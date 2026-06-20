@@ -516,6 +516,32 @@ type StorageContentBlockSasRoutes() =
             do! assertBadRequestForMalformedContentBlockAddress emptyDownload
         }
 
+    [<Test>]
+    member _.ContentBlockDownloadUriReturnsBadRequestForMalformedNonEmptyManifest() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathReader = $"{Guid.NewGuid()}"
+
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepositoryReader"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use readerClient = createClientWithUserId pathReader
+            let parameters = createContentBlockDownloadParameters repositoryId
+            let block = ContentBlock.Create(parameters.ContentBlockAddress, 0L, 1L)
+
+            parameters.AuthorizedScope <- "/malformed/manifest.bin"
+
+            parameters.Manifest <-
+                FileManifest.Create(ManifestAddress "manifest-malformed-non-empty", ChunkingSuiteId String.Empty, FileContentHash String.Empty, 1L, [ block ])
+
+            let! response = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Contain("FileManifest.ChunkingSuiteId"))
+            Assert.That(body, Does.Not.Contain("InternalServerError"))
+            Assert.That(body, Does.Not.Contain("Error in /storage/getContentBlockDownloadUri"))
+        }
+
 [<NonParallelizable>]
 type StorageContentBlockDiscoveryRoutes() =
 
@@ -734,6 +760,36 @@ type StorageManifestUploadSessionRoutes() =
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
         parameters.CorrelationId <- correlationId
+
+    let createClientWithClaims (claims: string list) =
+        let client = new HttpClient()
+        client.BaseAddress <- Client.BaseAddress
+        client.DefaultRequestHeaders.Add("x-grace-user-id", testUserId)
+
+        if not (List.isEmpty claims) then
+            client.DefaultRequestHeaders.Add("x-grace-claims", String.Join(";", claims))
+
+        client
+
+    let upsertPathPermissionAsync (client: HttpClient) repositoryId path claimPermissions =
+        task {
+            let parameters = Parameters.Access.UpsertPathPermissionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.Path <- path
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            for (claim, permission) in claimPermissions do
+                let claimPermission = Parameters.Access.ClaimPermissionParameters()
+                claimPermission.Claim <- claim
+                claimPermission.DirectoryPermission <- permission
+                parameters.ClaimPermissions.Add(claimPermission)
+
+            let! response = client.PostAsync("/authorize/upsert-path-permission", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+        }
 
     let tryGetJsonProperty (name: string) (element: JsonElement) =
         element.EnumerateObject()
@@ -967,6 +1023,98 @@ type StorageManifestUploadSessionRoutes() =
                 with
             | Ok reconstructedBytes -> Assert.That(Convert.ToHexString(reconstructedBytes), Is.EqualTo(Convert.ToHexString(payload)))
             | Error error -> Assert.Fail($"Expected downloaded ContentBlock to reconstruct the manifest bytes, got {error}.")
+        }
+
+    [<Test>]
+    member _.ContentBlockDownloadUriRejectsManifestFinalizedForDifferentAuthorizedScope() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let pathA = $"/download/path-a-{Guid.NewGuid():N}.bin"
+            let pathB = $"/download/path-b-{Guid.NewGuid():N}.bin"
+            let readerClaim = $"download-scope-reader-{Guid.NewGuid():N}"
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 8uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            do! upsertPathPermissionAsync Client repositoryId pathA [ (readerClaim, "Read") ]
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- pathB
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- pathB
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
+            uploadUriParameters.ContentBlockAddress <- block.Address
+            uploadUriParameters.AuthorizedScope <- pathB
+
+            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- pathB
+            confirm.OperationId <- "confirm-0"
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some "etag-scope-binding")
+
+            let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
+
+            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
+            setStorageParameters finalize repositoryId correlationId
+            finalize.UploadSessionId <- sessionId
+            finalize.AuthorizedScope <- pathB
+            finalize.OperationId <- "finalize"
+            finalize.Manifest <- manifest
+
+            finalize.BlockPayloads <-
+                [|
+                    { Address = block.Address; Payload = block.Payload }
+                |]
+
+            let! finalizeResult = postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
+            Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+            Assert.That(finalizeResult.ReturnValue.Session.AuthorizedScope, Is.EqualTo(pathB))
+
+            let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
+            setStorageParameters downloadUriParameters repositoryId correlationId
+            downloadUriParameters.AuthorizedScope <- pathA
+            downloadUriParameters.ContentBlockAddress <- block.Address
+            downloadUriParameters.Manifest <- manifest
+
+            use pathAReader = createClientWithClaims [ readerClaim ]
+            let! downloadUriResponse = pathAReader.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent downloadUriParameters)
+            let! downloadUriBody = downloadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), downloadUriBody)
+            assertJsonContent downloadUriResponse
+            Assert.That(downloadUriBody, Does.Contain("authorized scope"))
+            Assert.That(downloadUriBody, Does.Not.Contain("cas/content/"))
         }
 
     [<Test>]
