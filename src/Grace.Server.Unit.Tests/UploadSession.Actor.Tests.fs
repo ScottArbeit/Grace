@@ -9,6 +9,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 
 module UploadSessionActor = Grace.Actors.UploadSession
 module ContentBlockMetadataActor = Grace.Actors.ContentBlockMetadata
@@ -1146,6 +1147,34 @@ type UploadSessionActorTests() =
 
         Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(1))
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
+
+    [<Test>]
+    member _.FinalizeManifestMergesClaimedMetadataBeforePersistingTerminalEvent() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+        let handleStart = actorSource.IndexOf("member this.Handle command metadata", StringComparison.Ordinal)
+
+        Assert.That(handleStart, Is.GreaterThanOrEqualTo(0), "The UploadSessionActor.Handle implementation must be present.")
+
+        let finalizeBranchStart = actorSource.IndexOf("| UploadSessionCommand.FinalizeManifest finalize ->", handleStart, StringComparison.Ordinal)
+
+        Assert.That(finalizeBranchStart, Is.GreaterThan(handleStart), "The Handle finalize branch must be present.")
+
+        let nextBranchStart = actorSource.IndexOf("| _ ->", finalizeBranchStart, StringComparison.Ordinal)
+
+        Assert.That(nextBranchStart, Is.GreaterThan(finalizeBranchStart), "The Handle finalize branch must have a bounded source slice.")
+
+        let finalizeBranch = actorSource.Substring(finalizeBranchStart, nextBranchStart - finalizeBranchStart)
+
+        let mergeIndex = finalizeBranch.IndexOf("this.MergeFinalizedContentBlockMetadata decision finalize metadata", StringComparison.Ordinal)
+
+        let applyEventsIndex = finalizeBranch.IndexOf("this.ApplyEvents decision.Events", StringComparison.Ordinal)
+
+        let dedupeIndex = finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata", StringComparison.Ordinal)
+
+        Assert.That(mergeIndex, Is.GreaterThanOrEqualTo(0), "Finalization must attempt metadata merge/revalidation in the finalize branch.")
+        Assert.That(applyEventsIndex, Is.GreaterThan(mergeIndex), "Metadata merge/revalidation must happen before persisting Finalized.")
+        Assert.That(dedupeIndex, Is.GreaterThan(applyEventsIndex), "Dedupe registration should still use the persisted finalize decision.")
 
     [<Test>]
     member _.RevalidatedClaimedMetadataMergeRejectsRemovedRangeBeforeSideEffect() =

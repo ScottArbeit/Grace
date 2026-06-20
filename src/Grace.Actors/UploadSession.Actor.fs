@@ -1007,6 +1007,124 @@ module UploadSession =
                     |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
             }
 
+        member private this.MergeFinalizedContentBlockMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+            task {
+                let storagePoolId = decision.Session.StoragePoolId
+
+                let metadataCommands =
+                    createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                        storagePoolId
+                        finalize.OperationId
+                        decision.Session
+                        finalize.Manifest
+                        finalize.ClaimedMetadata
+
+                let mutable metadataIndex = 0
+                let mutable metadataError = None
+                let mergedMetadata = ResizeArray<ContentBlockMetadata>()
+
+                while metadataIndex < metadataCommands.Length
+                      && metadataError.IsNone do
+                    match metadataCommands[metadataIndex] with
+                    | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                        let actorKey = ContentBlockMetadataActorKey.Create merge.StoragePoolId merge.ContentBlockAddress
+
+                        let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, metadata.CorrelationId)
+
+                        let claimedBlock = tryFindClaimedManifestBlock decision.Session finalize.Manifest merge.ContentBlockAddress
+
+                        let! metadataResult =
+                            match claimedBlock with
+                            | Some _ ->
+                                task {
+                                    let! currentMetadata = metadataActor.Get metadata.CorrelationId
+
+                                    match currentMetadata with
+                                    | None ->
+                                        return
+                                            Error(
+                                                graceError
+                                                    metadata.CorrelationId
+                                                    $"Authoritative ContentBlockMetadata is absent for claimed reuse range {merge.ContentBlockAddress}; claimed reuse cannot be finalized."
+                                            )
+                                    | Some authoritativeMetadata ->
+                                        match
+                                            createRevalidatedClaimedMetadataMergeCommand
+                                                metadata.CorrelationId
+                                                storagePoolId
+                                                finalize.OperationId
+                                                decision.Session
+                                                finalize.Manifest
+                                                finalize.ClaimedMetadata
+                                                authoritativeMetadata
+                                            with
+                                        | Error error -> return Error error
+                                        | Ok None ->
+                                            return
+                                                Error(
+                                                    graceError
+                                                        metadata.CorrelationId
+                                                        $"Authoritative ContentBlockMetadata could not be revalidated for claimed reuse range {merge.ContentBlockAddress}."
+                                                )
+                                        | Ok (Some revalidatedCommand) ->
+                                            match revalidatedCommand with
+                                            | ContentBlockMetadataCommand.MergePhysicalRanges revalidatedMerge ->
+                                                return! metadataActor.MergePhysicalRanges revalidatedMerge metadata
+                                            | _ -> return! metadataActor.MergePhysicalRanges merge metadata
+                                }
+                            | None -> metadataActor.MergePhysicalRanges merge metadata
+
+                        match metadataResult with
+                        | Ok returnValue -> mergedMetadata.Add(returnValue.ReturnValue.Metadata)
+                        | Error error -> metadataError <- Some error
+                    | _ -> ()
+
+                    metadataIndex <- metadataIndex + 1
+
+                match metadataError with
+                | Some error -> return Error error
+                | None -> return Ok(mergedMetadata.ToArray())
+            }
+
+        member private this.RegisterFinalizedManifestInDedupe
+            decision
+            (finalize: FinalizeManifest)
+            (mergedMetadata: ContentBlockMetadata array)
+            (metadata: EventMetadata)
+            =
+            task {
+                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
+
+                do!
+                    dedupeIndexActor.RegisterFinalizedManifest
+                        {
+                            StoragePoolId = decision.Session.StoragePoolId
+                            Session = decision.Session
+                            Manifest = finalize.Manifest
+                            BlockPayloads = finalize.BlockPayloads
+                        }
+                        metadata.CorrelationId
+                    :> Task
+
+                for authoritativeMetadata in mergedMetadata do
+                    do! dedupeIndexActor.WriteAfterAuthoritativeMetadata authoritativeMetadata metadata.CorrelationId :> Task
+            }
+
+        member private this.ScheduleFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+            task {
+                if not decision.WasIdempotentReplay then
+                    let reminderState =
+                        createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId finalize.OperationId metadata.CorrelationId
+
+                    do!
+                        (this :> IGraceReminderWithGuidKey)
+                            .ScheduleReminderAsync
+                            ReminderTypes.PhysicalDeletion
+                            DefaultPhysicalDeletionReminderDuration
+                            (ReminderState.UploadSessionPhysicalDeletion reminderState)
+                            metadata.CorrelationId
+            }
+
         interface IGraceReminderWithGuidKey with
             member this.ScheduleReminderAsync reminderType delay reminderState correlationId =
                 task {
@@ -1082,41 +1200,33 @@ module UploadSession =
 
                     match decideCommand state.State uploadSessionDto command metadata with
                     | Ok decision ->
-                        if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
-
-                        let mutable sideEffectError: GraceError option = None
-
                         match command with
-                        | UploadSessionCommand.Abandon operationId when not decision.WasIdempotentReplay ->
-                            let reminderState =
-                                createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
-
-                            do!
-                                (this :> IGraceReminderWithGuidKey)
-                                    .ScheduleReminderAsync
-                                    ReminderTypes.PhysicalDeletion
-                                    DefaultPhysicalDeletionReminderDuration
-                                    (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                                    metadata.CorrelationId
-                        | UploadSessionCommand.Expire operationId when not decision.WasIdempotentReplay ->
-                            let reminderState =
-                                createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
-
-                            do!
-                                (this :> IGraceReminderWithGuidKey)
-                                    .ScheduleReminderAsync
-                                    ReminderTypes.PhysicalDeletion
-                                    DefaultPhysicalDeletionReminderDuration
-                                    (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                                    metadata.CorrelationId
                         | UploadSessionCommand.FinalizeManifest finalize ->
-                            if not decision.WasIdempotentReplay then
+                            let! metadataMergeResult = this.MergeFinalizedContentBlockMetadata decision finalize metadata
+
+                            match metadataMergeResult with
+                            | Error error -> return Error error
+                            | Ok mergedMetadata ->
+                                if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+
+                                do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+                                do! this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata
+
+                                let returnValue =
+                                    (GraceReturnValue.Create decision metadata.CorrelationId)
+                                        .enhance(nameof RepositoryId, decision.Session.RepositoryId)
+                                        .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
+                                        .enhance(nameof UploadSessionOperationId, decision.OperationId)
+                                        .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+
+                                return Ok returnValue
+                        | _ ->
+                            if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+
+                            match command with
+                            | UploadSessionCommand.Abandon operationId when not decision.WasIdempotentReplay ->
                                 let reminderState =
-                                    createCleanupReminderState
-                                        decision.Session.UploadSessionId
-                                        decision.Session.RepositoryId
-                                        finalize.OperationId
-                                        metadata.CorrelationId
+                                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
 
                                 do!
                                     (this :> IGraceReminderWithGuidKey)
@@ -1125,106 +1235,22 @@ module UploadSession =
                                         DefaultPhysicalDeletionReminderDuration
                                         (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                         metadata.CorrelationId
-
-                            let storagePoolId = decision.Session.StoragePoolId
-
-                            let metadataCommands =
-                                createContentBlockMetadataMergeCommandsForFinalizedBlocks
-                                    storagePoolId
-                                    finalize.OperationId
-                                    decision.Session
-                                    finalize.Manifest
-                                    finalize.ClaimedMetadata
-
-                            let mutable metadataIndex = 0
-                            let mutable metadataError = None
-                            let mergedMetadata = ResizeArray<ContentBlockMetadata>()
-
-                            while metadataIndex < metadataCommands.Length
-                                  && metadataError.IsNone do
-                                match metadataCommands[metadataIndex] with
-                                | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-                                    let actorKey = ContentBlockMetadataActorKey.Create merge.StoragePoolId merge.ContentBlockAddress
-
-                                    let metadataActor =
-                                        orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, metadata.CorrelationId)
-
-                                    let claimedBlock = tryFindClaimedManifestBlock decision.Session finalize.Manifest merge.ContentBlockAddress
-
-                                    let! metadataResult =
-                                        match claimedBlock with
-                                        | Some _ ->
-                                            task {
-                                                let! currentMetadata = metadataActor.Get metadata.CorrelationId
-
-                                                match currentMetadata with
-                                                | None ->
-                                                    return
-                                                        Error(
-                                                            graceError
-                                                                metadata.CorrelationId
-                                                                $"Authoritative ContentBlockMetadata is absent for claimed reuse range {merge.ContentBlockAddress}; claimed reuse cannot be finalized."
-                                                        )
-                                                | Some authoritativeMetadata ->
-                                                    match
-                                                        createRevalidatedClaimedMetadataMergeCommand
-                                                            metadata.CorrelationId
-                                                            storagePoolId
-                                                            finalize.OperationId
-                                                            decision.Session
-                                                            finalize.Manifest
-                                                            finalize.ClaimedMetadata
-                                                            authoritativeMetadata
-                                                        with
-                                                    | Error error -> return Error error
-                                                    | Ok None ->
-                                                        return
-                                                            Error(
-                                                                graceError
-                                                                    metadata.CorrelationId
-                                                                    $"Authoritative ContentBlockMetadata could not be revalidated for claimed reuse range {merge.ContentBlockAddress}."
-                                                            )
-                                                    | Ok (Some revalidatedCommand) ->
-                                                        match revalidatedCommand with
-                                                        | ContentBlockMetadataCommand.MergePhysicalRanges revalidatedMerge ->
-                                                            return! metadataActor.MergePhysicalRanges revalidatedMerge metadata
-                                                        | _ -> return! metadataActor.MergePhysicalRanges merge metadata
-                                            }
-                                        | None -> metadataActor.MergePhysicalRanges merge metadata
-
-                                    match metadataResult with
-                                    | Ok returnValue -> mergedMetadata.Add(returnValue.ReturnValue.Metadata)
-                                    | Error error -> metadataError <- Some error
-                                | _ -> ()
-
-                                metadataIndex <- metadataIndex + 1
-
-                            match metadataError with
-                            | Some error -> sideEffectError <- Some error
-                            | None ->
-                                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
+                            | UploadSessionCommand.Expire operationId when not decision.WasIdempotentReplay ->
+                                let reminderState =
+                                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId operationId metadata.CorrelationId
 
                                 do!
-                                    dedupeIndexActor.RegisterFinalizedManifest
-                                        {
-                                            StoragePoolId = storagePoolId
-                                            Session = decision.Session
-                                            Manifest = finalize.Manifest
-                                            BlockPayloads = finalize.BlockPayloads
-                                        }
+                                    (this :> IGraceReminderWithGuidKey)
+                                        .ScheduleReminderAsync
+                                        ReminderTypes.PhysicalDeletion
+                                        DefaultPhysicalDeletionReminderDuration
+                                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                         metadata.CorrelationId
-                                    :> Task
+                            | UploadSessionCommand.DeletePhysicalState _ ->
+                                do! this.CompactPhysicalStateEvents()
+                                this.DeactivateOnIdle()
+                            | _ -> ()
 
-                                for authoritativeMetadata in mergedMetadata do
-                                    do! dedupeIndexActor.WriteAfterAuthoritativeMetadata authoritativeMetadata metadata.CorrelationId :> Task
-                        | UploadSessionCommand.DeletePhysicalState _ ->
-                            do! this.CompactPhysicalStateEvents()
-                            this.DeactivateOnIdle()
-                        | _ -> ()
-
-                        match sideEffectError with
-                        | Some error -> return Error error
-                        | None ->
                             let returnValue =
                                 (GraceReturnValue.Create decision metadata.CorrelationId)
                                     .enhance(nameof RepositoryId, decision.Session.RepositoryId)
