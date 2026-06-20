@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.Storage
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Common
+open Grace.Types.Repository
 open Grace.Types.UploadSession
 open NodaTime
 open NUnit.Framework
@@ -108,6 +109,8 @@ type DedupeIndexServerTests() =
 
     let discover records requested = DedupeIndex.discover storagePoolId requested timestamp records
 
+    let defaultRepository repositoryId = { RepositoryDto.Default with RepositoryId = repositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+
     let candidateShape (candidate: ContentBlockDiscoveryCandidate) =
         candidate.ContentBlockAddress, candidate.OrdinalStart, candidate.OrdinalCount, candidate.MetadataVersion, candidate.ProtectedChunkAddresses
 
@@ -165,6 +168,40 @@ type DedupeIndexServerTests() =
 
         Assert.That(records, Is.Not.Empty)
         Assert.That(records[0].ProtectedChunkAddresses[0], Is.EqualTo(expectedProtectedAddress))
+
+    [<Test>]
+    member _.DefaultPoolBridgeDoesNotExposeCrossRepositoryMetadataBeforePhysicalPlacementIsShardAware() =
+        let repoA = defaultRepository (Guid.Parse("507ccba8-8026-426c-ab65-c36d44625f1f"))
+        let repoB = defaultRepository (Guid.Parse("9ab312e7-d73f-48ca-8f44-07e6e4954a89"))
+        let repoAStoragePoolId = DedupeIndex.storagePoolIdForRepository repoA
+        let repoBStoragePoolId = DedupeIndex.storagePoolIdForRepository repoB
+        let block = encodedBlock "cross-repository-default-pool" 12
+        let manifest = manifestFor block
+        let repoAMetadata = { metadataFor 1 9L block with StoragePoolId = repoAStoragePoolId }
+
+        let repoARecords =
+            DedupeIndex.recordsAfterFinalize
+                {
+                    StoragePoolId = repoAStoragePoolId
+                    Session = { finalizedSession manifest with RepositoryId = repoA.RepositoryId }
+                    Manifest = manifest
+                    BlockPayloads = [| payloadFor block |]
+                    Metadata = [| repoAMetadata |]
+                }
+
+        let requestedChunk = (decodedChunkAddresses block)[0]
+        let repoAResult = DedupeIndex.discover repoAStoragePoolId [| requestedChunk |] timestamp repoARecords
+        let repoBResult = DedupeIndex.discover repoBStoragePoolId [| requestedChunk |] timestamp repoARecords
+
+        Assert.That(repoA.StoragePoolId, Is.EqualTo(repoB.StoragePoolId))
+        Assert.That(repoAStoragePoolId, Is.Not.EqualTo(repoBStoragePoolId))
+        Assert.That(repoAResult.CandidateContentBlocks, Has.Length.EqualTo(1))
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks,
+            Is.Empty,
+            "Repo B must not discover repo A metadata while physical ContentBlock placement remains repository-container scoped."
+        )
 
     [<Test>]
     member _.DiscoveryLimitsCandidateWindowsForAKeyChunk() =

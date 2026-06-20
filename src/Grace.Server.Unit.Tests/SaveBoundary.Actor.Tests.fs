@@ -458,7 +458,7 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected multi-block manifest metadata checks to use content-block ordinal zero, got {error.Error}.")
 
     [<Test>]
-    member _.ManifestSaveBoundaryUsesRepositoryDerivedContentBlockMetadataPool() =
+    member _.ManifestSaveBoundaryUsesDefaultContentBlockMetadataPool() =
         let contentBlockAddress = ContentBlockAddress "block-address"
         let expected = $"{DedupeIndex.storagePoolIdForRepositoryId repositoryId}|{contentBlockAddress}"
 
