@@ -90,6 +90,10 @@ module ContentBlockMetadata =
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else
@@ -98,6 +102,10 @@ module ContentBlockMetadata =
     let private validateExistingStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "Existing StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "Existing StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "Existing StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "Existing StoragePlacement.ObjectKey is required.")
         else
@@ -306,6 +314,24 @@ module ContentBlockMetadata =
                 Error(
                     validateExistingStoragePlacement correlationId existing.StoragePlacement
                     |> Option.get
+                )
+            | Some existing when
+                existing.StoragePlacement.StorageAccountName
+                <> merge.StoragePlacement.StorageAccountName
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"ContentBlockMetadata StoragePlacement.StorageAccountName mismatch. Existing {existing.StoragePlacement.StorageAccountName}, requested {merge.StoragePlacement.StorageAccountName}."
+                )
+            | Some existing when
+                existing.StoragePlacement.StorageContainerName
+                <> merge.StoragePlacement.StorageContainerName
+                ->
+                Error(
+                    graceError
+                        correlationId
+                        $"ContentBlockMetadata StoragePlacement.StorageContainerName mismatch. Existing {existing.StoragePlacement.StorageContainerName}, requested {merge.StoragePlacement.StorageContainerName}."
                 )
             | Some existing when
                 existing.StoragePlacement.ObjectKey

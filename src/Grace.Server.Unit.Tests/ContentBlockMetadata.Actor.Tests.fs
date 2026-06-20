@@ -31,6 +31,9 @@ type ContentBlockMetadataActorTests() =
     let contentBlockAddress = ContentBlockAddress "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     let contentBlockObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress
 
+    let placementFor objectKey eTag =
+        { StorageAccountName = "cas-account"; StorageContainerName = StorageContainerName "cas-container"; ObjectKey = objectKey; ETag = eTag }
+
     let activeRange = { OrdinalStart = 0; OrdinalCount = 8; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = 1024L }
 
     let reclaimableRange = { OrdinalStart = 8; OrdinalCount = 4; ActiveManifestCount = 0; PhysicalOffset = 1024L; PhysicalLength = 512L }
@@ -41,7 +44,7 @@ type ContentBlockMetadataActorTests() =
             StoragePoolId = storagePoolId
             ContentBlockAddress = contentBlockAddress
             BlockFormatVersion = 1s
-            StoragePlacement = { ObjectKey = contentBlockObjectKey; ETag = Some "etag-1" }
+            StoragePlacement = placementFor contentBlockObjectKey (Some "etag-1")
             Ranges = ranges
             TotalPhysicalBytes = 1536L
             ActivePhysicalBytes = 1024L
@@ -71,7 +74,7 @@ type ContentBlockMetadataActorTests() =
                 Ranges = ranges
             }
 
-    let mergeWithObjectKey operationId objectKey ranges = mergeWithPlacement operationId { ObjectKey = objectKey; ETag = Some "etag-1" } ranges
+    let mergeWithObjectKey operationId objectKey ranges = mergeWithPlacement operationId (placementFor objectKey (Some "etag-1")) ranges
 
     let merge operationId ranges = mergeWithObjectKey operationId contentBlockObjectKey ranges
 
@@ -269,7 +272,7 @@ type ContentBlockMetadataActorTests() =
             }
 
         let compactedRange = { active with PhysicalOffset = 0L }
-        let compactedPlacement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
+        let compactedPlacement = placementFor $"{contentBlockObjectKey}.compacted" (Some "etag-compact")
 
         let result =
             ContentBlockMetadataActor.decideCommand
@@ -320,7 +323,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
+        let placement = placementFor $"{contentBlockObjectKey}.compacted" (Some "etag-compact")
         let changedLogicalRange = { active with OrdinalCount = active.OrdinalCount + 1; PhysicalOffset = 0L }
 
         let changedLogicalResult =
@@ -373,7 +376,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
+        let placement = placementFor $"{contentBlockObjectKey}.compacted" (Some "etag-compact")
         let nonCompactingRange = { active with PhysicalOffset = minimumReclaimableBytes; PhysicalLength = 8192L }
 
         let result =
@@ -409,7 +412,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
+        let placement = placementFor $"{contentBlockObjectKey}.compacted" (Some "etag-compact")
 
         let futureBypassResult =
             ContentBlockMetadataActor.decideCommand
@@ -479,7 +482,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = true
             }
 
-        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
+        let placement = placementFor $"{contentBlockObjectKey}.compacted" (Some "etag-compact")
 
         let result =
             ContentBlockMetadataActor.decideCommand
@@ -537,7 +540,7 @@ type ContentBlockMetadataActorTests() =
                 HasActiveCompaction = false
             }
 
-        let placement = { ObjectKey = $"{contentBlockObjectKey}.compacted"; ETag = Some "etag-compact" }
+        let placement = placementFor $"{contentBlockObjectKey}.compacted" (Some "etag-compact")
 
         let result =
             ContentBlockMetadataActor.decideCommand
@@ -798,6 +801,52 @@ type ContentBlockMetadataActorTests() =
         match changedPlacement with
         | Ok _ -> Assert.Fail("Expected object key change to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.ObjectKey mismatch"))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsStoragePlacementAccountChangesForSameObjectKey() =
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                Unchecked.defaultof<_>
+
+        let changedAccount =
+            let current, events = created
+            let placement = { placementFor contentBlockObjectKey (Some "etag-1") with StorageAccountName = "cas-account-other" }
+
+            ContentBlockMetadataActor.decideCommand
+                events
+                current
+                (mergeWithPlacement "op-merge-account" placement [| reclaimableRange |])
+                (metadata "corr-merge-account")
+
+        match changedAccount with
+        | Ok _ -> Assert.Fail("Expected account change to be rejected for the same object key.")
+        | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.StorageAccountName mismatch"))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsStoragePlacementContainerChangesForSameObjectKey() =
+        let created =
+            match ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-create" [| activeRange |]) (metadata "corr-create") with
+            | Ok decision -> applyAll decision.Events ContentBlockMetadataDto.Empty, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected create to succeed, got {error.Error}.")
+                Unchecked.defaultof<_>
+
+        let changedContainer =
+            let current, events = created
+            let placement = { placementFor contentBlockObjectKey (Some "etag-1") with StorageContainerName = StorageContainerName "cas-container-other" }
+
+            ContentBlockMetadataActor.decideCommand
+                events
+                current
+                (mergeWithPlacement "op-merge-container" placement [| reclaimableRange |])
+                (metadata "corr-merge-container")
+
+        match changedContainer with
+        | Ok _ -> Assert.Fail("Expected container change to be rejected for the same object key.")
+        | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.StorageContainerName mismatch"))
 
     [<Test>]
     member _.MetadataActorUsesOneCompositeStringKeyAndDoesNotIntroduceChunkActorState() =
