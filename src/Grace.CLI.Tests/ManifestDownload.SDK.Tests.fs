@@ -154,7 +154,7 @@ type ManifestDownloadSdkTests() =
                         fun parameters ->
                             requestedBlocks.Add(parameters.ContentBlockAddress)
                             Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
-                            Assert.That(parameters.Manifest.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+                            Assert.That(parameters.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
                             Task.FromResult(Ok(GraceReturnValue.Create $"https://example.test/{parameters.ContentBlockAddress}" correlationId))
                     DownloadContentBlock =
                         fun contentBlockAddress uri ->
@@ -183,6 +183,45 @@ type ManifestDownloadSdkTests() =
 
                 Assert.That(requestedBlocks.ToArray() = expectedBlocks, Is.True)
                 Assert.That(downloadedBlocks.ToArray() = expectedBlocks, Is.True)
+        }
+
+    [<Test>]
+    member _.ManifestDownloadRequestsOnlyManifestIdentityForEachBlockUri() =
+        task {
+            let payload = ManifestDownloadSdkTests.PseudoRandomBytes 220000
+            payload[0] <- 9uy
+
+            let plan = LocalPlanner.analyzeBytes { LocalPlanner.Options.Default with EligibilityPolicy = ManifestDownloadSdkTests.BinaryPolicy 1024L } payload
+
+            let manifest = ManifestDownloadSdkTests.ManifestFor plan
+            let blockPayloads = ManifestDownloadSdkTests.EncodeBlocks plan
+            let fileVersion = ManifestDownloadSdkTests.CreateManifestFileVersion "identity-only-large.bin" payload manifest
+            let mutable requestCount = 0
+            let correlationId = "corr-sdk-manifest-download-identity-only"
+            use outputStream = new MemoryStream()
+
+            let client: ManifestDownload.ManifestDownloadClient =
+                {
+                    GetContentBlockDownloadUri =
+                        fun parameters ->
+                            requestCount <- requestCount + 1
+                            Assert.That(parameters.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+                            let manifestProperty = parameters.GetType().GetProperty("Manifest")
+                            Assert.That(manifestProperty, Is.Null)
+                            Task.FromResult(Ok(GraceReturnValue.Create $"https://example.test/{parameters.ContentBlockAddress}" correlationId))
+                    DownloadContentBlock =
+                        fun contentBlockAddress _ -> Task.FromResult(Ok(GraceReturnValue.Create blockPayloads[contentBlockAddress] correlationId))
+                }
+
+            let request = { ManifestDownloadSdkTests.CreateRequest fileVersion correlationId with OutputStream = Some outputStream }
+
+            let! result = ManifestDownload.downloadFileWithClient client request
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok returnValue ->
+                Assert.That(returnValue.ReturnValue.DownloadedBlockCount, Is.EqualTo(manifest.Blocks.Count))
+                Assert.That(requestCount, Is.EqualTo(manifest.Blocks.Count))
         }
 
     [<Test>]

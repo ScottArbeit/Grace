@@ -36,8 +36,9 @@ pub struct GetContentBlockDownloadUriParameters {
     /// Lowercase 64-character BLAKE3-derived ContentBlock address.
     #[serde(rename = "ContentBlockAddress", skip_serializing_if = "Option::is_none")]
     pub content_block_address: Option<String>,
-    #[serde(rename = "Manifest", skip_serializing_if = "Option::is_none")]
-    pub manifest: Option<Box<models::FileManifest>>,
+    /// Lowercase 64-character BLAKE3-derived FileManifest address.
+    #[serde(rename = "ManifestAddress", skip_serializing_if = "Option::is_none")]
+    pub manifest_address: Option<String>,
 }
 
 impl GetContentBlockDownloadUriParameters {
@@ -53,7 +54,7 @@ impl GetContentBlockDownloadUriParameters {
             repository_name: None,
             authorized_scope: None,
             content_block_address: None,
-            manifest: None,
+            manifest_address: None,
         }
     }
 }

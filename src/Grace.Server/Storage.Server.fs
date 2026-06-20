@@ -73,10 +73,19 @@ module Storage =
     let private invalidContentBlockAddressError correlationId =
         GraceError.Create "ContentBlockAddress must be a 64-character hexadecimal BLAKE3 value." correlationId
 
+    let private invalidManifestAddressError correlationId =
+        GraceError.Create "ManifestAddress must be a 64-character lowercase hexadecimal BLAKE3 value." correlationId
+
     let private validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
         match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
         | Some _ -> Ok()
         | None -> Error(invalidContentBlockAddressError correlationId)
+
+    let private validateManifestAddress correlationId (manifestAddress: ManifestAddress) =
+        if ContentAddress.isValidAddress manifestAddress then
+            Ok()
+        else
+            Error(invalidManifestAddressError correlationId)
 
     let private expectedContentBlockStoragePlacement (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) eTag =
         StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockObjectKey contentBlockAddress) eTag
@@ -200,7 +209,9 @@ module Storage =
             | _ -> return false
         }
 
-    let private shouldDeleteCreatedFinalContentBlockPayloadFromMetadataActor storagePoolId contentBlockAddress correlationId =
+    let internal finalContentBlockMetadataPoolIdForCleanup repositoryId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+
+    let private shouldDeleteCreatedFinalContentBlockPayloadFromMetadataActor metadataPoolId contentBlockAddress correlationId =
         let getRangePresence storagePoolId contentBlockAddress query correlationId =
             let metadataActor =
                 grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
@@ -210,7 +221,7 @@ module Storage =
 
             metadataActor.GetRangePresence query correlationId
 
-        shouldDeleteCreatedFinalContentBlockPayload getRangePresence storagePoolId contentBlockAddress correlationId
+        shouldDeleteCreatedFinalContentBlockPayload getRangePresence metadataPoolId contentBlockAddress correlationId
 
     type private MaterializedContentBlock = { StoragePlacement: ContentBlockStoragePlacement; CreatedFinalBlob: bool }
 
@@ -791,91 +802,34 @@ module Storage =
                     else
                         Ok()
 
-    let private validateDownloadManifestShape (manifest: FileManifest) correlationId =
-        if isNull (box manifest) then
-            Error(GraceError.Create "FileManifest is required before issuing a ContentBlock download URI." correlationId)
-        elif String.IsNullOrWhiteSpace manifest.ManifestAddress then
-            Error(GraceError.Create "FileManifest.ManifestAddress is required before issuing a ContentBlock download URI." correlationId)
-        elif String.IsNullOrWhiteSpace manifest.ChunkingSuiteId then
-            Error(GraceError.Create "FileManifest.ChunkingSuiteId is required before issuing a ContentBlock download URI." correlationId)
-        elif String.IsNullOrWhiteSpace manifest.FileContentHash then
-            Error(GraceError.Create "FileManifest.FileContentHash is required before issuing a ContentBlock download URI." correlationId)
-        elif isNull manifest.Blocks
-             || manifest.Blocks.Count = 0 then
-            Error(GraceError.Create "FileManifest.Blocks must include at least one ContentBlock before issuing a ContentBlock download URI." correlationId)
-        elif manifest.Blocks
-             |> Seq.exists (fun block ->
-                 isNull (box block)
-                 || String.IsNullOrWhiteSpace block.Address
-                 || block.Size <= 0L
-                 || block.Offset < 0L) then
-            Error(GraceError.Create "FileManifest.Blocks contains a malformed ContentBlock entry." correlationId)
-        elif manifest.Size < 0L then
-            Error(GraceError.Create "FileManifest.Size cannot be negative before issuing a ContentBlock download URI." correlationId)
-        else
-            Ok()
-
-    let private tryComputeDownloadManifestAddress (manifest: FileManifest) correlationId =
-        try
-            Ok(ContentAddress.computeManifestAddressForManifest manifest)
-        with
-        | ex ->
-            Error(
-                GraceError.Create
-                    $"FileManifest content is malformed and cannot be addressed before issuing a ContentBlock download URI: {ex.Message}"
-                    correlationId
-            )
-
     let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state =
         DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state
 
     let private validateManifestForContentBlockDownload storagePoolId (parameters: GetContentBlockDownloadUriParameters) correlationId =
         task {
-            let manifest = parameters.Manifest
-
-            match validateDownloadManifestShape manifest correlationId with
+            match validateManifestAddress correlationId parameters.ManifestAddress with
             | Error error -> return Error error
             | Ok () ->
-                match tryComputeDownloadManifestAddress manifest correlationId with
-                | Error error -> return Error error
-                | Ok computedManifestAddress when
-                    computedManifestAddress
-                    <> manifest.ManifestAddress
-                    ->
-                    return Error(GraceError.Create "FileManifest.ManifestAddress must match the supplied manifest content." correlationId)
-                | Ok _ ->
-                    if manifest.Blocks
-                       |> Seq.exists (fun block ->
-                           not (isNull (box block))
-                           && block.Address = parameters.ContentBlockAddress)
-                       |> not then
-                        return
-                            Error(
-                                GraceError.Create
-                                    $"FileManifest {manifest.ManifestAddress} does not reference ContentBlockAddress {parameters.ContentBlockAddress}."
-                                    correlationId
-                            )
-                    else
-                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
 
-                        match!
-                            dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
-                                (
-                                    storagePoolId,
-                                    parameters.AuthorizedScope,
-                                    manifest.ManifestAddress,
-                                    parameters.ContentBlockAddress,
-                                    correlationId
-                                )
-                            with
-                        | Some metadata -> return Ok metadata.StoragePlacement
-                        | None ->
-                            return
-                                Error(
-                                    GraceError.Create
-                                        $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository and authorized scope."
-                                        correlationId
-                                )
+                match!
+                    dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                        (
+                            storagePoolId,
+                            parameters.AuthorizedScope,
+                            parameters.ManifestAddress,
+                            parameters.ContentBlockAddress,
+                            correlationId
+                        )
+                    with
+                | Some metadata -> return Ok metadata.StoragePlacement
+                | None ->
+                    return
+                        Error(
+                            GraceError.Create
+                                $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository and authorized scope."
+                                correlationId
+                        )
         }
 
     /// Gets a download URI for the specified file version that can be used by a Grace client.
@@ -1365,7 +1319,8 @@ module Storage =
                                                                 if finalMaterialization.CreatedFinalBlob then
                                                                     let! shouldDeleteFinalPayload =
                                                                         shouldDeleteCreatedFinalContentBlockPayloadFromMetadataActor
-                                                                            route.StoragePoolId
+                                                                            (finalContentBlockMetadataPoolIdForCleanup
+                                                                                requestContext.SessionForScope.RepositoryId)
                                                                             parameters.ContentBlockAddress
                                                                             correlationId
 
