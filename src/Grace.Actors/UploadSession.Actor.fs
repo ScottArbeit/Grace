@@ -570,6 +570,8 @@ module UploadSession =
                     Error(graceError metadata.CorrelationId "UploadSessionId must be a non-empty Guid.")
                 elif start.RepositoryId = RepositoryId.Empty then
                     Error(graceError metadata.CorrelationId "RepositoryId must be a non-empty Guid.")
+                elif String.IsNullOrWhiteSpace start.StoragePoolId then
+                    Error(graceError metadata.CorrelationId "StoragePoolId must be recorded when the upload session starts.")
                 elif start.ExpectedSize <= 0L then
                     Error(graceError metadata.CorrelationId "ExpectedSize must be greater than zero.")
                 else
@@ -843,7 +845,7 @@ module UploadSession =
                                         (ReminderState.UploadSessionPhysicalDeletion reminderState)
                                         metadata.CorrelationId
 
-                            let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId decision.Session.RepositoryId
+                            let storagePoolId = decision.Session.StoragePoolId
 
                             let metadataCommands =
                                 createContentBlockMetadataMergeCommandsForFinalizedUploads storagePoolId finalize.OperationId decision.Session finalize.Manifest

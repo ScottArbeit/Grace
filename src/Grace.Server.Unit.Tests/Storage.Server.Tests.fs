@@ -153,6 +153,21 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Not.Contain("SnapshotState correlationId"))
 
     [<Test>]
+    member _.UploadSessionBackedSasUsesRecordedSessionPoolRoute() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(compactedSource, Does.Contain("resolveUploadSessionStoragePoolRoute session.RepositoryId session.StoragePoolId"))
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("resolveUploadSessionStoragePoolRoute requestContext.SessionForScope.RepositoryId requestContext.SessionForScope.StoragePoolId")
+        )
+
+        Assert.That(storageServerSource, Does.Contain("StoragePoolId = route.StoragePoolId"))
+
+    [<Test>]
     member _.ConfirmActorRejectionDoesNotDeleteFinalCasPlacement() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
