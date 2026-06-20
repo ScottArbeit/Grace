@@ -153,74 +153,15 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Not.Contain("SnapshotState correlationId"))
 
     [<Test>]
-    member _.CreatedFinalPayloadCleanupSkipsDeletionWhenMetadataReferenceExists() =
-        task {
-            let calls = ResizeArray<StoragePoolId * ContentBlockAddress * ContentBlockRangeQuery * CorrelationId>()
+    member _.ConfirmActorRejectionDoesNotDeleteFinalCasPlacement() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
 
-            let getRangePresence storagePoolId contentBlockAddress query correlationId =
-                calls.Add(storagePoolId, contentBlockAddress, query, correlationId)
-                Task.FromResult ContentBlockRangePresence.Active
+        let compactedSource =
+            storageServerSource
+                .Replace("\r", String.Empty)
+                .Replace("\n", String.Empty)
+                .Replace(" ", String.Empty)
 
-            let! shouldDelete =
-                Storage.shouldDeleteCreatedFinalContentBlockPayload
-                    getRangePresence
-                    (StoragePoolId "pool-cas-race")
-                    (ContentBlockAddress "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
-                    "corr-cas-race"
-
-            Assert.That(shouldDelete, Is.False)
-            Assert.That(calls, Has.Count.EqualTo(1))
-            let storagePoolId, contentBlockAddress, query, correlationId = calls[0]
-            Assert.That(storagePoolId, Is.EqualTo(StoragePoolId "pool-cas-race"))
-            Assert.That(contentBlockAddress, Is.EqualTo(ContentBlockAddress "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
-            Assert.That(query.OrdinalStart, Is.EqualTo(0))
-            Assert.That(query.OrdinalCount, Is.EqualTo(1))
-            Assert.That(correlationId, Is.EqualTo("corr-cas-race"))
-        }
-
-    [<Test>]
-    member _.CreatedFinalPayloadCleanupUsesRepositoryMetadataPoolForRangePresence() =
-        task {
-            let calls = ResizeArray<StoragePoolId * ContentBlockAddress * ContentBlockRangeQuery * CorrelationId>()
-            let repositoryId = Guid.Parse("77777777-7777-7777-7777-777777777777")
-            let metadataPoolId = Storage.finalContentBlockMetadataPoolIdForCleanup repositoryId
-            let routePoolId = StoragePoolId "selected-route-pool"
-
-            Assert.That(metadataPoolId, Is.EqualTo(StoragePoolId $"{repositoryId}"))
-            Assert.That(metadataPoolId, Is.Not.EqualTo(routePoolId))
-
-            let getRangePresence storagePoolId contentBlockAddress query correlationId =
-                calls.Add(storagePoolId, contentBlockAddress, query, correlationId)
-
-                if storagePoolId = metadataPoolId then
-                    Task.FromResult ContentBlockRangePresence.Active
-                else
-                    Task.FromResult ContentBlockRangePresence.Absent
-
-            let! shouldDelete =
-                Storage.shouldDeleteCreatedFinalContentBlockPayload
-                    getRangePresence
-                    metadataPoolId
-                    (ContentBlockAddress "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
-                    "corr-cas-metadata-pool"
-
-            Assert.That(shouldDelete, Is.False)
-            Assert.That(calls, Has.Count.EqualTo(1))
-            let storagePoolId, _, _, _ = calls[0]
-            Assert.That(storagePoolId, Is.EqualTo(metadataPoolId))
-        }
-
-    [<Test>]
-    member _.CreatedFinalPayloadCleanupAllowsDeletionWhenMetadataRangeIsAbsent() =
-        task {
-            let getRangePresence _ _ _ _ = Task.FromResult ContentBlockRangePresence.Absent
-
-            let! shouldDelete =
-                Storage.shouldDeleteCreatedFinalContentBlockPayload
-                    getRangePresence
-                    (StoragePoolId "pool-cas-absent")
-                    (ContentBlockAddress "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
-                    "corr-cas-absent"
-
-            Assert.That(shouldDelete, Is.True)
-        }
+        Assert.That(storageServerSource, Does.Not.Contain("shouldDeleteCreatedFinalContentBlockPayload"))
+        Assert.That(compactedSource, Does.Not.Contain("deleteContentBlockPayloadBestEffortfinalMaterialization.StoragePlacement"))
