@@ -629,6 +629,7 @@ module Interfaces =
         /// Returns finalized metadata for one scoped manifest/block authorization lookup without snapshotting the full index.
         abstract member TryGetFinalizedScopedContentBlockMetadata:
             storagePoolId: StoragePoolId *
+            repositoryId: RepositoryId *
             authorizedScope: string *
             manifestAddress: ManifestAddress *
             contentBlockAddress: ContentBlockAddress *
