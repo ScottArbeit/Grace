@@ -106,6 +106,14 @@ type ManifestUploadSdkTests() =
         let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
         $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
 
+    static member private Placement contentBlockAddress eTag =
+        {
+            StorageAccountName = "cas-account"
+            StorageContainerName = StorageContainerName "cas-container"
+            ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress
+            ETag = eTag
+        }
+
     static member private CreateRequest tempPath (fileVersion: FileVersion) correlationId : ManifestUpload.ManifestUploadRequest =
         {
             OwnerId = Guid.Parse("22222222-2222-2222-2222-222222222222")
@@ -237,8 +245,7 @@ type ManifestUploadSdkTests() =
                                 calls.Add($"upload:{parameters.ContentBlockAddress}")
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
@@ -349,8 +356,7 @@ type ManifestUploadSdkTests() =
                             fun parameters payload ->
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
@@ -516,8 +522,7 @@ type ManifestUploadSdkTests() =
                                 Assert.That(parameters.ContentBlockAddress, Is.Not.EqualTo(claimedBlock.Address))
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
@@ -620,8 +625,7 @@ type ManifestUploadSdkTests() =
                             fun parameters payload ->
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =
@@ -684,8 +688,7 @@ type ManifestUploadSdkTests() =
                             fun parameters payload ->
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
@@ -772,8 +775,7 @@ type ManifestUploadSdkTests() =
                             fun parameters payload ->
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
@@ -861,8 +863,7 @@ type ManifestUploadSdkTests() =
                             fun parameters payload ->
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
@@ -918,7 +919,7 @@ type ManifestUploadSdkTests() =
                             fun parameters _payload ->
                                 Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
 
-                                let placement = { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = None }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress None
 
                                 existingPlacements.Add(placement)
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
@@ -984,8 +985,7 @@ type ManifestUploadSdkTests() =
                                 Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
-                                let placement =
-                                    { ObjectKey = StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress; ETag = Some $"etag-{uploadedBlocks.Count}" }
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some $"etag-{uploadedBlocks.Count}")
 
                                 Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
                         ConfirmBlockUploaded =

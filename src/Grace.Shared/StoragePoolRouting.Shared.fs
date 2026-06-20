@@ -25,6 +25,56 @@ module StoragePoolRouting =
 
     let private fail correlationId message = Error(GraceError.Create message correlationId)
 
+    let private normalizePrefix (prefix: string) =
+        if String.IsNullOrWhiteSpace prefix then
+            String.Empty
+        else
+            prefix.Trim().Trim('/')
+
+    let validateShard correlationId (shard: StorageShard) =
+        if isNull (box shard) then
+            fail correlationId "StorageShard is required."
+        elif String.IsNullOrWhiteSpace shard.StorageAccountName then
+            fail correlationId "StorageShard.StorageAccountName is required."
+        elif String.IsNullOrWhiteSpace shard.StorageContainerName then
+            fail correlationId "StorageShard.StorageContainerName is required."
+        else
+            Ok()
+
+    let objectKeyInShard (shard: StorageShard) objectKey =
+        let prefix = normalizePrefix shard.ObjectKeyPrefix
+
+        let normalizedObjectKey =
+            if String.IsNullOrWhiteSpace objectKey then
+                String.Empty
+            else
+                objectKey.TrimStart('/')
+
+        if String.IsNullOrWhiteSpace prefix then
+            normalizedObjectKey
+        else
+            $"{prefix}/{normalizedObjectKey}"
+
+    let storagePlacementForObjectKey (shard: StorageShard) objectKey eTag : Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement =
+        {
+            Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement.StorageAccountName = shard.StorageAccountName
+            StorageContainerName = shard.StorageContainerName
+            ObjectKey = objectKeyInShard shard objectKey
+            ETag = eTag
+        }
+
+    let sharedKeyCanSignShard (shard: StorageShard) =
+        shard.StorageAccountName.Equals(AzureEnvironment.storageEndpoints.AccountName, StringComparison.OrdinalIgnoreCase)
+
+    let validateShardForSharedKeySas correlationId (shard: StorageShard) =
+        match validateShard correlationId shard with
+        | Error error -> Error error
+        | Ok () when sharedKeyCanSignShard shard -> Ok()
+        | Ok () ->
+            fail
+                correlationId
+                $"StorageShard '{shard.StorageAccountName}/{shard.StorageContainerName}' cannot be signed with the configured shared-key account '{AzureEnvironment.storageEndpoints.AccountName}'. Configure managed identity for cross-account CAS SAS."
+
     let resolveConfiguredPoolRoute (configuredPools: ConfiguredStoragePool seq) (repository: RepositoryDto) correlationId =
         if isNull (box repository) then
             fail correlationId "Repository state is required before resolving a StoragePool route."
