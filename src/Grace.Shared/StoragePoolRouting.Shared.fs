@@ -14,6 +14,8 @@ module StoragePoolRouting =
 
     let defaultStoragePoolId = StoragePoolId Constants.DefaultStoragePoolId
 
+    let repositoryDedupeStoragePoolId (repositoryId: RepositoryId) = StoragePoolId $"{repositoryId}"
+
     let defaultStorageShard () =
         {
             StorageAccountName = AzureEnvironment.storageEndpoints.AccountName
@@ -95,12 +97,20 @@ module StoragePoolRouting =
         elif String.IsNullOrWhiteSpace storagePoolId then
             fail correlationId "UploadSession StoragePoolId is not configured."
         else
+            let configuredPools = configuredPools |> Seq.toArray
+
             let configuredPool =
                 configuredPools
                 |> Seq.tryFind (fun pool -> pool.StoragePoolId = storagePoolId)
 
             match configuredPool with
             | Some pool -> Ok { RepositoryId = repositoryId; StoragePoolId = pool.StoragePoolId; Shard = pool.Shard }
+            | None when storagePoolId = repositoryDedupeStoragePoolId repositoryId ->
+                match configuredPools
+                      |> Seq.tryFind (fun pool -> pool.StoragePoolId = defaultStoragePoolId)
+                    with
+                | Some defaultPool -> Ok { RepositoryId = repositoryId; StoragePoolId = storagePoolId; Shard = defaultPool.Shard }
+                | None -> fail correlationId $"StoragePoolId '{defaultStoragePoolId}' is not configured. StoragePool routing fails closed."
             | None -> fail correlationId $"StoragePoolId '{storagePoolId}' is not configured. StoragePool routing fails closed."
 
     let resolveRepositoryRoute (repository: RepositoryDto) correlationId =
