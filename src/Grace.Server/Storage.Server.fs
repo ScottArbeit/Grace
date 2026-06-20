@@ -186,6 +186,32 @@ module Storage =
 
     let private deleteContentBlockStagingPayload placement correlationId = deleteContentBlockPayloadBestEffort placement correlationId
 
+    let internal shouldDeleteCreatedFinalContentBlockPayload
+        (getRangePresence: StoragePoolId -> ContentBlockAddress -> ContentBlockRangeQuery -> CorrelationId -> Task<ContentBlockRangePresence>)
+        storagePoolId
+        contentBlockAddress
+        correlationId
+        =
+        task {
+            try
+                let! presence = getRangePresence storagePoolId contentBlockAddress { OrdinalStart = 0; OrdinalCount = 1 } correlationId
+                return presence = ContentBlockRangePresence.Absent
+            with
+            | _ -> return false
+        }
+
+    let private shouldDeleteCreatedFinalContentBlockPayloadFromMetadataActor storagePoolId contentBlockAddress correlationId =
+        let getRangePresence storagePoolId contentBlockAddress query correlationId =
+            let metadataActor =
+                grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                    Grace.Actors.ContentBlockMetadataActorKey.Create storagePoolId contentBlockAddress,
+                    correlationId
+                )
+
+            metadataActor.GetRangePresence query correlationId
+
+        shouldDeleteCreatedFinalContentBlockPayload getRangePresence storagePoolId contentBlockAddress correlationId
+
     type private MaterializedContentBlock = { StoragePlacement: ContentBlockStoragePlacement; CreatedFinalBlob: bool }
 
     let private createAzureContentBlockSasUriForPlacement (placement: ContentBlockStoragePlacement) permission correlationId =
@@ -800,50 +826,8 @@ module Storage =
                     correlationId
             )
 
-    let internal tryFindFinalizedScopedContentBlockMetadata
-        storagePoolId
-        authorizedScope
-        manifestAddress
-        contentBlockAddress
-        (state: DedupeIndex.DedupeIndexState)
-        =
-        let finalizedManifests =
-            if
-                isNull (box state)
-                || isNull state.FinalizedManifests
-            then
-                Array.empty
-            else
-                state.FinalizedManifests
-
-        let hasScopedFinalizedManifest =
-            finalizedManifests
-            |> Array.exists (fun registration ->
-                not (isNull (box registration))
-                && registration.StoragePoolId = storagePoolId
-                && registration.ManifestAddress = manifestAddress
-                && not (isNull (box registration.Session))
-                && registration.Session.AuthorizedScope = authorizedScope
-                && not (isNull registration.Blocks)
-                && registration.Blocks
-                   |> Array.exists (fun block ->
-                       not (isNull (box block))
-                       && block.Address = contentBlockAddress))
-
-        if not hasScopedFinalizedManifest then
-            None
-        else
-            let metadataRecords =
-                if isNull (box state) || isNull state.MetadataRecords then
-                    Array.empty
-                else
-                    state.MetadataRecords
-
-            metadataRecords
-            |> Array.tryFind (fun metadata ->
-                not (isNull (box metadata))
-                && metadata.StoragePoolId = storagePoolId
-                && metadata.ContentBlockAddress = contentBlockAddress)
+    let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state =
+        DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state
 
     let private validateManifestForContentBlockDownload storagePoolId (parameters: GetContentBlockDownloadUriParameters) correlationId =
         task {
@@ -873,15 +857,16 @@ module Storage =
                             )
                     else
                         let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
-                        let! dedupeIndexState = dedupeIndexActor.SnapshotState correlationId
 
-                        match
-                            tryFindFinalizedScopedContentBlockMetadata
-                                storagePoolId
-                                parameters.AuthorizedScope
-                                manifest.ManifestAddress
-                                parameters.ContentBlockAddress
-                                dedupeIndexState
+                        match!
+                            dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                                (
+                                    storagePoolId,
+                                    parameters.AuthorizedScope,
+                                    manifest.ManifestAddress,
+                                    parameters.ContentBlockAddress,
+                                    correlationId
+                                )
                             with
                         | Some metadata -> return Ok metadata.StoragePlacement
                         | None ->
@@ -1378,7 +1363,17 @@ module Storage =
                                                                 return! context |> result200Ok returnValue
                                                             | Error error ->
                                                                 if finalMaterialization.CreatedFinalBlob then
-                                                                    do! deleteContentBlockPayloadBestEffort finalMaterialization.StoragePlacement correlationId
+                                                                    let! shouldDeleteFinalPayload =
+                                                                        shouldDeleteCreatedFinalContentBlockPayloadFromMetadataActor
+                                                                            route.StoragePoolId
+                                                                            parameters.ContentBlockAddress
+                                                                            correlationId
+
+                                                                    if shouldDeleteFinalPayload then
+                                                                        do!
+                                                                            deleteContentBlockPayloadBestEffort
+                                                                                finalMaterialization.StoragePlacement
+                                                                                correlationId
 
                                                                 do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                                 return! context |> result400BadRequest error

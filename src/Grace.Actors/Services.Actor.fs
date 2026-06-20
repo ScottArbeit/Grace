@@ -127,6 +127,18 @@ module Services =
         else
             blobUri
 
+    let internal shardBlobHostForConfiguredHost (accountName: string) (configuredHost: string) =
+        let firstDot = configuredHost.IndexOf('.')
+
+        if firstDot > 0
+           && configuredHost
+               .Substring(firstDot)
+                  .IndexOf(".blob.", StringComparison.OrdinalIgnoreCase)
+              >= 0 then
+            $"{accountName}{configuredHost.Substring(firstDot)}"
+        else
+            $"{accountName}.blob.core.windows.net"
+
     let private shardBlobEndpointUri (accountName: string) (containerAndObjectPath: string) =
         let configuredEndpoint = AzureEnvironment.storageEndpoints.BlobEndpoint
 
@@ -134,18 +146,9 @@ module Services =
             Uri($"{configuredEndpoint.AbsoluteUri.TrimEnd('/')}/{containerAndObjectPath.TrimStart('/')}")
             |> normalizeLocalAzuriteBlobUri accountName
         else
-            let host = configuredEndpoint.Host
-            let suffixStart = host.IndexOf(".blob.", StringComparison.OrdinalIgnoreCase)
-
-            let blobHost =
-                if suffixStart >= 0 then
-                    $"{accountName}{host.Substring(suffixStart)}"
-                else
-                    $"{accountName}.blob.core.windows.net"
-
             UriBuilder(
                 configuredEndpoint.Scheme,
-                blobHost,
+                shardBlobHostForConfiguredHost accountName configuredEndpoint.Host,
                 -1,
                 containerAndObjectPath.TrimStart('/')
             )
