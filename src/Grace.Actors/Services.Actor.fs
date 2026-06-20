@@ -558,9 +558,7 @@ module Services =
          ||| BlobSasPermissions.Tag
          ||| BlobSasPermissions.Read)
 
-    let azureBlobCreatePermissions =
-        (BlobSasPermissions.Create
-         ||| BlobSasPermissions.Write)
+    let azureBlobCreatePermissions = BlobSasPermissions.Create
 
     /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
     let getUriWithWriteSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =

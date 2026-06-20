@@ -401,6 +401,19 @@ module Storage =
 
         sources.ToArray()
 
+    let internal validateFinalizeBlockPayloadContract correlationId (blockPayloads: FinalizeManifestBlockPayload array) =
+        if
+            not (isNull blockPayloads)
+            && blockPayloads.Length > 0
+        then
+            Error(
+                GraceError.Create
+                    "FinalizeManifestUpload BlockPayloads are server-hydrated from authoritative ContentBlock storage; caller-supplied block payload bytes are not accepted."
+                    correlationId
+            )
+        else
+            Ok()
+
     let private hydrateFinalizeBlockPayloads
         (context: HttpContext)
         (parameters: FinalizeManifestUploadParameters)
@@ -418,13 +431,12 @@ module Storage =
             match requireUploadSessionStoragePool correlationId session with
             | Error error -> return Error error
             | Ok storagePoolId ->
-                match resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto with
-                | Error routeError -> return Error routeError
-                | Ok route ->
-                    if isNull parameters.BlockPayloads |> not
-                       && parameters.BlockPayloads.Length > 0 then
-                        return Ok(parameters.BlockPayloads, storagePoolId)
-                    else
+                match validateFinalizeBlockPayloadContract correlationId parameters.BlockPayloads with
+                | Error error -> return Error error
+                | Ok () ->
+                    match resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto with
+                    | Error routeError -> return Error routeError
+                    | Ok route ->
                         let confirmedBlockUploads =
                             if isNull session.ConfirmedBlockUploads then
                                 Array.empty
@@ -473,7 +485,53 @@ module Storage =
                not (isNull (box block))
                && block.Address = contentBlockAddress)
 
-    let private validateContentBlockDownloadManifest
+    let private validateContentBlockDownloadManifestBlocks correlationId (manifest: FileManifest) =
+        if isNull manifest.Blocks
+           || manifest.Blocks.Count = 0 then
+            Error(GraceError.Create "ContentBlock download FileManifest Blocks are required." correlationId)
+        else
+            let mutable expectedOffset = 0L
+            let mutable error = None
+            let mutable index = 0
+
+            while index < manifest.Blocks.Count
+                  && Option.isNone error do
+                let block = manifest.Blocks[index]
+
+                if isNull (box block) then
+                    error <- Some(GraceError.Create $"ContentBlock download FileManifest Blocks[{index}] is required." correlationId)
+                elif not (ContentAddress.isValidAddress block.Address) then
+                    error <-
+                        Some(
+                            GraceError.Create
+                                $"ContentBlock download FileManifest Blocks[{index}].Address must be a 64-character hexadecimal BLAKE3 value."
+                                correlationId
+                        )
+                elif block.Size <= 0L then
+                    error <- Some(GraceError.Create $"ContentBlock download FileManifest Blocks[{index}].Size must be positive." correlationId)
+                elif block.Offset <> expectedOffset then
+                    error <-
+                        Some(
+                            GraceError.Create
+                                $"ContentBlock download FileManifest Blocks[{index}].Offset must be contiguous from zero. Expected {expectedOffset}, actual {block.Offset}."
+                                correlationId
+                        )
+                else
+                    expectedOffset <- expectedOffset + block.Size
+
+                index <- index + 1
+
+            match error with
+            | Some error -> Error error
+            | None when expectedOffset <> manifest.Size ->
+                Error(
+                    GraceError.Create
+                        $"ContentBlock download FileManifest Size must match the sum of block ranges. Expected {manifest.Size}, actual {expectedOffset}."
+                        correlationId
+                )
+            | None -> Ok()
+
+    let internal validateContentBlockDownloadManifest
         correlationId
         (contentBlockAddress: ContentBlockAddress)
         (storagePoolId: StoragePoolId)
@@ -489,16 +547,35 @@ module Storage =
             Error(GraceError.Create "ContentBlock download FileManifest StoragePoolId is required." correlationId)
         elif manifest.StoragePoolId <> storagePoolId then
             Error(GraceError.Create "ContentBlock download FileManifest StoragePoolId must match the resolved repository storage route." correlationId)
-        elif not (manifestContainsContentBlock contentBlockAddress manifest) then
-            Error(GraceError.Create "ContentBlock download requires the requested ContentBlockAddress to belong to the supplied FileManifest." correlationId)
+        elif String.IsNullOrWhiteSpace manifest.ChunkingSuiteId then
+            Error(GraceError.Create "ContentBlock download FileManifest ChunkingSuiteId is required." correlationId)
+        elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
+            Error(GraceError.Create "ContentBlock download FileManifest FileContentHash must be a 64-character hexadecimal BLAKE3 value." correlationId)
+        elif manifest.Size <= 0L then
+            Error(GraceError.Create "ContentBlock download FileManifest Size must be positive." correlationId)
         else
-            let expectedManifestAddress = ContentAddress.computeManifestAddressForManifest manifest
+            match validateContentBlockDownloadManifestBlocks correlationId manifest with
+            | Error error -> Error error
+            | Ok () ->
+                if not (manifestContainsContentBlock contentBlockAddress manifest) then
+                    Error(
+                        GraceError.Create
+                            "ContentBlock download requires the requested ContentBlockAddress to belong to the supplied FileManifest."
+                            correlationId
+                    )
+                else
+                    try
+                        let expectedManifestAddress = ContentAddress.computeManifestAddressForManifest manifest
 
-            if expectedManifestAddress
-               <> manifest.ManifestAddress then
-                Error(GraceError.Create "ContentBlock download FileManifest ManifestAddress does not match its reconstruction contract." correlationId)
-            else
-                Ok()
+                        if expectedManifestAddress
+                           <> manifest.ManifestAddress then
+                            Error(
+                                GraceError.Create "ContentBlock download FileManifest ManifestAddress does not match its reconstruction contract." correlationId
+                            )
+                        else
+                            Ok()
+                    with
+                    | ex -> Error(GraceError.Create $"ContentBlock download FileManifest is malformed: {ex.Message}" correlationId)
 
     let private loadRepositoryContentCounter repositoryId manifestAddress correlationId =
         task {

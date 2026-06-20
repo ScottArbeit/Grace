@@ -1,14 +1,17 @@
 namespace Grace.Server.Tests
 
+open Azure.Storage.Sas
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.UploadSession
 open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.Reflection
 
 module DedupeIndex = Grace.Shared.DedupeIndex
+module ActorServices = Grace.Actors.Services
 module StorageServer = Grace.Server.Storage
 
 [<Parallelizable(ParallelScope.All)>]
@@ -62,6 +65,20 @@ type StorageContentBlockSdkContract() =
                 ContentBlock.Create(contentBlockAddress, 0L, 10L)
             ]
         )
+
+    let downloadManifestWithBlock storagePoolId contentBlockAddress =
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                ChunkingSuiteId RabinChunking.SuiteName,
+                FileContentHash "fedcba9876543210fedcba9876543210fedcba9876543210fedcba9876543210",
+                10L,
+                [
+                    ContentBlock.Create(contentBlockAddress, 0L, 10L)
+                ]
+            )
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest; StoragePoolId = storagePoolId }
 
     let claimedRange storagePoolId contentBlockAddress : ClaimedReuseRange =
         {
@@ -136,6 +153,11 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("AuthorizedScope"), Is.Not.Null)
 
     [<Test>]
+    member _.ContentBlockCreateSasPermissionsDoNotGrantOverwriteWrite() =
+        Assert.That(ActorServices.azureBlobCreatePermissions.HasFlag BlobSasPermissions.Create, Is.True)
+        Assert.That(ActorServices.azureBlobCreatePermissions.HasFlag BlobSasPermissions.Write, Is.False)
+
+    [<Test>]
     member _.ContentBlockDownloadUriParametersCanCarryManifestStoragePool() =
         let parameterType = getStorageParameterType "GetContentBlockDownloadUriParameters"
         Assert.That(parameterType, Is.Not.Null)
@@ -174,6 +196,58 @@ type StorageContentBlockSdkContract() =
         match snd sources[0] with
         | StorageServer.ConfirmedUpload selectedBlock -> Assert.That(selectedBlock, Is.EqualTo(confirmedBlock))
         | StorageServer.ClaimedReuseRange _ -> Assert.Fail("Expected confirmed upload payload hydration to preserve existing precedence.")
+
+    [<Test>]
+    member _.FinalizeManifestUploadRejectsCallerSuppliedBlockPayloadFallbacks() =
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let callerPayload: FinalizeManifestBlockPayload = { Address = contentBlockAddress; Payload = [| 1uy; 2uy; 3uy |] }
+
+        match StorageServer.validateFinalizeBlockPayloadContract "corr-finalize-fallback" [| callerPayload |] with
+        | Ok _ -> Assert.Fail("Expected caller-supplied finalize block payload bytes to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("server-hydrated"))
+
+        match StorageServer.validateFinalizeBlockPayloadContract "corr-finalize-empty" Array.empty with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected empty finalize payload array to remain valid, got {error.Error}.")
+
+    [<Test>]
+    member _.DownloadManifestValidationReturnsGraceErrorsForMalformedEvidence() =
+        let storagePoolId = StoragePoolId "pool-download-validation"
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let manifest = downloadManifestWithBlock storagePoolId contentBlockAddress
+
+        let invalidCases =
+            [|
+                { manifest with ChunkingSuiteId = ChunkingSuiteId String.Empty }, "ChunkingSuiteId"
+                { manifest with FileContentHash = FileContentHash "not-a-blake3-address" }, "FileContentHash"
+                { manifest with
+                    Blocks =
+                        List<ContentBlock>(
+                            [
+                                ContentBlock.Create(contentBlockAddress, 0L, 0L)
+                            ]
+                        )
+                },
+                "Size must be positive"
+                { manifest with
+                    Blocks =
+                        List<ContentBlock>(
+                            [
+                                ContentBlock.Create(contentBlockAddress, 1L, 10L)
+                            ]
+                        )
+                },
+                "contiguous from zero"
+            |]
+
+        for invalidManifest, expectedMessage in invalidCases do
+            match StorageServer.validateContentBlockDownloadManifest "corr-download-validation" contentBlockAddress storagePoolId invalidManifest with
+            | Ok () -> Assert.Fail($"Expected malformed manifest to fail validation for {expectedMessage}.")
+            | Error error -> Assert.That(error.Error, Does.Contain(expectedMessage))
+
+        match StorageServer.validateContentBlockDownloadManifest "corr-download-valid" contentBlockAddress storagePoolId manifest with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected valid manifest download evidence to pass, got {error.Error}.")
 
     [<Test>]
     member _.IssueDedupeDiscoveryValidationUsesSessionStoragePoolAfterRepositoryRouteDrift() =

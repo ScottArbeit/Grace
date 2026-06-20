@@ -310,6 +310,10 @@ type SaveBoundaryActorTests() =
     [<Test>]
     member _.CommitAndCheckpointManifestReferencesRegisterRepositoryOwnership() =
         task {
+            Assert.That(ReferenceActor.shouldRegisterManifestOwnershipOnCreate ReferenceType.Commit, Is.True)
+            Assert.That(ReferenceActor.shouldRegisterManifestOwnershipOnCreate ReferenceType.Checkpoint, Is.True)
+            Assert.That(ReferenceActor.shouldRegisterManifestOwnershipOnCreate ReferenceType.Tag, Is.False)
+
             let verify referenceType =
                 task {
                     let manifest = finalizedManifest ()

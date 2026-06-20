@@ -123,6 +123,8 @@ module Reference =
         || referenceType = ReferenceType.Commit
         || referenceType = ReferenceType.Checkpoint
 
+    let internal shouldRegisterManifestOwnershipOnCreate referenceType = shouldRegisterManifestOwnership referenceType
+
     let internal tryGetSaveStoragePoolIdFromCreatedEvent (referenceEvent: ReferenceEvent) =
         match referenceEvent.Event with
         | Created (_, _, _, _, _, _, _, _, referenceType, _, _) when shouldApplyManifestExpiryBoundary referenceType ->
@@ -725,7 +727,7 @@ module Reference =
 
                     let applySaveManifestBoundary referenceId organizationId repositoryId directoryId referenceType =
                         task {
-                            if referenceType <> ReferenceType.Save then
+                            if not (shouldRegisterManifestOwnershipOnCreate referenceType) then
                                 return Ok None
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId

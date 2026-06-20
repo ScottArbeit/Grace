@@ -758,6 +758,14 @@ type StorageManifestUploadSessionRoutes() =
                 return Unchecked.defaultof<string>
         }
 
+    let overwriteContentBlockWithSas (payload: byte array) (uploadUri: Uri) =
+        task {
+            let blobClient = BlobClient(uploadUri)
+            use payloadStream = new MemoryStream(payload, writable = false)
+            let! response = blobClient.UploadAsync(payloadStream, true)
+            return response.Value.ETag.ToString()
+        }
+
     let downloadContentBlockWithSas (downloadUri: Uri) =
         task {
             let blobClient = BlobClient(downloadUri)
@@ -840,7 +848,7 @@ type StorageManifestUploadSessionRoutes() =
             let uploadUri = Uri uploadUriBody
             let sasPermissions = queryParameter "sp" uploadUri
             Assert.That(sasPermissions, Does.Contain("c"))
-            Assert.That(sasPermissions, Does.Contain("w"))
+            Assert.That(sasPermissions, Does.Not.Contain("w"))
 
             let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
 
@@ -852,7 +860,15 @@ type StorageManifestUploadSessionRoutes() =
                 let! _ = putContentBlockWithSas block.Payload uploadUri
                 Assert.Fail("Expected conditional CAS retry to fail instead of overwriting existing content.")
             with
-            | :? Azure.RequestFailedException as ex -> Assert.That(ex.Status, Is.EqualTo(int HttpStatusCode.Conflict))
+            | :? Azure.RequestFailedException as ex -> Assert.That(ex.Status, Is.EqualTo(int HttpStatusCode.Forbidden))
+
+            try
+                let overwritePayload = Array.copy block.Payload
+                overwritePayload[0] <- overwritePayload[0] ^^^ 0xffuy
+                let! _ = overwriteContentBlockWithSas overwritePayload uploadUri
+                Assert.Fail("Expected create-only CAS SAS to reject an unconditional overwrite of existing shared content.")
+            with
+            | :? Azure.RequestFailedException as ex -> Assert.That(ex.Status, Is.EqualTo(int HttpStatusCode.Forbidden))
 
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
@@ -1437,9 +1453,8 @@ type StorageManifestUploadSessionRoutes() =
                     { Address = block.Address; Payload = block.Payload }
                 |]
 
-            let! retryResult = postUploadSessionDecision "/storage/finalizeManifestUpload" retryFinalize
-            Assert.That(retryResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
-            Assert.That(retryResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+            let! retryBody = postUploadSessionBadRequest "/storage/finalizeManifestUpload" retryFinalize
+            Assert.That(retryBody, Does.Contain("server-hydrated"))
         }
 
     [<Test>]
@@ -1524,7 +1539,6 @@ type StorageManifestUploadSessionRoutes() =
                     { Address = block.Address; Payload = block.Payload }
                 |]
 
-            let! retryResult = postUploadSessionDecision "/storage/finalizeManifestUpload" retryFinalize
-            Assert.That(retryResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
-            Assert.That(retryResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+            let! retryBody = postUploadSessionBadRequest "/storage/finalizeManifestUpload" retryFinalize
+            Assert.That(retryBody, Does.Contain("server-hydrated"))
         }
