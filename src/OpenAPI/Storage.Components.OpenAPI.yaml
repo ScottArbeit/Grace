@@ -83,8 +83,8 @@ GetContentBlockDownloadUriParameters:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
-    Manifest:
-      $ref: '#/FileManifest'
+    ManifestAddress:
+      $ref: '#/ManifestAddress'
 
 DiscoverContentBlocksParameters:
   description: >-

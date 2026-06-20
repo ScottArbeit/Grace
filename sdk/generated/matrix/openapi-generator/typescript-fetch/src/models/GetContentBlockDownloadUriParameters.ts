@@ -13,14 +13,6 @@
  */
 
 import { mapValues } from '../runtime';
-import type { FileManifest } from './FileManifest';
-import {
-    FileManifestFromJSON,
-    FileManifestFromJSONTyped,
-    FileManifestToJSON,
-    FileManifestToJSONTyped,
-} from './FileManifest';
-
 /**
  * 
  * @export
@@ -88,11 +80,11 @@ export interface GetContentBlockDownloadUriParameters {
      */
     contentBlockAddress?: string;
     /**
-     * 
-     * @type {FileManifest}
+     * Lowercase 64-character BLAKE3-derived FileManifest address.
+     * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
-    manifest?: FileManifest;
+    manifestAddress?: string;
 }
 
 /**
@@ -122,7 +114,7 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
         'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
-        'manifest': json['Manifest'] == null ? undefined : FileManifestFromJSON(json['Manifest']),
+        'manifestAddress': json['ManifestAddress'] == null ? undefined : json['ManifestAddress'],
     };
 }
 
@@ -147,7 +139,7 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'RepositoryName': value['repositoryName'],
         'AuthorizedScope': value['authorizedScope'],
         'ContentBlockAddress': value['contentBlockAddress'],
-        'Manifest': FileManifestToJSON(value['manifest']),
+        'ManifestAddress': value['manifestAddress'],
     };
 }
 

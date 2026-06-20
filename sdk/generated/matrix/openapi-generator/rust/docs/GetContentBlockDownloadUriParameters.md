@@ -14,7 +14,7 @@ Name | Type | Description | Notes
 **repository_name** | Option<**String**> |  | [optional]
 **authorized_scope** | Option<**String**> |  | [optional]
 **content_block_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional]
-**manifest** | Option<[**models::FileManifest**](FileManifest.md)> |  | [optional]
+**manifest_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived FileManifest address. | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 
