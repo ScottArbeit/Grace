@@ -44,7 +44,21 @@ class TestGetContentBlockDownloadUriParameters(unittest.TestCase):
                 organization_name = '',
                 repository_id = '',
                 repository_name = '',
-                content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b'
+                authorized_scope = '',
+                content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
+                manifest = grace_generated_openapi_probe.models.file_manifest.FileManifest(
+                    class = 'FileManifest', 
+                    manifest_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
+                    chunking_suite_id = 'rabin-v1', 
+                    file_content_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
+                    size = 56, 
+                    blocks = [
+                        grace_generated_openapi_probe.models.content_block.ContentBlock(
+                            class = 'ContentBlock', 
+                            address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
+                            offset = 56, 
+                            size = 56, )
+                        ], )
             )
         else:
             return GetContentBlockDownloadUriParameters(
