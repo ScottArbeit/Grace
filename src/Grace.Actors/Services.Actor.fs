@@ -524,10 +524,7 @@ module Services =
                || session.BlockUploadIntents.Length = 0 then
                 return Ok 0
             else
-                let repositoryActor = Repository.CreateActorProxy session.OrganizationId session.RepositoryId correlationId
-                let! repositoryDto = repositoryActor.Get correlationId
-
-                match StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId with
+                match resolveUploadSessionStoragePoolRoute session.RepositoryId session.StoragePoolId correlationId with
                 | Error error -> return Error error
                 | Ok route -> return! deleteUploadSessionStagingPayloadsForRoute route session correlationId
         }

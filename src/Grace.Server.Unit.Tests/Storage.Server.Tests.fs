@@ -5,6 +5,7 @@ open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.Repository
 open Grace.Types.UploadSession
 open NUnit.Framework
 open System
@@ -152,6 +153,38 @@ type StorageContentBlockSdkContract() =
         Assert.That(crossRepositoryRejected, Is.EqualTo(None))
 
     [<Test>]
+    member _.DefaultRepositoryDedupePoolResolutionUsesRepositoryScopedPool() =
+        let repositoryId = Guid.Parse("9fce80dd-b0e5-462c-953d-1cc9e357d515")
+
+        let repository = { RepositoryDto.Default with RepositoryId = repositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+
+        match Storage.resolveRepositoryDedupeStoragePoolId repository "corr-dedupe-pool" with
+        | Error error -> Assert.Fail($"Expected default repository dedupe pool to resolve, got {error.Error}.")
+        | Ok storagePoolId ->
+            Assert.That(storagePoolId, Is.EqualTo(DedupeIndex.storagePoolIdForRepositoryId repositoryId))
+            Assert.That(storagePoolId, Is.Not.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+
+    [<Test>]
+    member _.UploadSessionRepositoryValidationRejectsCrossRepositorySession() =
+        let requestRepositoryId = Guid.Parse("89be65f0-fb98-45fb-bbcf-b11683948430")
+        let recordedRepositoryId = Guid.Parse("77544495-e6f0-41cf-9dc5-3c23c7921ce9")
+
+        let session =
+            { UploadSessionDto.Default with UploadSessionId = Guid.Parse("b16cf0e8-ef17-49ea-92b6-9f9e3896594d"); RepositoryId = recordedRepositoryId }
+
+        match Storage.validateUploadSessionRepositoryId requestRepositoryId session "corr-cross-repo-session" with
+        | Ok () -> Assert.Fail("Expected a session from a different repository to be rejected.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("RepositoryId must match the request repository"))
+            Assert.That(error.Error, Does.Contain($"{recordedRepositoryId}"))
+            Assert.That(error.Error, Does.Contain($"{requestRepositoryId}"))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-cross-repo-session"))
+
+        match Storage.validateUploadSessionRepositoryId recordedRepositoryId session "corr-same-repo-session" with
+        | Error error -> Assert.Fail($"Expected matching repository session to be accepted, got {error.Error}.")
+        | Ok () -> Assert.Pass()
+
+    [<Test>]
     member _.DownloadAuthorizationUsesTargetedDedupeIndexLookupInsteadOfFullSnapshotState() =
         let methodInfo = typeof<IDedupeIndexActor>.GetMethod ("TryGetFinalizedScopedContentBlockMetadata", BindingFlags.Public ||| BindingFlags.Instance)
 
@@ -176,7 +209,34 @@ type StorageContentBlockSdkContract() =
             Does.Contain("resolveUploadSessionStoragePoolRoute requestContext.SessionForScope.RepositoryId requestContext.SessionForScope.StoragePoolId")
         )
 
-        Assert.That(storageServerSource, Does.Contain("StoragePoolId = route.StoragePoolId"))
+        Assert.That(storageServerSource, Does.Contain("StoragePoolId = storagePoolId"))
+        Assert.That(storageServerSource, Does.Contain("validateManifestForContentBlockDownload storagePoolId repositoryId"))
+        Assert.That(storageServerSource, Does.Contain("DedupeIndex.discover storagePoolId"))
+
+    [<Test>]
+    member _.UploadSessionStagingCleanupUsesRecordedSessionPoolRoute() =
+        let servicesPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Services.Actor.fs"))
+        let servicesSource = File.ReadAllText(servicesPath)
+        let cleanupStart = servicesSource.IndexOf("let deleteUploadSessionStagingPayloads", StringComparison.Ordinal)
+        let cleanupEnd = servicesSource.IndexOf("let getAzureBlobClientForFileVersion", cleanupStart, StringComparison.Ordinal)
+
+        Assert.That(cleanupStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(cleanupEnd, Is.GreaterThan(cleanupStart))
+
+        let cleanupSource = servicesSource.Substring(cleanupStart, cleanupEnd - cleanupStart)
+        let compactedSource = String.Join(" ", cleanupSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("resolveUploadSessionStoragePoolRoute session.RepositoryId session.StoragePoolId"),
+            "Cleanup must resolve the route from the session's recorded StoragePoolId, not current repository state."
+        )
+
+        Assert.That(
+            compactedSource,
+            Does.Not.Contain("StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId"),
+            "Cleanup must not reload the repository and follow mutable route state after SAS issuance."
+        )
 
     [<Test>]
     member _.ConfirmActorRejectionDoesNotDeleteFinalCasPlacement() =
