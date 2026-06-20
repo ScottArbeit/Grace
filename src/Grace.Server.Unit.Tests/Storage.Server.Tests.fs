@@ -36,6 +36,30 @@ type StorageContentBlockSdkContract() =
         assertContentBlockParameterShape "GetContentBlockUploadUriParameters"
         assertContentBlockParameterShape "GetContentBlockDownloadUriParameters"
 
+        Assert.That(
+            (getStorageParameterType "GetContentBlockUploadUriParameters")
+                .GetProperty("UploadSessionId"),
+            Is.Not.Null
+        )
+
+        Assert.That(
+            (getStorageParameterType "GetContentBlockUploadUriParameters")
+                .GetProperty("AuthorizedScope"),
+            Is.Not.Null
+        )
+
+        Assert.That(
+            (getStorageParameterType "GetContentBlockDownloadUriParameters")
+                .GetProperty("AuthorizedScope"),
+            Is.Not.Null
+        )
+
+        Assert.That(
+            (getStorageParameterType "GetContentBlockDownloadUriParameters")
+                .GetProperty("Manifest"),
+            Is.Not.Null
+        )
+
     [<Test>]
     member _.ContentBlockSasSdkMethodsMatchSharedParameterContracts() =
         assertSdkMethod "GetContentBlockUploadUri" "GetContentBlockUploadUriParameters"

@@ -91,11 +91,7 @@ module Storage =
         { StorageAccountName = accountName; StorageContainerName = StorageContainerName containerName; ObjectKey = objectKey; ETag = etag }
 
     let private contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
-        contentBlockPlacementFromUriUsingConfiguredEndpoint
-            AzureEnvironment.storageEndpoints.BlobEndpoint
-            AzureEnvironment.storageEndpoints.AccountName
-            blobUriWithSasToken
-            etag
+        contentBlockPlacementFromUriUsingConfiguredEndpoint null String.Empty blobUriWithSasToken etag
 
     let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
         if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then

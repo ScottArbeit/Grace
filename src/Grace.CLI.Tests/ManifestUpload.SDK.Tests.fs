@@ -242,6 +242,7 @@ type ManifestUploadSdkTests() =
                         UploadContentBlock =
                             fun parameters payload ->
                                 Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
+                                Assert.That(parameters.UploadSessionId, Is.EqualTo(sessionIds[0]))
                                 calls.Add($"upload:{parameters.ContentBlockAddress}")
                                 uploadedBlocks[parameters.ContentBlockAddress] <- payload
 
