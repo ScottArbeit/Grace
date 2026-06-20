@@ -185,7 +185,7 @@ type StorageContentBlockSdkContract() =
         | Ok () -> Assert.Pass()
 
     [<Test>]
-    member _.FinalizeManifestValidatesRequestRepositoryBeforeHydratedReplayEvidence() =
+    member _.FinalizeManifestChecksIdempotentReplayBeforeHydratedClaimedReuseEvidence() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
         let finalizeStart = storageServerSource.IndexOf("let FinalizeManifestUpload", StringComparison.Ordinal)
@@ -198,17 +198,22 @@ type StorageContentBlockSdkContract() =
         let scopeValidationIndex = finalizeSource.IndexOf("validateUploadSessionScope requestContext parameters correlationId true", StringComparison.Ordinal)
 
         let replayIndex =
-            finalizeSource.IndexOf("tryReplayUploadSessionCommand requestContext command parameters.OperationId correlationId", StringComparison.Ordinal)
+            finalizeSource.IndexOf("tryReplayUploadSessionCommand requestContext replayCommand parameters.OperationId correlationId", StringComparison.Ordinal)
 
         let hydrateIndex =
             finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId", StringComparison.Ordinal)
 
         Assert.That(scopeValidationIndex, Is.GreaterThanOrEqualTo(0))
-        Assert.That(hydrateIndex, Is.GreaterThan(scopeValidationIndex))
-        Assert.That(replayIndex, Is.GreaterThan(hydrateIndex))
+        Assert.That(replayIndex, Is.GreaterThan(scopeValidationIndex))
+        Assert.That(hydrateIndex, Is.GreaterThan(replayIndex))
         Assert.That(hydrateIndex, Is.GreaterThan(scopeValidationIndex))
         Assert.That(finalizeSource, Does.Not.Contain("hydrateFinalizeBlockPayloads context"))
-        Assert.That(finalizeSource, Does.Not.Contain("ClaimedMetadata = Array.empty"), "Same-operation finalize replay must not use an empty-evidence command.")
+
+        Assert.That(
+            finalizeSource,
+            Does.Contain("ClaimedMetadata = Array.empty"),
+            "Same-operation finalize replay must be checked before reloading stale claimed metadata evidence."
+        )
 
     [<Test>]
     member _.FinalizeManifestLoadsClaimedReuseEvidenceFromAuthoritativeMetadataActorKey() =
@@ -234,7 +239,7 @@ type StorageContentBlockSdkContract() =
         let storageServerSource = File.ReadAllText(storageServerPath)
         let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
 
-        Assert.That(compactedSource, Does.Contain("manifestBlockAddressesRequiringClaimedMetadata requestContext.SessionForScope manifest"))
+        Assert.That(compactedSource, Does.Contain("manifestBlocksRequiringClaimedMetadata requestContext.SessionForScope manifest"))
 
         Assert.That(
             compactedSource,

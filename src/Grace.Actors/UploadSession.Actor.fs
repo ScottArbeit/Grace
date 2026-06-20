@@ -346,21 +346,15 @@ module UploadSession =
                && intent.LogicalOffset = block.Offset
                && intent.LogicalLength = block.Size)
 
-    let private manifestBlockAddressesRequiringClaimedMetadata (session: UploadSessionDto) (manifest: FileManifest) =
-        let addresses = HashSet<ContentBlockAddress>()
-
-        if
-            not (isNull (box manifest))
-            && not (isNull manifest.Blocks)
-        then
-            for block in manifest.Blocks do
-                if
-                    not (isNull (box block))
-                    && not (blockWasUploaded session block)
-                then
-                    addresses.Add(block.Address) |> ignore
-
-        addresses
+    let private manifestBlocksRequiringClaimedMetadata (session: UploadSessionDto) (manifest: FileManifest) =
+        if isNull (box manifest) || isNull manifest.Blocks then
+            Array.empty
+        else
+            manifest.Blocks
+            |> Seq.filter (fun block ->
+                not (isNull (box block))
+                && not (blockWasUploaded session block))
+            |> Seq.toArray
 
     let private validateAuthoritativeStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         match validateStoragePlacement correlationId placement with
@@ -441,10 +435,13 @@ module UploadSession =
         (claimedMetadata: Dictionary<string, ContentBlockMetadata>)
         (claimedRanges: ClaimedReuseRange array)
         contentBlockAddress
+        physicalLength
         =
         let candidates =
             claimedRanges
-            |> Array.filter (fun claimedRange -> claimedRange.ContentBlockAddress = contentBlockAddress)
+            |> Array.filter (fun claimedRange ->
+                claimedRange.ContentBlockAddress = contentBlockAddress
+                && claimedRange.PhysicalLength = physicalLength)
             |> Array.sortWith (fun left right ->
                 let versionComparison = compare right.MetadataVersion left.MetadataVersion
 
@@ -471,10 +468,15 @@ module UploadSession =
         | None ->
             match firstError with
             | Some validationError -> Error validationError
-            | None -> Error(graceError correlationId $"A claimed reuse range satisfying manifest block {contentBlockAddress} is required before finalization.")
+            | None ->
+                Error(
+                    graceError
+                        correlationId
+                        $"A claimed reuse range covering manifest block {contentBlockAddress} length {physicalLength} is required before finalization."
+                )
 
     let private validateClaimedMetadataForFinalize correlationId storagePoolId (session: UploadSessionDto) (manifest: FileManifest) claimedMetadata =
-        let manifestAddresses = manifestBlockAddressesRequiringClaimedMetadata session manifest
+        let manifestBlocks = manifestBlocksRequiringClaimedMetadata session manifest
         let metadata = claimedMetadataByKey claimedMetadata
 
         let claimedRanges =
@@ -485,9 +487,9 @@ module UploadSession =
 
         let mutable error = None
 
-        for contentBlockAddress in manifestAddresses do
+        for block in manifestBlocks do
             if error.IsNone then
-                match trySelectClaimedRangeMetadata correlationId storagePoolId metadata claimedRanges contentBlockAddress with
+                match trySelectClaimedRangeMetadata correlationId storagePoolId metadata claimedRanges block.Address block.Size with
                 | Ok _ -> ()
                 | Error validationError -> error <- Some validationError
 
@@ -506,7 +508,8 @@ module UploadSession =
                 commands.Add(
                     ContentBlockMetadataCommand.MergePhysicalRanges
                         {
-                            OperationId = $"{finalizeOperationId}:content-block-metadata:{confirmedBlock.ContentBlockAddress}"
+                            OperationId =
+                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{confirmedBlock.ContentBlockAddress}"
                             StoragePoolId = storagePoolId
                             ContentBlockAddress = confirmedBlock.ContentBlockAddress
                             BlockFormatVersion = 1s
@@ -524,7 +527,6 @@ module UploadSession =
         (manifest: FileManifest)
         claimedMetadata
         =
-        let manifestAddresses = manifestBlockAddresses manifest
         let commands = ResizeArray<ContentBlockMetadataCommand>()
         let seen = HashSet<ContentBlockAddress>()
 
@@ -541,9 +543,17 @@ module UploadSession =
             else
                 session.ClaimedReuseRanges
 
-        for contentBlockAddress in manifestAddresses do
-            if seen.Add contentBlockAddress then
-                match trySelectClaimedRangeMetadata String.Empty storagePoolId metadata claimedRanges contentBlockAddress with
+        let manifestBlocks =
+            if isNull (box manifest) || isNull manifest.Blocks then
+                Array.empty
+            else
+                manifest.Blocks
+                |> Seq.filter (fun block -> not (isNull (box block)))
+                |> Seq.toArray
+
+        for block in manifestBlocks do
+            if seen.Add block.Address then
+                match trySelectClaimedRangeMetadata String.Empty storagePoolId metadata claimedRanges block.Address block.Size with
                 | Ok claimedRange ->
                     let key = claimedMetadataKey claimedRange.StoragePoolId claimedRange.ContentBlockAddress claimedRange.MetadataVersion
 
@@ -554,7 +564,8 @@ module UploadSession =
                             commands.Add(
                                 ContentBlockMetadataCommand.MergePhysicalRanges
                                     {
-                                        OperationId = $"{finalizeOperationId}:content-block-metadata:{claimedRange.ContentBlockAddress}"
+                                        OperationId =
+                                            $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{claimedRange.ContentBlockAddress}"
                                         StoragePoolId = storagePoolId
                                         ContentBlockAddress = claimedRange.ContentBlockAddress
                                         BlockFormatVersion = authoritativeMetadata.BlockFormatVersion

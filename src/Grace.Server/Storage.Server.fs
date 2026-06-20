@@ -524,16 +524,15 @@ module Storage =
                && intent.LogicalOffset = block.Offset
                && intent.LogicalLength = block.Size)
 
-    let private manifestBlockAddressesRequiringClaimedMetadata (session: UploadSessionDto) (manifest: FileManifest) =
+    let private manifestBlocksRequiringClaimedMetadata (session: UploadSessionDto) (manifest: FileManifest) =
         if isNull (box manifest) || isNull manifest.Blocks then
-            HashSet<ContentBlockAddress>()
+            Array.empty
         else
             manifest.Blocks
             |> Seq.filter (fun block ->
                 not (isNull (box block))
                 && not (manifestBlockWasUploaded session block))
-            |> Seq.map (fun block -> block.Address)
-            |> HashSet<ContentBlockAddress>
+            |> Seq.toArray
 
     let private readFinalizeBlockPayloadFromPlacement contentBlockAddress placement correlationId =
         task {
@@ -560,12 +559,14 @@ module Storage =
                && range.PhysicalOffset = claimedRange.PhysicalOffset
                && range.PhysicalLength = claimedRange.PhysicalLength)
 
-    let private claimedRangesForAddressNewestFirst (session: UploadSessionDto) contentBlockAddress =
+    let private claimedRangesForManifestBlockNewestFirst (session: UploadSessionDto) contentBlockAddress physicalLength =
         if isNull session.ClaimedReuseRanges then
             Array.empty
         else
             session.ClaimedReuseRanges
-            |> Array.filter (fun claimedRange -> claimedRange.ContentBlockAddress = contentBlockAddress)
+            |> Array.filter (fun claimedRange ->
+                claimedRange.ContentBlockAddress = contentBlockAddress
+                && claimedRange.PhysicalLength = physicalLength)
             |> Array.sortWith (fun left right ->
                 let versionComparison = compare right.MetadataVersion left.MetadataVersion
 
@@ -578,17 +579,15 @@ module Storage =
         task {
             let storagePoolId = requestContext.SessionForScope.StoragePoolId
 
-            let manifestAddresses = manifestBlockAddressesRequiringClaimedMetadata requestContext.SessionForScope manifest
+            let manifestBlocks = manifestBlocksRequiringClaimedMetadata requestContext.SessionForScope manifest
 
             let metadata = ResizeArray<ContentBlockMetadata>()
             let mutable error = None
             let mutable index = 0
-            let manifestAddressArray = manifestAddresses |> Seq.toArray
 
-            while error.IsNone
-                  && index < manifestAddressArray.Length do
-                let contentBlockAddress = manifestAddressArray[index]
-                let candidates = claimedRangesForAddressNewestFirst requestContext.SessionForScope contentBlockAddress
+            while error.IsNone && index < manifestBlocks.Length do
+                let block = manifestBlocks[index]
+                let candidates = claimedRangesForManifestBlockNewestFirst requestContext.SessionForScope block.Address block.Size
                 let mutable selected = None
                 let mutable firstError = None
                 let mutable candidateIndex = 0
@@ -644,7 +643,7 @@ module Storage =
                         error <-
                             Some(
                                 GraceError.Create
-                                    $"A claimed reuse range satisfying manifest block {contentBlockAddress} is required before finalization."
+                                    $"A claimed reuse range covering manifest block {block.Address} length {block.Size} is required before finalization."
                                     correlationId
                             )
 
@@ -1458,24 +1457,37 @@ module Storage =
                     match scopeValidation with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok requestContext ->
-                        let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId
+                        let replayCommand =
+                            UploadSessionCommand.FinalizeManifest
+                                {
+                                    OperationId = parameters.OperationId
+                                    Manifest = parameters.Manifest
+                                    BlockPayloads =
+                                        if isNull parameters.BlockPayloads then
+                                            Array.empty
+                                        else
+                                            parameters.BlockPayloads
+                                    ClaimedMetadata = Array.empty
+                                }
 
-                        match evidenceResult with
-                        | Error error -> return! context |> result400BadRequest error
-                        | Ok evidence ->
-                            let command =
-                                UploadSessionCommand.FinalizeManifest
-                                    {
-                                        OperationId = parameters.OperationId
-                                        Manifest = parameters.Manifest
-                                        BlockPayloads = evidence.BlockPayloads
-                                        ClaimedMetadata = evidence.ClaimedMetadata
-                                    }
+                        match! tryReplayUploadSessionCommand requestContext replayCommand parameters.OperationId correlationId with
+                        | Some (Ok returnValue) -> return! context |> result200Ok returnValue
+                        | Some (Error error) -> return! context |> result400BadRequest error
+                        | None ->
+                            let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId
 
-                            match! tryReplayUploadSessionCommand requestContext command parameters.OperationId correlationId with
-                            | Some (Ok returnValue) -> return! context |> result200Ok returnValue
-                            | Some (Error error) -> return! context |> result400BadRequest error
-                            | None ->
+                            match evidenceResult with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok evidence ->
+                                let command =
+                                    UploadSessionCommand.FinalizeManifest
+                                        {
+                                            OperationId = parameters.OperationId
+                                            Manifest = parameters.Manifest
+                                            BlockPayloads = evidence.BlockPayloads
+                                            ClaimedMetadata = evidence.ClaimedMetadata
+                                        }
+
                                 let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
 
                                 match result with
