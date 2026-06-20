@@ -1132,7 +1132,7 @@ type UploadSessionActorTests() =
         Assert.That(
             secondDecision.Metadata.Ranges[0]
                 .ActiveManifestCount,
-            Is.EqualTo(1)
+            Is.EqualTo(2)
         )
 
     [<Test>]
@@ -1188,6 +1188,27 @@ type UploadSessionActorTests() =
             Assert.That(merge.StoragePlacement.ETag, Is.EqualTo(advancedCurrentMetadata.StoragePlacement.ETag))
         | Ok _ -> Assert.Fail("Expected current authoritative metadata to produce a claimed merge command.")
         | Error error -> Assert.Fail($"Expected metadata-version advancement to be tolerated, got {error.Error}.")
+
+        let activeRelocatedRange = { metadataRange with ActiveManifestCount = 1; PhysicalOffset = metadataRange.PhysicalOffset + 128L }
+        let activeRelocatedMetadata = { hydratedMetadata with MetadataVersion = 8L; Ranges = [| activeRelocatedRange |] }
+
+        let activeRelocatedResult =
+            UploadSessionActor.createRevalidatedClaimedMetadataMergeCommand
+                "corr-revalidate-active-relocated-range"
+                storagePoolId
+                "op-finalize"
+                session
+                manifest
+                [| hydratedMetadata |]
+                activeRelocatedMetadata
+
+        match activeRelocatedResult with
+        | Ok (Some (ContentBlockMetadataCommand.MergePhysicalRanges merge)) ->
+            Assert.That(merge.Ranges, Has.Length.EqualTo(1))
+            Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(activeRelocatedRange.PhysicalOffset))
+            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        | Ok _ -> Assert.Fail("Expected active relocated metadata to produce a claimed merge command.")
+        | Error error -> Assert.Fail($"Expected active relocated metadata to be accepted for replay repair, got {error.Error}.")
 
         let relocatedRange = { metadataRange with PhysicalOffset = metadataRange.PhysicalOffset + 128L }
         let relocatedMetadata = { hydratedMetadata with MetadataVersion = 8L; Ranges = [| relocatedRange |] }

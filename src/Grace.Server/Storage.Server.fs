@@ -553,7 +553,7 @@ module Storage =
         && not (String.IsNullOrWhiteSpace placement.StorageContainerName)
         && not (String.IsNullOrWhiteSpace placement.ObjectKey)
 
-    let internal authoritativeClaimedRangeMatchesForFinalizeReplay (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
+    let private hasAuthoritativeClaimedRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         not (isNull (box claimedRange))
         && not (isNull (box metadata))
         && metadata.StoragePoolId = claimedRange.StoragePoolId
@@ -568,9 +568,31 @@ module Storage =
                && range.PhysicalOffset = claimedRange.PhysicalOffset
                && range.PhysicalLength = claimedRange.PhysicalLength)
 
-    let private authoritativeClaimedRangeMatches (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
-        metadata.MetadataVersion = claimedRange.MetadataVersion
-        && authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange metadata
+    let private hasAuthoritativeFinalizedLogicalRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
+        not (isNull (box claimedRange))
+        && not (isNull (box metadata))
+        && metadata.StoragePoolId = claimedRange.StoragePoolId
+        && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
+        && metadata.BlockFormatVersion > 0s
+        && completeContentBlockStoragePlacement metadata.StoragePlacement
+        && not (isNull metadata.Ranges)
+        && metadata.Ranges
+           |> Array.exists (fun range ->
+               range.OrdinalStart = claimedRange.OrdinalStart
+               && range.OrdinalCount = claimedRange.OrdinalCount
+               && range.PhysicalLength = claimedRange.PhysicalLength
+               && range.ActiveManifestCount > 0)
+
+    let internal authoritativeClaimedRangeMatchesForFinalizeReplay (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
+        hasAuthoritativeClaimedRange claimedRange metadata
+        || hasAuthoritativeFinalizedLogicalRange claimedRange metadata
+
+    let internal authoritativeClaimedRangeMatchesForFinalize (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
+        (not (isNull (box claimedRange))
+         && not (isNull (box metadata))
+         && ((metadata.MetadataVersion = claimedRange.MetadataVersion
+              && hasAuthoritativeClaimedRange claimedRange metadata)
+             || hasAuthoritativeFinalizedLogicalRange claimedRange metadata))
 
     let private claimedRangesForManifestBlockNewestFirst (session: UploadSessionDto) contentBlockAddress physicalLength =
         if isNull session.ClaimedReuseRanges then
@@ -671,8 +693,8 @@ module Storage =
 
     let private loadClaimedMetadataForFinalize (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
         loadClaimedMetadataForFinalizeWith
-            authoritativeClaimedRangeMatches
-            (fun _ authoritativeMetadata -> authoritativeMetadata)
+            authoritativeClaimedRangeMatchesForFinalize
+            (fun claimedRange authoritativeMetadata -> { authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion })
             "Authoritative ContentBlockMetadata is stale or incomplete for claimed reuse range"
             requestContext
             manifest

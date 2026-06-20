@@ -169,9 +169,21 @@ module ContentBlockMetadata =
 
     let private mergeRanges correlationId existingRanges incomingRanges =
         let merged = Dictionary<string, ContentBlockMetadataRange>()
+        let incoming = Dictionary<string, ContentBlockMetadataRange>()
         let mutable error = None
 
-        let addRange preserveActiveCount range =
+        let mergeActiveCount existing range =
+            if range.ActiveManifestCount > Int32.MaxValue - existing.ActiveManifestCount then
+                error <- Some(graceError correlationId "ContentBlockMetadataRange.ActiveManifestCount cannot exceed Int32.MaxValue.")
+                existing
+            else
+                { existing with
+                    ActiveManifestCount =
+                        existing.ActiveManifestCount
+                        + range.ActiveManifestCount
+                }
+
+        let addExistingRange range =
             let key = rangeKey range
 
             if error.IsSome then
@@ -179,19 +191,28 @@ module ContentBlockMetadata =
             elif merged.ContainsKey key then
                 let existing = merged[key]
 
-                let activeManifestCount =
-                    if preserveActiveCount then
-                        max existing.ActiveManifestCount range.ActiveManifestCount
-                    else
-                        existing.ActiveManifestCount
-
-                merged[key] <- { existing with ActiveManifestCount = activeManifestCount }
+                merged[key] <- mergeActiveCount existing range
             else
                 merged[key] <- range
 
-        existingRanges |> Array.iter (addRange true)
+        let addIncomingRange range =
+            let key = rangeKey range
 
-        incomingRanges |> Array.iter (addRange false)
+            if error.IsNone then
+                match incoming.TryGetValue key with
+                | true, existing -> incoming[key] <- { existing with ActiveManifestCount = max existing.ActiveManifestCount range.ActiveManifestCount }
+                | false, _ -> incoming[key] <- range
+
+        existingRanges |> Array.iter addExistingRange
+        incomingRanges |> Array.iter addIncomingRange
+
+        incoming.Values
+        |> Seq.iter (fun range ->
+            let key = rangeKey range
+
+            match merged.TryGetValue key with
+            | true, existing -> merged[key] <- mergeActiveCount existing range
+            | false, _ -> merged[key] <- range)
 
         match error with
         | Some error -> Error error

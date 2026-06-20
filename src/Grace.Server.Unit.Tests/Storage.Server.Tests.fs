@@ -264,7 +264,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(
             storageServerSource,
             Does.Contain("{ authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion }"),
-            "Replay hydration must validate current authoritative metadata while preserving the durable claim key for side-effect repair."
+            "Finalize hydration must validate current authoritative metadata while preserving the durable claim key for side-effect repair."
         )
 
     [<Test>]
@@ -286,7 +286,7 @@ type StorageContentBlockSdkContract() =
         )
 
     [<Test>]
-    member _.FinalizeReplayClaimedReuseEvidenceAllowsMetadataVersionAdvanceButFailsClosedOnRangeEvidence() =
+    member _.FinalizeClaimedReuseEvidenceAllowsEquivalentCurrentStateButFailsClosedOnUnsafeDrift() =
         let storagePoolId = StoragePoolId "pool-finalize-replay"
         let contentBlockAddress = ContentBlockAddress "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
 
@@ -329,6 +329,20 @@ type StorageContentBlockSdkContract() =
         )
 
         Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalize claimedRange currentMetadata,
+            Is.True,
+            "Fresh finalization must accept an already-finalized equivalent actor state when metadata version advanced."
+        )
+
+        let inactiveExactRange = { durableRange with ActiveManifestCount = 0 }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalize claimedRange { currentMetadata with Ranges = [| inactiveExactRange |] },
+            Is.False,
+            "Fresh finalization must not accept stale metadata-version churn unless the actor state is already finalized."
+        )
+
+        Assert.That(
             Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with StoragePoolId = StoragePoolId "pool-other" },
             Is.False,
             "Replay hydration must fail closed for the wrong storage pool."
@@ -342,12 +356,26 @@ type StorageContentBlockSdkContract() =
             "Replay hydration must fail closed for the wrong content block address."
         )
 
-        let changedPhysicalRange = { durableRange with PhysicalOffset = durableRange.PhysicalOffset + 1L }
+        let relocatedFinalizedRange = { durableRange with PhysicalOffset = durableRange.PhysicalOffset + 1L }
 
         Assert.That(
-            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with Ranges = [| changedPhysicalRange |] },
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with Ranges = [| relocatedFinalizedRange |] },
+            Is.True,
+            "Replay hydration must accept the actor's current finalized location after the original range was relocated."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalize claimedRange { currentMetadata with Ranges = [| relocatedFinalizedRange |] },
+            Is.True,
+            "Fresh finalization must accept a finalized equivalent logical range after benign metadata churn."
+        )
+
+        let inactiveRelocatedRange = { relocatedFinalizedRange with ActiveManifestCount = 0 }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with Ranges = [| inactiveRelocatedRange |] },
             Is.False,
-            "Replay hydration must fail closed when the stored physical range no longer matches the durable claim."
+            "Replay hydration must fail closed when relocated metadata is not an active finalized range."
         )
 
         Assert.That(

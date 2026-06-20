@@ -377,10 +377,17 @@ module UploadSession =
         metadata
 
     let private matchingClaimedMetadataRange (metadata: ContentBlockMetadata) (claimedRange: ClaimedReuseRange) =
-        Grace.Types.ContentBlockMetadata.tryFindRange metadata { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
-        |> Option.filter (fun range ->
+        let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
+
+        Grace.Types.ContentBlockMetadata.findRanges metadata query
+        |> Array.tryFind (fun range ->
             range.PhysicalOffset = claimedRange.PhysicalOffset
             && range.PhysicalLength = claimedRange.PhysicalLength)
+        |> Option.orElseWith (fun () ->
+            Grace.Types.ContentBlockMetadata.findRanges metadata query
+            |> Array.tryFind (fun range ->
+                range.PhysicalLength = claimedRange.PhysicalLength
+                && range.ActiveManifestCount > 0))
 
     let private validateClaimedRangeMetadata
         correlationId
