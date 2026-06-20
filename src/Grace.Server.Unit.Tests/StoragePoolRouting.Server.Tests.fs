@@ -137,6 +137,21 @@ type StoragePoolRoutingServerTests() =
             Assert.That(error.CorrelationId, Is.EqualTo("corr-cross-account-shared-key"))
 
     [<Test>]
+    member _.ManagedIdentityCasUserDelegationSasUsesSelectedShardAccountName() =
+        let route: StoragePoolRouting.StoragePoolRoute =
+            {
+                RepositoryId = Guid.Parse("99999999-1111-2222-3333-444444444444")
+                StoragePoolId = StoragePoolId "pool-custom-cname"
+                Shard =
+                    { StorageAccountName = "cas-shard-authority"; StorageContainerName = StorageContainerName "cas-a"; ObjectKeyPrefix = "pool-custom-cname" }
+            }
+
+        let signingAccount = Grace.Actors.Services.casUserDelegationSasSigningAccountName route
+
+        Assert.That(signingAccount, Is.EqualTo(route.Shard.StorageAccountName))
+        Assert.That(signingAccount, Is.Not.EqualTo(AzureEnvironment.storageEndpoints.AccountName))
+
+    [<Test>]
     member _.RepositoryDerivedBridgeRemainsRepositoryScopedUntilContentBlockPlacementUsesStoragePoolShard() =
         let firstRepositoryId = Guid.Parse("55555555-5555-5555-5555-555555555555")
         let secondRepositoryId = Guid.Parse("66666666-6666-6666-6666-666666666666")
