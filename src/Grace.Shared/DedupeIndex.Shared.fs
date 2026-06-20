@@ -508,6 +508,18 @@ module DedupeIndex =
 
     let snapshot () = lock globalGate (fun () -> Array.copy (normalizeState globalState).Records)
 
+    let finalizedManifestContainsBlock storagePoolId manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        (normalizeState state).FinalizedManifests
+        |> Array.exists (fun registration ->
+            not (isNull (box registration))
+            && registration.StoragePoolId = storagePoolId
+            && registration.ManifestAddress = manifestAddress
+            && not (isNull registration.Blocks)
+            && registration.Blocks
+               |> Array.exists (fun block ->
+                   not (isNull (box block))
+                   && block.Address = contentBlockAddress))
+
     let private candidateFromRecord matchingKeyChunkCount (record: DedupeIndexRecord) =
         {
             StoragePoolId = record.StoragePoolId
