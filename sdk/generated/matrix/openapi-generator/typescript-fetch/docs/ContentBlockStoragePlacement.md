@@ -7,6 +7,8 @@ Object-storage placement metadata for a confirmed ContentBlock payload.
 
 Name | Type
 ------------ | -------------
+`storageAccountName` | string
+`storageContainerName` | string
 `objectKey` | string
 `eTag` | string
 
@@ -17,6 +19,8 @@ import type { ContentBlockStoragePlacement } from '@grace-vcs/generated-openapi-
 
 // TODO: Update the object below with actual values
 const example = {
+  "storageAccountName": null,
+  "storageContainerName": null,
   "objectKey": null,
   "eTag": null,
 } satisfies ContentBlockStoragePlacement

@@ -63,6 +63,9 @@ type ContentBlockMetadataActorTests() =
     let replace operationId expectedVersion ranges =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = record ranges }
 
+    let replaceWithMetadata operationId expectedVersion metadata =
+        ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = metadata }
+
     let mergeWithPlacement operationId placement ranges =
         ContentBlockMetadataCommand.MergePhysicalRanges
             {
@@ -127,6 +130,37 @@ type ContentBlockMetadataActorTests() =
         match staleUpdate with
         | Ok _ -> Assert.Fail("Expected stale whole-record update to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("MetadataVersion"))
+
+    [<Test>]
+    member _.ReplaceWholeRecordRejectsNullStoragePlacementAsGraceError() =
+        let invalidRecord = { record [| activeRange |] with StoragePlacement = Unchecked.defaultof<ContentBlockStoragePlacement> }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (replaceWithMetadata "op-replace-null-placement" None invalidRecord)
+                (metadata "corr-replace-null-placement")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected null storage placement to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
+
+    [<Test>]
+    member _.ReplaceWholeRecordRejectsBlankStoragePlacementAccountAsGraceError() =
+        let invalidRecord =
+            { record [| activeRange |] with StoragePlacement = { placementFor contentBlockObjectKey (Some "etag-1") with StorageAccountName = String.Empty } }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (replaceWithMetadata "op-replace-blank-account" None invalidRecord)
+                (metadata "corr-replace-blank-account")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected blank storage account to be rejected.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement.StorageAccountName is required."))
 
     [<Test>]
     member _.RangePresenceDistinguishesActiveReclaimableAndAbsentRanges() =

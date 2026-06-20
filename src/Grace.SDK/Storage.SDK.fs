@@ -40,7 +40,7 @@ module Storage =
         ex.Status = int HttpStatusCode.Conflict
         && String.Equals(ex.ErrorCode, blobAlreadyExistsErrorCode, StringComparison.OrdinalIgnoreCase)
 
-    let private contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
+    let internal contentBlockPlacementFromUriUsingConfiguredEndpoint (configuredBlobEndpoint: Uri) configuredAccountName (blobUriWithSasToken: Uri) etag =
         let pathSegments =
             blobUriWithSasToken
                 .AbsolutePath
@@ -48,19 +48,31 @@ module Storage =
                 .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
             |> Array.map Uri.UnescapeDataString
 
+        let host = blobUriWithSasToken.Host
+
         let isPathStyleAzurite =
-            blobUriWithSasToken.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
-            || IPAddress.TryParse(blobUriWithSasToken.Host)
-               |> fst
+            host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(host) |> fst
+
+        let isConfiguredCustomEndpoint =
+            not (isNull configuredBlobEndpoint)
+            && host.Equals(configuredBlobEndpoint.Host, StringComparison.OrdinalIgnoreCase)
+
+        let isAzureBlobEndpoint = host.IndexOf(".blob.", StringComparison.OrdinalIgnoreCase) > 0
 
         let accountName =
             if isPathStyleAzurite && pathSegments.Length >= 3 then
                 pathSegments[0]
-            else
-                let host = blobUriWithSasToken.Host
+            elif
+                isConfiguredCustomEndpoint
+                && not (String.IsNullOrWhiteSpace configuredAccountName)
+            then
+                configuredAccountName
+            elif isAzureBlobEndpoint then
                 let firstDot = host.IndexOf('.')
-
                 if firstDot > 0 then host.Substring(0, firstDot) else host
+            else
+                String.Empty
 
         let containerIndex = if isPathStyleAzurite then 1 else 0
 
@@ -77,6 +89,13 @@ module Storage =
                 String.Empty
 
         { StorageAccountName = accountName; StorageContainerName = StorageContainerName containerName; ObjectKey = objectKey; ETag = etag }
+
+    let private contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
+        contentBlockPlacementFromUriUsingConfiguredEndpoint
+            AzureEnvironment.storageEndpoints.BlobEndpoint
+            AzureEnvironment.storageEndpoints.AccountName
+            blobUriWithSasToken
+            etag
 
     let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
         if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then
