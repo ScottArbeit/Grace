@@ -659,23 +659,15 @@ module Storage =
                     Error(GraceError.Create "ContentBlock download FilePath does not match the supplied FileManifest StoragePoolId." correlationId)
                 | Some _ -> Ok()
 
-    let private loadSavedFileVersionForPath repositoryId (filePath: RelativePath) correlationId =
-        task {
-            if String.IsNullOrWhiteSpace filePath then
-                return None
-            else
-                let directoryPath = getRelativeDirectory filePath Constants.RootDirectoryPath
-                let! directoryVersion = getMostRecentDirectoryVersionByRelativePath repositoryId directoryPath correlationId
-
-                return
-                    directoryVersion
-                    |> Option.bind (fun directory ->
-                        if isNull directory.Files then
-                            None
-                        else
-                            directory.Files
-                            |> Seq.tryFind (fun fileVersion -> String.Equals(fileVersion.RelativePath, filePath, StringComparison.OrdinalIgnoreCase)))
-        }
+    let internal validateContentBlockDownloadRepositoryOwnership correlationId hasRepositoryManifestReference =
+        if hasRepositoryManifestReference then
+            Ok()
+        else
+            Error(
+                GraceError.Create
+                    "ContentBlock download requires a repository-owned manifest or finalized upload session before issuing a read SAS."
+                    correlationId
+            )
 
     let private uploadSessionOwnsManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) (manifest: FileManifest) correlationId =
         task {
@@ -706,16 +698,7 @@ module Storage =
             else
                 let! hasRepositoryManifestReference = repositoryOwnsManifest repositoryId parameters.Manifest.ManifestAddress correlationId
 
-                if hasRepositoryManifestReference then
-                    let! savedFileVersion = loadSavedFileVersionForPath repositoryId parameters.FilePath correlationId
-                    return validateContentBlockDownloadFilePathEvidence correlationId parameters.FilePath savedFileVersion parameters.Manifest
-                else
-                    return
-                        Error(
-                            GraceError.Create
-                                "ContentBlock download requires a repository-owned manifest or finalized upload session before issuing a read SAS."
-                                correlationId
-                        )
+                return validateContentBlockDownloadRepositoryOwnership correlationId hasRepositoryManifestReference
         }
 
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =

@@ -236,6 +236,38 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected FilePath evidence to accept the saved file manifest, got {error.Error}.")
 
     [<Test>]
+    member _.ContentBlockDownloadRepositoryOwnershipDoesNotRequireLatestPathMatch() =
+        let historicalPath = RelativePath "src/replaced.bin"
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let historicalManifest = downloadManifestWithBlock (StoragePoolId Constants.DefaultStoragePoolId) contentBlockAddress
+
+        let latestManifest =
+            downloadManifestWithBlock
+                (StoragePoolId Constants.DefaultStoragePoolId)
+                (ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+
+        let latestFileVersion = FileVersion.Create historicalPath latestManifest.FileContentHash String.Empty false latestManifest.Size
+        latestFileVersion.ContentReference <- FileContentReference.FileManifest latestManifest
+
+        match
+            StorageServer.validateContentBlockDownloadFilePathEvidence
+                "corr-historical-path-regression"
+                historicalPath
+                (Some latestFileVersion)
+                historicalManifest
+            with
+        | Ok () -> Assert.Fail("The latest path evidence should reject the historical manifest after the path is replaced.")
+        | Error error -> Assert.That(error.Error, Does.Contain("ManifestAddress"))
+
+        match StorageServer.validateContentBlockDownloadRepositoryOwnership "corr-historical-repository-owned" true with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected durable repository manifest ownership to authorize the historical manifest, got {error.Error}.")
+
+        match StorageServer.validateContentBlockDownloadRepositoryOwnership "corr-historical-not-owned" false with
+        | Ok () -> Assert.Fail("Expected missing repository manifest ownership to fail closed.")
+        | Error error -> Assert.That(error.Error, Does.Contain("repository-owned manifest"))
+
+    [<Test>]
     member _.GeneratedRawClientsCarryFilePathForContentBlockDownloads() =
         let repoRoot = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.TestDirectory, "..", "..", "..", "..", ".."))
 

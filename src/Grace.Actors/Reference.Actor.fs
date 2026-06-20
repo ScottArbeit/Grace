@@ -136,6 +136,7 @@ module Reference =
 
     let internal shouldApplyManifestExpiryBoundary referenceType =
         referenceType = ReferenceType.Save
+        || referenceType = ReferenceType.Commit
         || referenceType = ReferenceType.Checkpoint
 
     let shouldApplySaveExpiryBoundary (referenceDto: ReferenceDto) =

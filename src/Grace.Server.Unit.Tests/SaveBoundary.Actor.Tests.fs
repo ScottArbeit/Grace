@@ -1047,6 +1047,7 @@ type SaveBoundaryActorTests() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]
 
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary ReferenceType.Commit, Is.True)
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary ReferenceType.Checkpoint, Is.True)
 
         let expiryPlan =
@@ -1075,6 +1076,40 @@ type SaveBoundaryActorTests() =
             | Ok decision -> Assert.That(decision.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
             | Error error -> Assert.Fail($"Expected checkpoint expiry decrement workflow to start, got {error.Error}.")
         | None -> Assert.Fail("Expected checkpoint expiry decrement intent to start manifest contribution workflow fan-out.")
+
+    [<Test>]
+    member _.CommitExpiryStartsDecrementContributionWorkflow() =
+        let originalPool = StoragePoolId "pool-before-commit-expiry"
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        Assert.That(ReferenceActor.shouldRegisterManifestOwnershipOnCreate ReferenceType.Commit, Is.True)
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary ReferenceType.Commit, Is.True)
+
+        let expiryPlan =
+            ReferenceActor.planManifestSaveExpiryBoundaryWhenNeeded repositoryId (Some originalPool) referenceId directoryVersion "corr-commit-expiry"
+            |> expectPlan
+
+        match expiryPlan.CounterCommand with
+        | RepositoryContentCounterCommand.RemoveReference (operationId, commandRepositoryId, manifestAddress) ->
+            Assert.That(operationId, Is.EqualTo(RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}"))
+            Assert.That(commandRepositoryId, Is.EqualTo(repositoryId))
+            Assert.That(manifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        | _ -> Assert.Fail("Expected commit expiry to remove the repository manifest reference.")
+
+        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
+
+        match ReferenceActor.tryCreateManifestContributionStart expiryPlan intent with
+        | Some startCommand ->
+            let workflowDecision =
+                ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default startCommand (metadata "corr-commit-expiry-workflow")
+
+            match workflowDecision with
+            | Ok decision ->
+                Assert.That(decision.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+                Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(manifest.Blocks.Count))
+            | Error error -> Assert.Fail($"Expected commit expiry decrement workflow to start, got {error.Error}.")
+        | None -> Assert.Fail("Expected commit expiry decrement intent to start manifest contribution workflow fan-out.")
 
     [<Test>]
     member _.SaveExpiryDecrementWorkflowUsesDistinctOperationIdAfterIncrementWorkflow() =
@@ -1274,5 +1309,5 @@ type SaveBoundaryActorTests() =
     member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveExpiringReferences() =
         Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
         Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.True)
-        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Commit), Is.False)
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Commit), Is.True)
         Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)
