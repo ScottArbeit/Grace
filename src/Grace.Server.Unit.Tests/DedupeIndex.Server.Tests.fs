@@ -85,7 +85,13 @@ type DedupeIndexServerTests() =
             StoragePoolId = storagePoolId
             ContentBlockAddress = block.Address
             BlockFormatVersion = 1s
-            StoragePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some $"etag-{metadataVersion}" }
+            StoragePlacement =
+                {
+                    StorageAccountName = "cas-account"
+                    StorageContainerName = StorageContainerName "cas-container"
+                    ObjectKey = StorageKeys.contentBlockObjectKey block.Address
+                    ETag = Some $"etag-{metadataVersion}"
+                }
             Ranges =
                 [|
                     {

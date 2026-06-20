@@ -125,6 +125,36 @@ module Services =
         else
             blobUri
 
+    let private shardBlobEndpointUri (accountName: string) (containerAndObjectPath: string) =
+        let configuredEndpoint = AzureEnvironment.storageEndpoints.BlobEndpoint
+
+        if accountName.Equals(AzureEnvironment.storageEndpoints.AccountName, StringComparison.OrdinalIgnoreCase) then
+            Uri($"{configuredEndpoint.AbsoluteUri.TrimEnd('/')}/{containerAndObjectPath.TrimStart('/')}")
+            |> normalizeLocalAzuriteBlobUri accountName
+        else
+            let host = configuredEndpoint.Host
+            let suffixStart = host.IndexOf(".blob.", StringComparison.OrdinalIgnoreCase)
+
+            let blobHost =
+                if suffixStart >= 0 then
+                    $"{accountName}{host.Substring(suffixStart)}"
+                else
+                    $"{accountName}.blob.core.windows.net"
+
+            UriBuilder(
+                configuredEndpoint.Scheme,
+                blobHost,
+                -1,
+                containerAndObjectPath.TrimStart('/')
+            )
+                .Uri
+
+    let private storageSharedKeyCredentialForShard (shard: StoragePoolRouting.StorageShard) =
+        if StoragePoolRouting.sharedKeyCanSignShard shard then
+            sharedKeyCredential.Value
+        else
+            None
+
     let private createBlobContainerClientFromEndpoint containerName =
         if AzureEnvironment.useManagedIdentityForStorage then
             Context.blobServiceClient.GetBlobContainerClient(containerName)
@@ -137,6 +167,16 @@ module Services =
 
                 BlobContainerClient(containerUri, credential)
             | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
+
+    let private createBlobContainerClientForShard (shard: StoragePoolRouting.StorageShard) =
+        let containerUri = shardBlobEndpointUri shard.StorageAccountName $"{shard.StorageContainerName}"
+
+        if AzureEnvironment.useManagedIdentityForStorage then
+            BlobContainerClient(containerUri, DefaultAzureCredential())
+        else
+            match storageSharedKeyCredentialForShard shard with
+            | Some credential -> BlobContainerClient(containerUri, credential)
+            | None -> BlobContainerClient(containerUri)
 
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
@@ -359,6 +399,49 @@ module Services =
             return containerClient.GetBlockBlobClient blobName
         }
 
+    let resolveRepositoryStoragePoolRoute repositoryDto correlationId = StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId
+
+    let getCasContainerClient (shard: StoragePoolRouting.StorageShard) correlationId =
+        task {
+            match StoragePoolRouting.validateShard correlationId shard with
+            | Error error -> return Error error
+            | Ok () ->
+                let key = $"CasCon:{shard.StorageAccountName}-{shard.StorageContainerName}"
+
+                let! blobContainerClient =
+                    memoryCache.GetOrCreateAsync(
+                        key,
+                        fun cacheEntry ->
+                            task {
+                                let blobContainerClient = createBlobContainerClientForShard shard
+                                let! _ = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None)
+                                cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
+                                return blobContainerClient
+                            }
+                    )
+
+                return Ok blobContainerClient
+        }
+
+    let getAzureContentBlockClient (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) correlationId =
+        task {
+            let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
+
+            match! getCasContainerClient route.Shard correlationId with
+            | Error error -> return Error error
+            | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient objectKey)
+        }
+
+    let getAzureContentBlockClientForPlacement (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
+        task {
+            let shard: StoragePoolRouting.StorageShard =
+                { StorageAccountName = placement.StorageAccountName; StorageContainerName = placement.StorageContainerName; ObjectKeyPrefix = String.Empty }
+
+            match! getCasContainerClient shard correlationId with
+            | Error error -> return Error error
+            | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient placement.ObjectKey)
+        }
+
     let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
@@ -441,6 +524,90 @@ module Services =
                     }
 
             return UriWithSharedAccessSignature($"{sasUri}")
+        }
+
+    let createAzureContentBlockSasUri
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (contentBlockAddress: ContentBlockAddress)
+        (permission: BlobSasPermissions)
+        (correlationId: CorrelationId)
+        =
+        task {
+            let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
+
+            match StoragePoolRouting.validateShard correlationId route.Shard with
+            | Error error -> return Error error
+            | Ok () when
+                not AzureEnvironment.useManagedIdentityForStorage
+                && not (StoragePoolRouting.sharedKeyCanSignShard route.Shard)
+                ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"StorageShard '{route.Shard.StorageAccountName}/{route.Shard.StorageContainerName}' cannot be signed with the configured shared-key account '{AzureEnvironment.storageEndpoints.AccountName}'. Configure managed identity for cross-account CAS SAS."
+                            correlationId
+                    )
+            | Ok () ->
+                match! getCasContainerClient route.Shard correlationId with
+                | Error error -> return Error error
+                | Ok blobContainerClient ->
+                    let blobUri = shardBlobEndpointUri route.Shard.StorageAccountName $"{route.Shard.StorageContainerName}/{objectKey}"
+
+                    let blobSasBuilder =
+                        BlobSasBuilder(
+                            permissions = permission,
+                            expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                            StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
+                            BlobContainerName = blobContainerClient.Name,
+                            BlobName = objectKey,
+                            Resource = "b"
+                        )
+
+                    let! sasUri =
+                        if AzureEnvironment.useManagedIdentityForStorage then
+                            task {
+                                let blobServiceClient = blobContainerClient.GetParentBlobServiceClient()
+
+                                let userDelegationKeyOptions =
+                                    BlobGetUserDelegationKeyOptions(
+                                        DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                                        StartsOn = DateTimeOffset.UtcNow
+                                    )
+
+                                let! userDelegationKey = blobServiceClient.GetUserDelegationKeyAsync(userDelegationKeyOptions)
+                                let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, blobServiceClient.AccountName)
+                                return Uri($"{blobUri}?{sasQueryParameters}")
+                            }
+                        else
+                            task {
+                                match storageSharedKeyCredentialForShard route.Shard with
+                                | Some credential ->
+                                    let fullUriBlobClient = BlobClient(blobUri, credential)
+
+                                    let fullUriBlobSasBuilder =
+                                        BlobSasBuilder(
+                                            permissions = permission,
+                                            expiresOn = blobSasBuilder.ExpiresOn,
+                                            StartsOn = blobSasBuilder.StartsOn,
+                                            Resource = "b"
+                                        )
+
+                                    return fullUriBlobClient.GenerateSasUri(fullUriBlobSasBuilder)
+                                | None ->
+                                    let blobClient = blobContainerClient.GetBlobClient objectKey
+
+                                    if blobClient.CanGenerateSasUri then
+                                        return blobClient.GenerateSasUri(blobSasBuilder)
+                                    else
+                                        return
+                                            raise (
+                                                InvalidOperationException(
+                                                    "Azure Blob shared key is not configured and the current blob client cannot generate SAS. Configure grace__azure_storage__key, include AccountKey in grace__azure_storage__connectionstring, or enable managed identity for storage."
+                                                )
+                                            )
+                            }
+
+                    return Ok(UriWithSharedAccessSignature($"{sasUri}"))
         }
 
     let azureBlobReadPermissions =

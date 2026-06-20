@@ -40,7 +40,43 @@ module Storage =
         ex.Status = int HttpStatusCode.Conflict
         && String.Equals(ex.ErrorCode, blobAlreadyExistsErrorCode, StringComparison.OrdinalIgnoreCase)
 
-    let private contentBlockPlacement contentBlockAddress etag = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = etag }
+    let private contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
+        let pathSegments =
+            blobUriWithSasToken
+                .AbsolutePath
+                .Trim('/')
+                .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map Uri.UnescapeDataString
+
+        let isPathStyleAzurite =
+            blobUriWithSasToken.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(blobUriWithSasToken.Host)
+               |> fst
+
+        let accountName =
+            if isPathStyleAzurite && pathSegments.Length >= 3 then
+                pathSegments[0]
+            else
+                let host = blobUriWithSasToken.Host
+                let firstDot = host.IndexOf('.')
+
+                if firstDot > 0 then host.Substring(0, firstDot) else host
+
+        let containerIndex = if isPathStyleAzurite then 1 else 0
+
+        let containerName =
+            if pathSegments.Length > containerIndex then
+                pathSegments[containerIndex]
+            else
+                String.Empty
+
+        let objectKey =
+            if pathSegments.Length > containerIndex + 1 then
+                String.Join("/", pathSegments |> Array.skip (containerIndex + 1))
+            else
+                String.Empty
+
+        { StorageAccountName = accountName; StorageContainerName = StorageContainerName containerName; ObjectKey = objectKey; ETag = etag }
 
     let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
         if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then
@@ -370,12 +406,12 @@ module Storage =
                     use payloadStream = new MemoryStream(payload, writable = false)
                     let! response = blockBlobClient.UploadAsync(payloadStream)
 
-                    return Ok(GraceReturnValue.Create (contentBlockPlacement contentBlockAddress (Some(response.Value.ETag.ToString()))) correlationId)
+                    return Ok(GraceReturnValue.Create (contentBlockPlacementFromUri blobUriWithSasToken (Some(response.Value.ETag.ToString()))) correlationId)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
             with
             | :? RequestFailedException as ex when isExistingContentBlockUploadConflict ex ->
-                return Ok(GraceReturnValue.Create (contentBlockPlacement contentBlockAddress None) correlationId)
+                return Ok(GraceReturnValue.Create (contentBlockPlacementFromUri blobUriWithSasToken None) correlationId)
             | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
