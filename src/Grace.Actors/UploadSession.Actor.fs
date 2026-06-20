@@ -756,11 +756,14 @@ module UploadSession =
 
                         match decideCommand state.State uploadSessionDto command metadata with
                         | Ok decision ->
-                            if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                            match! deleteUploadSessionStagingPayloads uploadSessionDto metadata.CorrelationId with
+                            | Error error -> return Error error
+                            | Ok _ ->
+                                if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
-                            do! this.CompactPhysicalStateEvents()
-                            this.DeactivateOnIdle()
-                            return Ok()
+                                do! this.CompactPhysicalStateEvents()
+                                this.DeactivateOnIdle()
+                                return Ok()
                         | Error error -> return Error error
                     | reminderType, reminderState ->
                         return
