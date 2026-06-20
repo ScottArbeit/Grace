@@ -658,6 +658,7 @@ module Storage =
         (requestContext: UploadSessionRequestContext)
         (parameters: FinalizeManifestUploadParameters)
         (manifest: FileManifest)
+        useRequestBlockPayloads
         (correlationId: CorrelationId)
         =
         task {
@@ -668,10 +669,9 @@ module Storage =
                 let mutable error = None
                 let mutable index = 0
 
-                if
-                    not (isNull parameters.BlockPayloads)
-                    && parameters.BlockPayloads.Length > 0
-                then
+                if useRequestBlockPayloads
+                   && not (isNull parameters.BlockPayloads)
+                   && parameters.BlockPayloads.Length > 0 then
                     payloads.AddRange parameters.BlockPayloads
                 else
                     let blockAddresses = manifestBlockAddresses manifest
@@ -711,6 +711,100 @@ module Storage =
                 | Some error -> return Error error
                 | None -> return Ok { BlockPayloads = payloads.ToArray(); ClaimedMetadata = claimedMetadata }
         }
+
+    let private getFinalizeReplayState requestContext operationId correlationId =
+        task {
+            let! events = requestContext.UploadSessionActor.GetEvents correlationId
+
+            let eventOperationId (uploadSessionEvent: UploadSessionEvent) =
+                match uploadSessionEvent.Event with
+                | UploadSessionEventType.Started start -> Some start.OperationId
+                | UploadSessionEventType.Abandoned operationId
+                | UploadSessionEventType.Expired operationId
+                | UploadSessionEventType.PhysicalStateDeleted operationId -> Some operationId
+                | UploadSessionEventType.Finalized (operationId, _)
+                | UploadSessionEventType.CleanupReminderScheduled (operationId, _)
+                | UploadSessionEventType.BlockUploadIntentRegistered (operationId, _)
+                | UploadSessionEventType.BlockUploadConfirmed (operationId, _)
+                | UploadSessionEventType.DedupeDiscoveryIssued (operationId, _)
+                | UploadSessionEventType.ReuseRangesClaimed (operationId, _) -> Some operationId
+
+            let operationAlreadyApplied =
+                events
+                |> Seq.exists (fun uploadSessionEvent -> eventOperationId uploadSessionEvent = Some operationId)
+
+            let finalizedManifestAddress =
+                events
+                |> Seq.tryPick (fun uploadSessionEvent ->
+                    match uploadSessionEvent.Event with
+                    | UploadSessionEventType.Finalized (finalizeOperationId, manifestAddress) when finalizeOperationId = operationId -> Some manifestAddress
+                    | _ -> None)
+
+            return operationAlreadyApplied, finalizedManifestAddress
+        }
+
+    let private operationAlreadyAppliedToDifferentUploadSessionEventError operationId correlationId =
+        GraceError.Create $"UploadSession OperationId {operationId} was already applied to a non-finalize event and cannot finalize this session." correlationId
+
+    let private validateFinalizeReplayManifestAddress finalizedManifestAddress (manifest: FileManifest) correlationId =
+        if isNull (box manifest) then
+            Error(GraceError.Create "FileManifest is required for finalize replay." correlationId)
+        elif manifest.ManifestAddress
+             <> finalizedManifestAddress then
+            Error(
+                GraceError.Create
+                    $"Finalize replay ManifestAddress must match the durable finalized manifest address. Expected {finalizedManifestAddress}, actual {manifest.ManifestAddress}."
+                    correlationId
+            )
+        else
+            Ok()
+
+    let private validateFinalizeReplayEvidence
+        (session: UploadSessionDto)
+        finalizedManifestAddress
+        (manifest: FileManifest)
+        (evidence: HydratedFinalizeEvidence)
+        correlationId
+        =
+        validateFinalizeReplayManifestAddress finalizedManifestAddress manifest correlationId
+        |> Result.bind (fun () ->
+            if manifest.Size <> session.ExpectedSize then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest Size must match UploadSession ExpectedSize. Expected {session.ExpectedSize}, actual {manifest.Size}."
+                        correlationId
+                )
+            elif manifest.FileContentHash
+                 <> session.FileContentHash then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest FileContentHash must match UploadSession FileContentHash. Expected {session.FileContentHash}, actual {manifest.FileContentHash}."
+                        correlationId
+                )
+            elif manifest.ChunkingSuiteId
+                 <> session.ChunkingSuiteId then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest ChunkingSuiteId must match UploadSession ChunkingSuiteId. Expected {session.ChunkingSuiteId}, actual {manifest.ChunkingSuiteId}."
+                        correlationId
+                )
+            else
+                let blockPayloads =
+                    evidence.BlockPayloads
+                    |> Array.map (fun payload ->
+                        if isNull (box payload) then
+                            Unchecked.defaultof<ManifestValidation.ManifestBlockPayload>
+                        else
+                            ManifestValidation.createBlockPayload payload.Address payload.Payload)
+
+                match ManifestValidation.validate session.ChunkingSuiteId manifest blockPayloads with
+                | Ok _ -> Ok()
+                | Error validationError ->
+                    Error(
+                        GraceError.Create
+                            $"Finalize replay evidence must reconstruct the durable manifest before side-effect repair: {validationError}."
+                            correlationId
+                    ))
 
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
         {
@@ -1457,36 +1551,51 @@ module Storage =
                     match scopeValidation with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok requestContext ->
-                        let replayCommand =
+                        let createFinalizeCommand evidence =
                             UploadSessionCommand.FinalizeManifest
                                 {
                                     OperationId = parameters.OperationId
                                     Manifest = parameters.Manifest
-                                    BlockPayloads =
-                                        if isNull parameters.BlockPayloads then
-                                            Array.empty
-                                        else
-                                            parameters.BlockPayloads
-                                    ClaimedMetadata = Array.empty
+                                    BlockPayloads = evidence.BlockPayloads
+                                    ClaimedMetadata = evidence.ClaimedMetadata
                                 }
 
-                        match! tryReplayUploadSessionCommand requestContext replayCommand parameters.OperationId correlationId with
-                        | Some (Ok returnValue) -> return! context |> result200Ok returnValue
-                        | Some (Error error) -> return! context |> result400BadRequest error
-                        | None ->
-                            let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId
+                        match! getFinalizeReplayState requestContext parameters.OperationId correlationId with
+                        | _, Some finalizedManifestAddress ->
+                            match validateFinalizeReplayManifestAddress finalizedManifestAddress parameters.Manifest correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest false correlationId
+
+                                match evidenceResult with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok evidence ->
+                                    match
+                                        validateFinalizeReplayEvidence
+                                            requestContext.SessionForScope
+                                            finalizedManifestAddress
+                                            parameters.Manifest
+                                            evidence
+                                            correlationId
+                                        with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok () ->
+                                        let! result = requestContext.UploadSessionActor.Handle (createFinalizeCommand evidence) requestContext.Metadata
+
+                                        match result with
+                                        | Ok returnValue -> return! context |> result200Ok returnValue
+                                        | Error error -> return! context |> result400BadRequest error
+                        | true, None ->
+                            return!
+                                context
+                                |> result400BadRequest (operationAlreadyAppliedToDifferentUploadSessionEventError parameters.OperationId correlationId)
+                        | false, None ->
+                            let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest true correlationId
 
                             match evidenceResult with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok evidence ->
-                                let command =
-                                    UploadSessionCommand.FinalizeManifest
-                                        {
-                                            OperationId = parameters.OperationId
-                                            Manifest = parameters.Manifest
-                                            BlockPayloads = evidence.BlockPayloads
-                                            ClaimedMetadata = evidence.ClaimedMetadata
-                                        }
+                                let command = createFinalizeCommand evidence
 
                                 let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
 

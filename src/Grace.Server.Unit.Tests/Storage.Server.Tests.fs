@@ -185,7 +185,7 @@ type StorageContentBlockSdkContract() =
         | Ok () -> Assert.Pass()
 
     [<Test>]
-    member _.FinalizeManifestChecksIdempotentReplayBeforeHydratedClaimedReuseEvidence() =
+    member _.FinalizeManifestHydratesAndValidatesReplayEvidenceBeforeActorSideEffects() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
         let finalizeStart = storageServerSource.IndexOf("let FinalizeManifestUpload", StringComparison.Ordinal)
@@ -195,24 +195,57 @@ type StorageContentBlockSdkContract() =
         Assert.That(finalizeEnd, Is.GreaterThan(finalizeStart))
 
         let finalizeSource = storageServerSource.Substring(finalizeStart, finalizeEnd - finalizeStart)
+        let compactedStorageSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
         let scopeValidationIndex = finalizeSource.IndexOf("validateUploadSessionScope requestContext parameters correlationId true", StringComparison.Ordinal)
 
-        let replayIndex =
-            finalizeSource.IndexOf("tryReplayUploadSessionCommand requestContext replayCommand parameters.OperationId correlationId", StringComparison.Ordinal)
+        let replayEventIndex = finalizeSource.IndexOf("getFinalizeReplayState requestContext parameters.OperationId correlationId", StringComparison.Ordinal)
 
-        let hydrateIndex =
-            finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId", StringComparison.Ordinal)
+        let replayHydrateIndex =
+            finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest false correlationId", StringComparison.Ordinal)
+
+        let replayValidateIndex = finalizeSource.IndexOf("validateFinalizeReplayEvidence", StringComparison.Ordinal)
+
+        let actorHandleIndex =
+            finalizeSource.IndexOf(
+                "requestContext.UploadSessionActor.Handle (createFinalizeCommand evidence) requestContext.Metadata",
+                StringComparison.Ordinal
+            )
+
+        let normalHydrateIndex =
+            finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest true correlationId", StringComparison.Ordinal)
 
         Assert.That(scopeValidationIndex, Is.GreaterThanOrEqualTo(0))
-        Assert.That(replayIndex, Is.GreaterThan(scopeValidationIndex))
-        Assert.That(hydrateIndex, Is.GreaterThan(replayIndex))
-        Assert.That(hydrateIndex, Is.GreaterThan(scopeValidationIndex))
+        Assert.That(replayEventIndex, Is.GreaterThan(scopeValidationIndex))
+        Assert.That(replayHydrateIndex, Is.GreaterThan(replayEventIndex))
+        Assert.That(replayValidateIndex, Is.GreaterThan(replayHydrateIndex))
+        Assert.That(actorHandleIndex, Is.GreaterThan(replayValidateIndex))
+        Assert.That(normalHydrateIndex, Is.GreaterThan(actorHandleIndex))
         Assert.That(finalizeSource, Does.Not.Contain("hydrateFinalizeBlockPayloads context"))
 
         Assert.That(
             finalizeSource,
-            Does.Contain("ClaimedMetadata = Array.empty"),
-            "Same-operation finalize replay must be checked before reloading stale claimed metadata evidence."
+            Does.Not.Contain("ClaimedMetadata = Array.empty"),
+            "Same-operation finalize replay side effects must not run with empty claimed metadata."
+        )
+
+        Assert.That(
+            finalizeSource,
+            Does.Not.Contain("BlockPayloads = parameters.BlockPayloads"),
+            "Same-operation finalize replay side effects must not run with retry-supplied block payloads."
+        )
+
+        Assert.That(
+            finalizeSource,
+            Does.Contain("operationAlreadyAppliedToDifferentUploadSessionEventError parameters.OperationId correlationId"),
+            "Finalize must not let actor replay semantics turn a non-finalize operation-id collision into side effects."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does
+                .Contain("&& not (isNull parameters.BlockPayloads)")
+                .And.Contain("then payloads.AddRange parameters.BlockPayloads"),
+            "Fresh finalization may still use request payloads; replay hydration opts out through the false flag."
         )
 
     [<Test>]
