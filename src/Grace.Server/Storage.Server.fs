@@ -443,6 +443,88 @@ module Storage =
                 return Error(getErrorMessage StorageError.UnknownObjectStorageProvider)
         }
 
+    let private validateUploadSessionForContentBlockUpload (parameters: GetContentBlockUploadUriParameters) repositoryId correlationId =
+        task {
+            if parameters.UploadSessionId = UploadSessionId.Empty then
+                return Error(GraceError.Create "UploadSessionId is required before issuing a ContentBlock upload URI." correlationId)
+            else
+                let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
+
+                let! session = loadSessionForScope uploadSessionActor correlationId
+
+                if session.UploadSessionId = UploadSessionId.Empty
+                   || session.LifecycleState = UploadSessionLifecycleState.NotStarted then
+                    return Error(GraceError.Create "UploadSession must be started before issuing a ContentBlock upload URI." correlationId)
+                elif session.AuthorizedScope
+                     <> parameters.AuthorizedScope then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{session.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
+                                correlationId
+                        )
+                elif
+                    isNull session.BlockUploadIntents
+                    || not
+                        (
+                            session.BlockUploadIntents
+                            |> Array.exists (fun intent ->
+                                not (isNull (box intent))
+                                && intent.ContentBlockAddress = parameters.ContentBlockAddress)
+                        )
+                then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"Block upload intent does not exist for ContentBlockAddress {parameters.ContentBlockAddress}; upload URI cannot be issued."
+                                correlationId
+                        )
+                else
+                    return Ok()
+        }
+
+    let private validateManifestForContentBlockDownload storagePoolId (parameters: GetContentBlockDownloadUriParameters) correlationId =
+        task {
+            let manifest = parameters.Manifest
+
+            if isNull (box manifest) then
+                return Error(GraceError.Create "FileManifest is required before issuing a ContentBlock download URI." correlationId)
+            elif String.IsNullOrWhiteSpace manifest.ManifestAddress then
+                return Error(GraceError.Create "FileManifest.ManifestAddress is required before issuing a ContentBlock download URI." correlationId)
+            elif ContentAddress.computeManifestAddressForManifest manifest
+                 <> manifest.ManifestAddress then
+                return Error(GraceError.Create "FileManifest.ManifestAddress must match the supplied manifest content." correlationId)
+            elif
+                isNull manifest.Blocks
+                || not
+                    (
+                        manifest.Blocks
+                        |> Seq.exists (fun block ->
+                            not (isNull (box block))
+                            && block.Address = parameters.ContentBlockAddress)
+                    )
+            then
+                return
+                    Error(
+                        GraceError.Create
+                            $"FileManifest {manifest.ManifestAddress} does not reference ContentBlockAddress {parameters.ContentBlockAddress}."
+                            correlationId
+                    )
+            else
+                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                let! dedupeIndexState = dedupeIndexActor.SnapshotState correlationId
+
+                if DedupeIndex.finalizedManifestContainsBlock storagePoolId manifest.ManifestAddress parameters.ContentBlockAddress dedupeIndexState then
+                    return Ok()
+                else
+                    return
+                        Error(
+                            GraceError.Create
+                                $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository."
+                                correlationId
+                        )
+        }
+
     /// Gets a download URI for the specified file version that can be used by a Grace client.
     let GetDownloadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
@@ -486,11 +568,14 @@ module Storage =
                         match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok route ->
-                            match! createAzureContentBlockSasUri route parameters.ContentBlockAddress azureBlobCreatePermissions correlationId with
+                            match! validateUploadSessionForContentBlockUpload parameters repositoryId correlationId with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok uploadUri ->
-                                context.SetStatusCode StatusCodes.Status200OK
-                                return! context.WriteStringAsync uploadUri.AbsoluteUri
+                            | Ok () ->
+                                match! createAzureContentBlockSasUri route parameters.ContentBlockAddress azureBlobCreatePermissions correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok uploadUri ->
+                                    context.SetStatusCode StatusCodes.Status200OK
+                                    return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -518,11 +603,16 @@ module Storage =
                         match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok route ->
-                            match! createAzureContentBlockSasUri route parameters.ContentBlockAddress azureBlobReadPermissions correlationId with
+                            let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+
+                            match! validateManifestForContentBlockDownload storagePoolId parameters correlationId with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok downloadUri ->
-                                context.SetStatusCode StatusCodes.Status200OK
-                                return! context.WriteStringAsync downloadUri.AbsoluteUri
+                            | Ok () ->
+                                match! createAzureContentBlockSasUri route parameters.ContentBlockAddress azureBlobReadPermissions correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok downloadUri ->
+                                    context.SetStatusCode StatusCodes.Status200OK
+                                    return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
