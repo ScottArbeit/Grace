@@ -197,10 +197,15 @@ type StorageContentBlockSdkContract() =
         let finalizeSource = storageServerSource.Substring(finalizeStart, finalizeEnd - finalizeStart)
         let scopeValidationIndex = finalizeSource.IndexOf("validateUploadSessionScope requestContext parameters correlationId true", StringComparison.Ordinal)
 
+        let replayIndex =
+            finalizeSource.IndexOf("tryReplayUploadSessionCommand requestContext replayCommand parameters.OperationId correlationId", StringComparison.Ordinal)
+
         let hydrateIndex =
             finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest correlationId", StringComparison.Ordinal)
 
         Assert.That(scopeValidationIndex, Is.GreaterThanOrEqualTo(0))
+        Assert.That(replayIndex, Is.GreaterThan(scopeValidationIndex))
+        Assert.That(hydrateIndex, Is.GreaterThan(replayIndex))
         Assert.That(hydrateIndex, Is.GreaterThan(scopeValidationIndex))
         Assert.That(finalizeSource, Does.Not.Contain("hydrateFinalizeBlockPayloads context"))
 
@@ -220,6 +225,20 @@ type StorageContentBlockSdkContract() =
             compactedSource,
             Does.Contain("readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement"),
             "Claimed reuse payload hydration must use authoritative metadata placement, not a recomputed route."
+        )
+
+    [<Test>]
+    member _.FinalizeManifestHydratesClaimedMetadataOnlyForBlocksNotSatisfiedByConfirmedUploads() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(compactedSource, Does.Contain("manifestBlockAddressesRequiringClaimedMetadata requestContext.SessionForScope manifest"))
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("not (manifestBlockWasUploaded session block)"),
+            "Claimed metadata hydration must skip stale claims for manifest blocks already satisfied by confirmed uploads."
         )
 
     [<Test>]

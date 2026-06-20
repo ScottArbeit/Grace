@@ -167,20 +167,27 @@ module ContentBlockMetadata =
 
     let private rangeKey (range: ContentBlockMetadataRange) = $"{range.OrdinalStart}:{range.OrdinalCount}:{range.PhysicalOffset}:{range.PhysicalLength}"
 
-    let private mergeRanges existingRanges incomingRanges =
+    let private mergeRanges correlationId existingRanges incomingRanges =
         let merged = Dictionary<string, ContentBlockMetadataRange>()
+        let mutable error = None
 
         let addRange preserveActiveCount range =
             let key = rangeKey range
 
-            if merged.ContainsKey key then
+            if error.IsSome then
+                ()
+            elif merged.ContainsKey key then
                 let existing = merged[key]
 
                 let activeManifestCount =
                     if preserveActiveCount then
                         max existing.ActiveManifestCount range.ActiveManifestCount
+                    elif existing.ActiveManifestCount > Int32.MaxValue - range.ActiveManifestCount then
+                        error <- Some(graceError correlationId "ContentBlockMetadataRange.ActiveManifestCount cannot exceed Int32.MaxValue.")
+                        existing.ActiveManifestCount
                     else
-                        range.ActiveManifestCount
+                        existing.ActiveManifestCount
+                        + range.ActiveManifestCount
 
                 merged[key] <- { existing with ActiveManifestCount = activeManifestCount }
             else
@@ -188,12 +195,15 @@ module ContentBlockMetadata =
 
         existingRanges |> Array.iter (addRange true)
 
-        incomingRanges |> Array.iter (addRange true)
+        incomingRanges |> Array.iter (addRange false)
 
-        merged.Values
-        |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
-        |> Seq.toArray
-        |> Ok
+        match error with
+        | Some error -> Error error
+        | None ->
+            merged.Values
+            |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+            |> Seq.toArray
+            |> Ok
 
     let private activeLogicalRangeKey (range: ContentBlockMetadataRange) = range.OrdinalStart, range.OrdinalCount, range.ActiveManifestCount
 
@@ -348,7 +358,7 @@ module ContentBlockMetadata =
                     |> Option.map (fun metadata -> metadata.Ranges)
                     |> Option.defaultValue Array.empty
 
-                match mergeRanges existingRanges merge.Ranges with
+                match mergeRanges correlationId existingRanges merge.Ranges with
                 | Error error -> Error error
                 | Ok ranges ->
                     match activePhysicalBytes correlationId ranges with

@@ -789,6 +789,47 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected append merge to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.MergePhysicalRangesAddsDistinctReferenceContributionsForSamePhysicalRange() =
+        let currentMetadata = record [| activeRange |]
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let contribution = { activeRange with ActiveManifestCount = 1 }
+
+        let first = ContentBlockMetadataActor.decideCommand [] currentDto (merge "op-finalize-first" [| contribution |]) (metadata "corr-finalize-first")
+
+        match first with
+        | Ok firstDecision ->
+            Assert.That(firstDecision.Metadata.Ranges, Has.Length.EqualTo(1))
+
+            Assert.That(
+                firstDecision.Metadata.Ranges[0]
+                    .ActiveManifestCount,
+                Is.EqualTo(activeRange.ActiveManifestCount + 1)
+            )
+
+            let firstDto = applyAll firstDecision.Events currentDto
+
+            let second =
+                ContentBlockMetadataActor.decideCommand
+                    firstDecision.Events
+                    firstDto
+                    (merge "op-finalize-second" [| contribution |])
+                    (metadata "corr-finalize-second")
+
+            match second with
+            | Ok secondDecision ->
+                Assert.That(secondDecision.Metadata.Ranges, Has.Length.EqualTo(1))
+
+                Assert.That(
+                    secondDecision.Metadata.Ranges[0]
+                        .ActiveManifestCount,
+                    Is.EqualTo(activeRange.ActiveManifestCount + 2)
+                )
+
+                Assert.That(secondDecision.Metadata.ActivePhysicalBytes, Is.EqualTo(activeRange.PhysicalLength))
+            | Error error -> Assert.Fail($"Expected second contribution merge to succeed, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected first contribution merge to succeed, got {error.Error}.")
+
+    [<Test>]
     member _.MergePhysicalRangesAllowsSameOrdinalAtDifferentPhysicalOffsets() =
         let relocatedRange = { activeRange with PhysicalOffset = 4096L; PhysicalLength = activeRange.PhysicalLength; ActiveManifestCount = 0 }
 

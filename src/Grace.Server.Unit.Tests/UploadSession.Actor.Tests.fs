@@ -818,11 +818,110 @@ type UploadSessionActorTests() =
             Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(metadataRange.OrdinalCount))
             Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(metadataRange.PhysicalOffset))
             Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(metadataRange.PhysicalLength))
-            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(metadataRange.ActiveManifestCount + 1))
+            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
         | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     [<Test>]
-    member _.FinalizedUploadRangesIncrementExistingActiveManifestCount() =
+    member _.FinalizeManifestSkipsStaleClaimedMetadataWhenConfirmedUploadSatisfiesBlock() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("uploaded block supersedes stale reuse claim")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+        let intent = intentForBlock "op-intent" block 0L
+
+        let claimedRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = 0
+                OrdinalCount = minimumReuseRunLength
+                PhysicalOffset = 0L
+                PhysicalLength = int64 fileBytes.Length
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                BlockUploadIntents =
+                    [|
+                        {
+                            ContentBlockAddress = intent.ContentBlockAddress
+                            LogicalOffset = intent.LogicalOffset
+                            LogicalLength = intent.LogicalLength
+                            ExpectedPayloadLength = intent.ExpectedPayloadLength
+                            RegisteredAt = timestamp
+                        }
+                    |]
+                ConfirmedBlockUploads =
+                    [|
+                        {
+                            ContentBlockAddress = block.Address
+                            PayloadLength = block.Payload.LongLength
+                            StoragePlacement = placementFor block.Address (Some "etag-confirmed")
+                            Ranges =
+                                [|
+                                    {
+                                        OrdinalStart = 0
+                                        OrdinalCount = 1
+                                        ActiveManifestCount = 0
+                                        PhysicalOffset = 0L
+                                        PhysicalLength = int64 fileBytes.Length
+                                    }
+                                |]
+                            ConfirmedAt = timestamp
+                        }
+                    |]
+                ClaimedReuseRanges = [| claimedRange |]
+            }
+
+        let staleClaimedMetadata =
+            reuseMetadataFor
+                block.Address
+                8L
+                [|
+                    {
+                        OrdinalStart = 0
+                        OrdinalCount = minimumReuseRunLength
+                        ActiveManifestCount = 0
+                        PhysicalOffset = 0L
+                        PhysicalLength = int64 fileBytes.Length
+                    }
+                |]
+
+        let finalizeCommand = finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| staleClaimedMetadata |]
+        let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+
+            let commands =
+                UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                    sessionStoragePoolId
+                    "op-finalize"
+                    session
+                    manifest
+                    [| staleClaimedMetadata |]
+
+            Assert.That(commands, Has.Length.EqualTo(1))
+
+            match commands[0] with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
+                Assert.That(merge.StoragePlacement.ObjectKey, Is.EqualTo(StorageKeys.contentBlockObjectKey block.Address))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            | _ -> Assert.Fail("Expected confirmed upload to provide the metadata merge command.")
+        | Error error -> Assert.Fail($"Expected confirmed upload to supersede stale claimed metadata, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizedUploadRangesEmitSingleReferenceContribution() =
         let ranges =
             [|
                 { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = 11L }
@@ -830,7 +929,7 @@ type UploadSessionActorTests() =
 
         let activeRanges = UploadSessionActor.activeRangesForFinalizedManifest ranges
 
-        Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(3))
+        Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(1))
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     [<Test>]

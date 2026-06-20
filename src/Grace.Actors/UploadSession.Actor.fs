@@ -335,7 +335,32 @@ module UploadSession =
 
     let activeRangesForFinalizedManifest (ranges: ContentBlockMetadataRange array) =
         ranges
-        |> Array.map (fun range -> { range with ActiveManifestCount = range.ActiveManifestCount + 1 })
+        |> Array.map (fun range -> { range with ActiveManifestCount = 1 })
+
+    let private blockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
+        session.ConfirmedBlockUploads
+        |> Array.exists (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = block.Address)
+        && session.BlockUploadIntents
+           |> Array.exists (fun intent ->
+               intent.ContentBlockAddress = block.Address
+               && intent.LogicalOffset = block.Offset
+               && intent.LogicalLength = block.Size)
+
+    let private manifestBlockAddressesRequiringClaimedMetadata (session: UploadSessionDto) (manifest: FileManifest) =
+        let addresses = HashSet<ContentBlockAddress>()
+
+        if
+            not (isNull (box manifest))
+            && not (isNull manifest.Blocks)
+        then
+            for block in manifest.Blocks do
+                if
+                    not (isNull (box block))
+                    && not (blockWasUploaded session block)
+                then
+                    addresses.Add(block.Address) |> ignore
+
+        addresses
 
     let private validateAuthoritativeStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         match validateStoragePlacement correlationId placement with
@@ -411,7 +436,7 @@ module UploadSession =
                         ))
 
     let private validateClaimedMetadataForFinalize correlationId storagePoolId (session: UploadSessionDto) (manifest: FileManifest) claimedMetadata =
-        let manifestAddresses = manifestBlockAddresses manifest
+        let manifestAddresses = manifestBlockAddressesRequiringClaimedMetadata session manifest
         let metadata = claimedMetadataByKey claimedMetadata
         let mutable error = None
         let mutable index = 0
@@ -521,15 +546,6 @@ module UploadSession =
             $"FileManifest Blocks[{index}] payload size mismatch. Expected {expected}, actual {actual}."
         | ManifestValidation.FileContentHashMismatch (expected, actual) -> $"FileManifest FileContentHash mismatch. Expected {expected}, actual {actual}."
         | ManifestValidation.ManifestSizeMismatch (expected, actual) -> $"FileManifest Size mismatch. Expected {expected}, actual {actual}."
-
-    let private blockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
-        session.ConfirmedBlockUploads
-        |> Array.exists (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = block.Address)
-        && session.BlockUploadIntents
-           |> Array.exists (fun intent ->
-               intent.ContentBlockAddress = block.Address
-               && intent.LogicalOffset = block.Offset
-               && intent.LogicalLength = block.Size)
 
     let private blockWasClaimed (session: UploadSessionDto) (block: ContentBlock) =
         session.ClaimedReuseRanges
