@@ -63,10 +63,10 @@ type ManifestContributionWorkflowActorTests() =
             Unchecked.defaultof<ManifestContributionWorkflowDecision>
 
     [<Test>]
-    member _.WorkflowPrimaryKeyCombinesRepositoryIdAndManifestAddress() =
-        let key = ManifestContributionWorkflowActor.primaryKey repositoryId manifestAddress
+    member _.WorkflowPrimaryKeyCombinesRepositoryIdStoragePoolAndManifestAddress() =
+        let key = ManifestContributionWorkflowActor.primaryKey repositoryId range0.StoragePoolId manifestAddress
 
-        Assert.That(key, Is.EqualTo("a6c6b60ad4d240f68362258dbe75a5bf|manifest:blake3:alpha"))
+        Assert.That(key, Is.EqualTo("a6c6b60ad4d240f68362258dbe75a5bf|pool-main|manifest:blake3:alpha"))
 
     [<Test>]
     member _.StartRejectsDuplicateRanges() =
@@ -177,7 +177,7 @@ type ManifestContributionWorkflowActorTests() =
             |> expectOk
 
         let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
-        let wrongKey = ManifestContributionWorkflowActor.primaryKey (Guid.Parse("24560efe-bb67-4be8-b0d1-1a11990e66b1")) manifestAddress
+        let wrongKey = ManifestContributionWorkflowActor.primaryKey (Guid.Parse("24560efe-bb67-4be8-b0d1-1a11990e66b1")) range0.StoragePoolId manifestAddress
 
         let result =
             ManifestContributionWorkflowActor.decideCommandForKey
@@ -206,7 +206,7 @@ type ManifestContributionWorkflowActorTests() =
 
         let result =
             ManifestContributionWorkflowActor.decideCommandForKey
-                (Some(ManifestContributionWorkflowActor.primaryKey repositoryId manifestAddress))
+                (Some(ManifestContributionWorkflowActor.primaryKey repositoryId range0.StoragePoolId manifestAddress))
                 started.Events
                 afterStart
                 (succeededFor wrongRepositoryId manifestAddress "range-wrong-target" range0)

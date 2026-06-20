@@ -602,24 +602,25 @@ module Storage =
                     with
                     | ex -> Error(GraceError.Create $"ContentBlock download FileManifest is malformed: {ex.Message}" correlationId)
 
-    let private loadRepositoryContentCounter repositoryId manifestAddress correlationId =
+    let private loadRepositoryContentCounter repositoryId storagePoolId manifestAddress correlationId =
         task {
             let counterActor =
                 grainFactory.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
-                    Grace.Actors.RepositoryContentCounter.primaryKey repositoryId manifestAddress,
+                    Grace.Actors.RepositoryContentCounter.primaryKey repositoryId storagePoolId manifestAddress,
                     correlationId
                 )
 
             return! counterActor.Get correlationId
         }
 
-    let private repositoryOwnsManifest repositoryId manifestAddress correlationId =
+    let private repositoryOwnsManifest repositoryId (manifest: FileManifest) correlationId =
         task {
-            let! counter = loadRepositoryContentCounter repositoryId manifestAddress correlationId
+            let! counter = loadRepositoryContentCounter repositoryId manifest.StoragePoolId manifest.ManifestAddress correlationId
 
             return
                 counter.RepositoryId = repositoryId
-                && counter.ManifestAddress = manifestAddress
+                && counter.StoragePoolId = manifest.StoragePoolId
+                && counter.ManifestAddress = manifest.ManifestAddress
                 && counter.ReferenceCount > 0L
                 && counter.LifecycleState = RepositoryContentCounterLifecycleState.Referenced
         }
@@ -659,6 +660,23 @@ module Storage =
                     Error(GraceError.Create "ContentBlock download FilePath does not match the supplied FileManifest StoragePoolId." correlationId)
                 | Some _ -> Ok()
 
+    let private loadSavedFileVersionForFilePath repositoryId (filePath: RelativePath) correlationId =
+        task {
+            if String.IsNullOrWhiteSpace filePath then
+                return None
+            else
+                let normalizedFilePath = normalizeFilePath filePath
+                let directoryPath = getRelativeDirectory normalizedFilePath Constants.RootDirectoryPath
+                let! directoryVersion = getMostRecentDirectoryVersionByRelativePath repositoryId directoryPath correlationId
+
+                return
+                    directoryVersion
+                    |> Option.bind (fun directoryVersion ->
+                        directoryVersion.Files
+                        |> Seq.tryFind (fun fileVersion ->
+                            String.Equals(normalizeFilePath fileVersion.RelativePath, normalizedFilePath, StringComparison.Ordinal)))
+        }
+
     let internal validateContentBlockDownloadRepositoryOwnership correlationId hasRepositoryManifestReference =
         if hasRepositoryManifestReference then
             Ok()
@@ -668,6 +686,11 @@ module Storage =
                     "ContentBlock download requires a repository-owned manifest or finalized upload session before issuing a read SAS."
                     correlationId
             )
+
+    let internal validateContentBlockDownloadAuthorizationEvidence correlationId filePath savedFileVersion manifest hasRepositoryManifestReference =
+        match validateContentBlockDownloadFilePathEvidence correlationId filePath savedFileVersion manifest with
+        | Error error -> Error error
+        | Ok () -> validateContentBlockDownloadRepositoryOwnership correlationId hasRepositoryManifestReference
 
     let private uploadSessionOwnsManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) (manifest: FileManifest) correlationId =
         task {
@@ -691,14 +714,25 @@ module Storage =
 
     let private authorizeContentBlockDownloadForManifest repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
         task {
-            let! sessionOwnsManifest = uploadSessionOwnsManifest repositoryId parameters parameters.Manifest correlationId
+            let! savedFileVersion = loadSavedFileVersionForFilePath repositoryId parameters.FilePath correlationId
 
-            if sessionOwnsManifest then
-                return Ok()
-            else
-                let! hasRepositoryManifestReference = repositoryOwnsManifest repositoryId parameters.Manifest.ManifestAddress correlationId
+            match validateContentBlockDownloadFilePathEvidence correlationId parameters.FilePath savedFileVersion parameters.Manifest with
+            | Error error -> return Error error
+            | Ok () ->
+                let! sessionOwnsManifest = uploadSessionOwnsManifest repositoryId parameters parameters.Manifest correlationId
 
-                return validateContentBlockDownloadRepositoryOwnership correlationId hasRepositoryManifestReference
+                if sessionOwnsManifest then
+                    return Ok()
+                else
+                    let! hasRepositoryManifestReference = repositoryOwnsManifest repositoryId parameters.Manifest correlationId
+
+                    return
+                        validateContentBlockDownloadAuthorizationEvidence
+                            correlationId
+                            parameters.FilePath
+                            savedFileVersion
+                            parameters.Manifest
+                            hasRepositoryManifestReference
         }
 
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =

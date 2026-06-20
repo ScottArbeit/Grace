@@ -236,6 +236,31 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected FilePath evidence to accept the saved file manifest, got {error.Error}.")
 
     [<Test>]
+    member _.ContentBlockDownloadAuthorizationRejectsPathManifestSwapEvenWhenRepositoryOwnsManifest() =
+        let authorizedPath = RelativePath "src/authorized.bin"
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let authorizedManifest = downloadManifestWithBlock (StoragePoolId Constants.DefaultStoragePoolId) contentBlockAddress
+
+        let swappedManifest =
+            downloadManifestWithBlock
+                (StoragePoolId Constants.DefaultStoragePoolId)
+                (ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789")
+
+        let fileVersion = FileVersion.Create authorizedPath authorizedManifest.FileContentHash String.Empty false authorizedManifest.Size
+        fileVersion.ContentReference <- FileContentReference.FileManifest authorizedManifest
+
+        match
+            StorageServer.validateContentBlockDownloadAuthorizationEvidence
+                "corr-path-swap-repository-owned"
+                authorizedPath
+                (Some fileVersion)
+                swappedManifest
+                true
+            with
+        | Ok () -> Assert.Fail("Expected FilePath manifest evidence to remain authoritative even when the repository owns the supplied manifest.")
+        | Error error -> Assert.That(error.Error, Does.Contain("ManifestAddress"))
+
+    [<Test>]
     member _.ContentBlockDownloadRepositoryOwnershipDoesNotRequireLatestPathMatch() =
         let historicalPath = RelativePath "src/replaced.bin"
         let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"

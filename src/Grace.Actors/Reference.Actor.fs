@@ -40,22 +40,25 @@ module Reference =
             WorkflowRanges: ManifestContributionWorkflowRange array
         }
 
-    let private manifestContributionOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) =
-        RepositoryContentCounterOperationId $"save:{referenceId:N}:{manifestAddress}"
+    let private manifestContributionOperationId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        RepositoryContentCounterOperationId $"save:{referenceId:N}:{storagePoolId}:{manifestAddress}"
 
-    let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+    let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
-    let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+    let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
     let private counterCommandDirection command =
         match command with
         | RepositoryContentCounterCommand.AddReference _ -> ManifestContributionDirection.Increment
         | RepositoryContentCounterCommand.RemoveReference _ -> ManifestContributionDirection.Decrement
 
-    let private workflowOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) direction =
+    let private workflowOperationId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) direction =
         match direction with
-        | ManifestContributionDirection.Increment -> ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
-        | ManifestContributionDirection.Decrement -> ManifestContributionWorkflowOperationId $"save-expiry:{referenceId:N}:{manifestAddress}:fanout"
+        | ManifestContributionDirection.Increment -> ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{storagePoolId}:{manifestAddress}:fanout"
+        | ManifestContributionDirection.Decrement ->
+            ManifestContributionWorkflowOperationId $"save-expiry:{referenceId:N}:{storagePoolId}:{manifestAddress}:fanout"
 
     let private workflowRangesForManifest (manifest: FileManifest) =
         let seenContentBlocks = HashSet<ContentBlockAddress>()
@@ -77,7 +80,7 @@ module Reference =
 
         ManifestContributionWorkflowCommand.Start
             {
-                OperationId = workflowOperationId plan.ReferenceId plan.Manifest.ManifestAddress direction
+                OperationId = workflowOperationId plan.ReferenceId plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress direction
                 RepositoryId = plan.RepositoryId
                 ManifestAddress = plan.Manifest.ManifestAddress
                 Direction = direction
@@ -87,13 +90,13 @@ module Reference =
     let private planManifestSaveBoundaryForManifests repositoryId referenceId manifests =
         manifests
         |> Seq.map (fun manifest ->
-            let operationId = manifestContributionOperationId referenceId manifest.ManifestAddress
+            let operationId = manifestContributionOperationId referenceId manifest.StoragePoolId manifest.ManifestAddress
 
             {
                 RepositoryId = repositoryId
                 ReferenceId = referenceId
                 Manifest = manifest
-                CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.ManifestAddress)
+                CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.StoragePoolId, manifest.ManifestAddress)
                 WorkflowRanges = workflowRangesForManifest manifest
             })
         |> Seq.toList
@@ -127,9 +130,13 @@ module Reference =
         |> Result.map (fun plans ->
             plans
             |> List.map (fun plan ->
-                let operationId = RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{plan.Manifest.ManifestAddress}"
+                let operationId =
+                    RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{plan.Manifest.StoragePoolId}:{plan.Manifest.ManifestAddress}"
 
-                { plan with CounterCommand = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, plan.Manifest.ManifestAddress) }))
+                { plan with
+                    CounterCommand =
+                        RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress)
+                }))
 
     let planManifestSaveExpiryBoundary repositoryId storagePoolId referenceId (directoryVersion: DirectoryVersion) correlationId =
         planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId storagePoolId referenceId [ directoryVersion ] correlationId
@@ -278,14 +285,16 @@ module Reference =
 
     let tryCreateManifestContributionStart plan intent =
         match intent with
-        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, manifestAddress) when
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
             repositoryId = plan.RepositoryId
+            && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Increment
             ->
             Some(workflowStartCommandForPlan plan)
-        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, manifestAddress) when
+        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
             repositoryId = plan.RepositoryId
+            && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Decrement
             ->
@@ -294,8 +303,8 @@ module Reference =
 
     let private counterCommandOperationId command =
         match command with
-        | RepositoryContentCounterCommand.AddReference (operationId, _, _)
-        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _) -> Some operationId
+        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _)
+        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> Some operationId
 
     let private commandCrossedZero operationId command events =
         let mutable referenceCount = 0L
@@ -303,7 +312,7 @@ module Reference =
 
         for counterEvent in events do
             match counterEvent.Event with
-            | RepositoryContentCounterEventType.ReferenceAdded (eventOperationId, _, _) ->
+            | RepositoryContentCounterEventType.ReferenceAdded (eventOperationId, _, _, _) ->
                 if eventOperationId = operationId
                    && referenceCount = 0L
                    && counterCommandDirection command = ManifestContributionDirection.Increment then
@@ -334,10 +343,10 @@ module Reference =
             | Some _ -> None
         | None -> None
 
-    let private createRepositoryContentCounterActor repositoryId manifestAddress correlationId =
+    let private createRepositoryContentCounterActor repositoryId storagePoolId manifestAddress correlationId =
         let grain =
             orleansClient.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
-                repositoryContentCounterPrimaryKey repositoryId manifestAddress,
+                repositoryContentCounterPrimaryKey repositoryId storagePoolId manifestAddress,
                 correlationId
             )
 
@@ -347,10 +356,10 @@ module Reference =
         memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
         grain
 
-    let private createManifestContributionWorkflowActor repositoryId manifestAddress correlationId =
+    let private createManifestContributionWorkflowActor repositoryId storagePoolId manifestAddress correlationId =
         let grain =
             orleansClient.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
-                manifestContributionWorkflowPrimaryKey repositoryId manifestAddress,
+                manifestContributionWorkflowPrimaryKey repositoryId storagePoolId manifestAddress,
                 correlationId
             )
 
@@ -369,7 +378,8 @@ module Reference =
             while planIndex < planArray.Length && error.IsNone do
                 let plan = planArray[planIndex]
 
-                let counterActor = createRepositoryContentCounterActor plan.RepositoryId plan.Manifest.ManifestAddress metadata.CorrelationId
+                let counterActor =
+                    createRepositoryContentCounterActor plan.RepositoryId plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress metadata.CorrelationId
 
                 match! counterActor.Handle plan.CounterCommand metadata with
                 | Error graceError -> error <- Some graceError
@@ -379,7 +389,12 @@ module Reference =
                     match tryCreateManifestContributionStartForCounterDecision plan counterReturnValue.ReturnValue counterEvents with
                     | None -> ()
                     | Some startCommand ->
-                        let workflowActor = createManifestContributionWorkflowActor plan.RepositoryId plan.Manifest.ManifestAddress metadata.CorrelationId
+                        let workflowActor =
+                            createManifestContributionWorkflowActor
+                                plan.RepositoryId
+                                plan.Manifest.StoragePoolId
+                                plan.Manifest.ManifestAddress
+                                metadata.CorrelationId
 
                         match! workflowActor.Handle startCommand metadata with
                         | Ok _ -> ()
@@ -393,7 +408,7 @@ module Reference =
         }
 
     let internal applySaveManifestBoundaryForDirectoryVersionsWithRouteResolver
-        (resolveStorageRoute: unit -> Task<Result<DedupeIndex.RepositoryStorageRoute, GraceError>>)
+        (_resolveStorageRoute: unit -> Task<Result<DedupeIndex.RepositoryStorageRoute, GraceError>>)
         (applyBoundary: ManifestSaveContributionPlan list -> EventMetadata -> Task<Result<unit, GraceError>>)
         repositoryId
         referenceId
@@ -411,12 +426,9 @@ module Reference =
                 | Error graceError -> return Error graceError
                 | Ok [] -> return Ok None
                 | Ok plans ->
-                    match! resolveStorageRoute () with
+                    match! applyBoundary plans metadata with
+                    | Ok () -> return Ok(Some plans[0].Manifest.StoragePoolId)
                     | Error graceError -> return Error graceError
-                    | Ok route ->
-                        match! applyBoundary plans metadata with
-                        | Ok () -> return Ok(Some route.StoragePoolId)
-                        | Error graceError -> return Error graceError
         }
 
     let internal applySaveManifestBoundaryWithRouteResolver

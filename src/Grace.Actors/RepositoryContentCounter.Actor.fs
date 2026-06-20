@@ -17,7 +17,8 @@ open System.Threading.Tasks
 
 module RepositoryContentCounter =
 
-    let primaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+    let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
     let commandName command =
         match command with
@@ -26,17 +27,17 @@ module RepositoryContentCounter =
 
     let operationId command =
         match command with
-        | RepositoryContentCounterCommand.AddReference (operationId, _, _) -> operationId
-        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _) -> operationId
+        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _) -> operationId
+        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> operationId
 
     let private commandTarget command =
         match command with
-        | RepositoryContentCounterCommand.AddReference (_, repositoryId, manifestAddress)
-        | RepositoryContentCounterCommand.RemoveReference (_, repositoryId, manifestAddress) -> repositoryId, manifestAddress
+        | RepositoryContentCounterCommand.AddReference (_, repositoryId, storagePoolId, manifestAddress)
+        | RepositoryContentCounterCommand.RemoveReference (_, repositoryId, storagePoolId, manifestAddress) -> repositoryId, storagePoolId, manifestAddress
 
     let private eventOperationId counterEvent =
         match counterEvent.Event with
-        | RepositoryContentCounterEventType.ReferenceAdded (operationId, _, _) -> operationId
+        | RepositoryContentCounterEventType.ReferenceAdded (operationId, _, _, _) -> operationId
         | RepositoryContentCounterEventType.ReferenceRemoved operationId -> operationId
 
     let private eventCommandName counterEvent =
@@ -65,15 +66,17 @@ module RepositoryContentCounter =
 
     let private graceError correlationId message = GraceError.Create message correlationId
 
-    let private targetMismatch (counter: RepositoryContentCounterDto) repositoryId manifestAddress =
+    let private targetMismatch (counter: RepositoryContentCounterDto) repositoryId storagePoolId manifestAddress =
         (counter.RepositoryId <> RepositoryId.Empty
          && counter.RepositoryId <> repositoryId)
+        || (not (String.IsNullOrWhiteSpace counter.StoragePoolId)
+            && counter.StoragePoolId <> storagePoolId)
         || (not (String.IsNullOrWhiteSpace counter.ManifestAddress)
             && counter.ManifestAddress <> manifestAddress)
 
-    let private expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId manifestAddress =
+    let private expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId storagePoolId manifestAddress =
         match expectedPrimaryKey with
-        | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId manifestAddress, StringComparison.Ordinal))
+        | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId storagePoolId manifestAddress, StringComparison.Ordinal))
         | None -> false
 
     let decideCommandForKey
@@ -85,17 +88,19 @@ module RepositoryContentCounter =
         : Result<RepositoryContentCounterDecision, GraceError>
         =
         let operationId = operationId command
-        let repositoryId, manifestAddress = commandTarget command
+        let repositoryId, storagePoolId, manifestAddress = commandTarget command
 
         if String.IsNullOrWhiteSpace operationId then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty operation id.")
         elif repositoryId = RepositoryId.Empty then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty RepositoryId.")
+        elif String.IsNullOrWhiteSpace storagePoolId then
+            Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty StoragePoolId.")
         elif String.IsNullOrWhiteSpace manifestAddress then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command requires a non-empty ManifestAddress.")
-        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId manifestAddress then
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId storagePoolId manifestAddress then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the grain key.")
-        elif targetMismatch counter repositoryId manifestAddress then
+        elif targetMismatch counter repositoryId storagePoolId manifestAddress then
             Error(graceError metadata.CorrelationId "RepositoryContentCounter command target does not match the initialized counter.")
         else
             match tryFindAppliedOperation events operationId with
@@ -109,12 +114,15 @@ module RepositoryContentCounter =
                 match command with
                 | RepositoryContentCounterCommand.AddReference _ ->
                     let counterEvent =
-                        { Event = RepositoryContentCounterEventType.ReferenceAdded(operationId, repositoryId, manifestAddress); Metadata = metadata }
+                        {
+                            Event = RepositoryContentCounterEventType.ReferenceAdded(operationId, repositoryId, storagePoolId, manifestAddress)
+                            Metadata = metadata
+                        }
 
                     let intents =
                         if counter.ReferenceCount = 0L then
                             [
-                                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifestAddress)
+                                RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
                             ]
                         else
                             []
@@ -129,7 +137,7 @@ module RepositoryContentCounter =
                         let intents =
                             if counter.ReferenceCount = 1L then
                                 [
-                                    RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifestAddress)
+                                    RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress)
                                 ]
                             else
                                 []
