@@ -152,6 +152,18 @@ type StoragePoolRoutingServerTests() =
         Assert.That(signingAccount, Is.Not.EqualTo(AzureEnvironment.storageEndpoints.AccountName))
 
     [<Test>]
+    member _.ShardBlobHostReplacementPreservesPrivateLinkSuffix() =
+        let host = Grace.Actors.Services.shardBlobHostForConfiguredHost "cas-shard-private" "primaryacct.privatelink.blob.core.windows.net"
+
+        Assert.That(host, Is.EqualTo("cas-shard-private.privatelink.blob.core.windows.net"))
+
+    [<Test>]
+    member _.ShardBlobHostReplacementPreservesStandardBlobSuffix() =
+        let host = Grace.Actors.Services.shardBlobHostForConfiguredHost "cas-shard-standard" "primaryacct.blob.core.windows.net"
+
+        Assert.That(host, Is.EqualTo("cas-shard-standard.blob.core.windows.net"))
+
+    [<Test>]
     member _.RepositoryDerivedBridgeRemainsRepositoryScopedUntilContentBlockPlacementUsesStoragePoolShard() =
         let firstRepositoryId = Guid.Parse("55555555-5555-5555-5555-555555555555")
         let secondRepositoryId = Guid.Parse("66666666-6666-6666-6666-666666666666")
