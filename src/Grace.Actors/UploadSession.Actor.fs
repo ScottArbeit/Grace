@@ -148,6 +148,10 @@ module UploadSession =
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else

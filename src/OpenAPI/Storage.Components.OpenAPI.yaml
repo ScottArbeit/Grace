@@ -837,12 +837,18 @@ ContentBlockStoragePlacement:
   description: Object-storage placement metadata for a confirmed ContentBlock payload.
   type: object
   properties:
+    StorageAccountName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageAccountName'
+    StorageContainerName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageContainerName'
     ObjectKey:
       type: string
     ETag:
       type: string
       nullable: true
   required:
+    - StorageAccountName
+    - StorageContainerName
     - ObjectKey
 
 FinalizeManifestBlockPayload:

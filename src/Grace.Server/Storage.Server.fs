@@ -17,6 +17,7 @@ open Grace.Shared.Utilities
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Validation.Errors
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Common
@@ -68,6 +69,43 @@ module Storage =
         match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
         | Some _ -> Ok()
         | None -> Error(invalidContentBlockAddressError correlationId)
+
+    let private expectedContentBlockStoragePlacement (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) eTag =
+        StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockObjectKey contentBlockAddress) eTag
+
+    let private validateContentBlockStoragePlacementForRoute
+        correlationId
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (contentBlockAddress: ContentBlockAddress)
+        (placement: ContentBlockStoragePlacement)
+        =
+        if isNull (box placement) then
+            Error(GraceError.Create "StoragePlacement is required." correlationId)
+        else
+            let expected = expectedContentBlockStoragePlacement route contentBlockAddress placement.ETag
+
+            if placement.StorageAccountName
+               <> expected.StorageAccountName then
+                Error(
+                    GraceError.Create
+                        $"StoragePlacement.StorageAccountName must match the selected StoragePool shard. Expected {expected.StorageAccountName}, actual {placement.StorageAccountName}."
+                        correlationId
+                )
+            elif placement.StorageContainerName
+                 <> expected.StorageContainerName then
+                Error(
+                    GraceError.Create
+                        $"StoragePlacement.StorageContainerName must match the selected StoragePool shard. Expected {expected.StorageContainerName}, actual {placement.StorageContainerName}."
+                        correlationId
+                )
+            elif placement.ObjectKey <> expected.ObjectKey then
+                Error(
+                    GraceError.Create
+                        $"StoragePlacement.ObjectKey must match the selected StoragePool shard. Expected {expected.ObjectKey}, actual {placement.ObjectKey}."
+                        correlationId
+                )
+            else
+                Ok()
 
     let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
         let organizationId =
@@ -272,10 +310,12 @@ module Storage =
             match repositoryDto.ObjectStorageProvider with
             | AzureBlobStorage ->
                 try
-                    let! blobClient = getAzureBlobClient repositoryDto confirmedBlock.StoragePlacement.ObjectKey correlationId
-                    let! downloadResult = blobClient.DownloadContentAsync()
+                    match! getAzureContentBlockClientForPlacement confirmedBlock.StoragePlacement correlationId with
+                    | Error error -> return Error error
+                    | Ok blobClient ->
+                        let! downloadResult = blobClient.DownloadContentAsync()
 
-                    return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
+                        return Ok({ Address = confirmedBlock.ContentBlockAddress; Payload = downloadResult.Value.Content.ToArray() })
                 with
                 | :? Azure.RequestFailedException as ex ->
                     return
@@ -443,10 +483,14 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                        let! uploadUri = getUriWithCreateSharedAccessSignature repositoryDto blobName correlationId
-                        context.SetStatusCode StatusCodes.Status200OK
-                        return! context.WriteStringAsync uploadUri.AbsoluteUri
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok route ->
+                            match! createAzureContentBlockSasUri route parameters.ContentBlockAddress azureBlobCreatePermissions correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok uploadUri ->
+                                context.SetStatusCode StatusCodes.Status200OK
+                                return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -471,10 +515,14 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                        let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
-                        context.SetStatusCode StatusCodes.Status200OK
-                        return! context.WriteStringAsync downloadUri.AbsoluteUri
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok route ->
+                            match! createAzureContentBlockSasUri route parameters.ContentBlockAddress azureBlobReadPermissions correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok downloadUri ->
+                                context.SetStatusCode StatusCodes.Status200OK
+                                return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -776,16 +824,27 @@ module Storage =
                 try
                     let! parameters = context.BindJsonAsync<ConfirmContentBlockUploadParameters>()
 
-                    let command =
-                        UploadSessionCommand.ConfirmBlockUploaded
-                            {
-                                OperationId = parameters.OperationId
-                                ContentBlockAddress = parameters.ContentBlockAddress
-                                Payload = parameters.Payload
-                                StoragePlacement = parameters.StoragePlacement
-                            }
+                    let graceIds = getGraceIds context
+                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                    let! repositoryDto = repositoryActor.Get correlationId
 
-                    return! handleUploadSessionCommand context parameters command correlationId
+                    match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok route ->
+                        match validateContentBlockStoragePlacementForRoute correlationId route parameters.ContentBlockAddress parameters.StoragePlacement with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok () ->
+                            let command =
+                                UploadSessionCommand.ConfirmBlockUploaded
+                                    {
+                                        OperationId = parameters.OperationId
+                                        ContentBlockAddress = parameters.ContentBlockAddress
+                                        Payload = parameters.Payload
+                                        StoragePlacement = parameters.StoragePlacement
+                                    }
+
+                            return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex

@@ -19,6 +19,38 @@ open System.Text
 open System.Text.Json
 open System.Net.Http.Headers
 
+module private StoragePlacementTestHelpers =
+    let contentBlockPlacementFromUri (blobUriWithSasToken: Uri) eTag =
+        let pathSegments =
+            blobUriWithSasToken
+                .AbsolutePath
+                .Trim('/')
+                .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map Uri.UnescapeDataString
+
+        let isPathStyleAzurite =
+            blobUriWithSasToken.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(blobUriWithSasToken.Host)
+               |> fst
+
+        let accountName =
+            if isPathStyleAzurite && pathSegments.Length >= 3 then
+                pathSegments[0]
+            else
+                let host = blobUriWithSasToken.Host
+                let firstDot = host.IndexOf('.')
+
+                if firstDot > 0 then host.Substring(0, firstDot) else host
+
+        let containerIndex = if isPathStyleAzurite then 1 else 0
+
+        {
+            StorageAccountName = accountName
+            StorageContainerName = StorageContainerName pathSegments[containerIndex]
+            ObjectKey = String.Join("/", pathSegments |> Array.skip (containerIndex + 1))
+            ETag = eTag
+        }
+
 [<NonParallelizable>]
 type StorageWholeFileCompatibility() =
 
@@ -840,7 +872,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
 
-            let storagePlacement = { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
+            let storagePlacement = StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
 
             Assert.That(storagePlacement.ETag, Is.Not.EqualTo(None))
 
@@ -1401,6 +1433,8 @@ type StorageManifestUploadSessionRoutes() =
 
             confirm.StoragePlacement <-
                 {
+                    StorageAccountName = AzureEnvironment.storageEndpoints.AccountName
+                    StorageContainerName = StorageContainerName Constants.DefaultCasStorageContainerName
                     ObjectKey = StorageKeys.contentBlockObjectKey (ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray()))
                     ETag = Some "etag-missing-block"
                 }
@@ -1489,7 +1523,7 @@ type StorageManifestUploadSessionRoutes() =
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
-            confirm.StoragePlacement <- { ObjectKey = StorageKeys.contentBlockObjectKey block.Address; ETag = Some uploadETag }
+            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some uploadETag)
 
             let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
 
