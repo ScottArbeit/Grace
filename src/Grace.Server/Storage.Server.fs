@@ -764,10 +764,10 @@ module Storage =
                     else
                         Ok()
 
-    let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state =
-        DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state
+    let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state =
+        DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
 
-    let private validateManifestForContentBlockDownload storagePoolId (parameters: GetContentBlockDownloadUriParameters) correlationId =
+    let private validateManifestForContentBlockDownload storagePoolId repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
         task {
             match validateManifestAddress correlationId parameters.ManifestAddress with
             | Error error -> return Error error
@@ -778,6 +778,7 @@ module Storage =
                     dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
                         (
                             storagePoolId,
+                            repositoryId,
                             parameters.AuthorizedScope,
                             parameters.ManifestAddress,
                             parameters.ContentBlockAddress,
@@ -879,9 +880,7 @@ module Storage =
                         match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok route ->
-                            let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
-
-                            match! validateManifestForContentBlockDownload storagePoolId parameters correlationId with
+                            match! validateManifestForContentBlockDownload route.StoragePoolId repositoryId parameters correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok storagePlacement ->
                                 match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId with
@@ -928,14 +927,17 @@ module Storage =
                         let organizationId, repositoryId = resolveStorageIds graceIds parameters
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
-                        let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
-                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
-                        let! snapshot = dedupeIndexActor.Snapshot correlationId
-                        let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
 
-                        return!
-                            context
-                            |> result200Ok (GraceReturnValue.Create result correlationId)
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok route ->
+                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                            let! snapshot = dedupeIndexActor.Snapshot correlationId
+                            let result = DedupeIndex.discover route.StoragePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
+
+                            return!
+                                context
+                                |> result200Ok (GraceReturnValue.Create result correlationId)
                 with
                 | ex ->
                     logToConsole $"Exception in DiscoverContentBlocks: {(ExceptionResponse.Create ex)}"
@@ -1013,14 +1015,7 @@ module Storage =
                         match scopeValidation with
                         | Error error -> return! context |> result400BadRequest error
                         | Ok requestContext ->
-                            let repositoryActor =
-                                Repository.CreateActorProxy
-                                    requestContext.SessionForScope.OrganizationId
-                                    requestContext.SessionForScope.RepositoryId
-                                    correlationId
-
-                            let! repositoryDto = repositoryActor.Get correlationId
-                            let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+                            let storagePoolId = requestContext.SessionForScope.StoragePoolId
                             let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
                             let! records = dedupeIndexActor.Snapshot correlationId
 
@@ -1088,14 +1083,7 @@ module Storage =
                             match validateActiveDedupeDiscoveryForClaim requestContext parameters correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok discovery ->
-                                let repositoryActor =
-                                    Repository.CreateActorProxy
-                                        requestContext.SessionForScope.OrganizationId
-                                        requestContext.SessionForScope.RepositoryId
-                                        correlationId
-
-                                let! repositoryDto = repositoryActor.Get correlationId
-                                let storagePoolId = DedupeIndex.storagePoolIdForRepository repositoryDto
+                                let storagePoolId = requestContext.SessionForScope.StoragePoolId
 
                                 match validateClaimReuseHints correlationId storagePoolId discovery hints with
                                 | Error error -> return! context |> result400BadRequest error
