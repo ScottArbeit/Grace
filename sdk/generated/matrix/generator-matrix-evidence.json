@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "1b90f25db5b9bd01b5d5377e825396fc97ade339fc79a5e30541913253511ea0",
+  "sourceProjectionSha256": "d22c3311966f66b1ba6b96fb0a630299362351dc365cfb504200aeeb87195d01",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.2",
@@ -153,15 +153,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "0374cabecc15f21a0cfc93039c440ed1d060b12a3684f200c921bbb5818bb867"
+      "manifestSha256": "bb1ec119a6c41c3961815368329192b226cf7acbf960e64ed259f0fa6ab575cd"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "67b69aaf86eb3d6918e3e2370a6a64d26e95e8c5939fc0f4b60bee9072bdc1de"
+      "manifestSha256": "c50afcd5d9052502035f2e834f82316e16ee2f137ef1870c5217b3564632960b"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "3465d674b7b5155453303d4c1bebfeee0fa37299503d640d16312ca4f0ebe300"
+      "manifestSha256": "c67ca3be54179df0cbd4e833d050ce19c510fe663297c2c8911055924eecfdce"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",

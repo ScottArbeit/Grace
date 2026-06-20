@@ -824,27 +824,31 @@ module Storage =
                 try
                     let! parameters = context.BindJsonAsync<ConfirmContentBlockUploadParameters>()
 
-                    let graceIds = getGraceIds context
-                    let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                    let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                    let! repositoryDto = repositoryActor.Get correlationId
-
-                    match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                    match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok route ->
-                        match validateContentBlockStoragePlacementForRoute correlationId route parameters.ContentBlockAddress parameters.StoragePlacement with
-                        | Error error -> return! context |> result400BadRequest error
-                        | Ok () ->
-                            let command =
-                                UploadSessionCommand.ConfirmBlockUploaded
-                                    {
-                                        OperationId = parameters.OperationId
-                                        ContentBlockAddress = parameters.ContentBlockAddress
-                                        Payload = parameters.Payload
-                                        StoragePlacement = parameters.StoragePlacement
-                                    }
+                    | Ok () ->
+                        let graceIds = getGraceIds context
+                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
 
-                            return! handleUploadSessionCommand context parameters command correlationId
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok route ->
+                            match validateContentBlockStoragePlacementForRoute correlationId route parameters.ContentBlockAddress parameters.StoragePlacement
+                                with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                let command =
+                                    UploadSessionCommand.ConfirmBlockUploaded
+                                        {
+                                            OperationId = parameters.OperationId
+                                            ContentBlockAddress = parameters.ContentBlockAddress
+                                            Payload = parameters.Payload
+                                            StoragePlacement = parameters.StoragePlacement
+                                        }
+
+                                return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
