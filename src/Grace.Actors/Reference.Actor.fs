@@ -127,6 +127,15 @@ module Reference =
         | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) -> Ok storagePoolId
         | _ -> Error(GraceError.Create $"Save reference {referenceId} does not have a recorded StoragePoolId for manifest expiry fan-out." correlationId)
 
+    let internal planManifestSaveExpiryBoundaryWhenNeeded repositoryId storagePoolId referenceId (directoryVersion: DirectoryVersion) correlationId =
+        match planManifestSaveExpiryBoundary repositoryId (StoragePoolId String.Empty) referenceId directoryVersion correlationId with
+        | Error graceError -> Error graceError
+        | Ok [] -> Ok []
+        | Ok _ ->
+            match requireSaveStoragePoolId correlationId referenceId storagePoolId with
+            | Error graceError -> Error graceError
+            | Ok storagePoolId -> planManifestSaveExpiryBoundary repositoryId storagePoolId referenceId directoryVersion correlationId
+
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
         let rootRelativePath = directoryVersion.RelativePath
 
@@ -468,19 +477,16 @@ module Reference =
                                         physicalDeletionReminderState.StoragePoolId
                                         |> Option.orElse saveStoragePoolId
 
-                                    match requireSaveStoragePoolId this.correlationId referenceId storagePoolId with
+                                    match
+                                        planManifestSaveExpiryBoundaryWhenNeeded
+                                            physicalDeletionReminderState.RepositoryId
+                                            storagePoolId
+                                            referenceId
+                                            directoryVersionDto.DirectoryVersion
+                                            this.correlationId
+                                        with
                                     | Error graceError -> return Error graceError
-                                    | Ok storagePoolId ->
-                                        match
-                                            planManifestSaveExpiryBoundary
-                                                physicalDeletionReminderState.RepositoryId
-                                                storagePoolId
-                                                referenceId
-                                                directoryVersionDto.DirectoryVersion
-                                                this.correlationId
-                                            with
-                                        | Error graceError -> return Error graceError
-                                        | Ok plans -> return! applyManifestContributionBoundary plans (EventMetadata.New this.correlationId "GraceSystem")
+                                    | Ok plans -> return! applyManifestContributionBoundary plans (EventMetadata.New this.correlationId "GraceSystem")
                                 else
                                     return Ok()
                             }
@@ -735,19 +741,16 @@ module Reference =
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
                                 let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
 
-                                match requireSaveStoragePoolId metadata.CorrelationId referenceId saveStoragePoolId with
+                                match
+                                    planManifestSaveExpiryBoundaryWhenNeeded
+                                        repositoryId
+                                        saveStoragePoolId
+                                        referenceId
+                                        directoryVersionDto.DirectoryVersion
+                                        metadata.CorrelationId
+                                    with
                                 | Error graceError -> return Error graceError
-                                | Ok storagePoolId ->
-                                    match
-                                        planManifestSaveExpiryBoundary
-                                            repositoryId
-                                            storagePoolId
-                                            referenceId
-                                            directoryVersionDto.DirectoryVersion
-                                            metadata.CorrelationId
-                                        with
-                                    | Error graceError -> return Error graceError
-                                    | Ok plans -> return! applyManifestContributionBoundary plans metadata
+                                | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
 
                     let validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash =

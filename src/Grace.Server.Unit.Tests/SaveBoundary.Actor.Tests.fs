@@ -839,12 +839,12 @@ type SaveBoundaryActorTests() =
 
         Assert.That(ReferenceActor.tryGetSaveStoragePoolIdFromCreatedEvent createdEvent, Is.EqualTo(Some originalPool))
 
-        match ReferenceActor.requireSaveStoragePoolId "corr-expiry-missing" referenceId None with
-        | Ok pool -> Assert.Fail($"Expected missing save StoragePoolId evidence to fail closed, got {pool}.")
+        match ReferenceActor.planManifestSaveExpiryBoundaryWhenNeeded repositoryId None referenceId directoryVersion "corr-expiry-missing" with
+        | Ok _ -> Assert.Fail("Expected missing save StoragePoolId evidence to fail closed before manifest expiry fan-out.")
         | Error error -> Assert.That(error.Error, Does.Contain("does not have a recorded StoragePoolId"))
 
         let expiryPlan =
-            ReferenceActor.planManifestSaveExpiryBoundary repositoryId originalPool referenceId directoryVersion "corr-expiry-original-pool"
+            ReferenceActor.planManifestSaveExpiryBoundaryWhenNeeded repositoryId (Some originalPool) referenceId directoryVersion "corr-expiry-original-pool"
             |> expectPlan
 
         Assert.That(currentRepositoryPool, Is.Not.EqualTo(originalPool))
@@ -1060,7 +1060,7 @@ type SaveBoundaryActorTests() =
     member _.SaveExpiryPlanningKeepsWholeFileCleanupAsNoOp() =
         let directoryVersion = directoryWith [ wholeFile () ]
 
-        match ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-whole-file-expiry" with
+        match ReferenceActor.planManifestSaveExpiryBoundaryWhenNeeded repositoryId None referenceId directoryVersion "corr-whole-file-expiry" with
         | Ok plans -> Assert.That(plans, Is.Empty)
         | Error error -> Assert.Fail($"Expected whole-file save expiry planning to remain a no-op, got {error.Error}.")
 
