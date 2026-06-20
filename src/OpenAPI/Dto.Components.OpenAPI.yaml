@@ -178,6 +178,8 @@
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName
         ObjectStorageProvider:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ObjectStorageProvider
+        StoragePoolId:
+          $ref: Storage.Components.OpenAPI.yaml#/StoragePoolId
         StorageAccountName:
           type: string
         StorageContainerName:

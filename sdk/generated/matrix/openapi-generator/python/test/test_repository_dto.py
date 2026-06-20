@@ -42,6 +42,7 @@ class TestRepositoryDto(unittest.TestCase):
                 organization_id = 'e35d64a9-b990-44f5-bf02-32ad7d15630c',
                 repository_name = '',
                 object_storage_provider = 'AWSS3',
+                storage_pool_id = '',
                 storage_account_name = '',
                 storage_container_name = '',
                 repository_visibility = 'Private',
