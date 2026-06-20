@@ -6558,6 +6558,8 @@ components:
           $ref: '#/components/schemas/OrganizationId'
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
         FileContentHash:
@@ -6609,6 +6611,7 @@ components:
         - OwnerId
         - OrganizationId
         - RepositoryId
+        - StoragePoolId
         - AuthorizedScope
         - FileContentHash
         - ExpectedSize
@@ -6638,6 +6641,8 @@ components:
           $ref: '#/components/schemas/OrganizationId'
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
         FileContentHash:
@@ -6656,6 +6661,7 @@ components:
         - OwnerId
         - OrganizationId
         - RepositoryId
+        - StoragePoolId
         - AuthorizedScope
         - FileContentHash
         - ExpectedSize

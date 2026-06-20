@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 **owner_id** | **uuid::Uuid** |  | 
 **organization_id** | **uuid::Uuid** |  | 
 **repository_id** | **uuid::Uuid** |  | 
+**storage_pool_id** | **String** | StoragePool-wide CAS scope identifier. | 
 **authorized_scope** | **String** |  | 
 **file_content_hash** | **String** | Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes. | 
 **expected_size** | **i64** |  | 

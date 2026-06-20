@@ -22,6 +22,9 @@ pub struct StartUploadSession {
     pub organization_id: uuid::Uuid,
     #[serde(rename = "RepositoryId")]
     pub repository_id: uuid::Uuid,
+    /// StoragePool-wide CAS scope identifier.
+    #[serde(rename = "StoragePoolId")]
+    pub storage_pool_id: String,
     #[serde(rename = "AuthorizedScope")]
     pub authorized_scope: String,
     /// Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.
@@ -41,12 +44,13 @@ pub struct StartUploadSession {
 
 impl StartUploadSession {
     /// Event payload recorded when a manifest upload session starts.
-    pub fn new(upload_session_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, authorized_scope: String, file_content_hash: String, expected_size: i64, chunking_suite_id: String, sampling_policy_snapshot: String, operation_id: String) -> StartUploadSession {
+    pub fn new(upload_session_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, storage_pool_id: String, authorized_scope: String, file_content_hash: String, expected_size: i64, chunking_suite_id: String, sampling_policy_snapshot: String, operation_id: String) -> StartUploadSession {
         StartUploadSession {
             upload_session_id,
             owner_id,
             organization_id,
             repository_id,
+            storage_pool_id,
             authorized_scope,
             file_content_hash,
             expected_size,

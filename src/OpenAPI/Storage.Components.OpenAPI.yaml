@@ -143,6 +143,8 @@ StartUploadSession:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
     RepositoryId:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     AuthorizedScope:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     FileContentHash:
@@ -161,6 +163,7 @@ StartUploadSession:
     - OwnerId
     - OrganizationId
     - RepositoryId
+    - StoragePoolId
     - AuthorizedScope
     - FileContentHash
     - ExpectedSize
@@ -464,6 +467,8 @@ UploadSessionDto:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
     RepositoryId:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     AuthorizedScope:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     FileContentHash:
@@ -515,6 +520,7 @@ UploadSessionDto:
     - OwnerId
     - OrganizationId
     - RepositoryId
+    - StoragePoolId
     - AuthorizedScope
     - FileContentHash
     - ExpectedSize

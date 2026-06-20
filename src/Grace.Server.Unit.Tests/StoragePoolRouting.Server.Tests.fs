@@ -66,6 +66,36 @@ type StoragePoolRoutingServerTests() =
             Assert.That(error.CorrelationId, Is.EqualTo("corr-missing-pool"))
 
     [<Test>]
+    member _.UploadSessionRecordedStoragePoolRouteDoesNotFollowRepositoryRouteDrift() =
+        let repositoryId = Guid.Parse("45454545-4545-4545-4545-454545454545")
+        let recordedPoolId = StoragePoolId "pool-recorded"
+        let currentRepositoryPoolId = StoragePoolId "pool-current"
+
+        let configuredPools: StoragePoolRouting.ConfiguredStoragePool array =
+            [|
+                {
+                    StoragePoolId = recordedPoolId
+                    Shard = { StorageAccountName = "cas-recorded"; StorageContainerName = StorageContainerName "cas-recorded"; ObjectKeyPrefix = "recorded" }
+                }
+                {
+                    StoragePoolId = currentRepositoryPoolId
+                    Shard = { StorageAccountName = "cas-current"; StorageContainerName = StorageContainerName "cas-current"; ObjectKeyPrefix = "current" }
+                }
+            |]
+
+        let route = StoragePoolRouting.resolveConfiguredPoolRouteForStoragePoolId configuredPools repositoryId recordedPoolId "corr-recorded-pool"
+
+        match route with
+        | Error error -> Assert.Fail($"Expected recorded upload-session pool to resolve, got {error.Error}.")
+        | Ok route ->
+            Assert.That(route.RepositoryId, Is.EqualTo(repositoryId))
+            Assert.That(route.StoragePoolId, Is.EqualTo(recordedPoolId))
+            Assert.That(route.StoragePoolId, Is.Not.EqualTo(currentRepositoryPoolId))
+            Assert.That(route.Shard.StorageAccountName, Is.EqualTo("cas-recorded"))
+            Assert.That(route.Shard.StorageContainerName, Is.EqualTo(StorageContainerName "cas-recorded"))
+            Assert.That(route.Shard.ObjectKeyPrefix, Is.EqualTo("recorded"))
+
+    [<Test>]
     member _.ShardPlacementUsesSelectedAccountContainerAndPrefix() =
         let shard: StoragePoolRouting.StorageShard =
             { StorageAccountName = "cas-shard-a"; StorageContainerName = StorageContainerName "cas-a"; ObjectKeyPrefix = "/pool-a/" }
