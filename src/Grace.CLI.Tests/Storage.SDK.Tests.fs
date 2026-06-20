@@ -57,3 +57,17 @@ type StorageSdkTests() =
         Assert.That(azuritePlacement.StorageAccountName, Is.EqualTo("devstoreaccount1"))
         Assert.That(string azuritePlacement.StorageContainerName, Is.EqualTo("cas-container"))
         Assert.That(azuritePlacement.ObjectKey, Is.EqualTo("cas/content/dddddddd"))
+
+    [<Test>]
+    member _.ContentBlockPlacementFromUriKeepsStandardAccountEvidenceWithoutConfiguredEndpoint() =
+        let placement =
+            Storage.contentBlockPlacementFromUriUsingConfiguredEndpoint
+                null
+                String.Empty
+                (Uri "https://shardaccount.blob.core.windows.net/cas-container/cas/content/eeeeeeee?sig=fake")
+                (Some "etag-standard")
+
+        Assert.That(placement.StorageAccountName, Is.EqualTo("shardaccount"))
+        Assert.That(string placement.StorageContainerName, Is.EqualTo("cas-container"))
+        Assert.That(placement.ObjectKey, Is.EqualTo("cas/content/eeeeeeee"))
+        Assert.That(placement.ETag, Is.EqualTo(Some "etag-standard"))

@@ -254,6 +254,7 @@ module private RestartDurabilityHelpers =
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
             uploadUriParameters.AuthorizedScope <- "/"
 
