@@ -21,6 +21,8 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
+from uuid import UUID
+from grace_generated_openapi_probe.models.file_manifest import FileManifest
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -39,7 +41,10 @@ class GetContentBlockDownloadUriParameters(BaseModel):
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
     storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress", "StoragePoolId"]
+    manifest: Optional[FileManifest] = Field(default=None, alias="Manifest")
+    upload_session_id: Optional[UUID] = Field(default=None, alias="UploadSessionId")
+    authorized_scope: Optional[StrictStr] = Field(default=None, alias="AuthorizedScope")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress", "StoragePoolId", "Manifest", "UploadSessionId", "AuthorizedScope"]
 
     @field_validator('content_block_address')
     def content_block_address_validate_regular_expression(cls, value):
@@ -93,6 +98,9 @@ class GetContentBlockDownloadUriParameters(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
+        # override the default output from pydantic by calling `to_dict()` of manifest
+        if self.manifest:
+            _dict['Manifest'] = self.manifest.to_dict()
         return _dict
 
     @classmethod
@@ -114,7 +122,10 @@ class GetContentBlockDownloadUriParameters(BaseModel):
             "RepositoryId": obj.get("RepositoryId"),
             "RepositoryName": obj.get("RepositoryName"),
             "ContentBlockAddress": obj.get("ContentBlockAddress"),
-            "StoragePoolId": obj.get("StoragePoolId")
+            "StoragePoolId": obj.get("StoragePoolId"),
+            "Manifest": FileManifest.from_dict(obj["Manifest"]) if obj.get("Manifest") is not None else None,
+            "UploadSessionId": obj.get("UploadSessionId"),
+            "AuthorizedScope": obj.get("AuthorizedScope")
         })
         return _obj
 

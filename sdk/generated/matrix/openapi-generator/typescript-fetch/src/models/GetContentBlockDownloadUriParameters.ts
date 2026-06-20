@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { FileManifest } from './FileManifest';
+import {
+    FileManifestFromJSON,
+    FileManifestFromJSONTyped,
+    FileManifestToJSON,
+    FileManifestToJSONTyped,
+} from './FileManifest';
+
 /**
  * 
  * @export
@@ -79,6 +87,24 @@ export interface GetContentBlockDownloadUriParameters {
      * @memberof GetContentBlockDownloadUriParameters
      */
     storagePoolId?: string;
+    /**
+     * 
+     * @type {FileManifest}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    manifest?: FileManifest;
+    /**
+     * 
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    uploadSessionId?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    authorizedScope?: string;
 }
 
 /**
@@ -108,6 +134,9 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
         'storagePoolId': json['StoragePoolId'] == null ? undefined : json['StoragePoolId'],
+        'manifest': json['Manifest'] == null ? undefined : FileManifestFromJSON(json['Manifest']),
+        'uploadSessionId': json['UploadSessionId'] == null ? undefined : json['UploadSessionId'],
+        'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
     };
 }
 
@@ -132,6 +161,9 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'RepositoryName': value['repositoryName'],
         'ContentBlockAddress': value['contentBlockAddress'],
         'StoragePoolId': value['storagePoolId'],
+        'Manifest': FileManifestToJSON(value['manifest']),
+        'UploadSessionId': value['uploadSessionId'],
+        'AuthorizedScope': value['authorizedScope'],
     };
 }
 

@@ -108,10 +108,51 @@ module Services =
 
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
+    let internal storageAccountNameForConfiguredDefault (accountName: string) (configuredDefaultAccountName: string) =
+        let configuredAccount =
+            if String.IsNullOrWhiteSpace configuredDefaultAccountName then
+                DefaultObjectStorageAccount
+            else
+                configuredDefaultAccountName
+
+        if String.IsNullOrWhiteSpace accountName then
+            configuredAccount
+        elif
+            String.Equals(accountName, DefaultObjectStorageAccount, StringComparison.OrdinalIgnoreCase)
+            || String.Equals(accountName, DefaultCasStorageAccountName, StringComparison.OrdinalIgnoreCase)
+        then
+            configuredAccount
+        else
+            accountName
+
+    let internal effectiveStorageAccountName accountName = storageAccountNameForConfiguredDefault accountName AzureEnvironment.storageEndpoints.AccountName
+
+    let internal validateSharedKeyStorageAccountForConfiguredDefault accountName configuredDefaultAccountName useManagedIdentityForStorage =
+        if useManagedIdentityForStorage then
+            Ok()
+        else
+            let configuredAccountName = storageAccountNameForConfiguredDefault String.Empty configuredDefaultAccountName
+            let effectiveAccountName = storageAccountNameForConfiguredDefault accountName configuredDefaultAccountName
+
+            if String.Equals(effectiveAccountName, configuredAccountName, StringComparison.OrdinalIgnoreCase) then
+                Ok()
+            else
+                Error(
+                    $"Azure Blob shared-key SAS cannot be issued for storage account '{effectiveAccountName}' with the configured default account '{configuredAccountName}'. Configure per-account storage keys or enable managed identity for storage before routing CAS to a different account."
+                )
+
+    let validateSharedKeyStorageAccount accountName =
+        validateSharedKeyStorageAccountForConfiguredDefault
+            accountName
+            AzureEnvironment.storageEndpoints.AccountName
+            AzureEnvironment.useManagedIdentityForStorage
+
     /// Shared key credential for Azure Storage when available.
     let private sharedKeyCredentialForAccount accountName =
+        let effectiveAccountName = effectiveStorageAccountName accountName
+
         AzureEnvironment.storageAccountKey
-        |> Option.map (fun accountKey -> StorageSharedKeyCredential(accountName, accountKey))
+        |> Option.map (fun accountKey -> StorageSharedKeyCredential(effectiveAccountName, accountKey))
 
     let private normalizeLocalAzuriteBlobUri (accountName: string) (blobUri: Uri) =
         let accountPathPrefix = $"/{accountName}/"
@@ -140,24 +181,34 @@ module Services =
             builder.Uri
 
     let internal buildBlobContainerUriForAccount accountName containerName =
-        buildBlobContainerUriForEndpoint accountName containerName AzureEnvironment.storageEndpoints.AccountName AzureEnvironment.storageEndpoints.BlobEndpoint
+        buildBlobContainerUriForEndpoint
+            (effectiveStorageAccountName accountName)
+            containerName
+            AzureEnvironment.storageEndpoints.AccountName
+            AzureEnvironment.storageEndpoints.BlobEndpoint
 
     let private createBlobContainerClientFromEndpoint accountName containerName =
+        let effectiveAccountName = effectiveStorageAccountName accountName
+
+        match validateSharedKeyStorageAccount accountName with
+        | Error error -> raise (InvalidOperationException error)
+        | Ok () -> ()
+
         if AzureEnvironment.useManagedIdentityForStorage then
-            if String.Equals(accountName, AzureEnvironment.storageEndpoints.AccountName, StringComparison.OrdinalIgnoreCase) then
+            if String.Equals(effectiveAccountName, AzureEnvironment.storageEndpoints.AccountName, StringComparison.OrdinalIgnoreCase) then
                 Context.blobServiceClient.GetBlobContainerClient(containerName)
             else
                 let containerUri =
-                    buildBlobContainerUriForAccount accountName containerName
-                    |> normalizeLocalAzuriteBlobUri accountName
+                    buildBlobContainerUriForAccount effectiveAccountName containerName
+                    |> normalizeLocalAzuriteBlobUri effectiveAccountName
 
                 BlobContainerClient(containerUri, defaultAzureCredential.Value)
         else
-            match sharedKeyCredentialForAccount accountName with
+            match sharedKeyCredentialForAccount effectiveAccountName with
             | Some credential ->
                 let containerUri =
-                    buildBlobContainerUriForAccount accountName containerName
-                    |> normalizeLocalAzuriteBlobUri accountName
+                    buildBlobContainerUriForAccount effectiveAccountName containerName
+                    |> normalizeLocalAzuriteBlobUri effectiveAccountName
 
                 BlobContainerClient(containerUri, credential)
             | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
@@ -342,14 +393,15 @@ module Services =
     let getContainerClient (repositoryDto: RepositoryDto) correlationId =
         task {
             let containerName = storageContainerNameForRepository repositoryDto
-            let key = $"Con:{repositoryDto.StorageAccountName}-{containerName}"
+            let storageAccountName = effectiveStorageAccountName repositoryDto.StorageAccountName
+            let key = $"Con:{storageAccountName}-{containerName}"
 
             let! blobContainerClient =
                 memoryCache.GetOrCreateAsync(
                     key,
                     fun cacheEntry ->
                         task {
-                            let blobContainerClient = createBlobContainerClientFromEndpoint repositoryDto.StorageAccountName containerName
+                            let blobContainerClient = createBlobContainerClientFromEndpoint storageAccountName containerName
                             let ownerActorProxy = Owner.CreateActorProxy repositoryDto.OwnerId CorrelationId.Empty
                             let! ownerDto = ownerActorProxy.Get correlationId
                             let organizationActorProxy = Organization.CreateActorProxy repositoryDto.OrganizationId CorrelationId.Empty
@@ -405,11 +457,16 @@ module Services =
     /// Creates a full URI for a specific file version.
     let private createAzureBlobSasUri (repositoryDto: RepositoryDto) (blobName: string) (permission: BlobSasPermissions) (correlationId: CorrelationId) =
         task {
+            match validateSharedKeyStorageAccount repositoryDto.StorageAccountName with
+            | Error error -> raise (InvalidOperationException error)
+            | Ok () -> ()
+
+            let storageAccountName = effectiveStorageAccountName repositoryDto.StorageAccountName
             let! blobContainerClient = getContainerClient repositoryDto correlationId
 
             let blobUri =
                 Uri($"{blobContainerClient.Uri.AbsoluteUri.TrimEnd('/')}/{blobName}")
-                |> normalizeLocalAzuriteBlobUri repositoryDto.StorageAccountName
+                |> normalizeLocalAzuriteBlobUri storageAccountName
 
             let blobSasBuilder =
                 BlobSasBuilder(
@@ -440,7 +497,7 @@ module Services =
                     }
                 else
                     task {
-                        match sharedKeyCredentialForAccount repositoryDto.StorageAccountName with
+                        match sharedKeyCredentialForAccount storageAccountName with
                         | Some credential ->
                             let fullUriBlobClient = BlobClient(blobUri, credential)
 

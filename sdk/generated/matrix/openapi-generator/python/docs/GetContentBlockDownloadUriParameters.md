@@ -15,6 +15,9 @@ Name | Type | Description | Notes
 **repository_name** | **str** |  | [optional] 
 **content_block_address** | **str** | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional] 
 **storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. | [optional] 
+**manifest** | [**FileManifest**](FileManifest.md) |  | [optional] 
+**upload_session_id** | **UUID** |  | [optional] 
+**authorized_scope** | **str** |  | [optional] 
 
 ## Example
 

@@ -37,6 +37,12 @@ pub struct GetContentBlockDownloadUriParameters {
     /// StoragePool-wide CAS scope identifier.
     #[serde(rename = "StoragePoolId", skip_serializing_if = "Option::is_none")]
     pub storage_pool_id: Option<String>,
+    #[serde(rename = "Manifest", skip_serializing_if = "Option::is_none")]
+    pub manifest: Option<Box<models::FileManifest>>,
+    #[serde(rename = "UploadSessionId", skip_serializing_if = "Option::is_none")]
+    pub upload_session_id: Option<uuid::Uuid>,
+    #[serde(rename = "AuthorizedScope", skip_serializing_if = "Option::is_none")]
+    pub authorized_scope: Option<String>,
 }
 
 impl GetContentBlockDownloadUriParameters {
@@ -52,6 +58,9 @@ impl GetContentBlockDownloadUriParameters {
             repository_name: None,
             content_block_address: None,
             storage_pool_id: None,
+            manifest: None,
+            upload_session_id: None,
+            authorized_scope: None,
         }
     }
 }

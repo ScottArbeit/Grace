@@ -16,6 +16,9 @@ Name | Type
 `repositoryName` | string
 `contentBlockAddress` | string
 `storagePoolId` | string
+`manifest` | [FileManifest](FileManifest.md)
+`uploadSessionId` | string
+`authorizedScope` | string
 
 ## Example
 
@@ -34,6 +37,9 @@ const example = {
   "repositoryName": null,
   "contentBlockAddress": null,
   "storagePoolId": null,
+  "manifest": null,
+  "uploadSessionId": null,
+  "authorizedScope": null,
 } satisfies GetContentBlockDownloadUriParameters
 
 console.log(example)

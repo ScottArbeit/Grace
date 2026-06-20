@@ -245,6 +245,50 @@ type DedupeIndexServerTests() =
         Assert.That(azuriteContainerUri.AbsolutePath, Does.StartWith($"/{shardAccount}/cas-routed"))
 
     [<Test>]
+    member _.DefaultStorageAccountPlaceholderUsesConfiguredEndpointAccount() =
+        let configuredAccount = "configured-storage-account"
+
+        let effectiveObjectAccount = ActorServices.storageAccountNameForConfiguredDefault Constants.DefaultObjectStorageAccount configuredAccount
+
+        let effectiveCasAccount = ActorServices.storageAccountNameForConfiguredDefault Constants.DefaultCasStorageAccountName configuredAccount
+
+        let effectiveBlankAccount = ActorServices.storageAccountNameForConfiguredDefault String.Empty configuredAccount
+
+        Assert.That(effectiveObjectAccount, Is.EqualTo(configuredAccount))
+        Assert.That(effectiveCasAccount, Is.EqualTo(configuredAccount))
+        Assert.That(effectiveBlankAccount, Is.EqualTo(configuredAccount))
+
+    [<Test>]
+    member _.ExplicitShardStorageAccountIsNotCollapsedToConfiguredDefault() =
+        let configuredAccount = "configured-storage-account"
+        let shardAccount = "cas-shard-account"
+
+        let effectiveShardAccount = ActorServices.storageAccountNameForConfiguredDefault shardAccount configuredAccount
+
+        Assert.That(effectiveShardAccount, Is.EqualTo(shardAccount))
+
+    [<Test>]
+    member _.SharedKeyCrossAccountStorageAccountFailsClosed() =
+        let configuredAccount = "configured-storage-account"
+        let shardAccount = "cas-shard-account"
+
+        match ActorServices.validateSharedKeyStorageAccountForConfiguredDefault shardAccount configuredAccount false with
+        | Ok () -> Assert.Fail("Expected shared-key CAS routing to reject a non-default shard account without per-account keys.")
+        | Error error ->
+            Assert.That(error, Does.Contain(shardAccount))
+            Assert.That(error, Does.Contain(configuredAccount))
+            Assert.That(error, Does.Contain("per-account storage keys"))
+
+    [<Test>]
+    member _.ManagedIdentityCanRouteCrossAccountStorageShard() =
+        let configuredAccount = "configured-storage-account"
+        let shardAccount = "cas-shard-account"
+
+        match ActorServices.validateSharedKeyStorageAccountForConfiguredDefault shardAccount configuredAccount true with
+        | Ok () -> Assert.Pass()
+        | Error error -> Assert.Fail($"Managed identity routing should allow cross-account shards, got {error}.")
+
+    [<Test>]
     member _.RepositoryStorageRouteFailsClosedWhenPoolIsMissing() =
         let repository = repositoryWithStoragePool repositoryId (StoragePoolId "pool-missing")
 

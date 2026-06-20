@@ -103,6 +103,11 @@ module Storage =
 
     let private repositoryForCasStorage route repositoryDto = DedupeIndex.repositoryForStorageRoute route repositoryDto
 
+    let private validateSasStorageAccount correlationId (repositoryDto: RepositoryDto) =
+        match Grace.Actors.Services.validateSharedKeyStorageAccount repositoryDto.StorageAccountName with
+        | Ok () -> Ok()
+        | Error error -> Error(GraceError.Create error correlationId)
+
     let private stampManifestStoragePool storagePoolId (manifest: FileManifest) =
         if isNull (box manifest) then
             manifest
@@ -659,9 +664,13 @@ module Storage =
                         | Ok route ->
                             let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
                             let casRepositoryDto = repositoryForCasStorage route repositoryDto
-                            let! uploadUri = getUriWithCreateSharedAccessSignature casRepositoryDto blobName correlationId
-                            context.SetStatusCode StatusCodes.Status200OK
-                            return! context.WriteStringAsync uploadUri.AbsoluteUri
+
+                            match validateSasStorageAccount correlationId casRepositoryDto with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                let! uploadUri = getUriWithCreateSharedAccessSignature casRepositoryDto blobName correlationId
+                                context.SetStatusCode StatusCodes.Status200OK
+                                return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
@@ -703,9 +712,13 @@ module Storage =
                                 | Ok () ->
                                     let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
                                     let casRepositoryDto = repositoryForCasStorage route repositoryDto
-                                    let! downloadUri = getUriWithReadSharedAccessSignature casRepositoryDto blobName correlationId
-                                    context.SetStatusCode StatusCodes.Status200OK
-                                    return! context.WriteStringAsync downloadUri.AbsoluteUri
+
+                                    match validateSasStorageAccount correlationId casRepositoryDto with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok () ->
+                                        let! downloadUri = getUriWithReadSharedAccessSignature casRepositoryDto blobName correlationId
+                                        context.SetStatusCode StatusCodes.Status200OK
+                                        return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
