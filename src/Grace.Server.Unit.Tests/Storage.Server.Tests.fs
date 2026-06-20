@@ -1,6 +1,10 @@
 namespace Grace.Server.Tests
 
+open Grace.Server
 open Grace.Shared
+open Grace.Types.Common
+open Grace.Types.ContentBlockMetadata
+open Grace.Types.UploadSession
 open NUnit.Framework
 open System.Reflection
 
@@ -73,3 +77,55 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("KeyChunkAddresses"), Is.Not.Null)
         Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Null)
         assertSdkMethod "DiscoverContentBlocks" "DiscoverContentBlocksParameters"
+
+    [<Test>]
+    member _.DownloadPlacementResolutionUsesFinalizedScopedMetadataPlacement() =
+        let storagePoolId = StoragePoolId "pool-download-placement"
+        let authorizedScope = "/download/recorded-placement.bin"
+        let manifestAddress = ManifestAddress "manifest-recorded-placement"
+        let contentBlockAddress = ContentBlockAddress "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+        let recordedPlacement =
+            {
+                StorageAccountName = "recorded-account"
+                StorageContainerName = StorageContainerName "recorded-container"
+                ObjectKey = "compacted/cas/content/aaaaaaaa"
+                ETag = Some "etag-recorded"
+            }
+
+        let currentRoutePlacement =
+            { recordedPlacement with
+                StorageAccountName = "current-account"
+                StorageContainerName = StorageContainerName "current-container"
+                ObjectKey = "cas/content/aaaaaaaa"
+            }
+
+        let metadata =
+            { ContentBlockMetadata.Empty with
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                StoragePlacement = recordedPlacement
+                MetadataVersion = 7L
+            }
+
+        let registration: DedupeIndex.RuntimeFinalizedManifestRegistration =
+            {
+                StoragePoolId = storagePoolId
+                Session = { UploadSessionDto.Default with AuthorizedScope = authorizedScope }
+                ManifestAddress = manifestAddress
+                Blocks =
+                    [|
+                        { Address = contentBlockAddress; ChunkAddresses = Array.empty }
+                    |]
+            }
+
+        let state = { DedupeIndex.DedupeIndexState.Empty with FinalizedManifests = [| registration |]; MetadataRecords = [| metadata |] }
+
+        let selected = Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state
+
+        Assert.That(selected, Is.EqualTo(Some metadata))
+        Assert.That(selected.Value.StoragePlacement, Is.Not.EqualTo(currentRoutePlacement))
+
+        let rejected = Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId "/other/scope.bin" manifestAddress contentBlockAddress state
+
+        Assert.That(rejected, Is.EqualTo(None))
