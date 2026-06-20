@@ -501,7 +501,7 @@ type StorageContentBlockSasRoutes() =
             Assert.That(deniedDownload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
             let! allowedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
-            do! assertBadRequestContains "FileManifest.ManifestAddress is required" allowedDownload
+            do! assertBadRequestContains "ManifestAddress" allowedDownload
         }
 
     [<Test>]
@@ -536,7 +536,7 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
-    member _.ContentBlockDownloadUriReturnsBadRequestForMalformedNonEmptyManifest() =
+    member _.ContentBlockDownloadUriReturnsBadRequestForMalformedManifestAddress() =
         task {
             let repositoryId = repositoryIds[0]
             let pathReader = $"{Guid.NewGuid()}"
@@ -546,17 +546,13 @@ type StorageContentBlockSasRoutes() =
 
             use readerClient = createClientWithUserId pathReader
             let parameters = createContentBlockDownloadParameters repositoryId
-            let block = ContentBlock.Create(parameters.ContentBlockAddress, 0L, 1L)
-
             parameters.AuthorizedScope <- "/malformed/manifest.bin"
-
-            parameters.Manifest <-
-                FileManifest.Create(ManifestAddress "manifest-malformed-non-empty", ChunkingSuiteId String.Empty, FileContentHash String.Empty, 1L, [ block ])
+            parameters.ManifestAddress <- ManifestAddress "manifest-malformed-non-empty"
 
             let! response = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
-            Assert.That(body, Does.Contain("FileManifest.ChunkingSuiteId"))
+            Assert.That(body, Does.Contain("ManifestAddress"))
             Assert.That(body, Does.Not.Contain("InternalServerError"))
             Assert.That(body, Does.Not.Contain("Error in /storage/getContentBlockDownloadUri"))
         }
@@ -1132,7 +1128,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters downloadUriParameters repositoryId correlationId
             downloadUriParameters.AuthorizedScope <- "/"
             downloadUriParameters.ContentBlockAddress <- block.Address
-            downloadUriParameters.Manifest <- manifest
+            downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
 
             let! downloadUriResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent downloadUriParameters)
             let! downloadUriBody = downloadUriResponse.Content.ReadAsStringAsync()
@@ -1911,7 +1907,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters downloadUriParameters repositoryId correlationId
             downloadUriParameters.AuthorizedScope <- pathA
             downloadUriParameters.ContentBlockAddress <- block.Address
-            downloadUriParameters.Manifest <- manifest
+            downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
 
             use pathAReader = createClientWithClaims [ readerClaim ]
             let! downloadUriResponse = pathAReader.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent downloadUriParameters)
@@ -1948,7 +1944,7 @@ type StorageManifestUploadSessionRoutes() =
             let! downloadUriBody = downloadUriResponse.Content.ReadAsStringAsync()
             Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), downloadUriBody)
             assertJsonContent downloadUriResponse
-            Assert.That(downloadUriBody, Does.Contain("FileManifest.ManifestAddress is required"))
+            Assert.That(downloadUriBody, Does.Contain("ManifestAddress"))
 
             let! discoveryResponse =
                 postDiscoveryAsync

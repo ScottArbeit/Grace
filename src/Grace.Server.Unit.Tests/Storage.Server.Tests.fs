@@ -7,6 +7,7 @@ open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open NUnit.Framework
+open System
 open System.IO
 open System.Reflection
 open System.Threading.Tasks
@@ -63,8 +64,14 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(
             (getStorageParameterType "GetContentBlockDownloadUriParameters")
-                .GetProperty("Manifest"),
+                .GetProperty("ManifestAddress"),
             Is.Not.Null
+        )
+
+        Assert.That(
+            (getStorageParameterType "GetContentBlockDownloadUriParameters")
+                .GetProperty("Manifest"),
+            Is.Null
         )
 
     [<Test>]
@@ -169,6 +176,38 @@ type StorageContentBlockSdkContract() =
             Assert.That(query.OrdinalStart, Is.EqualTo(0))
             Assert.That(query.OrdinalCount, Is.EqualTo(1))
             Assert.That(correlationId, Is.EqualTo("corr-cas-race"))
+        }
+
+    [<Test>]
+    member _.CreatedFinalPayloadCleanupUsesRepositoryMetadataPoolForRangePresence() =
+        task {
+            let calls = ResizeArray<StoragePoolId * ContentBlockAddress * ContentBlockRangeQuery * CorrelationId>()
+            let repositoryId = Guid.Parse("77777777-7777-7777-7777-777777777777")
+            let metadataPoolId = Storage.finalContentBlockMetadataPoolIdForCleanup repositoryId
+            let routePoolId = StoragePoolId "selected-route-pool"
+
+            Assert.That(metadataPoolId, Is.EqualTo(StoragePoolId $"{repositoryId}"))
+            Assert.That(metadataPoolId, Is.Not.EqualTo(routePoolId))
+
+            let getRangePresence storagePoolId contentBlockAddress query correlationId =
+                calls.Add(storagePoolId, contentBlockAddress, query, correlationId)
+
+                if storagePoolId = metadataPoolId then
+                    Task.FromResult ContentBlockRangePresence.Active
+                else
+                    Task.FromResult ContentBlockRangePresence.Absent
+
+            let! shouldDelete =
+                Storage.shouldDeleteCreatedFinalContentBlockPayload
+                    getRangePresence
+                    metadataPoolId
+                    (ContentBlockAddress "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd")
+                    "corr-cas-metadata-pool"
+
+            Assert.That(shouldDelete, Is.False)
+            Assert.That(calls, Has.Count.EqualTo(1))
+            let storagePoolId, _, _, _ = calls[0]
+            Assert.That(storagePoolId, Is.EqualTo(metadataPoolId))
         }
 
     [<Test>]
