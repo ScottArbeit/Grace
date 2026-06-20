@@ -34,6 +34,34 @@ type StorageSdkTests() =
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-staged"))
 
     [<Test>]
+    member _.ContentBlockPlacementFromIpCustomEndpointPrefersShardFragmentBeforePathStyleParsing() =
+        let placement =
+            Storage.contentBlockPlacementFromUriUsingConfiguredEndpoint
+                (Uri "https://10.10.0.15")
+                "configured-account"
+                (Uri "https://10.10.0.15/cas-container/staging/upload-sessions/session/content-blocks/aaaaaaaa?sig=fake#graceStorageAccount=cas-shard-ip")
+                (Some "etag-ip")
+
+        Assert.That(placement.StorageAccountName, Is.EqualTo("cas-shard-ip"))
+        Assert.That(string placement.StorageContainerName, Is.EqualTo("cas-container"))
+        Assert.That(placement.ObjectKey, Is.EqualTo("staging/upload-sessions/session/content-blocks/aaaaaaaa"))
+        Assert.That(placement.ETag, Is.EqualTo(Some "etag-ip"))
+
+    [<Test>]
+    member _.ContentBlockPlacementFromAzuriteUploadUriKeepsPathStyleParsingWithShardFragment() =
+        let placement =
+            Storage.contentBlockPlacementFromUriUsingConfiguredEndpoint
+                (Uri "http://127.0.0.1:10000/devstoreaccount1")
+                "configured-account"
+                (Uri
+                    "http://127.0.0.1:10000/devstoreaccount1/cas-container/staging/upload-sessions/session/content-blocks/aaaaaaaa?sig=fake#graceStorageAccount=devstoreaccount1")
+                None
+
+        Assert.That(placement.StorageAccountName, Is.EqualTo("devstoreaccount1"))
+        Assert.That(string placement.StorageContainerName, Is.EqualTo("cas-container"))
+        Assert.That(placement.ObjectKey, Is.EqualTo("staging/upload-sessions/session/content-blocks/aaaaaaaa"))
+
+    [<Test>]
     member _.ContentBlockPlacementFromUriDoesNotInferAccountFromArbitraryCustomHost() =
         let placement =
             Storage.contentBlockPlacementFromUriUsingConfiguredEndpoint

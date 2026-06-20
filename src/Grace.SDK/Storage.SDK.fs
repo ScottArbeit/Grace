@@ -83,14 +83,26 @@ module Storage =
         let isAzureBlobEndpoint = host.IndexOf(".blob.", StringComparison.OrdinalIgnoreCase) > 0
         let fragmentAccountName = tryGetFragmentValue "graceStorageAccount" blobUriWithSasToken
 
+        let hasFragmentAccountName =
+            fragmentAccountName.IsSome
+            && not (String.IsNullOrWhiteSpace fragmentAccountName.Value)
+
+        let fragmentMatchesPathStyleAccount =
+            hasFragmentAccountName
+            && pathSegments.Length >= 3
+            && pathSegments[0]
+                .Equals(fragmentAccountName.Value, StringComparison.OrdinalIgnoreCase)
+
+        let usePathStyleParsing =
+            isPathStyleAzurite
+            && (not hasFragmentAccountName
+                || fragmentMatchesPathStyleAccount)
+
         let accountName =
-            if isPathStyleAzurite && pathSegments.Length >= 3 then
-                pathSegments[0]
-            elif
-                fragmentAccountName.IsSome
-                && not (String.IsNullOrWhiteSpace fragmentAccountName.Value)
-            then
+            if hasFragmentAccountName then
                 fragmentAccountName.Value
+            elif usePathStyleParsing && pathSegments.Length >= 3 then
+                pathSegments[0]
             elif
                 isConfiguredCustomEndpoint
                 && not (String.IsNullOrWhiteSpace configuredAccountName)
@@ -102,7 +114,7 @@ module Storage =
             else
                 String.Empty
 
-        let containerIndex = if isPathStyleAzurite then 1 else 0
+        let containerIndex = if usePathStyleParsing then 1 else 0
 
         let containerName =
             if pathSegments.Length > containerIndex then
