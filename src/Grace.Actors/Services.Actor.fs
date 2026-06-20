@@ -408,6 +408,9 @@ module Services =
 
     let resolveRepositoryStoragePoolRoute repositoryDto correlationId = StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId
 
+    let resolveUploadSessionStoragePoolRoute repositoryId storagePoolId correlationId =
+        StoragePoolRouting.resolveStoragePoolRouteForStoragePoolId repositoryId storagePoolId correlationId
+
     let getCasContainerClient (shard: StoragePoolRouting.StorageShard) correlationId =
         task {
             match StoragePoolRouting.validateShard correlationId shard with
