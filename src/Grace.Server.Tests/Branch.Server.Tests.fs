@@ -639,6 +639,14 @@ module BranchServerTestHelpers =
 
         selectedHash.Substring(0, prefixLength)
 
+    let stableChildDirectoryShaPrefix (child: Grace.Types.Common.DirectoryVersion) (root: Grace.Types.Common.DirectoryVersion) =
+        let childOnlyPrefix = shortestUniquePrefix child.Sha256Hash root.Sha256Hash
+
+        if childOnlyPrefix.Length < 16 then
+            (string child.Sha256Hash).Substring(0, 16)
+        else
+            childOnlyPrefix
+
     let shortestUniqueBlake3Prefix (selected: Blake3Hash) (others: Blake3Hash seq) =
         let selectedHash = string selected
         let otherHashes = others |> Seq.map string |> Seq.toArray
@@ -1223,7 +1231,7 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
 
-            let childOnlyPrefix = BranchServerTestHelpers.shortestUniquePrefix child.Sha256Hash root.Sha256Hash
+            let childOnlyPrefix = BranchServerTestHelpers.stableChildDirectoryShaPrefix child root
             let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty (Sha256Hash childOnlyPrefix)
             let! responseBody = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
