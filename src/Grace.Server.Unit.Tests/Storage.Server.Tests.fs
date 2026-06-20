@@ -244,8 +244,15 @@ type StorageContentBlockSdkContract() =
             compactedStorageSource,
             Does
                 .Contain("&& not (isNull parameters.BlockPayloads)")
-                .And.Contain("then payloads.AddRange parameters.BlockPayloads"),
-            "Fresh finalization may still use request payloads; replay hydration opts out through the false flag."
+                .And.Contain("requestPayloads[payload.Address] <- payload")
+                .And.Contain("match requestPayloads.TryGetValue address with"),
+            "Fresh finalization may still use request payloads for non-claimed blocks; replay hydration opts out through the false flag."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does.Contain("| Some metadata -> match! readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement correlationId"),
+            "Claimed reuse payload hydration must read authoritative storage placement even when request payloads exist."
         )
 
         Assert.That(

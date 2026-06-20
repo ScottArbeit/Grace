@@ -497,6 +497,67 @@ module UploadSession =
         | Some validationError -> Error validationError
         | None -> Ok()
 
+    let private tryFindClaimedManifestBlock (session: UploadSessionDto) (manifest: FileManifest) contentBlockAddress =
+        manifestBlocksRequiringClaimedMetadata session manifest
+        |> Array.tryFind (fun block -> block.Address = contentBlockAddress)
+
+    let internal createRevalidatedClaimedMetadataMergeCommand
+        correlationId
+        storagePoolId
+        finalizeOperationId
+        (session: UploadSessionDto)
+        (manifest: FileManifest)
+        claimedMetadata
+        (authoritativeMetadata: ContentBlockMetadata)
+        =
+        match tryFindClaimedManifestBlock session manifest authoritativeMetadata.ContentBlockAddress with
+        | None -> Ok None
+        | Some block ->
+            let metadata = claimedMetadataByKey claimedMetadata
+
+            let claimedRanges =
+                if isNull session.ClaimedReuseRanges then
+                    Array.empty
+                else
+                    session.ClaimedReuseRanges
+
+            match trySelectClaimedRangeMetadata correlationId storagePoolId metadata claimedRanges block.Address block.Size with
+            | Error validationError -> Error validationError
+            | Ok claimedRange ->
+                if authoritativeMetadata.StoragePoolId
+                   <> claimedRange.StoragePoolId then
+                    Error(graceError correlationId "Authoritative ContentBlockMetadata StoragePoolId does not match the claimed reuse range.")
+                elif authoritativeMetadata.ContentBlockAddress
+                     <> claimedRange.ContentBlockAddress then
+                    Error(graceError correlationId "Authoritative ContentBlockMetadata ContentBlockAddress does not match the claimed reuse range.")
+                elif authoritativeMetadata.BlockFormatVersion <= 0s then
+                    Error(graceError correlationId "Authoritative ContentBlockMetadata BlockFormatVersion is required before finalizing claimed reuse.")
+                else
+                    validateAuthoritativeStoragePlacement correlationId authoritativeMetadata.StoragePlacement
+                    |> Result.bind (fun () ->
+                        match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
+                        | Some physicalRange ->
+                            Ok(
+                                Some(
+                                    ContentBlockMetadataCommand.MergePhysicalRanges
+                                        {
+                                            OperationId =
+                                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{claimedRange.ContentBlockAddress}"
+                                            StoragePoolId = storagePoolId
+                                            ContentBlockAddress = claimedRange.ContentBlockAddress
+                                            BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
+                                            StoragePlacement = authoritativeMetadata.StoragePlacement
+                                            Ranges = activeRangesForFinalizedManifest [| physicalRange |]
+                                        }
+                                )
+                            )
+                        | None ->
+                            Error(
+                                graceError
+                                    correlationId
+                                    $"Authoritative ContentBlockMetadata range is absent or changed for claimed reuse range {claimedRange.ContentBlockAddress}."
+                            ))
+
     let createContentBlockMetadataMergeCommandsForFinalizedUploads storagePoolId finalizeOperationId (session: UploadSessionDto) (manifest: FileManifest) =
         let manifestAddresses = manifestBlockAddresses manifest
         let commands = ResizeArray<ContentBlockMetadataCommand>()
@@ -1081,7 +1142,48 @@ module UploadSession =
                                     let metadataActor =
                                         orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, metadata.CorrelationId)
 
-                                    let! metadataResult = metadataActor.MergePhysicalRanges merge metadata
+                                    let claimedBlock = tryFindClaimedManifestBlock decision.Session finalize.Manifest merge.ContentBlockAddress
+
+                                    let! metadataResult =
+                                        match claimedBlock with
+                                        | Some _ ->
+                                            task {
+                                                let! currentMetadata = metadataActor.Get metadata.CorrelationId
+
+                                                match currentMetadata with
+                                                | None ->
+                                                    return
+                                                        Error(
+                                                            graceError
+                                                                metadata.CorrelationId
+                                                                $"Authoritative ContentBlockMetadata is absent for claimed reuse range {merge.ContentBlockAddress}; claimed reuse cannot be finalized."
+                                                        )
+                                                | Some authoritativeMetadata ->
+                                                    match
+                                                        createRevalidatedClaimedMetadataMergeCommand
+                                                            metadata.CorrelationId
+                                                            storagePoolId
+                                                            finalize.OperationId
+                                                            decision.Session
+                                                            finalize.Manifest
+                                                            finalize.ClaimedMetadata
+                                                            authoritativeMetadata
+                                                        with
+                                                    | Error error -> return Error error
+                                                    | Ok None ->
+                                                        return
+                                                            Error(
+                                                                graceError
+                                                                    metadata.CorrelationId
+                                                                    $"Authoritative ContentBlockMetadata could not be revalidated for claimed reuse range {merge.ContentBlockAddress}."
+                                                            )
+                                                    | Ok (Some revalidatedCommand) ->
+                                                        match revalidatedCommand with
+                                                        | ContentBlockMetadataCommand.MergePhysicalRanges revalidatedMerge ->
+                                                            return! metadataActor.MergePhysicalRanges revalidatedMerge metadata
+                                                        | _ -> return! metadataActor.MergePhysicalRanges merge metadata
+                                            }
+                                        | None -> metadataActor.MergePhysicalRanges merge metadata
 
                                     match metadataResult with
                                     | Ok returnValue -> mergedMetadata.Add(returnValue.ReturnValue.Metadata)

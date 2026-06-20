@@ -699,44 +699,49 @@ module Storage =
             let payloads = ResizeArray<FinalizeManifestBlockPayload>()
             let mutable error = None
             let mutable index = 0
+            let requestPayloads = Dictionary<ContentBlockAddress, FinalizeManifestBlockPayload>()
 
             if useRequestBlockPayloads
                && not (isNull parameters.BlockPayloads)
                && parameters.BlockPayloads.Length > 0 then
-                payloads.AddRange parameters.BlockPayloads
-            else
-                let blockAddresses = manifestBlockAddresses manifest
+                for payload in parameters.BlockPayloads do
+                    if not (isNull (box payload)) then requestPayloads[payload.Address] <- payload
 
-                let confirmedBlockUploads =
-                    if isNull requestContext.SessionForScope.ConfirmedBlockUploads then
-                        Array.empty
-                    else
-                        requestContext.SessionForScope.ConfirmedBlockUploads
+            let blockAddresses = manifestBlockAddresses manifest
 
-                while index < blockAddresses.Length
-                      && Option.isNone error do
-                    let address = blockAddresses[index]
+            let confirmedBlockUploads =
+                if isNull requestContext.SessionForScope.ConfirmedBlockUploads then
+                    Array.empty
+                else
+                    requestContext.SessionForScope.ConfirmedBlockUploads
 
-                    match confirmedBlockUploads
-                          |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
-                        with
-                    | Some confirmedBlock ->
-                        match! readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId with
-                        | Ok payload -> payloads.Add payload
-                        | Error downloadError -> error <- Some downloadError
-                    | None ->
-                        let claimedMetadataForAddress =
-                            claimedMetadata
-                            |> Array.tryFind (fun metadata -> metadata.ContentBlockAddress = address)
+            while index < blockAddresses.Length
+                  && Option.isNone error do
+                let address = blockAddresses[index]
 
-                        match claimedMetadataForAddress with
-                        | None -> ()
-                        | Some metadata ->
-                            match! readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement correlationId with
+                let claimedMetadataForAddress =
+                    claimedMetadata
+                    |> Array.tryFind (fun metadata -> metadata.ContentBlockAddress = address)
+
+                match claimedMetadataForAddress with
+                | Some metadata ->
+                    match! readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement correlationId with
+                    | Ok payload -> payloads.Add payload
+                    | Error downloadError -> error <- Some downloadError
+                | None ->
+                    match requestPayloads.TryGetValue address with
+                    | true, payload -> payloads.Add payload
+                    | false, _ ->
+                        match confirmedBlockUploads
+                              |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
+                            with
+                        | Some confirmedBlock ->
+                            match! readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId with
                             | Ok payload -> payloads.Add payload
                             | Error downloadError -> error <- Some downloadError
+                        | None -> ()
 
-                    index <- index + 1
+                index <- index + 1
 
             match error with
             | Some error -> return Error error

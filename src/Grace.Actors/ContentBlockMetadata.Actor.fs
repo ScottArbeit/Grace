@@ -182,12 +182,8 @@ module ContentBlockMetadata =
                 let activeManifestCount =
                     if preserveActiveCount then
                         max existing.ActiveManifestCount range.ActiveManifestCount
-                    elif existing.ActiveManifestCount > Int32.MaxValue - range.ActiveManifestCount then
-                        error <- Some(graceError correlationId "ContentBlockMetadataRange.ActiveManifestCount cannot exceed Int32.MaxValue.")
-                        existing.ActiveManifestCount
                     else
                         existing.ActiveManifestCount
-                        + range.ActiveManifestCount
 
                 merged[key] <- { existing with ActiveManifestCount = activeManifestCount }
             else

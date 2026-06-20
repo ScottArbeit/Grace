@@ -1132,7 +1132,7 @@ type UploadSessionActorTests() =
         Assert.That(
             secondDecision.Metadata.Ranges[0]
                 .ActiveManifestCount,
-            Is.EqualTo(2)
+            Is.EqualTo(1)
         )
 
     [<Test>]
@@ -1146,6 +1146,65 @@ type UploadSessionActorTests() =
 
         Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(1))
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
+
+    [<Test>]
+    member _.RevalidatedClaimedMetadataMergeRejectsRemovedRangeBeforeSideEffect() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("reuse range bytes")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let metadataRange = { reusableMetadataRange with OrdinalStart = 0; OrdinalCount = minimumReuseRunLength; PhysicalLength = int64 fileBytes.Length }
+
+        let claimedRange =
+            {
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = metadataRange.OrdinalStart
+                OrdinalCount = metadataRange.OrdinalCount
+                PhysicalOffset = metadataRange.PhysicalOffset
+                PhysicalLength = metadataRange.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let session = { UploadSessionDto.Default with UploadSessionId = sessionId; StoragePoolId = storagePoolId; ClaimedReuseRanges = [| claimedRange |] }
+
+        let hydratedMetadata = reuseMetadataFor block.Address 7L [| metadataRange |]
+        let advancedCurrentMetadata = { hydratedMetadata with MetadataVersion = 8L }
+
+        let advancedResult =
+            UploadSessionActor.createRevalidatedClaimedMetadataMergeCommand
+                "corr-revalidate-advanced-version"
+                storagePoolId
+                "op-finalize"
+                session
+                manifest
+                [| hydratedMetadata |]
+                advancedCurrentMetadata
+
+        match advancedResult with
+        | Ok (Some (ContentBlockMetadataCommand.MergePhysicalRanges merge)) ->
+            Assert.That(merge.Ranges, Has.Length.EqualTo(1))
+            Assert.That(merge.StoragePlacement.ETag, Is.EqualTo(advancedCurrentMetadata.StoragePlacement.ETag))
+        | Ok _ -> Assert.Fail("Expected current authoritative metadata to produce a claimed merge command.")
+        | Error error -> Assert.Fail($"Expected metadata-version advancement to be tolerated, got {error.Error}.")
+
+        let relocatedRange = { metadataRange with PhysicalOffset = metadataRange.PhysicalOffset + 128L }
+        let relocatedMetadata = { hydratedMetadata with MetadataVersion = 8L; Ranges = [| relocatedRange |] }
+
+        let staleResult =
+            UploadSessionActor.createRevalidatedClaimedMetadataMergeCommand
+                "corr-revalidate-removed-range"
+                storagePoolId
+                "op-finalize"
+                session
+                manifest
+                [| hydratedMetadata |]
+                relocatedMetadata
+
+        match staleResult with
+        | Ok _ -> Assert.Fail("Expected stale claimed range revalidation to fail closed before metadata merge side effects.")
+        | Error error -> Assert.That(error.Error, Does.Contain("range is absent or changed"))
 
     [<Test>]
     member _.FinalizeManifestFromClaimedReuseRangeValidatesReconstructionAndFinalizes() =
