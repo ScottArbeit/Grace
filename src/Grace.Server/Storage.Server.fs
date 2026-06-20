@@ -65,9 +65,6 @@ module Storage =
 
     let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
 
-    let private getContentBlockStagingObjectKey (repositoryId: RepositoryId) (uploadSessionId: UploadSessionId) (contentBlockAddress: ContentBlockAddress) =
-        $"staging/repositories/{repositoryId}/upload-sessions/{uploadSessionId:N}/content-blocks/{contentBlockAddress}"
-
     let private appendShardEvidenceFragment (storageAccountName: StorageAccountName) (uri: Uri) =
         let builder = UriBuilder(uri)
         builder.Fragment <- $"graceStorageAccount={Uri.EscapeDataString(storageAccountName)}"
@@ -91,7 +88,7 @@ module Storage =
         (contentBlockAddress: ContentBlockAddress)
         eTag
         =
-        StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockStagingObjectKey repositoryId uploadSessionId contentBlockAddress) eTag
+        getContentBlockStagingPlacement route repositoryId uploadSessionId contentBlockAddress eTag
 
     let private validateContentBlockStagingPlacementForRoute
         correlationId
@@ -180,17 +177,16 @@ module Storage =
                 return Error(GraceError.Create $"ContentBlock payload could not be read from object storage: {ex.Message}" correlationId)
         }
 
-    let private deleteContentBlockStagingPayload placement correlationId =
+    let private deleteContentBlockPayloadBestEffort placement correlationId =
         task {
-            try
-                match! getAzureContentBlockClientForPlacement placement correlationId with
-                | Error _ -> return ()
-                | Ok blobClient ->
-                    let! _ = blobClient.DeleteIfExistsAsync()
-                    return ()
-            with
-            | _ -> return ()
+            match! deleteAzureContentBlockPlacementIfExists placement correlationId with
+            | Ok _
+            | Error _ -> return ()
         }
+
+    let private deleteContentBlockStagingPayload placement correlationId = deleteContentBlockPayloadBestEffort placement correlationId
+
+    type private MaterializedContentBlock = { StoragePlacement: ContentBlockStoragePlacement; CreatedFinalBlob: bool }
 
     let private createAzureContentBlockSasUriForPlacement (placement: ContentBlockStoragePlacement) permission correlationId =
         task {
@@ -233,7 +229,13 @@ module Storage =
                         let uploadOptions = BlobUploadOptions()
                         uploadOptions.Conditions <- conditions
                         let! uploadResult = finalBlobClient.UploadAsync(payloadStream, uploadOptions)
-                        return Ok(expectedContentBlockStoragePlacement route contentBlockAddress (Some(uploadResult.Value.ETag.ToString())))
+
+                        return
+                            Ok
+                                {
+                                    StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress (Some(uploadResult.Value.ETag.ToString()))
+                                    CreatedFinalBlob = true
+                                }
                     with
                     | :? RequestFailedException as ex when isExistingBlobConflict ex ->
                         match! readContentBlockPayloadFromPlacement finalPlacement correlationId with
@@ -257,7 +259,13 @@ module Storage =
                                             $"Existing final ContentBlock {contentBlockAddress} does not match the staged validated payload."
                                             correlationId
                                     )
-                            | Ok _, Ok _ -> return Ok(expectedContentBlockStoragePlacement route contentBlockAddress existingETag)
+                            | Ok _, Ok _ ->
+                                return
+                                    Ok
+                                        {
+                                            StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress existingETag
+                                            CreatedFinalBlob = false
+                                        }
                     | :? RequestFailedException as ex ->
                         return Error(GraceError.Create $"ContentBlock payload could not be materialized to final CAS storage: {ex.Message}" correlationId)
         }
@@ -1320,7 +1328,9 @@ module Storage =
                                     | Some (Error error) -> return! context |> result400BadRequest error
                                     | None ->
                                         match validateActiveConfirmSession requestContext parameters correlationId with
-                                        | Error error -> return! context |> result400BadRequest error
+                                        | Error error ->
+                                            do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                            return! context |> result400BadRequest error
                                         | Ok () ->
                                             match! readContentBlockPayloadFromPlacement parameters.StoragePlacement correlationId with
                                             | Error error -> return! context |> result400BadRequest error
@@ -1330,6 +1340,8 @@ module Storage =
                                                     && parameters.Payload.Length > 0
                                                     && not (parameters.Payload.SequenceEqual(stagedPayload))
                                                 then
+                                                    do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+
                                                     return!
                                                         context
                                                         |> result400BadRequest (
@@ -1339,19 +1351,23 @@ module Storage =
                                                         )
                                                 else
                                                     match validateConfirmIntentAgainstPayload requestContext parameters stagedPayload correlationId with
-                                                    | Error error -> return! context |> result400BadRequest error
+                                                    | Error error ->
+                                                        do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                        return! context |> result400BadRequest error
                                                     | Ok () ->
                                                         match! materializeValidatedContentBlock route parameters.ContentBlockAddress stagedPayload correlationId
                                                             with
-                                                        | Error error -> return! context |> result400BadRequest error
-                                                        | Ok finalPlacement ->
+                                                        | Error error ->
+                                                            do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                            return! context |> result400BadRequest error
+                                                        | Ok finalMaterialization ->
                                                             let command =
                                                                 UploadSessionCommand.ConfirmBlockUploaded
                                                                     {
                                                                         OperationId = parameters.OperationId
                                                                         ContentBlockAddress = parameters.ContentBlockAddress
                                                                         Payload = stagedPayload
-                                                                        StoragePlacement = finalPlacement
+                                                                        StoragePlacement = finalMaterialization.StoragePlacement
                                                                     }
 
                                                             let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
@@ -1360,7 +1376,12 @@ module Storage =
                                                             | Ok returnValue ->
                                                                 do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                                 return! context |> result200Ok returnValue
-                                                            | Error error -> return! context |> result400BadRequest error
+                                                            | Error error ->
+                                                                if finalMaterialization.CreatedFinalBlob then
+                                                                    do! deleteContentBlockPayloadBestEffort finalMaterialization.StoragePlacement correlationId
+
+                                                                do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                                return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
