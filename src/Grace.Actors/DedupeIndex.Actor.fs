@@ -108,3 +108,9 @@ module DedupeIndexActor =
                                 Array.copy currentState.MetadataRecords
                     }
                 |> returnTask
+
+            member this.TryGetFinalizedScopedContentBlockMetadata(storagePoolId, authorizedScope, manifestAddress, contentBlockAddress, correlationId) =
+                this.correlationId <- correlationId
+
+                DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress currentState
+                |> returnTask

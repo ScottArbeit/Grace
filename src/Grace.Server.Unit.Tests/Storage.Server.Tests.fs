@@ -1,12 +1,15 @@
 namespace Grace.Server.Tests
 
 open Grace.Server
+open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open NUnit.Framework
+open System.IO
 open System.Reflection
+open System.Threading.Tasks
 
 [<Parallelizable(ParallelScope.All)>]
 type StorageContentBlockSdkContract() =
@@ -129,3 +132,56 @@ type StorageContentBlockSdkContract() =
         let rejected = Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId "/other/scope.bin" manifestAddress contentBlockAddress state
 
         Assert.That(rejected, Is.EqualTo(None))
+
+    [<Test>]
+    member _.DownloadAuthorizationUsesTargetedDedupeIndexLookupInsteadOfFullSnapshotState() =
+        let methodInfo = typeof<IDedupeIndexActor>.GetMethod ("TryGetFinalizedScopedContentBlockMetadata", BindingFlags.Public ||| BindingFlags.Instance)
+
+        Assert.That(methodInfo, Is.Not.Null)
+
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+
+        Assert.That(storageServerSource, Does.Contain("TryGetFinalizedScopedContentBlockMetadata"))
+        Assert.That(storageServerSource, Does.Not.Contain("SnapshotState correlationId"))
+
+    [<Test>]
+    member _.CreatedFinalPayloadCleanupSkipsDeletionWhenMetadataReferenceExists() =
+        task {
+            let calls = ResizeArray<StoragePoolId * ContentBlockAddress * ContentBlockRangeQuery * CorrelationId>()
+
+            let getRangePresence storagePoolId contentBlockAddress query correlationId =
+                calls.Add(storagePoolId, contentBlockAddress, query, correlationId)
+                Task.FromResult ContentBlockRangePresence.Active
+
+            let! shouldDelete =
+                Storage.shouldDeleteCreatedFinalContentBlockPayload
+                    getRangePresence
+                    (StoragePoolId "pool-cas-race")
+                    (ContentBlockAddress "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+                    "corr-cas-race"
+
+            Assert.That(shouldDelete, Is.False)
+            Assert.That(calls, Has.Count.EqualTo(1))
+            let storagePoolId, contentBlockAddress, query, correlationId = calls[0]
+            Assert.That(storagePoolId, Is.EqualTo(StoragePoolId "pool-cas-race"))
+            Assert.That(contentBlockAddress, Is.EqualTo(ContentBlockAddress "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
+            Assert.That(query.OrdinalStart, Is.EqualTo(0))
+            Assert.That(query.OrdinalCount, Is.EqualTo(1))
+            Assert.That(correlationId, Is.EqualTo("corr-cas-race"))
+        }
+
+    [<Test>]
+    member _.CreatedFinalPayloadCleanupAllowsDeletionWhenMetadataRangeIsAbsent() =
+        task {
+            let getRangePresence _ _ _ _ = Task.FromResult ContentBlockRangePresence.Absent
+
+            let! shouldDelete =
+                Storage.shouldDeleteCreatedFinalContentBlockPayload
+                    getRangePresence
+                    (StoragePoolId "pool-cas-absent")
+                    (ContentBlockAddress "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc")
+                    "corr-cas-absent"
+
+            Assert.That(shouldDelete, Is.True)
+        }
