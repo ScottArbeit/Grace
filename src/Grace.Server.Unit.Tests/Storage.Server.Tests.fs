@@ -201,7 +201,7 @@ type StorageContentBlockSdkContract() =
         let replayEventIndex = finalizeSource.IndexOf("getFinalizeReplayState requestContext parameters.OperationId correlationId", StringComparison.Ordinal)
 
         let replayHydrateIndex =
-            finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest false correlationId", StringComparison.Ordinal)
+            finalizeSource.IndexOf("hydrateFinalizeReplayEvidence requestContext parameters parameters.Manifest correlationId", StringComparison.Ordinal)
 
         let replayValidateIndex = finalizeSource.IndexOf("validateFinalizeReplayEvidence", StringComparison.Ordinal)
 
@@ -248,6 +248,18 @@ type StorageContentBlockSdkContract() =
             "Fresh finalization may still use request payloads; replay hydration opts out through the false flag."
         )
 
+        Assert.That(
+            finalizeSource,
+            Does.Not.Contain("hydrateFinalizeEvidence requestContext parameters parameters.Manifest false correlationId"),
+            "Same-operation finalize replay must not call the fresh claimed-metadata validation path."
+        )
+
+        Assert.That(
+            storageServerSource,
+            Does.Contain("{ authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion }"),
+            "Replay hydration must validate current authoritative metadata while preserving the durable claim key for side-effect repair."
+        )
+
     [<Test>]
     member _.FinalizeManifestLoadsClaimedReuseEvidenceFromAuthoritativeMetadataActorKey() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -264,6 +276,79 @@ type StorageContentBlockSdkContract() =
             compactedSource,
             Does.Contain("readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement"),
             "Claimed reuse payload hydration must use authoritative metadata placement, not a recomputed route."
+        )
+
+    [<Test>]
+    member _.FinalizeReplayClaimedReuseEvidenceAllowsMetadataVersionAdvanceButFailsClosedOnRangeEvidence() =
+        let storagePoolId = StoragePoolId "pool-finalize-replay"
+        let contentBlockAddress = ContentBlockAddress "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+        let placement =
+            {
+                StorageAccountName = "cas-account"
+                StorageContainerName = StorageContainerName "cas-container"
+                ObjectKey = "cas/content/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                ETag = Some "etag-current"
+            }
+
+        let durableRange = { OrdinalStart = 4; OrdinalCount = 8; ActiveManifestCount = 1; PhysicalOffset = 1024L; PhysicalLength = 4096L }
+
+        let claimedRange: ClaimedReuseRange =
+            {
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                OrdinalStart = durableRange.OrdinalStart
+                OrdinalCount = durableRange.OrdinalCount
+                PhysicalOffset = durableRange.PhysicalOffset
+                PhysicalLength = durableRange.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = NodaTime.Instant.FromUtc(2026, 6, 1, 12, 0)
+            }
+
+        let currentMetadata =
+            { ContentBlockMetadata.Empty with
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                BlockFormatVersion = 1s
+                StoragePlacement = placement
+                Ranges = [| durableRange |]
+                MetadataVersion = 8L
+            }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange currentMetadata,
+            Is.True,
+            "Replay hydration must not reject only because finalization advanced MetadataVersion after the original claim."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with StoragePoolId = StoragePoolId "pool-other" },
+            Is.False,
+            "Replay hydration must fail closed for the wrong storage pool."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay
+                claimedRange
+                { currentMetadata with ContentBlockAddress = ContentBlockAddress "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+            Is.False,
+            "Replay hydration must fail closed for the wrong content block address."
+        )
+
+        let changedPhysicalRange = { durableRange with PhysicalOffset = durableRange.PhysicalOffset + 1L }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with Ranges = [| changedPhysicalRange |] },
+            Is.False,
+            "Replay hydration must fail closed when the stored physical range no longer matches the durable claim."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay
+                claimedRange
+                { currentMetadata with StoragePlacement = ContentBlockStoragePlacement.Empty },
+            Is.False,
+            "Replay hydration must fail closed when authoritative placement is missing."
         )
 
     [<Test>]

@@ -547,10 +547,19 @@ module Storage =
                     )
         }
 
-    let private authoritativeClaimedRangeMatches (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
-        metadata.StoragePoolId = claimedRange.StoragePoolId
+    let private completeContentBlockStoragePlacement (placement: ContentBlockStoragePlacement) =
+        not (isNull (box placement))
+        && not (String.IsNullOrWhiteSpace placement.StorageAccountName)
+        && not (String.IsNullOrWhiteSpace placement.StorageContainerName)
+        && not (String.IsNullOrWhiteSpace placement.ObjectKey)
+
+    let internal authoritativeClaimedRangeMatchesForFinalizeReplay (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
+        not (isNull (box claimedRange))
+        && not (isNull (box metadata))
+        && metadata.StoragePoolId = claimedRange.StoragePoolId
         && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
-        && metadata.MetadataVersion = claimedRange.MetadataVersion
+        && metadata.BlockFormatVersion > 0s
+        && completeContentBlockStoragePlacement metadata.StoragePlacement
         && not (isNull metadata.Ranges)
         && metadata.Ranges
            |> Array.exists (fun range ->
@@ -558,6 +567,10 @@ module Storage =
                && range.OrdinalCount = claimedRange.OrdinalCount
                && range.PhysicalOffset = claimedRange.PhysicalOffset
                && range.PhysicalLength = claimedRange.PhysicalLength)
+
+    let private authoritativeClaimedRangeMatches (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
+        metadata.MetadataVersion = claimedRange.MetadataVersion
+        && authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange metadata
 
     let private claimedRangesForManifestBlockNewestFirst (session: UploadSessionDto) contentBlockAddress physicalLength =
         if isNull session.ClaimedReuseRanges then
@@ -575,7 +588,14 @@ module Storage =
                 else
                     compare right.ClaimedAt left.ClaimedAt)
 
-    let private loadClaimedMetadataForFinalize (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
+    let private loadClaimedMetadataForFinalizeWith
+        (rangeMatches: ClaimedReuseRange -> ContentBlockMetadata -> bool)
+        (evidenceMetadata: ClaimedReuseRange -> ContentBlockMetadata -> ContentBlockMetadata)
+        staleOrIncompleteMessage
+        (requestContext: UploadSessionRequestContext)
+        (manifest: FileManifest)
+        correlationId
+        =
         task {
             let storagePoolId = requestContext.SessionForScope.StoragePoolId
 
@@ -622,15 +642,10 @@ module Storage =
                                             $"Authoritative ContentBlockMetadata is absent for {claimedRange.ContentBlockAddress}; claimed reuse cannot be finalized."
                                             correlationId
                                     )
-                        | Some authoritativeMetadata when not (authoritativeClaimedRangeMatches claimedRange authoritativeMetadata) ->
+                        | Some authoritativeMetadata when not (rangeMatches claimedRange authoritativeMetadata) ->
                             if firstError.IsNone then
-                                firstError <-
-                                    Some(
-                                        GraceError.Create
-                                            $"Authoritative ContentBlockMetadata is stale or incomplete for claimed reuse range {claimedRange.ContentBlockAddress}."
-                                            correlationId
-                                    )
-                        | Some authoritativeMetadata -> selected <- Some authoritativeMetadata
+                                firstError <- Some(GraceError.Create $"{staleOrIncompleteMessage} {claimedRange.ContentBlockAddress}." correlationId)
+                        | Some authoritativeMetadata -> selected <- Some(evidenceMetadata claimedRange authoritativeMetadata)
 
                     candidateIndex <- candidateIndex + 1
 
@@ -654,6 +669,80 @@ module Storage =
             | None -> return Ok(metadata.ToArray())
         }
 
+    let private loadClaimedMetadataForFinalize (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
+        loadClaimedMetadataForFinalizeWith
+            authoritativeClaimedRangeMatches
+            (fun _ authoritativeMetadata -> authoritativeMetadata)
+            "Authoritative ContentBlockMetadata is stale or incomplete for claimed reuse range"
+            requestContext
+            manifest
+            correlationId
+
+    let private loadClaimedMetadataForFinalizeReplay (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
+        loadClaimedMetadataForFinalizeWith
+            authoritativeClaimedRangeMatchesForFinalizeReplay
+            (fun claimedRange authoritativeMetadata -> { authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion })
+            "Authoritative ContentBlockMetadata is absent, incomplete, or no longer matches durable finalized range for claimed reuse range"
+            requestContext
+            manifest
+            correlationId
+
+    let private hydrateFinalizeEvidenceFromClaimedMetadata
+        (requestContext: UploadSessionRequestContext)
+        (parameters: FinalizeManifestUploadParameters)
+        (manifest: FileManifest)
+        (claimedMetadata: ContentBlockMetadata array)
+        useRequestBlockPayloads
+        (correlationId: CorrelationId)
+        =
+        task {
+            let payloads = ResizeArray<FinalizeManifestBlockPayload>()
+            let mutable error = None
+            let mutable index = 0
+
+            if useRequestBlockPayloads
+               && not (isNull parameters.BlockPayloads)
+               && parameters.BlockPayloads.Length > 0 then
+                payloads.AddRange parameters.BlockPayloads
+            else
+                let blockAddresses = manifestBlockAddresses manifest
+
+                let confirmedBlockUploads =
+                    if isNull requestContext.SessionForScope.ConfirmedBlockUploads then
+                        Array.empty
+                    else
+                        requestContext.SessionForScope.ConfirmedBlockUploads
+
+                while index < blockAddresses.Length
+                      && Option.isNone error do
+                    let address = blockAddresses[index]
+
+                    match confirmedBlockUploads
+                          |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
+                        with
+                    | Some confirmedBlock ->
+                        match! readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId with
+                        | Ok payload -> payloads.Add payload
+                        | Error downloadError -> error <- Some downloadError
+                    | None ->
+                        let claimedMetadataForAddress =
+                            claimedMetadata
+                            |> Array.tryFind (fun metadata -> metadata.ContentBlockAddress = address)
+
+                        match claimedMetadataForAddress with
+                        | None -> ()
+                        | Some metadata ->
+                            match! readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement correlationId with
+                            | Ok payload -> payloads.Add payload
+                            | Error downloadError -> error <- Some downloadError
+
+                    index <- index + 1
+
+            match error with
+            | Some error -> return Error error
+            | None -> return Ok { BlockPayloads = payloads.ToArray(); ClaimedMetadata = claimedMetadata }
+        }
+
     let private hydrateFinalizeEvidence
         (requestContext: UploadSessionRequestContext)
         (parameters: FinalizeManifestUploadParameters)
@@ -665,51 +754,19 @@ module Storage =
             match! loadClaimedMetadataForFinalize requestContext manifest correlationId with
             | Error error -> return Error error
             | Ok claimedMetadata ->
-                let payloads = ResizeArray<FinalizeManifestBlockPayload>()
-                let mutable error = None
-                let mutable index = 0
+                return! hydrateFinalizeEvidenceFromClaimedMetadata requestContext parameters manifest claimedMetadata useRequestBlockPayloads correlationId
+        }
 
-                if useRequestBlockPayloads
-                   && not (isNull parameters.BlockPayloads)
-                   && parameters.BlockPayloads.Length > 0 then
-                    payloads.AddRange parameters.BlockPayloads
-                else
-                    let blockAddresses = manifestBlockAddresses manifest
-
-                    let confirmedBlockUploads =
-                        if isNull requestContext.SessionForScope.ConfirmedBlockUploads then
-                            Array.empty
-                        else
-                            requestContext.SessionForScope.ConfirmedBlockUploads
-
-                    while index < blockAddresses.Length
-                          && Option.isNone error do
-                        let address = blockAddresses[index]
-
-                        match confirmedBlockUploads
-                              |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
-                            with
-                        | Some confirmedBlock ->
-                            match! readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId with
-                            | Ok payload -> payloads.Add payload
-                            | Error downloadError -> error <- Some downloadError
-                        | None ->
-                            let claimedMetadataForAddress =
-                                claimedMetadata
-                                |> Array.tryFind (fun metadata -> metadata.ContentBlockAddress = address)
-
-                            match claimedMetadataForAddress with
-                            | None -> ()
-                            | Some metadata ->
-                                match! readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement correlationId with
-                                | Ok payload -> payloads.Add payload
-                                | Error downloadError -> error <- Some downloadError
-
-                        index <- index + 1
-
-                match error with
-                | Some error -> return Error error
-                | None -> return Ok { BlockPayloads = payloads.ToArray(); ClaimedMetadata = claimedMetadata }
+    let private hydrateFinalizeReplayEvidence
+        (requestContext: UploadSessionRequestContext)
+        (parameters: FinalizeManifestUploadParameters)
+        (manifest: FileManifest)
+        (correlationId: CorrelationId)
+        =
+        task {
+            match! loadClaimedMetadataForFinalizeReplay requestContext manifest correlationId with
+            | Error error -> return Error error
+            | Ok claimedMetadata -> return! hydrateFinalizeEvidenceFromClaimedMetadata requestContext parameters manifest claimedMetadata false correlationId
         }
 
     let private getFinalizeReplayState requestContext operationId correlationId =
@@ -1565,7 +1622,7 @@ module Storage =
                             match validateFinalizeReplayManifestAddress finalizedManifestAddress parameters.Manifest correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok () ->
-                                let! evidenceResult = hydrateFinalizeEvidence requestContext parameters parameters.Manifest false correlationId
+                                let! evidenceResult = hydrateFinalizeReplayEvidence requestContext parameters parameters.Manifest correlationId
 
                                 match evidenceResult with
                                 | Error error -> return! context |> result400BadRequest error
