@@ -195,35 +195,7 @@ module Storage =
 
     let private deleteContentBlockStagingPayload placement correlationId = deleteContentBlockPayloadBestEffort placement correlationId
 
-    let internal shouldDeleteCreatedFinalContentBlockPayload
-        (getRangePresence: StoragePoolId -> ContentBlockAddress -> ContentBlockRangeQuery -> CorrelationId -> Task<ContentBlockRangePresence>)
-        storagePoolId
-        contentBlockAddress
-        correlationId
-        =
-        task {
-            try
-                let! presence = getRangePresence storagePoolId contentBlockAddress { OrdinalStart = 0; OrdinalCount = 1 } correlationId
-                return presence = ContentBlockRangePresence.Absent
-            with
-            | _ -> return false
-        }
-
-    let internal finalContentBlockMetadataPoolIdForCleanup repositoryId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
-
-    let private shouldDeleteCreatedFinalContentBlockPayloadFromMetadataActor metadataPoolId contentBlockAddress correlationId =
-        let getRangePresence storagePoolId contentBlockAddress query correlationId =
-            let metadataActor =
-                grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
-                    Grace.Actors.ContentBlockMetadataActorKey.Create storagePoolId contentBlockAddress,
-                    correlationId
-                )
-
-            metadataActor.GetRangePresence query correlationId
-
-        shouldDeleteCreatedFinalContentBlockPayload getRangePresence metadataPoolId contentBlockAddress correlationId
-
-    type private MaterializedContentBlock = { StoragePlacement: ContentBlockStoragePlacement; CreatedFinalBlob: bool }
+    type private MaterializedContentBlock = { StoragePlacement: ContentBlockStoragePlacement }
 
     let private createAzureContentBlockSasUriForPlacement (placement: ContentBlockStoragePlacement) permission correlationId =
         task {
@@ -268,11 +240,7 @@ module Storage =
                         let! uploadResult = finalBlobClient.UploadAsync(payloadStream, uploadOptions)
 
                         return
-                            Ok
-                                {
-                                    StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress (Some(uploadResult.Value.ETag.ToString()))
-                                    CreatedFinalBlob = true
-                                }
+                            Ok { StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress (Some(uploadResult.Value.ETag.ToString())) }
                     with
                     | :? RequestFailedException as ex when isExistingBlobConflict ex ->
                         match! readContentBlockPayloadFromPlacement finalPlacement correlationId with
@@ -296,13 +264,7 @@ module Storage =
                                             $"Existing final ContentBlock {contentBlockAddress} does not match the staged validated payload."
                                             correlationId
                                     )
-                            | Ok _, Ok _ ->
-                                return
-                                    Ok
-                                        {
-                                            StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress existingETag
-                                            CreatedFinalBlob = false
-                                        }
+                            | Ok _, Ok _ -> return Ok { StoragePlacement = expectedContentBlockStoragePlacement route contentBlockAddress existingETag }
                     | :? RequestFailedException as ex ->
                         return Error(GraceError.Create $"ContentBlock payload could not be materialized to final CAS storage: {ex.Message}" correlationId)
         }
@@ -1316,20 +1278,6 @@ module Storage =
                                                                 do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                                 return! context |> result200Ok returnValue
                                                             | Error error ->
-                                                                if finalMaterialization.CreatedFinalBlob then
-                                                                    let! shouldDeleteFinalPayload =
-                                                                        shouldDeleteCreatedFinalContentBlockPayloadFromMetadataActor
-                                                                            (finalContentBlockMetadataPoolIdForCleanup
-                                                                                requestContext.SessionForScope.RepositoryId)
-                                                                            parameters.ContentBlockAddress
-                                                                            correlationId
-
-                                                                    if shouldDeleteFinalPayload then
-                                                                        do!
-                                                                            deleteContentBlockPayloadBestEffort
-                                                                                finalMaterialization.StoragePlacement
-                                                                                correlationId
-
                                                                 do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                                 return! context |> result400BadRequest error
                 with
