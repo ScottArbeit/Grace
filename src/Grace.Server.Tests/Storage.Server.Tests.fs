@@ -367,8 +367,15 @@ type StorageContentBlockSasRoutes() =
             Assert.That(body, Does.Contain(contentBlockAddress))
         }
 
+    let assertBadRequestContains (expected: string) (response: HttpResponseMessage) =
+        task {
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Contain(expected))
+        }
+
     [<Test>]
-    member _.ContentBlockUploadUriRequiresPathWriteAndDoesNotProbeBlockExistence() =
+    member _.ContentBlockUploadUriRequiresPathWriteAndFailsClosedWithoutUploadSessionIntent() =
         task {
             let repositoryId = repositoryIds[0]
             let pathWriter = $"{Guid.NewGuid()}"
@@ -389,7 +396,7 @@ type StorageContentBlockSasRoutes() =
             Assert.That(deniedUpload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
             let! allowedUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
-            do! assertSuccessSasForContentBlock allowedUpload parameters.ContentBlockAddress
+            do! assertBadRequestContains "UploadSessionId is required" allowedUpload
         }
 
     [<Test>]
@@ -454,7 +461,7 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
-    member _.ContentBlockDownloadUriRequiresPathReadAndDoesNotProbeBlockExistence() =
+    member _.ContentBlockDownloadUriRequiresPathReadAndFailsClosedWithoutFinalizedManifestReference() =
         task {
             let repositoryId = repositoryIds[0]
             let pathReader = $"{Guid.NewGuid()}"
@@ -475,7 +482,7 @@ type StorageContentBlockSasRoutes() =
             Assert.That(deniedDownload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
 
             let! allowedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
-            do! assertSuccessSasForContentBlock allowedDownload parameters.ContentBlockAddress
+            do! assertBadRequestContains "FileManifest.ManifestAddress is required" allowedDownload
         }
 
     [<Test>]
@@ -887,6 +894,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
             uploadUriParameters.AuthorizedScope <- "/"
 
@@ -936,7 +944,9 @@ type StorageManifestUploadSessionRoutes() =
 
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters downloadUriParameters repositoryId correlationId
+            downloadUriParameters.AuthorizedScope <- "/"
             downloadUriParameters.ContentBlockAddress <- block.Address
+            downloadUriParameters.Manifest <- manifest
 
             let! downloadUriResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent downloadUriParameters)
             let! downloadUriBody = downloadUriResponse.Content.ReadAsStringAsync()
@@ -973,11 +983,9 @@ type StorageManifestUploadSessionRoutes() =
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
-            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
-            assertRawStringContent uploadUriResponse
-            Assert.That(uploadUriBody, Does.StartWith("http"))
-            Assert.That(uploadUriBody, Does.Contain("cas/content/"))
-            Assert.That(uploadUriBody, Does.Not.StartWith("{"))
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), uploadUriBody)
+            assertJsonContent uploadUriResponse
+            Assert.That(uploadUriBody, Does.Contain("UploadSessionId is required"))
 
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters downloadUriParameters repositoryId correlationId
@@ -985,11 +993,9 @@ type StorageManifestUploadSessionRoutes() =
 
             let! downloadUriResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent downloadUriParameters)
             let! downloadUriBody = downloadUriResponse.Content.ReadAsStringAsync()
-            Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUriBody)
-            assertRawStringContent downloadUriResponse
-            Assert.That(downloadUriBody, Does.StartWith("http"))
-            Assert.That(downloadUriBody, Does.Contain("cas/content/"))
-            Assert.That(downloadUriBody, Does.Not.StartWith("{"))
+            Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), downloadUriBody)
+            assertJsonContent downloadUriResponse
+            Assert.That(downloadUriBody, Does.Contain("FileManifest.ManifestAddress is required"))
 
             let! discoveryResponse =
                 postDiscoveryAsync
@@ -1455,6 +1461,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
             uploadUriParameters.AuthorizedScope <- "/"
 
@@ -1540,6 +1547,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
             setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
             uploadUriParameters.AuthorizedScope <- "/"
 
