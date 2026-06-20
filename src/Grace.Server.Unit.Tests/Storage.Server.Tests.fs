@@ -249,6 +249,26 @@ type StorageContentBlockSdkContract() =
             "Fresh finalization may still use request payloads for non-claimed blocks; replay hydration opts out through the false flag."
         )
 
+        let authoritativeUploadedHydrationIndex =
+            compactedStorageSource.IndexOf(
+                "tryReadFinalizeBlockPayloadFromAuthoritativeMetadata requestContext address correlationId",
+                StringComparison.Ordinal
+            )
+
+        let confirmedUploadFallbackIndex = compactedStorageSource.IndexOf("confirmedBlockUploads |> Array.tryFind", StringComparison.Ordinal)
+
+        Assert.That(
+            authoritativeUploadedHydrationIndex,
+            Is.GreaterThanOrEqualTo(0),
+            "Uploaded replay hydration must try current authoritative metadata before stale session upload placement."
+        )
+
+        Assert.That(
+            confirmedUploadFallbackIndex,
+            Is.GreaterThan(authoritativeUploadedHydrationIndex),
+            "ConfirmedBlockUploads must remain only a fallback after current authoritative uploaded metadata is unavailable."
+        )
+
         Assert.That(
             compactedStorageSource,
             Does.Contain("| Some metadata -> match! readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement correlationId"),

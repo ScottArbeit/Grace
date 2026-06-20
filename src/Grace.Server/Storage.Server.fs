@@ -610,6 +610,58 @@ module Storage =
                 else
                     compare right.ClaimedAt left.ClaimedAt)
 
+    let private tryReadFinalizeBlockPayloadFromAuthoritativeMetadata (requestContext: UploadSessionRequestContext) contentBlockAddress correlationId =
+        task {
+            let metadataActor =
+                grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
+                    Grace.Actors.ContentBlockMetadataActorKey.Create requestContext.SessionForScope.StoragePoolId contentBlockAddress,
+                    correlationId
+                )
+
+            let! authoritativeMetadata = metadataActor.Get correlationId
+
+            match authoritativeMetadata with
+            | None -> return Ok None
+            | Some metadata when
+                metadata.StoragePoolId
+                <> requestContext.SessionForScope.StoragePoolId
+                ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Authoritative ContentBlockMetadata StoragePoolId does not match upload session StoragePoolId for {contentBlockAddress}."
+                            correlationId
+                    )
+            | Some metadata when
+                metadata.ContentBlockAddress
+                <> contentBlockAddress
+                ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Authoritative ContentBlockMetadata ContentBlockAddress does not match finalized manifest block {contentBlockAddress}."
+                            correlationId
+                    )
+            | Some metadata when metadata.BlockFormatVersion <= 0s ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Authoritative ContentBlockMetadata BlockFormatVersion is required for finalized manifest block {contentBlockAddress}."
+                            correlationId
+                    )
+            | Some metadata when not (completeContentBlockStoragePlacement metadata.StoragePlacement) ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Authoritative ContentBlockMetadata StoragePlacement is incomplete for finalized manifest block {contentBlockAddress}."
+                            correlationId
+                    )
+            | Some metadata ->
+                match! readFinalizeBlockPayloadFromPlacement contentBlockAddress metadata.StoragePlacement correlationId with
+                | Ok payload -> return Ok(Some payload)
+                | Error error -> return Error error
+        }
+
     let private loadClaimedMetadataForFinalizeWith
         (rangeMatches: ClaimedReuseRange -> ContentBlockMetadata -> bool)
         (evidenceMetadata: ClaimedReuseRange -> ContentBlockMetadata -> ContentBlockMetadata)
@@ -754,14 +806,19 @@ module Storage =
                     match requestPayloads.TryGetValue address with
                     | true, payload -> payloads.Add payload
                     | false, _ ->
-                        match confirmedBlockUploads
-                              |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
-                            with
-                        | Some confirmedBlock ->
-                            match! readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId with
-                            | Ok payload -> payloads.Add payload
-                            | Error downloadError -> error <- Some downloadError
-                        | None -> ()
+                        match! tryReadFinalizeBlockPayloadFromAuthoritativeMetadata requestContext address correlationId with
+                        | Error downloadError -> error <- Some downloadError
+                        | Ok (Some payload) -> payloads.Add payload
+                        | Ok None ->
+                            match confirmedBlockUploads
+                                  |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = address)
+                                with
+                            | Some confirmedBlock ->
+                                match! readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId
+                                    with
+                                | Ok payload -> payloads.Add payload
+                                | Error downloadError -> error <- Some downloadError
+                            | None -> ()
 
                 index <- index + 1
 

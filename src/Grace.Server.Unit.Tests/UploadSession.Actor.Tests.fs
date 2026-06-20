@@ -199,6 +199,33 @@ type UploadSessionActorTests() =
             Unchecked.defaultof<_>
 
     [<Test>]
+    member _.FinalizePrevalidatesAllMetadataMergePlansBeforeSideEffectingMergeCalls() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
+        let actorSource = File.ReadAllText(actorPath)
+        let prevalidateStart = actorSource.IndexOf("member private this.PrevalidateFinalizedContentBlockMetadata", StringComparison.Ordinal)
+        let mergeStart = actorSource.IndexOf("member private this.MergePrevalidatedContentBlockMetadata", StringComparison.Ordinal)
+
+        Assert.That(prevalidateStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(mergeStart, Is.GreaterThan(prevalidateStart))
+
+        let prevalidateSource = actorSource.Substring(prevalidateStart, mergeStart - prevalidateStart)
+        let mergeSource = actorSource.Substring(mergeStart)
+
+        Assert.That(
+            prevalidateSource,
+            Does
+                .Contain("let! currentMetadata = metadataActor.Get metadata.CorrelationId")
+                .And.Contain("ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata uploadedMerge metadata.Timestamp"),
+            "Finalize must validate uploaded metadata merges against current authoritative metadata before side-effecting merge calls."
+        )
+
+        Assert.That(
+            mergeSource,
+            Does.Contain("metadataActor.MergePhysicalRanges merge metadata"),
+            "The side-effecting metadata merge must remain isolated behind prevalidation."
+        )
+
+    [<Test>]
     member _.StartWithSameOperationIdIsIdempotentReplay() =
         let command = UploadSessionCommand.Start(start "op-start")
         let first = UploadSessionActor.decideCommand [] UploadSessionDto.Default command (metadata "corr-start-1")
@@ -765,6 +792,10 @@ type UploadSessionActorTests() =
                 Assert.That(merge.Ranges[0].OrdinalStart, Is.EqualTo(0))
                 Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(1))
                 Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
+                Assert.That(merge.RequireMissingMetadata, Is.False)
+                Assert.That(merge.ExpectedRanges, Is.Empty)
+                Assert.That(merge.IsFinalizeContribution, Is.True)
             | _ -> Assert.Fail("Expected uploaded block finalization to create ContentBlockMetadata MergePhysicalRanges commands.")
 
         assertMerge commands[0] firstBlock.Address (StorageKeys.contentBlockObjectKey firstBlock.Address)
@@ -823,6 +854,10 @@ type UploadSessionActorTests() =
             Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(metadataRange.PhysicalOffset))
             Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(metadataRange.PhysicalLength))
             Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(Some authoritativeMetadata.MetadataVersion))
+            Assert.That(merge.RequireMissingMetadata, Is.False)
+            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| metadataRange |]))
+            Assert.That(merge.IsFinalizeContribution, Is.True)
         | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     [<Test>]
@@ -921,6 +956,10 @@ type UploadSessionActorTests() =
                 Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
                 Assert.That(merge.StoragePlacement.ObjectKey, Is.EqualTo(StorageKeys.contentBlockObjectKey block.Address))
                 Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
+                Assert.That(merge.RequireMissingMetadata, Is.False)
+                Assert.That(merge.ExpectedRanges, Is.Empty)
+                Assert.That(merge.IsFinalizeContribution, Is.True)
             | _ -> Assert.Fail("Expected confirmed upload to provide the metadata merge command.")
         | Error error -> Assert.Fail($"Expected confirmed upload to supersede stale claimed metadata, got {error.Error}.")
 
@@ -987,6 +1026,9 @@ type UploadSessionActorTests() =
                 Assert.That(merge.Ranges, Has.Length.EqualTo(1))
                 Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(int64 fileBytes.Length))
                 Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(Some freshMetadata.MetadataVersion))
+                Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| freshRange |]))
+                Assert.That(merge.IsFinalizeContribution, Is.True)
             | _ -> Assert.Fail("Expected the fresh claimed range to provide the metadata merge command.")
         | Error error -> Assert.Fail($"Expected fresh duplicate claim to supersede stale claim, got {error.Error}.")
 
@@ -1115,16 +1157,37 @@ type UploadSessionActorTests() =
         Assert.That(firstMergeOperationId, Does.Contain(sessionId.ToString("N")))
         Assert.That(secondMergeOperationId, Does.Contain(secondSession.UploadSessionId.ToString("N")))
 
+        let firstMetadataDto = { ContentBlockMetadataDto.Empty with Metadata = Some authoritativeMetadata }
+
         let firstDecision =
-            ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty firstCommands[0] (metadata "corr-metadata-first")
+            ContentBlockMetadataActor.decideCommand [] firstMetadataDto firstCommands[0] (metadata "corr-metadata-first")
             |> decisionOrFail "Expected first metadata merge to succeed"
 
         let currentMetadataDto =
             firstDecision.Events
-            |> List.fold (fun current event -> ContentBlockMetadataDto.UpdateDto event current) ContentBlockMetadataDto.Empty
+            |> List.fold (fun current event -> ContentBlockMetadataDto.UpdateDto event current) firstMetadataDto
+
+        let revalidatedSecondCommand =
+            match
+                UploadSessionActor.createRevalidatedClaimedMetadataMergeCommand
+                    "corr-metadata-second"
+                    sessionStoragePoolId
+                    "op-finalize"
+                    secondSession
+                    manifest
+                    [| authoritativeMetadata |]
+                    firstDecision.Metadata
+                with
+            | Ok (Some command) -> command
+            | Ok None ->
+                Assert.Fail("Expected second claimed reuse command to revalidate against current ContentBlockMetadata.")
+                secondCommands[0]
+            | Error error ->
+                Assert.Fail($"Expected second claimed reuse command to revalidate, got {error.Error}.")
+                secondCommands[0]
 
         let secondDecision =
-            ContentBlockMetadataActor.decideCommand firstDecision.Events currentMetadataDto secondCommands[0] (metadata "corr-metadata-second")
+            ContentBlockMetadataActor.decideCommand firstDecision.Events currentMetadataDto revalidatedSecondCommand (metadata "corr-metadata-second")
             |> decisionOrFail "Expected second metadata merge to be a distinct contribution"
 
         Assert.That(secondDecision.WasIdempotentReplay, Is.False)
@@ -1287,6 +1350,9 @@ type UploadSessionActorTests() =
         | Ok (Some (ContentBlockMetadataCommand.MergePhysicalRanges merge)) ->
             Assert.That(merge.Ranges, Has.Length.EqualTo(1))
             Assert.That(merge.StoragePlacement.ETag, Is.EqualTo(advancedCurrentMetadata.StoragePlacement.ETag))
+            Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(Some advancedCurrentMetadata.MetadataVersion))
+            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| metadataRange |]))
+            Assert.That(merge.IsFinalizeContribution, Is.True)
         | Ok _ -> Assert.Fail("Expected current authoritative metadata to produce a claimed merge command.")
         | Error error -> Assert.Fail($"Expected metadata-version advancement to be tolerated, got {error.Error}.")
 
@@ -1308,6 +1374,8 @@ type UploadSessionActorTests() =
             Assert.That(merge.Ranges, Has.Length.EqualTo(1))
             Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(activeRelocatedRange.PhysicalOffset))
             Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(Some activeRelocatedMetadata.MetadataVersion))
+            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| activeRelocatedRange |]))
         | Ok _ -> Assert.Fail("Expected active relocated metadata to produce a claimed merge command.")
         | Error error -> Assert.Fail($"Expected active relocated metadata to be accepted for replay repair, got {error.Error}.")
 

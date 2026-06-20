@@ -75,11 +75,27 @@ type ContentBlockMetadataActorTests() =
                 BlockFormatVersion = 1s
                 StoragePlacement = placement
                 Ranges = ranges
+                ExpectedMetadataVersion = None
+                RequireMissingMetadata = false
+                ExpectedRanges = Array.empty
+                IsFinalizeContribution = false
             }
 
     let mergeWithObjectKey operationId objectKey ranges = mergeWithPlacement operationId (placementFor objectKey (Some "etag-1")) ranges
 
     let merge operationId ranges = mergeWithObjectKey operationId contentBlockObjectKey ranges
+
+    let finalizeMerge operationId ranges =
+        match merge operationId ranges with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge -> ContentBlockMetadataCommand.MergePhysicalRanges { merge with IsFinalizeContribution = true }
+        | command -> command
+
+    let mergeWithPreconditions operationId expectedVersion requireMissing expectedRanges ranges =
+        match merge operationId ranges with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            ContentBlockMetadataCommand.MergePhysicalRanges
+                { merge with ExpectedMetadataVersion = expectedVersion; RequireMissingMetadata = requireMissing; ExpectedRanges = expectedRanges }
+        | command -> command
 
     let compact operationId expectedMetadataVersion placement ranges context =
         ContentBlockMetadataCommand.CompactPhysicalRanges
@@ -797,7 +813,11 @@ type ContentBlockMetadataActorTests() =
         let contribution = { activeRange with ActiveManifestCount = 1 }
 
         let result =
-            ContentBlockMetadataActor.decideCommand [] currentDto (merge "op-finalize-second-ref" [| contribution |]) (metadata "corr-finalize-second-ref")
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (finalizeMerge "op-finalize-second-ref" [| contribution |])
+                (metadata "corr-finalize-second-ref")
 
         match result with
         | Ok decision ->
@@ -826,7 +846,7 @@ type ContentBlockMetadataActorTests() =
             ContentBlockMetadataActor.decideCommand
                 []
                 currentDto
-                (merge "op-finalize-multi-range-existing" contributions)
+                (finalizeMerge "op-finalize-multi-range-existing" contributions)
                 (metadata "corr-finalize-multi-range-existing")
 
         match result with
@@ -867,13 +887,45 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected mixed append merge to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.MergePhysicalRangesAddsMixedFinalizeContributionsWhileAppendingMissingRanges() =
+        let existingActive = { activeRange with ActiveManifestCount = 1 }
+        let missingContribution = { reclaimableRange with ActiveManifestCount = 1 }
+
+        let currentMetadata = recordWithTotals [| existingActive |] existingActive.PhysicalLength existingActive.PhysicalLength timestamp 7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (finalizeMerge
+                    "op-finalize-mixed-existing-and-new"
+                    [|
+                        existingActive
+                        missingContribution
+                    |])
+                (metadata "corr-finalize-mixed-existing-and-new")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges, Has.Length.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(1))
+        | Error error -> Assert.Fail($"Expected mixed finalize contribution merge to succeed, got {error.Error}.")
+
+    [<Test>]
     member _.MergePhysicalRangesReactivatesExactReclaimableRangeContribution() =
         let currentMetadata = record [| reclaimableRange |]
         let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
         let contribution = { reclaimableRange with ActiveManifestCount = 1 }
 
         let result =
-            ContentBlockMetadataActor.decideCommand [] currentDto (merge "op-finalize-reclaimable" [| contribution |]) (metadata "corr-finalize-reclaimable")
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (finalizeMerge "op-finalize-reclaimable" [| contribution |])
+                (metadata "corr-finalize-reclaimable")
 
         match result with
         | Ok decision ->
@@ -897,7 +949,7 @@ type ContentBlockMetadataActorTests() =
             ContentBlockMetadataActor.decideCommand
                 []
                 currentDto
-                (merge "op-finalize-duplicate-evidence" [| contribution; contribution |])
+                (finalizeMerge "op-finalize-duplicate-evidence" [| contribution; contribution |])
                 (metadata "corr-finalize-duplicate-evidence")
 
         match result with
@@ -905,6 +957,56 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.Ranges, Has.Length.EqualTo(1))
             Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
         | Error error -> Assert.Fail($"Expected duplicate evidence merge to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsStaleExpectedMetadataVersion() =
+        let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let contribution = { activeRange with ActiveManifestCount = 1 }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (mergeWithPreconditions "op-stale-merge" (Some 6L) false Array.empty [| contribution |])
+                (metadata "corr-stale-merge")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected stale merge evidence to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata merge rejected."))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsCreateWhenMissingMetadataWasRequiredButRecordExists() =
+        let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (mergeWithPreconditions "op-create-race" None true Array.empty [| reclaimableRange |])
+                (metadata "corr-create-race")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected missing-metadata precondition to reject an existing record.")
+        | Error error -> Assert.That(error.Error, Does.Contain("merge expected missing metadata"))
+
+    [<Test>]
+    member _.MergePhysicalRangesRejectsMissingExpectedRangeEvidenceAtMergeTime() =
+        let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let contribution = { activeRange with ActiveManifestCount = 1 }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (mergeWithPreconditions "op-claimed-range-moved" (Some 7L) false [| reclaimableRange |] [| contribution |])
+                (metadata "corr-claimed-range-moved")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected missing expected range evidence to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("expected range evidence is absent or changed"))
 
     [<Test>]
     member _.MergePhysicalRangesAllowsSameOrdinalAtDifferentPhysicalOffsets() =
