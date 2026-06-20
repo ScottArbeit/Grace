@@ -159,6 +159,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - Follow the MarkdownLint ruleset found at `https://raw.githubusercontent.com/DavidAnson/markdownlint/refs/heads/main/doc/Rules.md`.
 - Verify updates by running MarkdownLint. Use `npx --yes markdownlint-cli2 ...`. `--help` is available.
 - For MD013, override the guidance to allow for 120-character lines.
+- When appending generated Markdown sections, especially to GitHub issue or pull request bodies, normalize the insertion
+  boundary before writing the file: trim trailing whitespace, preserve exactly one blank line after the previous block,
+  and ensure every new heading is preceded and followed by a blank line. Do not append a heading immediately after a
+  list item; this creates repeat MD022/MD032 failures.
 
 ## Editing Documentation
 
