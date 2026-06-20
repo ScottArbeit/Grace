@@ -321,17 +321,26 @@ module UploadSession =
         decodedBlock.Chunks
         |> Array.sumBy (fun chunk -> int64 chunk.Length)
 
-    let private manifestBlockAddresses (manifest: FileManifest) =
+    let private finalizedManifestContentBlockAddresses (manifest: FileManifest) =
         let addresses = HashSet<ContentBlockAddress>()
+        let orderedAddresses = ResizeArray<ContentBlockAddress>()
 
         if
             not (isNull (box manifest))
             && not (isNull manifest.Blocks)
         then
             for block in manifest.Blocks do
-                if not (isNull (box block)) then addresses.Add(block.Address) |> ignore
+                if
+                    not (isNull (box block))
+                    && addresses.Add(block.Address)
+                then
+                    orderedAddresses.Add(block.Address)
 
-        addresses
+        orderedAddresses.ToArray()
+
+    let private manifestBlockAddresses (manifest: FileManifest) =
+        finalizedManifestContentBlockAddresses manifest
+        |> HashSet<ContentBlockAddress>
 
     let activeRangesForFinalizedManifest (ranges: ContentBlockMetadataRange array) =
         ranges
@@ -1129,6 +1138,54 @@ module UploadSession =
                 | Ok prevalidatedMerges -> return! this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
             }
 
+        member private this.LoadAuthoritativeFinalizedManifestMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+            task {
+                let authoritativeMetadata = ResizeArray<ContentBlockMetadata>()
+
+                if not (isNull (box finalize)) then
+                    let manifestAddresses = finalizedManifestContentBlockAddresses finalize.Manifest
+                    let mutable addressIndex = 0
+                    let mutable metadataError = None
+
+                    while addressIndex < manifestAddresses.Length
+                          && metadataError.IsNone do
+                        let contentBlockAddress = manifestAddresses[addressIndex]
+                        let actorKey = ContentBlockMetadataActorKey.Create decision.Session.StoragePoolId contentBlockAddress
+
+                        let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, metadata.CorrelationId)
+
+                        let! currentMetadata = metadataActor.Get metadata.CorrelationId
+
+                        match currentMetadata with
+                        | Some current when
+                            current.StoragePoolId = decision.Session.StoragePoolId
+                            && current.ContentBlockAddress = contentBlockAddress
+                            ->
+                            authoritativeMetadata.Add current
+                        | Some _ ->
+                            metadataError <-
+                                Some(
+                                    graceError
+                                        metadata.CorrelationId
+                                        $"Authoritative ContentBlockMetadata actor returned mismatched metadata for finalize replay repair {contentBlockAddress}."
+                                )
+                        | None ->
+                            metadataError <-
+                                Some(
+                                    graceError
+                                        metadata.CorrelationId
+                                        $"Authoritative ContentBlockMetadata is required before repairing finalize replay Dedupe metadata for ContentBlockAddress {contentBlockAddress}."
+                                )
+
+                        addressIndex <- addressIndex + 1
+
+                    match metadataError with
+                    | Some error -> return Error error
+                    | None -> return Ok(authoritativeMetadata.ToArray())
+                else
+                    return Ok(Array.empty)
+            }
+
         member private this.RegisterFinalizedManifestInDedupe
             decision
             (finalize: FinalizeManifest)
@@ -1252,16 +1309,21 @@ module UploadSession =
                         match command with
                         | UploadSessionCommand.FinalizeManifest finalize ->
                             if decision.WasIdempotentReplay then
-                                do! this.RegisterFinalizedManifestInDedupe decision finalize Array.empty metadata
+                                let! replayMetadataResult = this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata
 
-                                let returnValue =
-                                    (GraceReturnValue.Create decision metadata.CorrelationId)
-                                        .enhance(nameof RepositoryId, decision.Session.RepositoryId)
-                                        .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
-                                        .enhance(nameof UploadSessionOperationId, decision.OperationId)
-                                        .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+                                match replayMetadataResult with
+                                | Error error -> return Error error
+                                | Ok replayMetadata ->
+                                    do! this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata
 
-                                return Ok returnValue
+                                    let returnValue =
+                                        (GraceReturnValue.Create decision metadata.CorrelationId)
+                                            .enhance(nameof RepositoryId, decision.Session.RepositoryId)
+                                            .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
+                                            .enhance(nameof UploadSessionOperationId, decision.OperationId)
+                                            .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+
+                                    return Ok returnValue
                             else
                                 let! metadataMergeResult = this.MergeFinalizedContentBlockMetadata decision finalize metadata
 

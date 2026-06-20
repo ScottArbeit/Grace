@@ -1149,7 +1149,7 @@ type UploadSessionActorTests() =
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     [<Test>]
-    member _.FinalizeManifestRepairsDedupeOnReplayAndMergesBeforePersistingTerminalEvent() =
+    member _.FinalizeManifestReplayDedupeRepairRefreshesAuthoritativeMetadataBeforeSuccess() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
         let handleStart = actorSource.IndexOf("member this.Handle command metadata", StringComparison.Ordinal)
@@ -1168,8 +1168,11 @@ type UploadSessionActorTests() =
 
         let replayGuardIndex = finalizeBranch.IndexOf("if decision.WasIdempotentReplay then", StringComparison.Ordinal)
 
+        let replayMetadataRefreshIndex =
+            finalizeBranch.IndexOf("this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata", StringComparison.Ordinal)
+
         let replayDedupeRepairIndex =
-            finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize Array.empty metadata", StringComparison.Ordinal)
+            finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata", StringComparison.Ordinal)
 
         let replayReturnIndex = finalizeBranch.IndexOf("return Ok returnValue", replayGuardIndex, StringComparison.Ordinal)
 
@@ -1182,9 +1185,15 @@ type UploadSessionActorTests() =
         Assert.That(replayGuardIndex, Is.GreaterThanOrEqualTo(0), "Finalize replays must not derive metadata merge side effects from the replay command body.")
 
         Assert.That(
-            replayDedupeRepairIndex,
+            replayMetadataRefreshIndex,
             Is.GreaterThan(replayGuardIndex),
-            "Finalize replays must repair idempotent DedupeIndex registration before returning success."
+            "Finalize replays must load current authoritative ContentBlockMetadata before repairing DedupeIndex metadata records."
+        )
+
+        Assert.That(
+            replayDedupeRepairIndex,
+            Is.GreaterThan(replayMetadataRefreshIndex),
+            "Finalize replays must repair DedupeIndex registration with current authoritative ContentBlockMetadata before returning success."
         )
 
         Assert.That(replayReturnIndex, Is.GreaterThan(replayDedupeRepairIndex), "Finalize replay dedupe repair must complete before returning replay success.")
@@ -1193,6 +1202,32 @@ type UploadSessionActorTests() =
         Assert.That(mergeIndex, Is.GreaterThan(replayReturnIndex), "Metadata merge/revalidation must be skipped for idempotent finalize replays.")
         Assert.That(applyEventsIndex, Is.GreaterThan(mergeIndex), "Metadata merge/revalidation must happen before persisting Finalized.")
         Assert.That(dedupeIndex, Is.GreaterThan(applyEventsIndex), "Dedupe registration should still use the persisted finalize decision.")
+
+        let loadStart = actorSource.IndexOf("member private this.LoadAuthoritativeFinalizedManifestMetadata", StringComparison.Ordinal)
+        let registerStart = actorSource.IndexOf("member private this.RegisterFinalizedManifestInDedupe", loadStart, StringComparison.Ordinal)
+
+        Assert.That(loadStart, Is.GreaterThanOrEqualTo(0), "Finalize replay must have a dedicated authoritative metadata refresh helper.")
+        Assert.That(registerStart, Is.GreaterThan(loadStart), "The replay metadata refresh source slice must be bounded before Dedupe registration.")
+
+        let loadSource = actorSource.Substring(loadStart, registerStart - loadStart)
+
+        Assert.That(
+            loadSource,
+            Does.Contain("finalizedManifestContentBlockAddresses finalize.Manifest"),
+            "Replay repair should refresh metadata for accepted manifest blocks, not for replay ClaimedMetadata entries."
+        )
+
+        Assert.That(
+            loadSource,
+            Does.Contain("metadataActor.Get metadata.CorrelationId"),
+            "Replay repair must read current durable ContentBlockMetadata state before publishing Dedupe metadata records."
+        )
+
+        Assert.That(
+            loadSource,
+            Does.Not.Contain("ClaimedMetadata"),
+            "Replay repair must not use mismatched replay command body claimed metadata for metadata side effects."
+        )
 
     [<Test>]
     member _.FinalizeManifestPrevalidatesClaimedMetadataBeforeApplyingAnyMetadataMerge() =
