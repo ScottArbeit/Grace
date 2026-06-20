@@ -13,6 +13,14 @@
  */
 
 import { mapValues } from '../runtime';
+import type { FileManifest } from './FileManifest';
+import {
+    FileManifestFromJSON,
+    FileManifestFromJSONTyped,
+    FileManifestToJSON,
+    FileManifestToJSONTyped,
+} from './FileManifest';
+
 /**
  * 
  * @export
@@ -68,11 +76,23 @@ export interface GetContentBlockDownloadUriParameters {
      */
     repositoryName?: string;
     /**
+     * 
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    authorizedScope?: string;
+    /**
      * Lowercase 64-character BLAKE3-derived ContentBlock address.
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
     contentBlockAddress?: string;
+    /**
+     * 
+     * @type {FileManifest}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    manifest?: FileManifest;
 }
 
 /**
@@ -100,7 +120,9 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'organizationName': json['OrganizationName'] == null ? undefined : json['OrganizationName'],
         'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
+        'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
         'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
+        'manifest': json['Manifest'] == null ? undefined : FileManifestFromJSON(json['Manifest']),
     };
 }
 
@@ -123,7 +145,9 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'OrganizationName': value['organizationName'],
         'RepositoryId': value['repositoryId'],
         'RepositoryName': value['repositoryName'],
+        'AuthorizedScope': value['authorizedScope'],
         'ContentBlockAddress': value['contentBlockAddress'],
+        'Manifest': FileManifestToJSON(value['manifest']),
     };
 }
 

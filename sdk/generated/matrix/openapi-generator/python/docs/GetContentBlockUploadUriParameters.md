@@ -13,6 +13,7 @@ Name | Type | Description | Notes
 **organization_name** | **str** |  | [optional] 
 **repository_id** | **str** |  | [optional] 
 **repository_name** | **str** |  | [optional] 
+**upload_session_id** | **UUID** |  | [optional] 
 **content_block_address** | **str** | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional] 
 **authorized_scope** | **str** |  | [optional] 
 

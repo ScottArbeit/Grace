@@ -21,6 +21,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
+from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -37,9 +38,10 @@ class GetContentBlockUploadUriParameters(BaseModel):
     organization_name: Optional[StrictStr] = Field(default=None, alias="OrganizationName")
     repository_id: Optional[StrictStr] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
+    upload_session_id: Optional[UUID] = Field(default=None, alias="UploadSessionId")
     content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
     authorized_scope: Optional[StrictStr] = Field(default=None, alias="AuthorizedScope")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ContentBlockAddress", "AuthorizedScope"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "UploadSessionId", "ContentBlockAddress", "AuthorizedScope"]
 
     @field_validator('content_block_address')
     def content_block_address_validate_regular_expression(cls, value):
@@ -113,6 +115,7 @@ class GetContentBlockUploadUriParameters(BaseModel):
             "OrganizationName": obj.get("OrganizationName"),
             "RepositoryId": obj.get("RepositoryId"),
             "RepositoryName": obj.get("RepositoryName"),
+            "UploadSessionId": obj.get("UploadSessionId"),
             "ContentBlockAddress": obj.get("ContentBlockAddress"),
             "AuthorizedScope": obj.get("AuthorizedScope")
         })

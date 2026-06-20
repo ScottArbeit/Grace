@@ -13,7 +13,9 @@ Name | Type | Description | Notes
 **organization_name** | **str** |  | [optional] 
 **repository_id** | **str** |  | [optional] 
 **repository_name** | **str** |  | [optional] 
+**authorized_scope** | **str** |  | [optional] 
 **content_block_address** | **str** | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional] 
+**manifest** | [**FileManifest**](FileManifest.md) |  | [optional] 
 
 ## Example
 
