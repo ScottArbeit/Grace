@@ -1026,6 +1026,86 @@ type StorageManifestUploadSessionRoutes() =
         }
 
     [<Test>]
+    member _.ContentBlockUploadUriRejectsRetentionPendingSessionWithRetainedIntent() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let payload = pseudoRandomBytes 220000
+            payload[0] <- 7uy
+            let block = encodeBlock payload
+            let manifest = manifestFor payload block
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
+            start.OperationId <- "start"
+
+            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/"
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
+            uploadUriParameters.ContentBlockAddress <- block.Address
+            uploadUriParameters.AuthorizedScope <- "/"
+
+            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
+            let uploadUri = Uri uploadUriBody
+            let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- "/"
+            confirm.OperationId <- "confirm-0"
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
+
+            let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
+
+            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
+            setStorageParameters finalize repositoryId correlationId
+            finalize.UploadSessionId <- sessionId
+            finalize.AuthorizedScope <- "/"
+            finalize.OperationId <- "finalize"
+            finalize.Manifest <- manifest
+
+            let! finalizeResult = postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
+            Assert.That(finalizeResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+            Assert.That(finalizeResult.ReturnValue.Session.BlockUploadIntents, Is.Not.Empty)
+
+            let! deniedResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! deniedBody = deniedResponse.Content.ReadAsStringAsync()
+
+            Assert.That(deniedResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), deniedBody)
+            assertJsonContent deniedResponse
+            Assert.That(deniedBody, Does.Contain("UploadSession must be active"))
+            Assert.That(deniedBody, Does.Contain("RetentionPending"))
+            Assert.That(deniedBody, Does.Not.Contain("cas/content/"))
+        }
+
+    [<Test>]
     member _.ContentBlockDownloadUriRejectsManifestFinalizedForDifferentAuthorizedScope() =
         task {
             let repositoryId = repositoryIds[0]
