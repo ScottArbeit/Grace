@@ -1423,6 +1423,15 @@ type StorageManifestUploadSessionRoutes() =
 
             let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
 
+            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.ContentBlockAddress <- block.Address
+            uploadUriParameters.AuthorizedScope <- "/"
+
+            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
@@ -1431,13 +1440,7 @@ type StorageManifestUploadSessionRoutes() =
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
 
-            confirm.StoragePlacement <-
-                {
-                    StorageAccountName = AzureEnvironment.storageEndpoints.AccountName
-                    StorageContainerName = StorageContainerName Constants.DefaultCasStorageContainerName
-                    ObjectKey = StorageKeys.contentBlockObjectKey (ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray()))
-                    ETag = Some "etag-missing-block"
-                }
+            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri (Uri uploadUriBody) (Some "etag-missing-block")
 
             let! _ = postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
 
