@@ -405,31 +405,34 @@ module ContentBlockMetadata =
                 match validateMetadata eventMetadata.CorrelationId replace.Metadata with
                 | Some error -> Error error
                 | None ->
-                    match current.Metadata, replace.ExpectedMetadataVersion with
-                    | None, Some expectedVersion ->
-                        Error(graceError eventMetadata.CorrelationId $"ContentBlockMetadata does not exist; expected MetadataVersion {expectedVersion}.")
-                    | Some _, None ->
-                        Error(graceError eventMetadata.CorrelationId "ExpectedMetadataVersion is required when replacing existing ContentBlockMetadata.")
-                    | Some existing, Some expectedVersion when existing.MetadataVersion <> expectedVersion ->
-                        Error(
-                            graceError
-                                eventMetadata.CorrelationId
-                                $"Stale ContentBlockMetadata update rejected. Expected MetadataVersion {expectedVersion}, current MetadataVersion {existing.MetadataVersion}."
-                        )
-                    | currentState, _ ->
-                        let nextVersion =
-                            currentState
-                            |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
-                            |> Option.defaultValue 1L
+                    match validateStoragePlacement eventMetadata.CorrelationId replace.Metadata.StoragePlacement with
+                    | Some error -> Error error
+                    | None ->
+                        match current.Metadata, replace.ExpectedMetadataVersion with
+                        | None, Some expectedVersion ->
+                            Error(graceError eventMetadata.CorrelationId $"ContentBlockMetadata does not exist; expected MetadataVersion {expectedVersion}.")
+                        | Some _, None ->
+                            Error(graceError eventMetadata.CorrelationId "ExpectedMetadataVersion is required when replacing existing ContentBlockMetadata.")
+                        | Some existing, Some expectedVersion when existing.MetadataVersion <> expectedVersion ->
+                            Error(
+                                graceError
+                                    eventMetadata.CorrelationId
+                                    $"Stale ContentBlockMetadata update rejected. Expected MetadataVersion {expectedVersion}, current MetadataVersion {existing.MetadataVersion}."
+                            )
+                        | currentState, _ ->
+                            let nextVersion =
+                                currentState
+                                |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
+                                |> Option.defaultValue 1L
 
-                        let metadata = stampMetadata replace.Metadata nextVersion eventMetadata.Timestamp
+                            let metadata = stampMetadata replace.Metadata nextVersion eventMetadata.Timestamp
 
-                        let events =
-                            [
-                                { Event = ContentBlockMetadataEventType.WholeRecordReplaced(operationId, metadata); Metadata = eventMetadata }
-                            ]
+                            let events =
+                                [
+                                    { Event = ContentBlockMetadataEventType.WholeRecordReplaced(operationId, metadata); Metadata = eventMetadata }
+                                ]
 
-                        okDecision metadata operationId events false "ContentBlockMetadata whole record replaced."
+                            okDecision metadata operationId events false "ContentBlockMetadata whole record replaced."
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
                 match createMergedMetadata eventMetadata.CorrelationId current.Metadata merge eventMetadata.Timestamp with
                 | Error error -> Error error

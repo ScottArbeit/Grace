@@ -39,6 +39,8 @@ class TestConfirmedBlockUpload(unittest.TestCase):
                 content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
                 payload_length = 56,
                 storage_placement = grace_generated_openapi_probe.models.content_block_storage_placement.ContentBlockStoragePlacement(
+                    storage_account_name = '', 
+                    storage_container_name = '', 
                     object_key = '', 
                     e_tag = '', ),
                 ranges = [
@@ -56,6 +58,8 @@ class TestConfirmedBlockUpload(unittest.TestCase):
                 content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
                 payload_length = 56,
                 storage_placement = grace_generated_openapi_probe.models.content_block_storage_placement.ContentBlockStoragePlacement(
+                    storage_account_name = '', 
+                    storage_container_name = '', 
                     object_key = '', 
                     e_tag = '', ),
                 ranges = [
