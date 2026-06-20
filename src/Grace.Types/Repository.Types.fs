@@ -24,6 +24,7 @@ module Repository =
             objectStorageProvider: ObjectStorageProvider
         | Initialize
         | SetObjectStorageProvider of objectStorageProvider: ObjectStorageProvider
+        | SetStoragePoolId of storagePoolId: StoragePoolId
         | SetStorageAccountName of storageAccountName: StorageAccountName
         | SetStorageContainerName of storageContainerName: StorageContainerName
         | SetRepositoryType of repositoryVisibility: RepositoryType
@@ -58,6 +59,7 @@ module Repository =
             objectStorageProvider: ObjectStorageProvider
         | Initialized
         | ObjectStorageProviderSet of objectStorageProvider: ObjectStorageProvider
+        | StoragePoolIdSet of storagePoolId: StoragePoolId
         | StorageAccountNameSet of storageAccountName: StorageAccountName
         | StorageContainerNameSet of storageContainerName: StorageContainerName
         | RepositoryTypeSet of repositoryVisibility: RepositoryType
@@ -99,6 +101,7 @@ module Repository =
             OrganizationId: OrganizationId
             RepositoryName: RepositoryName
             ObjectStorageProvider: ObjectStorageProvider
+            StoragePoolId: StoragePoolId
             StorageAccountName: StorageAccountName
             StorageContainerName: StorageContainerName
             RepositoryType: RepositoryType
@@ -131,6 +134,7 @@ module Repository =
                 OrganizationId = OrganizationId.Empty
                 RepositoryName = RepositoryName String.Empty
                 ObjectStorageProvider = ObjectStorageProvider.Unknown
+                StoragePoolId = StoragePoolId Constants.DefaultStoragePoolId
                 StorageAccountName = String.Empty
                 StorageContainerName = "grace-objects"
                 RepositoryType = RepositoryType.Private
@@ -166,12 +170,14 @@ module Repository =
                         OwnerId = ownerId
                         OrganizationId = organizationId
                         ObjectStorageProvider = objectStorageProvider
+                        StoragePoolId = StoragePoolId Constants.DefaultStoragePoolId
                         StorageAccountName = DefaultObjectStorageAccount
                         StorageContainerName = $"{repositoryId}"
                         CreatedAt = repositoryEvent.Metadata.Timestamp
                     }
                 | Initialized -> { currentRepositoryDto with InitializedAt = Some(getCurrentInstant ()) }
                 | ObjectStorageProviderSet objectStorageProvider -> { currentRepositoryDto with ObjectStorageProvider = objectStorageProvider }
+                | StoragePoolIdSet storagePoolId -> { currentRepositoryDto with StoragePoolId = storagePoolId }
                 | StorageAccountNameSet storageAccountName -> { currentRepositoryDto with StorageAccountName = storageAccountName }
                 | StorageContainerNameSet containerName -> { currentRepositoryDto with StorageContainerName = containerName }
                 | RepositoryStatusSet repositoryStatus -> { currentRepositoryDto with RepositoryStatus = repositoryStatus }

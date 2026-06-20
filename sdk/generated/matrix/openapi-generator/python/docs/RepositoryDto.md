@@ -12,6 +12,7 @@ Name | Type | Description | Notes
 **organization_id** | **UUID** |  | [optional] 
 **repository_name** | **str** |  | [optional] 
 **object_storage_provider** | [**ObjectStorageProvider**](ObjectStorageProvider.md) |  | [optional] 
+**storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. | [optional] 
 **storage_account_name** | **str** |  | [optional] 
 **storage_container_name** | **str** |  | [optional] 
 **repository_visibility** | [**RepositoryVisibility**](RepositoryVisibility.md) |  | [optional] 
