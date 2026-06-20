@@ -1007,7 +1007,7 @@ module UploadSession =
                     |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
             }
 
-        member private this.MergeFinalizedContentBlockMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+        member private this.PrevalidateFinalizedContentBlockMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
                 let storagePoolId = decision.Session.StoragePoolId
 
@@ -1021,7 +1021,7 @@ module UploadSession =
 
                 let mutable metadataIndex = 0
                 let mutable metadataError = None
-                let mergedMetadata = ResizeArray<ContentBlockMetadata>()
+                let prevalidatedMerges = ResizeArray<IContentBlockMetadataActor * MergeContentBlockPhysicalRanges>()
 
                 while metadataIndex < metadataCommands.Length
                       && metadataError.IsNone do
@@ -1033,7 +1033,7 @@ module UploadSession =
 
                         let claimedBlock = tryFindClaimedManifestBlock decision.Session finalize.Manifest merge.ContentBlockAddress
 
-                        let! metadataResult =
+                        let! prevalidationResult =
                             match claimedBlock with
                             | Some _ ->
                                 task {
@@ -1069,13 +1069,22 @@ module UploadSession =
                                         | Ok (Some revalidatedCommand) ->
                                             match revalidatedCommand with
                                             | ContentBlockMetadataCommand.MergePhysicalRanges revalidatedMerge ->
-                                                return! metadataActor.MergePhysicalRanges revalidatedMerge metadata
-                                            | _ -> return! metadataActor.MergePhysicalRanges merge metadata
+                                                prevalidatedMerges.Add(metadataActor, revalidatedMerge)
+                                                return Ok()
+                                            | _ ->
+                                                return
+                                                    Error(
+                                                        graceError
+                                                            metadata.CorrelationId
+                                                            $"Authoritative ContentBlockMetadata revalidation produced an unsupported command for claimed reuse range {merge.ContentBlockAddress}."
+                                                    )
                                 }
-                            | None -> metadataActor.MergePhysicalRanges merge metadata
+                            | None ->
+                                prevalidatedMerges.Add(metadataActor, merge)
+                                returnTask (Ok())
 
-                        match metadataResult with
-                        | Ok returnValue -> mergedMetadata.Add(returnValue.ReturnValue.Metadata)
+                        match prevalidationResult with
+                        | Ok () -> ()
                         | Error error -> metadataError <- Some error
                     | _ -> ()
 
@@ -1083,7 +1092,41 @@ module UploadSession =
 
                 match metadataError with
                 | Some error -> return Error error
+                | None -> return Ok(prevalidatedMerges.ToArray())
+            }
+
+        member private this.MergePrevalidatedContentBlockMetadata
+            (prevalidatedMerges: (IContentBlockMetadataActor * MergeContentBlockPhysicalRanges) array)
+            (metadata: EventMetadata)
+            =
+            task {
+                let mutable metadataIndex = 0
+                let mutable metadataError = None
+                let mergedMetadata = ResizeArray<ContentBlockMetadata>()
+
+                while metadataIndex < prevalidatedMerges.Length
+                      && metadataError.IsNone do
+                    let metadataActor, merge = prevalidatedMerges[metadataIndex]
+                    let! metadataResult = metadataActor.MergePhysicalRanges merge metadata
+
+                    match metadataResult with
+                    | Ok returnValue -> mergedMetadata.Add(returnValue.ReturnValue.Metadata)
+                    | Error error -> metadataError <- Some error
+
+                    metadataIndex <- metadataIndex + 1
+
+                match metadataError with
+                | Some error -> return Error error
                 | None -> return Ok(mergedMetadata.ToArray())
+            }
+
+        member private this.MergeFinalizedContentBlockMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+            task {
+                let! prevalidationResult = this.PrevalidateFinalizedContentBlockMetadata decision finalize metadata
+
+                match prevalidationResult with
+                | Error error -> return Error error
+                | Ok prevalidatedMerges -> return! this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
             }
 
         member private this.RegisterFinalizedManifestInDedupe
@@ -1202,16 +1245,7 @@ module UploadSession =
                     | Ok decision ->
                         match command with
                         | UploadSessionCommand.FinalizeManifest finalize ->
-                            let! metadataMergeResult = this.MergeFinalizedContentBlockMetadata decision finalize metadata
-
-                            match metadataMergeResult with
-                            | Error error -> return Error error
-                            | Ok mergedMetadata ->
-                                if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
-
-                                do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
-                                do! this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata
-
+                            if decision.WasIdempotentReplay then
                                 let returnValue =
                                     (GraceReturnValue.Create decision metadata.CorrelationId)
                                         .enhance(nameof RepositoryId, decision.Session.RepositoryId)
@@ -1220,6 +1254,25 @@ module UploadSession =
                                         .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
 
                                 return Ok returnValue
+                            else
+                                let! metadataMergeResult = this.MergeFinalizedContentBlockMetadata decision finalize metadata
+
+                                match metadataMergeResult with
+                                | Error error -> return Error error
+                                | Ok mergedMetadata ->
+                                    if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+
+                                    do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+                                    do! this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata
+
+                                    let returnValue =
+                                        (GraceReturnValue.Create decision metadata.CorrelationId)
+                                            .enhance(nameof RepositoryId, decision.Session.RepositoryId)
+                                            .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
+                                            .enhance(nameof UploadSessionOperationId, decision.OperationId)
+                                            .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+
+                                    return Ok returnValue
                         | _ ->
                             if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 

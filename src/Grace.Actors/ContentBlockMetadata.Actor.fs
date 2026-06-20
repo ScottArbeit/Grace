@@ -206,12 +206,18 @@ module ContentBlockMetadata =
         existingRanges |> Array.iter addExistingRange
         incomingRanges |> Array.iter addIncomingRange
 
+        let incomingDistinctRangeCount = incoming.Values.Count
+
         incoming.Values
         |> Seq.iter (fun range ->
             let key = rangeKey range
 
             match merged.TryGetValue key with
-            | true, existing -> merged[key] <- mergeActiveCount existing range
+            | true, existing ->
+                if incomingDistinctRangeCount = 1 then
+                    merged[key] <- mergeActiveCount existing range
+                else
+                    merged[key] <- existing
             | false, _ -> merged[key] <- range)
 
         match error with

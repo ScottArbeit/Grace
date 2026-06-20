@@ -1149,7 +1149,7 @@ type UploadSessionActorTests() =
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     [<Test>]
-    member _.FinalizeManifestMergesClaimedMetadataBeforePersistingTerminalEvent() =
+    member _.FinalizeManifestSkipsCommandDerivedSideEffectsOnReplayAndMergesBeforePersistingTerminalEvent() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
         let handleStart = actorSource.IndexOf("member this.Handle command metadata", StringComparison.Ordinal)
@@ -1166,15 +1166,38 @@ type UploadSessionActorTests() =
 
         let finalizeBranch = actorSource.Substring(finalizeBranchStart, nextBranchStart - finalizeBranchStart)
 
+        let replayGuardIndex = finalizeBranch.IndexOf("if decision.WasIdempotentReplay then", StringComparison.Ordinal)
+
         let mergeIndex = finalizeBranch.IndexOf("this.MergeFinalizedContentBlockMetadata decision finalize metadata", StringComparison.Ordinal)
 
         let applyEventsIndex = finalizeBranch.IndexOf("this.ApplyEvents decision.Events", StringComparison.Ordinal)
 
         let dedupeIndex = finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata", StringComparison.Ordinal)
 
+        Assert.That(replayGuardIndex, Is.GreaterThanOrEqualTo(0), "Finalize replays must not derive merge or dedupe side effects from the replay command body.")
         Assert.That(mergeIndex, Is.GreaterThanOrEqualTo(0), "Finalization must attempt metadata merge/revalidation in the finalize branch.")
+        Assert.That(mergeIndex, Is.GreaterThan(replayGuardIndex), "Metadata merge/revalidation must be skipped for idempotent finalize replays.")
         Assert.That(applyEventsIndex, Is.GreaterThan(mergeIndex), "Metadata merge/revalidation must happen before persisting Finalized.")
         Assert.That(dedupeIndex, Is.GreaterThan(applyEventsIndex), "Dedupe registration should still use the persisted finalize decision.")
+
+    [<Test>]
+    member _.FinalizeManifestPrevalidatesClaimedMetadataBeforeApplyingAnyMetadataMerge() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+        let mergeStart = actorSource.IndexOf("member private this.MergeFinalizedContentBlockMetadata", StringComparison.Ordinal)
+
+        Assert.That(mergeStart, Is.GreaterThanOrEqualTo(0), "The finalized metadata merge orchestrator must be present.")
+
+        let registerStart = actorSource.IndexOf("member private this.RegisterFinalizedManifestInDedupe", mergeStart, StringComparison.Ordinal)
+
+        Assert.That(registerStart, Is.GreaterThan(mergeStart), "The finalized metadata merge source slice must be bounded before dedupe registration.")
+
+        let mergeSource = actorSource.Substring(mergeStart, registerStart - mergeStart)
+        let prevalidateIndex = mergeSource.IndexOf("this.PrevalidateFinalizedContentBlockMetadata decision finalize metadata", StringComparison.Ordinal)
+        let mergePrevalidatedIndex = mergeSource.IndexOf("this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata", StringComparison.Ordinal)
+
+        Assert.That(prevalidateIndex, Is.GreaterThanOrEqualTo(0), "Finalize must validate all claimed/current metadata before side-effecting merges.")
+        Assert.That(mergePrevalidatedIndex, Is.GreaterThan(prevalidateIndex), "Finalize must apply metadata merges only after all prevalidation succeeds.")
 
     [<Test>]
     member _.RevalidatedClaimedMetadataMergeRejectsRemovedRangeBeforeSideEffect() =

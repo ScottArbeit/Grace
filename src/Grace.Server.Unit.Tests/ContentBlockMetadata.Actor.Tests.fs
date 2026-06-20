@@ -772,6 +772,8 @@ type ContentBlockMetadataActorTests() =
         | Ok decision ->
             Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(2L))
             Assert.That(decision.Metadata.Ranges.Length, Is.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(activeRange.ActiveManifestCount))
+            Assert.That(decision.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(reclaimableRange.ActiveManifestCount))
 
             let replay =
                 ContentBlockMetadataActor.decideCommand
