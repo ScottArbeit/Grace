@@ -10,6 +10,7 @@ Name | Type | Description | Notes
 **organization_id** | Option<**uuid::Uuid**> |  | [optional]
 **repository_name** | Option<**String**> |  | [optional]
 **object_storage_provider** | Option<[**models::ObjectStorageProvider**](ObjectStorageProvider.md)> |  | [optional]
+**storage_pool_id** | Option<**String**> | StoragePool-wide CAS scope identifier. | [optional]
 **storage_account_name** | Option<**String**> |  | [optional]
 **storage_container_name** | Option<**String**> |  | [optional]
 **repository_visibility** | Option<[**models::RepositoryVisibility**](RepositoryVisibility.md)> |  | [optional]
