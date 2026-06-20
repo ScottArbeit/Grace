@@ -443,6 +443,14 @@ module Storage =
                 return Error(getErrorMessage StorageError.UnknownObjectStorageProvider)
         }
 
+    let private isActiveUploadSessionLifecycle lifecycleState =
+        match lifecycleState with
+        | UploadSessionLifecycleState.Started
+        | UploadSessionLifecycleState.Discovering
+        | UploadSessionLifecycleState.UploadingBlocks
+        | UploadSessionLifecycleState.ClaimingRanges -> true
+        | _ -> false
+
     let private validateUploadSessionForContentBlockUpload (parameters: GetContentBlockUploadUriParameters) repositoryId correlationId =
         task {
             if parameters.UploadSessionId = UploadSessionId.Empty then
@@ -452,9 +460,16 @@ module Storage =
 
                 let! session = loadSessionForScope uploadSessionActor correlationId
 
-                if session.UploadSessionId = UploadSessionId.Empty
-                   || session.LifecycleState = UploadSessionLifecycleState.NotStarted then
-                    return Error(GraceError.Create "UploadSession must be started before issuing a ContentBlock upload URI." correlationId)
+                if
+                    session.UploadSessionId = UploadSessionId.Empty
+                    || not (isActiveUploadSessionLifecycle session.LifecycleState)
+                then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"UploadSession must be active before issuing a ContentBlock upload URI; current state is {session.LifecycleState}."
+                                correlationId
+                        )
                 elif session.AuthorizedScope
                      <> parameters.AuthorizedScope then
                     return
