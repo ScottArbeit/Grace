@@ -773,6 +773,64 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected repository content counter increment to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.SaveBoundaryIncludesManifestBackedFilesFromChildDirectories() =
+        let rootManifest = finalizedManifestWithStoragePool (StoragePoolId "pool-root")
+        let childManifest = finalizedManifestWithStoragePool (StoragePoolId "pool-child")
+        let childDirectoryId = Guid.Parse("44444444-4444-4444-4444-444444444444")
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryId
+                "/src"
+                []
+                [
+                    manifestFileAt "/src/app.fs" childManifest
+                ]
+
+        let rootDirectory =
+            hashedDirectory
+                directoryVersionId
+                "/"
+                [ childDirectory ]
+                [
+                    manifestFileAt "/root.bin" rootManifest
+                ]
+
+        let plans =
+            ReferenceActor.planManifestSaveBoundaryForDirectoryVersions
+                repositoryId
+                storagePoolId
+                referenceId
+                [ rootDirectory; childDirectory ]
+                "corr-child-manifest"
+            |> function
+                | Ok plans -> plans
+                | Error error ->
+                    Assert.Fail($"Expected root and child manifest save planning to succeed, got {error.Error}.")
+                    []
+
+        Assert.That(
+            plans
+            |> Seq.map (fun plan -> plan.Manifest.ManifestAddress)
+            |> Seq.toArray,
+            Is.EquivalentTo(
+                [|
+                    rootManifest.ManifestAddress
+                    childManifest.ManifestAddress
+                |]
+            )
+        )
+
+        Assert.That(
+            plans
+            |> Seq.map (fun plan -> plan.CounterCommand)
+            |> Seq.forall (function
+                | RepositoryContentCounterCommand.AddReference _ -> true
+                | _ -> false),
+            Is.True
+        )
+
+    [<Test>]
     member _.SaveBoundaryRestartsContributionWorkflowAfterCounterReplay() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]

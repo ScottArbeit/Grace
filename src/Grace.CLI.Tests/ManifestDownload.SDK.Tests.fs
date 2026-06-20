@@ -153,6 +153,7 @@ type ManifestDownloadSdkTests() =
                     GetContentBlockDownloadUri =
                         fun parameters ->
                             requestedBlocks.Add(parameters.ContentBlockAddress)
+                            Assert.That(parameters.FilePath, Is.EqualTo("large.bin"))
                             Task.FromResult(Ok(GraceReturnValue.Create $"https://example.test/{parameters.ContentBlockAddress}" correlationId))
                     DownloadContentBlock =
                         fun contentBlockAddress uri ->

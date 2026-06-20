@@ -32,7 +32,13 @@ module internal StorageAuthorizationResources =
         pathResource ownerId organizationId repositoryId path
 
     let contentBlockDownloadResource ownerId organizationId repositoryId (parameters: Storage.GetContentBlockDownloadUriParameters) =
-        pathResource ownerId organizationId repositoryId (StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress)
+        let path =
+            if String.IsNullOrWhiteSpace parameters.FilePath then
+                StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
+            else
+                parameters.FilePath
+
+        pathResource ownerId organizationId repositoryId path
 
     let uploadSessionResource ownerId organizationId repositoryId (parameters: Storage.UploadSessionStorageParameters) =
         pathResource ownerId organizationId repositoryId parameters.AuthorizedScope

@@ -60,6 +60,7 @@ module ManifestDownload =
         setStorageParameters request parameters |> ignore
         parameters.ContentBlockAddress <- contentBlockAddress
         parameters.StoragePoolId <- storagePoolId
+        parameters.FilePath <- request.FileVersion.RelativePath
         parameters.Manifest <- request.FileVersion.ContentReference.Manifest.Value
         parameters
 

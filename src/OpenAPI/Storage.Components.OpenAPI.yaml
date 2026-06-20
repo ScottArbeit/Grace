@@ -78,6 +78,8 @@ GetContentBlockDownloadUriParameters:
       $ref: '#/ContentBlockAddress'
     StoragePoolId:
       $ref: '#/StoragePoolId'
+    FilePath:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     Manifest:
       $ref: '#/FileManifest'
     UploadSessionId:

@@ -4402,6 +4402,8 @@ components:
           $ref: '#/components/schemas/ContentBlockAddress'
         StoragePoolId:
           $ref: '#/components/schemas/StoragePoolId'
+        FilePath:
+          $ref: '#/components/schemas/RelativePath'
         Manifest:
           $ref: '#/components/schemas/FileManifest'
         UploadSessionId:

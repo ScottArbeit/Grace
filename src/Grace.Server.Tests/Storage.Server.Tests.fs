@@ -336,7 +336,7 @@ type StorageContentBlockSasRoutes() =
         }
 
     [<Test>]
-    member _.ContentBlockUploadUriRequiresPathWriteAndDoesNotProbeBlockExistence() =
+    member _.ContentBlockUploadUriRequiresRegisteredUploadIntentBeforeSas() =
         task {
             let repositoryId = repositoryIds[0]
             let pathWriter = $"{Guid.NewGuid()}"
@@ -355,6 +355,57 @@ type StorageContentBlockSasRoutes() =
 
             let! deniedUpload = unprivilegedClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
             Assert.That(deniedUpload.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
+
+            parameters.AuthorizedScope <- "/"
+
+            let! sessionlessUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            let! sessionlessBody = sessionlessUpload.Content.ReadAsStringAsync()
+            Assert.That(sessionlessUpload.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), sessionlessBody)
+            Assert.That(sessionlessBody, Does.Contain("UploadSession"))
+            Assert.That(sessionlessBody, Does.Not.Contain("cas/content/"))
+
+            let sessionId = Guid.NewGuid()
+            let knownAddress = parameters.ContentBlockAddress
+            let registeredAddress = ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes($"registered-{Guid.NewGuid():N}"))
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setContentBlockParameters start repositoryId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- "/"
+            start.FileContentHash <- "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            start.ExpectedSize <- 4096L
+            start.ChunkingSuiteId <- RabinChunking.SuiteName
+            start.SamplingPolicySnapshot <- "review-regression"
+            start.OperationId <- "start"
+
+            let! startResponse = writerClient.PostAsync("/storage/startManifestUploadSession", createJsonContent start)
+            let! startBody = startResponse.Content.ReadAsStringAsync()
+            Assert.That(startResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), startBody)
+
+            parameters.UploadSessionId <- sessionId
+            parameters.ContentBlockAddress <- knownAddress
+
+            let! unregisteredUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
+            let! unregisteredBody = unregisteredUpload.Content.ReadAsStringAsync()
+            Assert.That(unregisteredUpload.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), unregisteredBody)
+            Assert.That(unregisteredBody, Does.Contain("registered block upload intent"))
+            Assert.That(unregisteredBody, Does.Not.Contain("cas/content/"))
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setContentBlockParameters register repositoryId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- "/"
+            register.OperationId <- "register"
+            register.ContentBlockAddress <- registeredAddress
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- 4096L
+            register.ExpectedPayloadLength <- 1024L
+
+            let! registerResponse = writerClient.PostAsync("/storage/registerContentBlockUpload", createJsonContent register)
+            let! registerBody = registerResponse.Content.ReadAsStringAsync()
+            Assert.That(registerResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), registerBody)
+
+            parameters.ContentBlockAddress <- registeredAddress
 
             let! allowedUpload = writerClient.PostAsync("/storage/getContentBlockUploadUri", createJsonContent parameters)
             do! assertSuccessSasForContentBlock allowedUpload parameters.ContentBlockAddress
@@ -936,11 +987,11 @@ type StorageManifestUploadSessionRoutes() =
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
-            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
-            assertRawStringContent uploadUriResponse
-            Assert.That(uploadUriBody, Does.StartWith("http"))
-            Assert.That(uploadUriBody, Does.Contain("cas/content/"))
-            Assert.That(uploadUriBody, Does.Not.StartWith("{"))
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), uploadUriBody)
+            assertJsonContent uploadUriResponse
+            Assert.That(uploadUriBody, Does.Contain("UploadSession"))
+            Assert.That(uploadUriBody, Does.Not.Contain("cas/content/"))
+            Assert.That(uploadUriBody, Does.StartWith("{"))
 
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters downloadUriParameters repositoryId correlationId

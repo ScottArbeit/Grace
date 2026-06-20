@@ -90,9 +90,20 @@ type StorageAuthorizationResourcesTests() =
         assertPathResource (StorageKeys.contentBlockObjectKey "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") resource
 
     [<Test>]
-    member _.ContentBlockDownloadUsesContentBlockObjectKey() =
+    member _.ContentBlockDownloadUsesFilePathWhenPresent() =
         let parameters = Storage.GetContentBlockDownloadUriParameters()
         parameters.ContentBlockAddress <- "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        parameters.FilePath <- "src/app.fs"
+
+        let resource = StorageAuthorizationResources.contentBlockDownloadResource ownerId organizationId repositoryId parameters
+
+        assertPathResource "src/app.fs" resource
+
+    [<Test>]
+    member _.ContentBlockDownloadFallsBackToContentBlockObjectKeyWhenFilePathIsBlank() =
+        let parameters = Storage.GetContentBlockDownloadUriParameters()
+        parameters.ContentBlockAddress <- "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        parameters.FilePath <- "   "
 
         let resource = StorageAuthorizationResources.contentBlockDownloadResource ownerId organizationId repositoryId parameters
 

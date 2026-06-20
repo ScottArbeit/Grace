@@ -281,6 +281,13 @@ module Storage =
         | Error error -> Error error
         | Ok storagePoolId -> validateClaimReuseHints correlationId storagePoolId discovery hints
 
+    let private validateContentBlockUploadIntent correlationId (session: UploadSessionDto) contentBlockAddress =
+        if session.BlockUploadIntents
+           |> Array.exists (fun intent -> intent.ContentBlockAddress = contentBlockAddress) then
+            Ok()
+        else
+            Error(GraceError.Create "ContentBlock upload SAS requires a matching registered block upload intent in the UploadSession." correlationId)
+
     let private handleUploadSessionCommand
         (context: HttpContext)
         (parameters: UploadSessionStorageParameters)
@@ -722,15 +729,15 @@ module Storage =
 
                         let! routeResult =
                             task {
-                                if parameters.UploadSessionId = UploadSessionId.Empty then
-                                    return resolveRepositoryStorageRoute correlationId repositoryDto
-                                else
-                                    let! requestContext = createUploadSessionRequestContext context parameters correlationId
-                                    let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
+                                let! requestContext = createUploadSessionRequestContext context parameters correlationId
+                                let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
 
-                                    match scopeValidation with
+                                match scopeValidation with
+                                | Error error -> return Error error
+                                | Ok requestContext ->
+                                    match validateContentBlockUploadIntent correlationId requestContext.SessionForScope parameters.ContentBlockAddress with
                                     | Error error -> return Error error
-                                    | Ok requestContext ->
+                                    | Ok () ->
                                         match requireUploadSessionStoragePool correlationId requestContext.SessionForScope with
                                         | Error error -> return Error error
                                         | Ok storagePoolId -> return resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto
