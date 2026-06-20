@@ -53,6 +53,33 @@ Read these files on demand:
   deployment/runtime behavior, or cross-service integration is affected.
 - Use PowerShell examples before bash / zsh in docs.
 
+## PowerShell Text Editing and Quoting
+
+Use PowerShell deliberately when writing or updating text. Most Grace orchestration and GitHub body updates run from
+PowerShell, so quoting mistakes can silently flatten Markdown, expand variables, or pass malformed arguments.
+
+- Prefer file-based edits for multiline GitHub issue, pull request, or Markdown bodies. Write a temporary `.md` file,
+  validate it, then pass it with `--body-file` or the relevant file argument.
+- Use single-quoted here-strings (`@' ... '@`) for literal Markdown, JSON, GraphQL, code, and command text that should
+  not expand `$variables`, backticks, or quotes.
+- Use double-quoted here-strings (`@" ... "@`) only when interpolation is required. Keep the interpolated values small
+  and inspect the generated text before sending it to GitHub or another tool.
+- Put here-string headers and footers on their own lines. PowerShell rejects characters after `@'` / `@"` and treats
+  leading spaces before the closing marker as content.
+- Avoid capturing multiline Markdown through `gh ... --jq .body` into a string and rewriting it directly; this can lose
+  line breaks depending on command shape. Prefer `ConvertFrom-Json` on `gh ... --json body`, or write/read explicit
+  body files.
+- Use `Set-Content -Encoding utf8NoBOM -NoNewline` when you already control the final newline. Otherwise,
+  `Set-Content` can add an extra newline that triggers MarkdownLint blank-line findings.
+- Normalize external text before linting or rewriting: convert CRLF/CR to LF, remove whitespace-only lines, collapse
+  three or more blank lines, then add exactly one final newline.
+- Escape only for PowerShell, not for bash. Do not use bash-style `\"`; choose single quotes, doubled single quotes
+  inside single-quoted strings, backtick escapes in double-quoted strings, or here-strings instead.
+- When replacing text, first verify the exact anchor with `.Contains()`, `.IndexOf()`, or `Select-String`. If the anchor
+  fails, inspect nearby text and switch to a section-based replacement instead of guessing.
+- For arguments containing `|`, `&`, `?`, JSON, GraphQL, SAS URLs, or Markdown tables, prefer files or arrays of
+  arguments over one large inline command string.
+
 ## Output Habits
 
 - Cite concrete files and commands in final answers.
