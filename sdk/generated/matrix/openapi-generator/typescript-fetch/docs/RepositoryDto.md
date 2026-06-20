@@ -13,6 +13,7 @@ Name | Type
 `organizationId` | string
 `repositoryName` | string
 `objectStorageProvider` | [ObjectStorageProvider](ObjectStorageProvider.md)
+`storagePoolId` | string
 `storageAccountName` | string
 `storageContainerName` | string
 `repositoryVisibility` | [RepositoryVisibility](RepositoryVisibility.md)
@@ -36,6 +37,7 @@ const example = {
   "organizationId": e35d64a9-b990-44f5-bf02-32ad7d15630c,
   "repositoryName": null,
   "objectStorageProvider": null,
+  "storagePoolId": null,
   "storageAccountName": null,
   "storageContainerName": null,
   "repositoryVisibility": null,
