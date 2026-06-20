@@ -14,6 +14,10 @@ use serde::{Deserialize, Serialize};
 /// ContentBlockStoragePlacement : Object-storage placement metadata for a confirmed ContentBlock payload.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContentBlockStoragePlacement {
+    #[serde(rename = "StorageAccountName")]
+    pub storage_account_name: String,
+    #[serde(rename = "StorageContainerName")]
+    pub storage_container_name: String,
     #[serde(rename = "ObjectKey")]
     pub object_key: String,
     #[serde(rename = "ETag", skip_serializing_if = "Option::is_none")]
@@ -22,8 +26,10 @@ pub struct ContentBlockStoragePlacement {
 
 impl ContentBlockStoragePlacement {
     /// Object-storage placement metadata for a confirmed ContentBlock payload.
-    pub fn new(object_key: String) -> ContentBlockStoragePlacement {
+    pub fn new(storage_account_name: String, storage_container_name: String, object_key: String) -> ContentBlockStoragePlacement {
         ContentBlockStoragePlacement {
+            storage_account_name,
+            storage_container_name,
             object_key,
             e_tag: None,
         }
