@@ -438,7 +438,7 @@ module DirectoryVersion =
         | ex -> Error(GraceError.CreateWithException ex $"FileManifest reference for '{fileVersion.RelativePath}' is invalid before Save." correlationId)
 
     let getManifestReferencesForSaveBoundary (directoryVersion: DirectoryVersion) correlationId =
-        let manifests = Dictionary<ManifestAddress, FileManifest>()
+        let manifests = Dictionary<StoragePoolId * ManifestAddress, FileManifest>()
         let mutable index = 0
         let mutable error: GraceError option = None
 
@@ -453,8 +453,10 @@ module DirectoryVersion =
                 | Some manifest ->
                     match validateManifestBackedFileForSaveBoundary correlationId fileVersion manifest with
                     | Ok () ->
-                        if not (manifests.ContainsKey manifest.ManifestAddress) then
-                            manifests.Add(manifest.ManifestAddress, manifest)
+                        let manifestKey = manifest.StoragePoolId, manifest.ManifestAddress
+
+                        if not (manifests.ContainsKey manifestKey) then
+                            manifests.Add(manifestKey, manifest)
                     | Error graceError -> error <- Some graceError
 
             index <- index + 1

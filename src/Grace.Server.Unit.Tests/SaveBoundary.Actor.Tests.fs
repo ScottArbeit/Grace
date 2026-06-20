@@ -591,6 +591,48 @@ type SaveBoundaryActorTests() =
             Assert.That(lookups, Does.Contain((poolA, sharedAddress)))
 
     [<Test>]
+    member _.ManifestSaveBoundaryKeepsSameAddressReferencesFromDifferentStoragePools() =
+        let poolA = StoragePoolId "pool-a"
+        let poolB = StoragePoolId "pool-b"
+        let manifestA = finalizedManifestWithStoragePool poolA
+        let manifestB = { manifestA with StoragePoolId = poolB }
+
+        let directoryVersion =
+            directoryWith [ manifestFileAt "/a.bin" manifestA
+                            manifestFileAt "/b.bin" manifestB ]
+
+        let lookups = ResizeArray<StoragePoolId * ContentBlockAddress>()
+        let contentBlockAddress = manifestA.Blocks[0].Address
+
+        let getRangePresence storagePoolId contentBlockAddress _ =
+            lookups.Add((storagePoolId, contentBlockAddress))
+
+            if storagePoolId = poolA then
+                Task.FromResult ContentBlockRangePresence.Reclaimable
+            else
+                Task.FromResult ContentBlockRangePresence.Absent
+
+        match DirectoryVersionActor.getManifestReferencesForSaveBoundary directoryVersion "corr-same-address-pools" with
+        | Error error -> Assert.Fail($"Expected same-address manifests from different pools to be collected, got {error.Error}.")
+        | Ok manifests ->
+            Assert.That(manifests |> Seq.length, Is.EqualTo(2))
+
+            Assert.That(
+                manifests
+                |> Seq.map (fun manifest -> manifest.StoragePoolId),
+                Is.EquivalentTo([ poolA; poolB ])
+            )
+
+            match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-same-address-pools" manifests)
+                .Result
+                with
+            | Ok () -> Assert.Fail("Expected pool-specific manifest validation to reject the pool whose metadata is absent.")
+            | Error error ->
+                Assert.That(error.Error, Does.Contain($"{manifestB.ManifestAddress}"))
+                Assert.That(lookups, Does.Contain((poolA, contentBlockAddress)))
+                Assert.That(lookups, Does.Contain((poolB, contentBlockAddress)))
+
+    [<Test>]
     member _.ManifestSaveBoundaryUsesResolvedStoragePoolForContentBlockMetadata() =
         let contentBlockAddress = ContentBlockAddress "block-address"
         let expected = $"{storagePoolId}|{contentBlockAddress}"
