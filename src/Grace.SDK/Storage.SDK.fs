@@ -40,6 +40,28 @@ module Storage =
         ex.Status = int HttpStatusCode.Conflict
         && String.Equals(ex.ErrorCode, blobAlreadyExistsErrorCode, StringComparison.OrdinalIgnoreCase)
 
+    let private tryGetFragmentValue name (uri: Uri) =
+        if isNull uri
+           || String.IsNullOrWhiteSpace uri.Fragment then
+            None
+        else
+            uri
+                .Fragment
+                .TrimStart('#')
+                .Split([| '&' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.tryPick (fun part ->
+                let index = part.IndexOf('=')
+
+                if index <= 0 then
+                    None
+                else
+                    let key = Uri.UnescapeDataString(part.Substring(0, index))
+
+                    if key.Equals(name, StringComparison.OrdinalIgnoreCase) then
+                        Some(Uri.UnescapeDataString(part.Substring(index + 1)))
+                    else
+                        None)
+
     let internal contentBlockPlacementFromUriUsingConfiguredEndpoint (configuredBlobEndpoint: Uri) configuredAccountName (blobUriWithSasToken: Uri) etag =
         let pathSegments =
             blobUriWithSasToken
@@ -59,10 +81,16 @@ module Storage =
             && host.Equals(configuredBlobEndpoint.Host, StringComparison.OrdinalIgnoreCase)
 
         let isAzureBlobEndpoint = host.IndexOf(".blob.", StringComparison.OrdinalIgnoreCase) > 0
+        let fragmentAccountName = tryGetFragmentValue "graceStorageAccount" blobUriWithSasToken
 
         let accountName =
             if isPathStyleAzurite && pathSegments.Length >= 3 then
                 pathSegments[0]
+            elif
+                fragmentAccountName.IsSome
+                && not (String.IsNullOrWhiteSpace fragmentAccountName.Value)
+            then
+                fragmentAccountName.Value
             elif
                 isConfiguredCustomEndpoint
                 && not (String.IsNullOrWhiteSpace configuredAccountName)
@@ -90,7 +118,7 @@ module Storage =
 
         { StorageAccountName = accountName; StorageContainerName = StorageContainerName containerName; ObjectKey = objectKey; ETag = etag }
 
-    let private contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
+    let internal contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
         contentBlockPlacementFromUriUsingConfiguredEndpoint null String.Empty blobUriWithSasToken etag
 
     let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
