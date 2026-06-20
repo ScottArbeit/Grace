@@ -809,6 +809,64 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected duplicate contribution merge to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.MergePhysicalRangesAddsMultiRangeFinalizeContributionsToExistingRanges() =
+        let currentMetadata =
+            record [| activeRange
+                      reclaimableRange |]
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let contributions =
+            [|
+                { activeRange with ActiveManifestCount = 1 }
+                { reclaimableRange with ActiveManifestCount = 1 }
+            |]
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (merge "op-finalize-multi-range-existing" contributions)
+                (metadata "corr-finalize-multi-range-existing")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges, Has.Length.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(activeRange.ActiveManifestCount + 1))
+            Assert.That(decision.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(1))
+
+            Assert.That(
+                decision.Metadata.ActivePhysicalBytes,
+                Is.EqualTo(
+                    activeRange.PhysicalLength
+                    + reclaimableRange.PhysicalLength
+                )
+            )
+        | Error error -> Assert.Fail($"Expected multi-range finalize contribution merge to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesPreservesExistingActiveRangesWhenGenericAppendAddsNewRanges() =
+        let existingActive = { activeRange with ActiveManifestCount = 1 }
+
+        let currentMetadata = recordWithTotals [| existingActive |] existingActive.PhysicalLength existingActive.PhysicalLength timestamp 7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (merge "op-append-mixed-existing-and-new" [| existingActive; reclaimableRange |])
+                (metadata "corr-append-mixed-existing-and-new")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges, Has.Length.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(decision.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(0))
+        | Error error -> Assert.Fail($"Expected mixed append merge to succeed, got {error.Error}.")
+
+    [<Test>]
     member _.MergePhysicalRangesReactivatesExactReclaimableRangeContribution() =
         let currentMetadata = record [| reclaimableRange |]
         let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }

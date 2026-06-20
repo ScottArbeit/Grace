@@ -1136,21 +1136,27 @@ module UploadSession =
             (metadata: EventMetadata)
             =
             task {
-                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
+                if not (isNull (box finalize)) then
+                    let dedupeIndexActor = DedupeIndexActor.CreateActorProxy metadata.CorrelationId
 
-                do!
-                    dedupeIndexActor.RegisterFinalizedManifest
-                        {
-                            StoragePoolId = decision.Session.StoragePoolId
-                            Session = decision.Session
-                            Manifest = finalize.Manifest
-                            BlockPayloads = finalize.BlockPayloads
-                        }
-                        metadata.CorrelationId
-                    :> Task
+                    do!
+                        dedupeIndexActor.RegisterFinalizedManifest
+                            {
+                                StoragePoolId = decision.Session.StoragePoolId
+                                Session = decision.Session
+                                Manifest = finalize.Manifest
+                                BlockPayloads = finalize.BlockPayloads
+                            }
+                            metadata.CorrelationId
+                        :> Task
 
-                for authoritativeMetadata in mergedMetadata do
-                    do! dedupeIndexActor.WriteAfterAuthoritativeMetadata authoritativeMetadata metadata.CorrelationId :> Task
+                    let metadataToRefresh = if isNull mergedMetadata then Array.empty else mergedMetadata
+
+                    let mutable metadataIndex = 0
+
+                    while metadataIndex < metadataToRefresh.Length do
+                        do! dedupeIndexActor.WriteAfterAuthoritativeMetadata metadataToRefresh[metadataIndex] metadata.CorrelationId :> Task
+                        metadataIndex <- metadataIndex + 1
             }
 
         member private this.ScheduleFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
@@ -1246,6 +1252,8 @@ module UploadSession =
                         match command with
                         | UploadSessionCommand.FinalizeManifest finalize ->
                             if decision.WasIdempotentReplay then
+                                do! this.RegisterFinalizedManifestInDedupe decision finalize Array.empty metadata
+
                                 let returnValue =
                                     (GraceReturnValue.Create decision metadata.CorrelationId)
                                         .enhance(nameof RepositoryId, decision.Session.RepositoryId)

@@ -208,13 +208,25 @@ module ContentBlockMetadata =
 
         let incomingDistinctRangeCount = incoming.Values.Count
 
+        let incomingContainsNewRange =
+            incoming.Values
+            |> Seq.exists (fun range ->
+                let key = rangeKey range
+                not (merged.ContainsKey key))
+
+        let incomingIsAllExistingFinalizeContribution =
+            not incomingContainsNewRange
+            && incoming.Values
+               |> Seq.forall (fun range -> range.ActiveManifestCount = 1)
+
         incoming.Values
         |> Seq.iter (fun range ->
             let key = rangeKey range
 
             match merged.TryGetValue key with
             | true, existing ->
-                if incomingDistinctRangeCount = 1 then
+                if incomingDistinctRangeCount = 1
+                   || incomingIsAllExistingFinalizeContribution then
                     merged[key] <- mergeActiveCount existing range
                 else
                     merged[key] <- existing

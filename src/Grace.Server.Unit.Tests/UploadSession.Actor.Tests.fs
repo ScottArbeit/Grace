@@ -1149,7 +1149,7 @@ type UploadSessionActorTests() =
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     [<Test>]
-    member _.FinalizeManifestSkipsCommandDerivedSideEffectsOnReplayAndMergesBeforePersistingTerminalEvent() =
+    member _.FinalizeManifestRepairsDedupeOnReplayAndMergesBeforePersistingTerminalEvent() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
         let handleStart = actorSource.IndexOf("member this.Handle command metadata", StringComparison.Ordinal)
@@ -1168,15 +1168,29 @@ type UploadSessionActorTests() =
 
         let replayGuardIndex = finalizeBranch.IndexOf("if decision.WasIdempotentReplay then", StringComparison.Ordinal)
 
+        let replayDedupeRepairIndex =
+            finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize Array.empty metadata", StringComparison.Ordinal)
+
+        let replayReturnIndex = finalizeBranch.IndexOf("return Ok returnValue", replayGuardIndex, StringComparison.Ordinal)
+
         let mergeIndex = finalizeBranch.IndexOf("this.MergeFinalizedContentBlockMetadata decision finalize metadata", StringComparison.Ordinal)
 
         let applyEventsIndex = finalizeBranch.IndexOf("this.ApplyEvents decision.Events", StringComparison.Ordinal)
 
         let dedupeIndex = finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata", StringComparison.Ordinal)
 
-        Assert.That(replayGuardIndex, Is.GreaterThanOrEqualTo(0), "Finalize replays must not derive merge or dedupe side effects from the replay command body.")
+        Assert.That(replayGuardIndex, Is.GreaterThanOrEqualTo(0), "Finalize replays must not derive metadata merge side effects from the replay command body.")
+
+        Assert.That(
+            replayDedupeRepairIndex,
+            Is.GreaterThan(replayGuardIndex),
+            "Finalize replays must repair idempotent DedupeIndex registration before returning success."
+        )
+
+        Assert.That(replayReturnIndex, Is.GreaterThan(replayDedupeRepairIndex), "Finalize replay dedupe repair must complete before returning replay success.")
+
         Assert.That(mergeIndex, Is.GreaterThanOrEqualTo(0), "Finalization must attempt metadata merge/revalidation in the finalize branch.")
-        Assert.That(mergeIndex, Is.GreaterThan(replayGuardIndex), "Metadata merge/revalidation must be skipped for idempotent finalize replays.")
+        Assert.That(mergeIndex, Is.GreaterThan(replayReturnIndex), "Metadata merge/revalidation must be skipped for idempotent finalize replays.")
         Assert.That(applyEventsIndex, Is.GreaterThan(mergeIndex), "Metadata merge/revalidation must happen before persisting Finalized.")
         Assert.That(dedupeIndex, Is.GreaterThan(applyEventsIndex), "Dedupe registration should still use the persisted finalize decision.")
 
