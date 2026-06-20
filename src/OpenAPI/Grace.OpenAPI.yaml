@@ -4407,8 +4407,8 @@ components:
           $ref: '#/components/schemas/RelativePath'
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
-        Manifest:
-          $ref: '#/components/schemas/FileManifest'
+        ManifestAddress:
+          $ref: '#/components/schemas/ManifestAddress'
     DiscoverContentBlocksParameters:
       description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
       allOf:
