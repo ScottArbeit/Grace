@@ -520,13 +520,14 @@ module DedupeIndex =
                    not (isNull (box block))
                    && block.Address = contentBlockAddress))
 
-    let finalizedScopedManifestContainsBlock storagePoolId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
+    let finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
         (normalizeState state).FinalizedManifests
         |> Array.exists (fun registration ->
             not (isNull (box registration))
             && registration.StoragePoolId = storagePoolId
             && registration.ManifestAddress = manifestAddress
             && not (isNull (box registration.Session))
+            && registration.Session.RepositoryId = repositoryId
             && registration.Session.AuthorizedScope = authorizedScope
             && not (isNull registration.Blocks)
             && registration.Blocks
@@ -534,8 +535,8 @@ module DedupeIndex =
                    not (isNull (box block))
                    && block.Address = contentBlockAddress))
 
-    let tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
-        if finalizedScopedManifestContainsBlock storagePoolId authorizedScope manifestAddress contentBlockAddress state
+    let tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        if finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
            |> not then
             None
         else

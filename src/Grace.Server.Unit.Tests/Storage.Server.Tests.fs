@@ -131,14 +131,25 @@ type StorageContentBlockSdkContract() =
 
         let state = { DedupeIndex.DedupeIndexState.Empty with FinalizedManifests = [| registration |]; MetadataRecords = [| metadata |] }
 
-        let selected = Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId authorizedScope manifestAddress contentBlockAddress state
+        let repositoryId = Guid.Parse("36805fab-e95a-409e-84c2-4b02698d18c8")
+        let otherRepositoryId = Guid.Parse("d12cf61c-d824-4199-98d0-b83b57e1ecc5")
+        let registration = { registration with Session = { registration.Session with RepositoryId = repositoryId } }
+        let state = { state with FinalizedManifests = [| registration |] }
+
+        let selected = Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
 
         Assert.That(selected, Is.EqualTo(Some metadata))
         Assert.That(selected.Value.StoragePlacement, Is.Not.EqualTo(currentRoutePlacement))
 
-        let rejected = Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId "/other/scope.bin" manifestAddress contentBlockAddress state
+        let rejected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId "/other/scope.bin" manifestAddress contentBlockAddress state
 
         Assert.That(rejected, Is.EqualTo(None))
+
+        let crossRepositoryRejected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId otherRepositoryId authorizedScope manifestAddress contentBlockAddress state
+
+        Assert.That(crossRepositoryRejected, Is.EqualTo(None))
 
     [<Test>]
     member _.DownloadAuthorizationUsesTargetedDedupeIndexLookupInsteadOfFullSnapshotState() =
