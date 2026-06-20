@@ -1,5 +1,6 @@
 namespace Grace.Actors
 
+open Azure
 open Azure.Core
 open Azure.Identity
 open Azure.Messaging.ServiceBus
@@ -28,6 +29,7 @@ open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Common
 open Grace.Types.Validation
+open Grace.Types.UploadSession
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
@@ -154,6 +156,8 @@ module Services =
             sharedKeyCredential.Value
         else
             None
+
+    let internal casUserDelegationSasSigningAccountName (route: StoragePoolRouting.StoragePoolRoute) = route.Shard.StorageAccountName
 
     let private createBlobContainerClientFromEndpoint containerName =
         if AzureEnvironment.useManagedIdentityForStorage then
@@ -442,6 +446,86 @@ module Services =
             | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient placement.ObjectKey)
         }
 
+    let getContentBlockStagingObjectKey (repositoryId: RepositoryId) (uploadSessionId: UploadSessionId) (contentBlockAddress: ContentBlockAddress) =
+        $"staging/repositories/{repositoryId}/upload-sessions/{uploadSessionId:N}/content-blocks/{contentBlockAddress}"
+
+    let getContentBlockStagingPlacement
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (repositoryId: RepositoryId)
+        (uploadSessionId: UploadSessionId)
+        (contentBlockAddress: ContentBlockAddress)
+        eTag
+        =
+        StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockStagingObjectKey repositoryId uploadSessionId contentBlockAddress) eTag
+
+    let deleteAzureContentBlockPlacementIfExists (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
+        task {
+            try
+                match! getAzureContentBlockClientForPlacement placement correlationId with
+                | Error error -> return Error error
+                | Ok blobClient ->
+                    let! deleted = blobClient.DeleteIfExistsAsync()
+                    return Ok deleted.Value
+            with
+            | :? RequestFailedException as ex ->
+                return Error(GraceError.Create $"ContentBlock payload could not be deleted from object storage: {ex.Message}" correlationId)
+        }
+
+    let deleteUploadSessionStagingPayloadsForRoute (route: StoragePoolRouting.StoragePoolRoute) (session: UploadSessionDto) correlationId =
+        task {
+            if session.UploadSessionId = UploadSessionId.Empty
+               || session.RepositoryId = RepositoryId.Empty
+               || isNull session.BlockUploadIntents
+               || session.BlockUploadIntents.Length = 0 then
+                return Ok 0
+            else
+                let distinctAddresses =
+                    session.BlockUploadIntents
+                    |> Array.choose (fun intent ->
+                        if
+                            isNull (box intent)
+                            || String.IsNullOrWhiteSpace intent.ContentBlockAddress
+                        then
+                            None
+                        else
+                            Some intent.ContentBlockAddress)
+                    |> Array.distinct
+
+                let mutable deletedCount = 0
+                let mutable firstError = None
+                let mutable index = 0
+
+                while index < distinctAddresses.Length
+                      && firstError.IsNone do
+                    let placement = getContentBlockStagingPlacement route session.RepositoryId session.UploadSessionId distinctAddresses[index] None
+
+                    match! deleteAzureContentBlockPlacementIfExists placement correlationId with
+                    | Ok deleted -> if deleted then deletedCount <- deletedCount + 1
+                    | Error error -> firstError <- Some error
+
+                    index <- index + 1
+
+                match firstError with
+                | Some error -> return Error error
+                | None -> return Ok deletedCount
+        }
+
+    let deleteUploadSessionStagingPayloads (session: UploadSessionDto) correlationId =
+        task {
+            if session.UploadSessionId = UploadSessionId.Empty
+               || session.RepositoryId = RepositoryId.Empty
+               || isNull session.BlockUploadIntents
+               || session.BlockUploadIntents.Length = 0 then
+                return Ok 0
+            else
+                let repositoryActor = Repository.CreateActorProxy session.OrganizationId session.RepositoryId correlationId
+                let! repositoryDto = repositoryActor.Get correlationId
+
+                match StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId with
+                | Error error -> return Error error
+                | Ok route -> return! deleteUploadSessionStagingPayloadsForRoute route session correlationId
+        }
+
     let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
@@ -573,7 +657,10 @@ module Services =
                                     )
 
                                 let! userDelegationKey = blobServiceClient.GetUserDelegationKeyAsync(userDelegationKeyOptions)
-                                let sasQueryParameters = blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, blobServiceClient.AccountName)
+
+                                let sasQueryParameters =
+                                    blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, casUserDelegationSasSigningAccountName route)
+
                                 return Uri($"{blobUri}?{sasQueryParameters}")
                             }
                         else
