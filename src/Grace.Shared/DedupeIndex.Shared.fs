@@ -182,6 +182,50 @@ module DedupeIndex =
                 )
             | Ok route -> Ok route
 
+    let resolveStoredManifestStorageRoute correlationId (storagePools: StoragePool array) (storagePoolId: StoragePoolId) (repositoryDto: RepositoryDto) =
+        if isNull (box repositoryDto) then
+            Error(GraceError.Create "Stored manifest storage routing requires a repository." correlationId)
+        elif repositoryDto.RepositoryId = RepositoryId.Empty then
+            Error(GraceError.Create "Stored manifest storage routing requires a non-empty RepositoryId." correlationId)
+        elif repositoryDto.RepositoryStatus = RepositoryStatus.Deleted
+             || repositoryDto.DeletedAt.IsSome then
+            Error(GraceError.Create "Stored manifest storage routing requires an active repository." correlationId)
+        elif String.IsNullOrWhiteSpace storagePoolId then
+            Error(GraceError.Create "Stored manifest storage routing requires a non-empty recorded StoragePoolId." correlationId)
+        elif isNull storagePools || storagePools.Length = 0 then
+            Error(GraceError.Create $"StoragePool '{storagePoolId}' is not configured." correlationId)
+        else
+            let pool =
+                storagePools
+                |> Array.tryFind (fun pool ->
+                    not (isNull (box pool))
+                    && pool.IsActive
+                    && pool.StoragePoolId = storagePoolId)
+
+            match pool with
+            | None -> Error(GraceError.Create $"StoragePool '{storagePoolId}' is not configured or active." correlationId)
+            | Some pool ->
+                let shard =
+                    if isNull pool.Shards then
+                        None
+                    else
+                        pool.Shards
+                        |> Array.tryFind (fun shard -> not (isNull (box shard)) && shard.IsActive)
+
+                match shard with
+                | None -> Error(GraceError.Create $"StoragePool '{storagePoolId}' has no active StorageShard." correlationId)
+                | Some shard ->
+                    if String.IsNullOrWhiteSpace shard.StorageContainerName then
+                        Error(GraceError.Create $"StoragePool '{storagePoolId}' active StorageShard requires a container name." correlationId)
+                    else
+                        Ok { RepositoryId = repositoryDto.RepositoryId; StoragePoolId = pool.StoragePoolId; StorageShard = shard }
+
+    let resolveStoredManifestStorageRouteWithDefaults correlationId (storagePoolId: StoragePoolId) (repositoryDto: RepositoryDto) =
+        if isNull (box repositoryDto) then
+            resolveStoredManifestStorageRoute correlationId Array.empty storagePoolId repositoryDto
+        else
+            resolveStoredManifestStorageRoute correlationId (defaultStoragePoolsForRepository repositoryDto) storagePoolId repositoryDto
+
     let repositoryForStorageRoute (route: RepositoryStorageRoute) (repositoryDto: RepositoryDto) =
         { repositoryDto with
             ObjectStorageProvider = route.StorageShard.ObjectStorageProvider

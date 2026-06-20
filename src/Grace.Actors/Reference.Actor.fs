@@ -110,13 +110,22 @@ module Reference =
 
                 { plan with CounterCommand = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, plan.Manifest.ManifestAddress) }))
 
+    let internal shouldApplyManifestExpiryBoundary referenceType =
+        referenceType = ReferenceType.Save
+        || referenceType = ReferenceType.Checkpoint
+
     let shouldApplySaveExpiryBoundary (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
-        && referenceDto.ReferenceType = ReferenceType.Save
+        && shouldApplyManifestExpiryBoundary referenceDto.ReferenceType
+
+    let internal shouldRegisterManifestOwnership referenceType =
+        referenceType = ReferenceType.Save
+        || referenceType = ReferenceType.Commit
+        || referenceType = ReferenceType.Checkpoint
 
     let internal tryGetSaveStoragePoolIdFromCreatedEvent (referenceEvent: ReferenceEvent) =
         match referenceEvent.Event with
-        | Created (_, _, _, _, _, _, _, _, referenceType, _, _) when referenceType = ReferenceType.Save ->
+        | Created (_, _, _, _, _, _, _, _, referenceType, _, _) when shouldApplyManifestExpiryBoundary referenceType ->
             match referenceEvent.Metadata.Properties.TryGetValue SaveStoragePoolIdMetadataKey with
             | true, value when not (String.IsNullOrWhiteSpace value) -> Some(StoragePoolId value)
             | _ -> None
@@ -125,7 +134,7 @@ module Reference =
     let internal requireSaveStoragePoolId correlationId referenceId storagePoolId =
         match storagePoolId with
         | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) -> Ok storagePoolId
-        | _ -> Error(GraceError.Create $"Save reference {referenceId} does not have a recorded StoragePoolId for manifest expiry fan-out." correlationId)
+        | _ -> Error(GraceError.Create $"Reference {referenceId} does not have a recorded StoragePoolId for manifest expiry fan-out." correlationId)
 
     let internal planManifestSaveExpiryBoundaryWhenNeeded repositoryId storagePoolId referenceId (directoryVersion: DirectoryVersion) correlationId =
         match planManifestSaveExpiryBoundary repositoryId (StoragePoolId String.Empty) referenceId directoryVersion correlationId with
@@ -357,7 +366,7 @@ module Reference =
         (metadata: EventMetadata)
         =
         task {
-            if referenceType <> ReferenceType.Save then
+            if not (shouldRegisterManifestOwnership referenceType) then
                 return Ok None
             else
                 match planManifestSaveBoundary repositoryId (StoragePoolId String.Empty) referenceId directoryVersion metadata.CorrelationId with
@@ -601,7 +610,7 @@ module Reference =
                                             DirectoryVersionId = referenceDto.DirectoryId
                                             Sha256Hash = referenceDto.Sha256Hash
                                             Blake3Hash = referenceDto.Blake3Hash
-                                            StoragePoolId = None
+                                            StoragePoolId = saveStoragePoolId
                                             DeleteReason = $"Checkpoint: automatic deletion after {repositoryDto.CheckpointDays} days"
                                             CorrelationId = correlationId
                                         }
@@ -735,7 +744,7 @@ module Reference =
 
                     let applySaveExpiryManifestBoundary referenceId organizationId repositoryId directoryId referenceType =
                         task {
-                            if referenceType <> ReferenceType.Save then
+                            if not (shouldApplyManifestExpiryBoundary referenceType) then
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId

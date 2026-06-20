@@ -256,6 +256,115 @@ type SaveBoundaryActorTests() =
         }
 
     [<Test>]
+    member _.WholeFileOnlyDurableReferencesDoNotResolveCasRoute() =
+        task {
+            let verify referenceType =
+                task {
+                    let directoryVersion = directoryWith [ wholeFile () ]
+                    let mutable routeCalls = 0
+                    let mutable boundaryCalls = 0
+
+                    let resolveRoute () =
+                        task {
+                            routeCalls <- routeCalls + 1
+
+                            return Error(GraceError.Create $"Whole-file-only {referenceType} should not resolve CAS storage routing." "corr-whole-file-durable")
+                        }
+
+                    let applyBoundary _ _ =
+                        task {
+                            boundaryCalls <- boundaryCalls + 1
+
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"Whole-file-only {referenceType} should not apply manifest contribution boundaries."
+                                        "corr-whole-file-durable"
+                                )
+                        }
+
+                    let! result =
+                        ReferenceActor.applySaveManifestBoundaryWithRouteResolver
+                            resolveRoute
+                            applyBoundary
+                            repositoryId
+                            referenceId
+                            referenceType
+                            directoryVersion
+                            (metadata $"corr-whole-file-{referenceType}")
+
+                    match result with
+                    | Ok None -> ()
+                    | Ok (Some storagePoolId) -> Assert.Fail($"Expected whole-file-only {referenceType} to skip CAS route resolution, got {storagePoolId}.")
+                    | Error error ->
+                        Assert.Fail($"Expected whole-file-only {referenceType} boundary to succeed without CAS route resolution, got {error.Error}.")
+
+                    Assert.That(routeCalls, Is.EqualTo(0))
+                    Assert.That(boundaryCalls, Is.EqualTo(0))
+                }
+
+            do! verify ReferenceType.Commit
+            do! verify ReferenceType.Checkpoint
+        }
+
+    [<Test>]
+    member _.CommitAndCheckpointManifestReferencesRegisterRepositoryOwnership() =
+        task {
+            let verify referenceType =
+                task {
+                    let manifest = finalizedManifest ()
+                    let directoryVersion = directoryWith [ manifestFile manifest ]
+                    let mutable appliedPlans: ReferenceActor.ManifestSaveContributionPlan list = []
+
+                    let resolveRoute () =
+                        task {
+                            let route: Grace.Shared.DedupeIndex.RepositoryStorageRoute =
+                                { RepositoryId = repositoryId; StoragePoolId = storagePoolId; StorageShard = Grace.Shared.DedupeIndex.defaultStorageShard () }
+
+                            return Ok route
+                        }
+
+                    let applyBoundary plans _ =
+                        task {
+                            appliedPlans <- plans
+                            return Ok()
+                        }
+
+                    let! result =
+                        ReferenceActor.applySaveManifestBoundaryWithRouteResolver
+                            resolveRoute
+                            applyBoundary
+                            repositoryId
+                            referenceId
+                            referenceType
+                            directoryVersion
+                            (metadata $"corr-durable-{referenceType}")
+
+                    match result with
+                    | Ok (Some routedPool) -> Assert.That(routedPool, Is.EqualTo(storagePoolId))
+                    | Ok None -> Assert.Fail($"Expected manifest-backed {referenceType} to register repository ownership.")
+                    | Error error -> Assert.Fail($"Expected manifest-backed {referenceType} ownership registration to succeed, got {error.Error}.")
+
+                    let plan = appliedPlans |> Seq.exactlyOne
+                    Assert.That(plan.Manifest.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+
+                    Assert.That(
+                        plan.CounterCommand,
+                        Is.EqualTo(
+                            RepositoryContentCounterCommand.AddReference(
+                                $"save:{referenceId:N}:{manifest.ManifestAddress}",
+                                repositoryId,
+                                manifest.ManifestAddress
+                            )
+                        )
+                    )
+                }
+
+            do! verify ReferenceType.Commit
+            do! verify ReferenceType.Checkpoint
+        }
+
+    [<Test>]
     member _.ManifestSaveBoundaryRejectsMismatchedFileBlake3WhenPresent() =
         let manifest = finalizedManifest ()
         let fileVersion = manifestFile manifest
@@ -871,6 +980,41 @@ type SaveBoundaryActorTests() =
         )
 
     [<Test>]
+    member _.CheckpointExpiryStartsDecrementContributionWorkflow() =
+        let originalPool = StoragePoolId "pool-before-checkpoint-expiry"
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary ReferenceType.Checkpoint, Is.True)
+
+        let expiryPlan =
+            ReferenceActor.planManifestSaveExpiryBoundaryWhenNeeded repositoryId (Some originalPool) referenceId directoryVersion "corr-checkpoint-expiry"
+            |> expectPlan
+
+        match expiryPlan.CounterCommand with
+        | RepositoryContentCounterCommand.RemoveReference (operationId, commandRepositoryId, manifestAddress) ->
+            Assert.That(operationId, Is.EqualTo(RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}"))
+            Assert.That(commandRepositoryId, Is.EqualTo(repositoryId))
+            Assert.That(manifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        | _ -> Assert.Fail("Expected checkpoint expiry to remove the repository manifest reference.")
+
+        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
+
+        match ReferenceActor.tryCreateManifestContributionStart expiryPlan intent with
+        | Some startCommand ->
+            let workflowDecision =
+                ManifestContributionWorkflowActor.decideCommand
+                    []
+                    ManifestContributionWorkflowDto.Default
+                    startCommand
+                    (metadata "corr-checkpoint-expiry-workflow")
+
+            match workflowDecision with
+            | Ok decision -> Assert.That(decision.Workflow.Direction, Is.EqualTo(ManifestContributionDirection.Decrement))
+            | Error error -> Assert.Fail($"Expected checkpoint expiry decrement workflow to start, got {error.Error}.")
+        | None -> Assert.Fail("Expected checkpoint expiry decrement intent to start manifest contribution workflow fan-out.")
+
+    [<Test>]
     member _.SaveExpiryDecrementWorkflowUsesDistinctOperationIdAfterIncrementWorkflow() =
         let manifest = finalizedManifest ()
         let directoryVersion = directoryWith [ manifestFile manifest ]
@@ -1065,7 +1209,8 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected whole-file save expiry planning to remain a no-op, got {error.Error}.")
 
     [<Test>]
-    member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveSaveReferences() =
+    member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveExpiringReferences() =
         Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
-        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.True)
+        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Commit), Is.False)
         Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)

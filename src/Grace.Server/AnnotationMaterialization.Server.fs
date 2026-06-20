@@ -276,7 +276,7 @@ module internal AnnotationMaterialization =
            && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
             match fileVersion.ContentReference.Manifest with
             | Some manifest ->
-                match DedupeIndex.resolveRepositoryStorageRouteForPool correlationId manifest.StoragePoolId repositoryDto with
+                match DedupeIndex.resolveStoredManifestStorageRouteWithDefaults correlationId manifest.StoragePoolId repositoryDto with
                 | Ok route -> Ok(DedupeIndex.repositoryForStorageRoute route repositoryDto)
                 | Error error -> Error error
             | None -> Ok repositoryDto

@@ -84,6 +84,15 @@ type AnnotationMaterializationServerTests() =
         fileVersion.ContentReference <- FileContentReference.FileManifest { manifest with StoragePoolId = Constants.DefaultStoragePoolId }
         fileVersion, block
 
+    let manifestFileWithStoragePool relativePath storagePoolId bytes =
+        let target, block = manifestFile relativePath bytes
+
+        match target.ContentReference.Manifest with
+        | Some manifest -> target.ContentReference <- FileContentReference.FileManifest { manifest with StoragePoolId = storagePoolId }
+        | None -> Assert.Fail("Expected manifest-backed test target.")
+
+        target, block
+
     let materialize reader fileVersion =
         AnnotationMaterialization.materializeTextWithObjectReader reader fileVersion correlationId CancellationToken.None
         |> fun task -> task.GetAwaiter().GetResult()
@@ -236,7 +245,7 @@ type AnnotationMaterializationServerTests() =
             Assert.That(routedRepository.StorageContainerName, Is.Not.EqualTo(repository.StorageContainerName))
 
     [<Test>]
-    member _.ManifestBackedMaterializationRejectsRouteDrift() =
+    member _.ManifestBackedMaterializationUsesStoredManifestPoolAfterRouteDrift() =
         let bytes = textBytes "manifest route drift"
         let target, _ = manifestFile "/src/Drift.fs" bytes
 
@@ -251,5 +260,26 @@ type AnnotationMaterializationServerTests() =
             }
 
         match AnnotationMaterialization.repositoryForTargetMaterialization repository target correlationId with
-        | Ok routedRepository -> Assert.Fail($"Expected route drift to fail closed, got {routedRepository.StoragePoolId}.")
+        | Ok routedRepository ->
+            Assert.That(routedRepository.StorageContainerName, Is.EqualTo(Constants.DefaultCasStorageContainerName))
+            Assert.That(routedRepository.StorageContainerName, Is.Not.EqualTo(repository.StorageContainerName))
+        | Error error -> Assert.Fail($"Expected stored manifest pool to route after repository drift, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestBackedMaterializationRejectsUnconfiguredStoredManifestPool() =
+        let bytes = textBytes "manifest invalid pool"
+        let target, _ = manifestFileWithStoragePool "/src/InvalidPool.fs" (StoragePoolId "pool-not-configured") bytes
+
+        let repository =
+            { RepositoryDto.Default with
+                RepositoryId = Guid.Parse("8f83c161-3297-40aa-996a-ec667f34d9a5")
+                RepositoryStatus = RepositoryStatus.Active
+                ObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
+                StorageAccountName = Constants.DefaultCasStorageAccountName
+                StorageContainerName = "repository-objects"
+                StoragePoolId = Constants.DefaultStoragePoolId
+            }
+
+        match AnnotationMaterialization.repositoryForTargetMaterialization repository target correlationId with
+        | Ok routedRepository -> Assert.Fail($"Expected unconfigured stored manifest pool to fail closed, got {routedRepository.StoragePoolId}.")
         | Error error -> Assert.That(error.Error, Does.Contain("not configured"))
