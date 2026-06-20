@@ -57,7 +57,7 @@ module Reference =
         | ManifestContributionDirection.Increment -> ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
         | ManifestContributionDirection.Decrement -> ManifestContributionWorkflowOperationId $"save-expiry:{referenceId:N}:{manifestAddress}:fanout"
 
-    let private workflowRangesForManifest storagePoolId (manifest: FileManifest) =
+    let private workflowRangesForManifest (manifest: FileManifest) =
         let seenContentBlocks = HashSet<ContentBlockAddress>()
         let ranges = ResizeArray<ManifestContributionWorkflowRange>()
         let mutable index = 0
@@ -66,7 +66,7 @@ module Reference =
             let block = manifest.Blocks[index]
 
             if seenContentBlocks.Add block.Address then
-                ranges.Add({ StoragePoolId = storagePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
+                ranges.Add({ StoragePoolId = manifest.StoragePoolId; ContentBlockAddress = block.Address; OrdinalStart = 0; OrdinalCount = 1 })
 
             index <- index + 1
 
@@ -84,7 +84,7 @@ module Reference =
                 Ranges = plan.WorkflowRanges
             }
 
-    let planManifestSaveBoundary repositoryId storagePoolId referenceId (directoryVersion: DirectoryVersion) correlationId =
+    let planManifestSaveBoundary repositoryId _storagePoolId referenceId (directoryVersion: DirectoryVersion) correlationId =
         match DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersion correlationId with
         | Error graceError -> Error graceError
         | Ok manifests ->
@@ -97,7 +97,7 @@ module Reference =
                     ReferenceId = referenceId
                     Manifest = manifest
                     CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.ManifestAddress)
-                    WorkflowRanges = workflowRangesForManifest storagePoolId manifest
+                    WorkflowRanges = workflowRangesForManifest manifest
                 })
             |> Ok
 

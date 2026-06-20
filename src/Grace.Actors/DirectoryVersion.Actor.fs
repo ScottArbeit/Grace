@@ -466,7 +466,7 @@ module DirectoryVersion =
     let contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
 
     let validateManifestReferencesForSaveBoundaryWithResolver
-        (getRangePresence: ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
+        (getRangePresence: StoragePoolId -> ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
         correlationId
         (manifests: FileManifest seq)
         =
@@ -483,7 +483,7 @@ module DirectoryVersion =
                 while blockIndex < manifest.Blocks.Count && error.IsNone do
                     let block = manifest.Blocks[blockIndex]
                     let query: ContentBlockRangeQuery = { OrdinalStart = 0; OrdinalCount = 1 }
-                    let! presence = getRangePresence block.Address query
+                    let! presence = getRangePresence manifest.StoragePoolId block.Address query
 
                     if presence = ContentBlockRangePresence.Absent then
                         error <-
@@ -504,25 +504,11 @@ module DirectoryVersion =
         }
 
     let private validateManifestReferencesForSaveBoundary correlationId manifests =
-        let manifestsByBlockAddress = Dictionary<ContentBlockAddress, FileManifest>()
+        let getRangePresence storagePoolId contentBlockAddress query =
+            let actorKey = contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress
+            let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
 
-        for manifest in manifests do
-            if
-                not (isNull (box manifest))
-                && not (isNull manifest.Blocks)
-            then
-                for block in manifest.Blocks do
-                    if not (isNull (box block)) then
-                        manifestsByBlockAddress[block.Address] <- manifest
-
-        let getRangePresence contentBlockAddress query =
-            match manifestsByBlockAddress.TryGetValue contentBlockAddress with
-            | false, _ -> Task.FromResult(ContentBlockRangePresence.Absent)
-            | true, manifest ->
-                let actorKey = contentBlockMetadataActorKeyForSaveBoundary manifest.StoragePoolId contentBlockAddress
-                let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
-
-                metadataActor.GetRangePresence query correlationId
+            metadataActor.GetRangePresence query correlationId
 
         validateManifestReferencesForSaveBoundaryWithResolver getRangePresence correlationId manifests
 

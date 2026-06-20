@@ -91,8 +91,36 @@ type SaveBoundaryActorTests() =
 
     let finalizedManifest () = finalizedManifestWithBlockCopies 1
 
+    let finalizedManifestWithStoragePool storagePoolId = { finalizedManifest () with StoragePoolId = storagePoolId }
+
+    let appendRepeatedBlock (manifest: FileManifest) =
+        let firstBlock = manifest.Blocks[0]
+        let blocks = List<ContentBlock>()
+
+        blocks.AddRange manifest.Blocks
+        blocks.Add(ContentBlock.Create(firstBlock.Address, manifest.Size, firstBlock.Size))
+
+        let resizedManifest =
+            { manifest with
+                FileContentHash =
+                    $"{manifest.FileContentHash}:expanded:{manifest.StoragePoolId}"
+                    |> Encoding.UTF8.GetBytes
+                    |> ContentAddress.computeBlake3Hex
+                    |> FileContentHash
+                Size = manifest.Size + firstBlock.Size
+                Blocks = blocks
+            }
+
+        { resizedManifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest resizedManifest }
+
     let manifestFile (manifest: FileManifest) =
         let fileVersion = FileVersion.Create "/large.bin" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
+        fileVersion.ContentReference <- FileContentReference.FileManifest manifest
+        fileVersion
+
+    let manifestFileAt relativePath (manifest: FileManifest) =
+        let fileVersion = FileVersion.Create relativePath "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
+
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
 
@@ -452,7 +480,7 @@ type SaveBoundaryActorTests() =
     member _.ManifestSaveBoundaryRejectsAbsentContentBlockMetadataRanges() =
         let manifest = finalizedManifest ()
 
-        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Absent
+        let getRangePresence _ _ _ = Task.FromResult ContentBlockRangePresence.Absent
 
         match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-absent-block" [ manifest ])
             .Result
@@ -464,7 +492,7 @@ type SaveBoundaryActorTests() =
     member _.ManifestSaveBoundaryAcceptsExistingReclaimableContentBlockMetadataRanges() =
         let manifest = finalizedManifest ()
 
-        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
+        let getRangePresence _ _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
 
         match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-reclaimable-block" [ manifest ])
             .Result
@@ -477,7 +505,7 @@ type SaveBoundaryActorTests() =
         let manifest = finalizedManifestWithBlockCopies 2
         let queries = ResizeArray<ContentBlockRangeQuery>()
 
-        let getRangePresence _ query =
+        let getRangePresence _ _ query =
             queries.Add(query)
             Task.FromResult ContentBlockRangePresence.Reclaimable
 
@@ -493,6 +521,35 @@ type SaveBoundaryActorTests() =
                 Is.True
             )
         | Error error -> Assert.Fail($"Expected multi-block manifest metadata checks to use content-block ordinal zero, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestSaveBoundaryKeysRangePresenceByPoolAndContentBlockAddress() =
+        let poolA = StoragePoolId "pool-a"
+        let poolB = StoragePoolId "pool-b"
+        let manifestA = finalizedManifestWithStoragePool poolA
+        let manifestB = { appendRepeatedBlock manifestA with StoragePoolId = poolB }
+        let sharedAddress = manifestA.Blocks[0].Address
+        let lookups = ResizeArray<StoragePoolId * ContentBlockAddress>()
+
+        let getRangePresence storagePoolId contentBlockAddress _ =
+            lookups.Add((storagePoolId, contentBlockAddress))
+
+            if storagePoolId = poolA
+               && contentBlockAddress = sharedAddress then
+                Task.FromResult ContentBlockRangePresence.Absent
+            else
+                Task.FromResult ContentBlockRangePresence.Reclaimable
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver
+                   getRangePresence
+                   "corr-duplicate-block-pools"
+                   [ manifestA; manifestB ])
+            .Result
+            with
+        | Ok () -> Assert.Fail("Expected save validation to reject the manifest whose own pool lacks finalized metadata.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain($"{manifestA.ManifestAddress}"))
+            Assert.That(lookups, Does.Contain((poolA, sharedAddress)))
 
     [<Test>]
     member _.ManifestSaveBoundaryUsesResolvedStoragePoolForContentBlockMetadata() =
@@ -590,7 +647,7 @@ type SaveBoundaryActorTests() =
     member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
         let manifest = finalizedManifestWithBlockCopies 2
         let directoryVersion = directoryWith [ manifestFile manifest ]
-        let expectedStoragePoolId = storagePoolId
+        let expectedStoragePoolId = manifest.StoragePoolId
 
         let plan =
             ReferenceActor.planManifestSaveBoundary repositoryId storagePoolId referenceId directoryVersion "corr-repeated-block"
@@ -618,6 +675,45 @@ type SaveBoundaryActorTests() =
             | Ok decision -> Assert.That(ManifestContributionWorkflowActor.pendingRanges decision.Workflow, Has.Length.EqualTo(1))
             | Error error -> Assert.Fail($"Expected repeated block occurrences to start contribution workflow, got {error.Error}.")
         | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
+
+    [<Test>]
+    member _.SaveBoundaryContributionWorkflowRangesUseEachManifestStoragePool() =
+        let routePool = StoragePoolId "pool-after-route-change"
+        let poolA = StoragePoolId "pool-a-before-route-change"
+        let poolB = StoragePoolId "pool-b-before-route-change"
+        let manifestA = finalizedManifestWithStoragePool poolA
+        let manifestB = finalizedManifestWithStoragePool poolB
+
+        let directoryVersion =
+            directoryWith [ manifestFileAt "/a.bin" manifestA
+                            manifestFileAt "/b.bin" manifestB ]
+
+        match ReferenceActor.planManifestSaveBoundary repositoryId routePool referenceId directoryVersion "corr-mixed-manifest-pools" with
+        | Error error -> Assert.Fail($"Expected mixed-pool manifest save planning to succeed, got {error.Error}.")
+        | Ok plans ->
+            Assert.That(plans |> Seq.length, Is.EqualTo(2))
+
+            let plannedPools =
+                plans
+                |> Seq.map (fun plan ->
+                    plan.Manifest.ManifestAddress,
+                    plan.WorkflowRanges
+                    |> Seq.map (fun range -> range.StoragePoolId)
+                    |> Seq.distinct
+                    |> Seq.toArray)
+                |> dict
+
+            Assert.That(plannedPools[manifestA.ManifestAddress], Has.Length.EqualTo(1))
+            Assert.That(plannedPools[manifestA.ManifestAddress][0], Is.EqualTo(poolA))
+            Assert.That(plannedPools[manifestB.ManifestAddress], Has.Length.EqualTo(1))
+            Assert.That(plannedPools[manifestB.ManifestAddress][0], Is.EqualTo(poolB))
+
+            Assert.That(
+                plans
+                |> Seq.collect (fun plan -> plan.WorkflowRanges)
+                |> Seq.exists (fun range -> range.StoragePoolId = routePool),
+                Is.False
+            )
 
     [<Test>]
     member _.SaveExpiryStartsDecrementContributionWorkflow() =
@@ -653,7 +749,7 @@ type SaveBoundaryActorTests() =
         | None -> Assert.Fail("Expected decrement intent to start manifest contribution workflow fan-out.")
 
     [<Test>]
-    member _.SaveExpiryDurableStoragePoolComesFromCreatedSaveEvent() =
+    member _.SaveExpiryRequiresDurableStoragePoolEvidenceButRangesUseManifestPool() =
         let originalPool = StoragePoolId "pool-before-route-change"
         let currentRepositoryPool = StoragePoolId "pool-after-route-change"
         let manifest = finalizedManifest ()
@@ -671,12 +767,26 @@ type SaveBoundaryActorTests() =
             |> expectPlan
 
         Assert.That(currentRepositoryPool, Is.Not.EqualTo(originalPool))
+        Assert.That(manifest.StoragePoolId, Is.Not.EqualTo(originalPool))
+        Assert.That(manifest.StoragePoolId, Is.Not.EqualTo(currentRepositoryPool))
         Assert.That(expiryPlan.WorkflowRanges, Has.Length.EqualTo(manifest.Blocks.Count))
 
         Assert.That(
             expiryPlan.WorkflowRanges
-            |> Seq.forall (fun range -> range.StoragePoolId = originalPool),
+            |> Seq.forall (fun range -> range.StoragePoolId = manifest.StoragePoolId),
             Is.True
+        )
+
+        Assert.That(
+            expiryPlan.WorkflowRanges
+            |> Seq.exists (fun range -> range.StoragePoolId = currentRepositoryPool),
+            Is.False
+        )
+
+        Assert.That(
+            expiryPlan.WorkflowRanges
+            |> Seq.exists (fun range -> range.StoragePoolId = originalPool),
+            Is.False
         )
 
     [<Test>]
