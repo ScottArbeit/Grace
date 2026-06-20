@@ -463,26 +463,33 @@ module Storage =
                     | Error error -> return! context |> result400BadRequest error
                     | Ok () ->
                         let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                        let! requestContext = createUploadSessionRequestContext context parameters correlationId
-                        let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
+                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
+                        let! repositoryDto = repositoryActor.Get correlationId
 
-                        match scopeValidation with
+                        let! routeResult =
+                            task {
+                                if parameters.UploadSessionId = UploadSessionId.Empty then
+                                    return resolveRepositoryStorageRoute correlationId repositoryDto
+                                else
+                                    let! requestContext = createUploadSessionRequestContext context parameters correlationId
+                                    let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
+
+                                    match scopeValidation with
+                                    | Error error -> return Error error
+                                    | Ok requestContext ->
+                                        match requireUploadSessionStoragePool correlationId requestContext.SessionForScope with
+                                        | Error error -> return Error error
+                                        | Ok storagePoolId -> return resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto
+                            }
+
+                        match routeResult with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok requestContext ->
-                            let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                            let! repositoryDto = repositoryActor.Get correlationId
-
-                            match requireUploadSessionStoragePool correlationId requestContext.SessionForScope with
-                            | Error error -> return! context |> result400BadRequest error
-                            | Ok storagePoolId ->
-                                match resolveRepositoryStorageRouteForPool correlationId storagePoolId repositoryDto with
-                                | Error error -> return! context |> result400BadRequest error
-                                | Ok route ->
-                                    let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
-                                    let casRepositoryDto = repositoryForCasStorage route repositoryDto
-                                    let! uploadUri = getUriWithCreateSharedAccessSignature casRepositoryDto blobName correlationId
-                                    context.SetStatusCode StatusCodes.Status200OK
-                                    return! context.WriteStringAsync uploadUri.AbsoluteUri
+                        | Ok route ->
+                            let blobName = getContentBlockObjectKey parameters.ContentBlockAddress
+                            let casRepositoryDto = repositoryForCasStorage route repositoryDto
+                            let! uploadUri = getUriWithCreateSharedAccessSignature casRepositoryDto blobName correlationId
+                            context.SetStatusCode StatusCodes.Status200OK
+                            return! context.WriteStringAsync uploadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
