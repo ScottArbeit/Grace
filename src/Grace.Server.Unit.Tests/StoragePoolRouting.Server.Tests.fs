@@ -96,6 +96,21 @@ type StoragePoolRoutingServerTests() =
             Assert.That(route.Shard.ObjectKeyPrefix, Is.EqualTo("recorded"))
 
     [<Test>]
+    member _.UploadSessionRepositoryScopedDedupePoolResolvesToDefaultShardWithoutLosingRecordedPoolId() =
+        let repositoryId = Guid.Parse("4b01c5b6-a12e-4f53-b7df-77034fa6c30f")
+        let recordedPoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+
+        match StoragePoolRouting.resolveStoragePoolRouteForStoragePoolId repositoryId recordedPoolId "corr-repository-dedupe-pool" with
+        | Error error -> Assert.Fail($"Expected repository-scoped dedupe pool to resolve to the default shard, got {error.Error}.")
+        | Ok route ->
+            Assert.That(route.RepositoryId, Is.EqualTo(repositoryId))
+            Assert.That(route.StoragePoolId, Is.EqualTo(recordedPoolId))
+            Assert.That(route.StoragePoolId, Is.Not.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+            Assert.That(route.Shard.StorageAccountName, Is.EqualTo(AzureEnvironment.storageEndpoints.AccountName))
+            Assert.That(route.Shard.StorageContainerName, Is.EqualTo(StorageContainerName Constants.DefaultCasStorageContainerName))
+            Assert.That(route.Shard.ObjectKeyPrefix, Is.EqualTo(Constants.DefaultCasStoragePrefix))
+
+    [<Test>]
     member _.ShardPlacementUsesSelectedAccountContainerAndPrefix() =
         let shard: StoragePoolRouting.StorageShard =
             { StorageAccountName = "cas-shard-a"; StorageContainerName = StorageContainerName "cas-a"; ObjectKeyPrefix = "/pool-a/" }

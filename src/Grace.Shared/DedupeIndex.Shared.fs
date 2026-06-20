@@ -76,7 +76,7 @@ module DedupeIndex =
             IsAuthoritative = false
         }
 
-    let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolId $"{repositoryId}"
+    let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolRouting.repositoryDedupeStoragePoolId repositoryId
 
     let storagePoolIdForRepository (repositoryDto: RepositoryDto) =
         if isNull (box repositoryDto) then

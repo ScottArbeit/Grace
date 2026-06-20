@@ -284,6 +284,12 @@ module Storage =
 
         organizationId, repositoryId
 
+    let internal resolveRepositoryDedupeStoragePoolId (repositoryDto: RepositoryDto) correlationId =
+        try
+            Ok(DedupeIndex.storagePoolIdForRepository repositoryDto)
+        with
+        | ex -> Error(GraceError.Create ex.Message correlationId)
+
     let private resolveOwnerId (graceIds: GraceIds) (parameters: StorageParameters) =
         if graceIds.OwnerId <> OwnerId.Empty then
             graceIds.OwnerId
@@ -295,7 +301,13 @@ module Storage =
         metadata.Properties[ "Path" ] <- $"{context.Request.Path}"
         metadata
 
-    type private UploadSessionRequestContext = { UploadSessionActor: IUploadSessionActor; Metadata: EventMetadata; SessionForScope: UploadSessionDto }
+    type private UploadSessionRequestContext =
+        {
+            UploadSessionActor: IUploadSessionActor
+            Metadata: EventMetadata
+            RequestRepositoryId: RepositoryId
+            SessionForScope: UploadSessionDto
+        }
 
     let private createUploadSessionRequestContext (context: HttpContext) (parameters: UploadSessionStorageParameters) correlationId =
         task {
@@ -304,7 +316,13 @@ module Storage =
 
             let uploadSessionActor = Grace.Actors.Extensions.ActorProxy.UploadSession.CreateActorProxy parameters.UploadSessionId repositoryId correlationId
 
-            return { UploadSessionActor = uploadSessionActor; Metadata = createEventMetadata context correlationId; SessionForScope = UploadSessionDto.Default }
+            return
+                {
+                    UploadSessionActor = uploadSessionActor
+                    Metadata = createEventMetadata context correlationId
+                    RequestRepositoryId = repositoryId
+                    SessionForScope = UploadSessionDto.Default
+                }
         }
 
     let private loadSessionForScope (uploadSessionActor: IUploadSessionActor) correlationId =
@@ -321,26 +339,44 @@ module Storage =
                 return session
         }
 
+    let internal validateUploadSessionRepositoryId repositoryId (session: UploadSessionDto) correlationId =
+        if not (isNull (box session))
+           && session.UploadSessionId <> UploadSessionId.Empty
+           && session.RepositoryId <> RepositoryId.Empty
+           && session.RepositoryId <> repositoryId then
+            Error(
+                GraceError.Create
+                    $"UploadSession RepositoryId must match the request repository. Recorded '{session.RepositoryId}', requested '{repositoryId}'."
+                    correlationId
+            )
+        else
+            Ok()
+
     let private validateUploadSessionScope requestContext (parameters: UploadSessionStorageParameters) correlationId requireExistingSession =
         task {
             let! sessionForScope = loadSessionForScope requestContext.UploadSessionActor correlationId
 
-            if requireExistingSession
-               && (sessionForScope.UploadSessionId = UploadSessionId.Empty
-                   || sessionForScope.LifecycleState = UploadSessionLifecycleState.NotStarted) then
+            match validateUploadSessionRepositoryId requestContext.RequestRepositoryId sessionForScope correlationId with
+            | Error error -> return Error error
+            | Ok () when
+                requireExistingSession
+                && (sessionForScope.UploadSessionId = UploadSessionId.Empty
+                    || sessionForScope.LifecycleState = UploadSessionLifecycleState.NotStarted)
+                ->
                 return Error(GraceError.Create "UploadSession must be started before this operation." correlationId)
-            elif sessionForScope.UploadSessionId
-                 <> UploadSessionId.Empty
-                 && sessionForScope.AuthorizedScope
-                    <> parameters.AuthorizedScope then
+            | Ok () when
+                sessionForScope.UploadSessionId
+                <> UploadSessionId.Empty
+                && sessionForScope.AuthorizedScope
+                   <> parameters.AuthorizedScope
+                ->
                 return
                     Error(
                         GraceError.Create
                             $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{sessionForScope.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
                             correlationId
                     )
-            else
-                return Ok { requestContext with SessionForScope = sessionForScope }
+            | Ok () -> return Ok { requestContext with SessionForScope = sessionForScope }
         }
 
     let private validateActiveDedupeDiscoveryForClaim requestContext (parameters: ClaimReuseRangesParameters) correlationId =
@@ -632,32 +668,36 @@ module Storage =
                                 $"UploadSession must be active before issuing a ContentBlock upload URI; current state is {session.LifecycleState}."
                                 correlationId
                         )
-                elif session.AuthorizedScope
-                     <> parameters.AuthorizedScope then
-                    return
-                        Error(
-                            GraceError.Create
-                                $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{session.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
-                                correlationId
-                        )
-                elif
-                    isNull session.BlockUploadIntents
-                    || not
-                        (
-                            session.BlockUploadIntents
-                            |> Array.exists (fun intent ->
-                                not (isNull (box intent))
-                                && intent.ContentBlockAddress = parameters.ContentBlockAddress)
-                        )
-                then
-                    return
-                        Error(
-                            GraceError.Create
-                                $"Block upload intent does not exist for ContentBlockAddress {parameters.ContentBlockAddress}; upload URI cannot be issued."
-                                correlationId
-                        )
                 else
-                    return Ok session
+                    match validateUploadSessionRepositoryId repositoryId session correlationId with
+                    | Error error -> return Error error
+                    | Ok () ->
+                        if session.AuthorizedScope
+                           <> parameters.AuthorizedScope then
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"UploadSession AuthorizedScope must match the scope recorded when the session was started. Expected '{session.AuthorizedScope}', actual '{parameters.AuthorizedScope}'."
+                                        correlationId
+                                )
+                        elif
+                            isNull session.BlockUploadIntents
+                            || not
+                                (
+                                    session.BlockUploadIntents
+                                    |> Array.exists (fun intent ->
+                                        not (isNull (box intent))
+                                        && intent.ContentBlockAddress = parameters.ContentBlockAddress)
+                                )
+                        then
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"Block upload intent does not exist for ContentBlockAddress {parameters.ContentBlockAddress}; upload URI cannot be issued."
+                                        correlationId
+                                )
+                        else
+                            return Ok session
         }
 
     let private uploadSessionEventOperationId (uploadSessionEvent: UploadSessionEvent) =
@@ -877,10 +917,10 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok route ->
-                            match! validateManifestForContentBlockDownload route.StoragePoolId repositoryId parameters correlationId with
+                        | Ok storagePoolId ->
+                            match! validateManifestForContentBlockDownload storagePoolId repositoryId parameters correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok storagePlacement ->
                                 match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId with
@@ -928,12 +968,12 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                        match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok route ->
+                        | Ok storagePoolId ->
                             let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
                             let! snapshot = dedupeIndexActor.Snapshot correlationId
-                            let result = DedupeIndex.discover route.StoragePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
+                            let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
 
                             return!
                                 context
@@ -962,24 +1002,27 @@ module Storage =
 
                     match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok route ->
-                        let command =
-                            UploadSessionCommand.Start
-                                {
-                                    UploadSessionId = parameters.UploadSessionId
-                                    OwnerId = ownerId
-                                    OrganizationId = organizationId
-                                    RepositoryId = repositoryId
-                                    StoragePoolId = route.StoragePoolId
-                                    AuthorizedScope = parameters.AuthorizedScope
-                                    FileContentHash = parameters.FileContentHash
-                                    ExpectedSize = parameters.ExpectedSize
-                                    ChunkingSuiteId = parameters.ChunkingSuiteId
-                                    SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
-                                    OperationId = parameters.OperationId
-                                }
+                    | Ok _ ->
+                        match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok storagePoolId ->
+                            let command =
+                                UploadSessionCommand.Start
+                                    {
+                                        UploadSessionId = parameters.UploadSessionId
+                                        OwnerId = ownerId
+                                        OrganizationId = organizationId
+                                        RepositoryId = repositoryId
+                                        StoragePoolId = storagePoolId
+                                        AuthorizedScope = parameters.AuthorizedScope
+                                        FileContentHash = parameters.FileContentHash
+                                        ExpectedSize = parameters.ExpectedSize
+                                        ChunkingSuiteId = parameters.ChunkingSuiteId
+                                        SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
+                                        OperationId = parameters.OperationId
+                                    }
 
-                        return! handleUploadSessionCommand context parameters command correlationId
+                            return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
