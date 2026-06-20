@@ -34,6 +34,7 @@ module UploadSession =
             OwnerId: OwnerId
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             AuthorizedScope: RelativePath
             FileContentHash: FileContentHash
             ExpectedSize: int64
@@ -176,6 +177,7 @@ module UploadSession =
             OwnerId: OwnerId
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             AuthorizedScope: RelativePath
             FileContentHash: FileContentHash
             ExpectedSize: int64
@@ -201,6 +203,7 @@ module UploadSession =
                 OwnerId = OwnerId.Empty
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
+                StoragePoolId = StoragePoolId String.Empty
                 AuthorizedScope = RelativePath String.Empty
                 FileContentHash = FileContentHash String.Empty
                 ExpectedSize = 0L
@@ -227,6 +230,7 @@ module UploadSession =
                     OwnerId = start.OwnerId
                     OrganizationId = start.OrganizationId
                     RepositoryId = start.RepositoryId
+                    StoragePoolId = start.StoragePoolId
                     AuthorizedScope = start.AuthorizedScope
                     FileContentHash = start.FileContentHash
                     ExpectedSize = start.ExpectedSize
