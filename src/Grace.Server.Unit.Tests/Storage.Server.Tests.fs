@@ -427,8 +427,8 @@ type StorageContentBlockSdkContract() =
         | Ok () -> Assert.Pass()
 
     [<TestCase("/", "repository root")>]
-    [<TestCase("/team", "broader repository or directory scope")>]
     [<TestCase("/team/", "directory path")>]
+    [<TestCase("/team//", "directory path")>]
     member _.StartManifestUploadSessionRejectsBroadAuthorizedScope(scope: string, expectedMessage: string) =
         match Storage.validateStartManifestUploadSessionAuthorizedScope "corr-broad-start-scope" scope with
         | Ok () -> Assert.Fail($"Expected broad AuthorizedScope '{scope}' to be rejected.")
@@ -436,9 +436,13 @@ type StorageContentBlockSdkContract() =
             Assert.That(error.Error, Does.Contain(expectedMessage))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-broad-start-scope"))
 
-    [<Test>]
-    member _.StartManifestUploadSessionAcceptsExactFileAuthorizedScope() =
-        match Storage.validateStartManifestUploadSessionAuthorizedScope "corr-exact-start-scope" "/team/file.bin" with
+    [<TestCase("/team/file.bin")>]
+    [<TestCase("/Dockerfile")>]
+    [<TestCase("/LICENSE")>]
+    [<TestCase("/Makefile")>]
+    [<TestCase("/team/Dockerfile")>]
+    member _.StartManifestUploadSessionAcceptsExactFileAuthorizedScope(scope: string) =
+        match Storage.validateStartManifestUploadSessionAuthorizedScope "corr-exact-start-scope" scope with
         | Error error -> Assert.Fail($"Expected exact file AuthorizedScope to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
 

@@ -377,17 +377,7 @@ module Storage =
         elif normalizedScope.EndsWith("/", StringComparison.Ordinal) then
             Error(GraceError.Create "StartManifestUploadSession AuthorizedScope must not be a directory path; use the exact file path." correlationId)
         else
-            let lastSeparator = normalizedScope.LastIndexOf("/", StringComparison.Ordinal)
-            let leaf = normalizedScope.Substring(lastSeparator + 1)
-
-            if leaf.Contains(".", StringComparison.Ordinal) then
-                Ok()
-            else
-                Error(
-                    GraceError.Create
-                        "StartManifestUploadSession AuthorizedScope must include the target file name, not a broader repository or directory scope."
-                        correlationId
-                )
+            Ok()
 
     let private validateUploadSessionScope requestContext (parameters: UploadSessionStorageParameters) correlationId requireExistingSession =
         task {
