@@ -127,6 +127,43 @@ module Reference =
         | Some graceError -> Error graceError
         | None -> Ok(planManifestReferences repositoryId referenceId manifestReferences)
 
+    let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersions: DirectoryVersion seq) correlationId =
+        let directoryVersionArray = directoryVersions |> Seq.toArray
+
+        let directoryVersionIds =
+            HashSet<DirectoryVersionId>(
+                directoryVersionArray
+                |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
+            )
+
+        if not (directoryVersionIds.Contains rootDirectoryVersionId) then
+            Error(
+                (GraceError.Create "Recursive directory traversal did not include the root DirectoryVersion." correlationId)
+                    .enhance (nameof DirectoryVersionId, rootDirectoryVersionId)
+            )
+        else
+            let missingChild =
+                directoryVersionArray
+                |> Seq.collect (fun directoryVersion ->
+                    directoryVersion.Directories
+                    |> Seq.map (fun childDirectoryVersionId -> directoryVersion, childDirectoryVersionId))
+                |> Seq.tryFind (fun (_, childDirectoryVersionId) -> not (directoryVersionIds.Contains childDirectoryVersionId))
+
+            match missingChild with
+            | Some (parentDirectoryVersion, childDirectoryVersionId) ->
+                Error(
+                    (GraceError.Create "Recursive directory traversal did not include a declared child DirectoryVersion." correlationId)
+                        .enhance(nameof DirectoryVersionId, rootDirectoryVersionId)
+                        .enhance("ParentDirectoryVersionId", parentDirectoryVersion.DirectoryVersionId)
+                        .enhance ("ChildDirectoryVersionId", childDirectoryVersionId)
+                )
+            | None -> Ok directoryVersionArray
+
+    let planManifestSaveBoundaryForRecursiveDirectoryVersions repositoryId referenceId rootDirectoryVersionId directoryVersions correlationId =
+        match validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId directoryVersions correlationId with
+        | Error graceError -> Error graceError
+        | Ok completeDirectoryVersions -> planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId completeDirectoryVersions correlationId
+
     let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
         planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
 
@@ -151,6 +188,50 @@ module Reference =
     let shouldApplyManifestExpiryBoundary (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
         && referenceDto.ReferenceType = ReferenceType.Save
+
+    let planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
+        repositoryId
+        referenceId
+        rootDirectoryVersionId
+        (referenceDto: ReferenceDto)
+        (getRecursiveDirectoryVersions: unit -> Task<Grace.Types.DirectoryVersion.DirectoryVersionDto array>)
+        correlationId
+        =
+        task {
+            if shouldApplyManifestExpiryBoundary referenceDto then
+                let! directoryVersionDtos = getRecursiveDirectoryVersions ()
+
+                match
+                    planManifestSaveBoundaryForRecursiveDirectoryVersions
+                        repositoryId
+                        referenceId
+                        rootDirectoryVersionId
+                        (directoryVersionDtos
+                         |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
+                        correlationId
+                    with
+                | Error graceError -> return Error graceError
+                | Ok plans ->
+                    return
+                        plans
+                        |> List.map (fun plan ->
+                            let operationId =
+                                RepositoryContentCounterOperationId
+                                    $"reference-expiry:{referenceId:N}:{plan.Manifest.StoragePoolId}:{plan.Manifest.ManifestAddress}"
+
+                            { plan with
+                                CounterCommand =
+                                    RepositoryContentCounterCommand.RemoveReference(
+                                        operationId,
+                                        repositoryId,
+                                        plan.Manifest.StoragePoolId,
+                                        plan.Manifest.ManifestAddress
+                                    )
+                            })
+                        |> Ok
+            else
+                return Ok []
+        }
 
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
         let rootRelativePath = directoryVersion.RelativePath
@@ -473,23 +554,22 @@ module Reference =
                             else
                                 referenceDto.ReferenceId
 
-                        let directoryVersionActorProxy =
-                            DirectoryVersion.CreateActorProxy
-                                physicalDeletionReminderState.DirectoryVersionId
-                                physicalDeletionReminderState.RepositoryId
-                                this.correlationId
-
-                        let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false this.correlationId
-
                         let! boundaryResult =
                             task {
                                 if shouldApplyManifestExpiryBoundary referenceDto then
-                                    match
-                                        planManifestSaveExpiryBoundaryForDirectoryVersions
+                                    let directoryVersionActorProxy =
+                                        DirectoryVersion.CreateActorProxy
+                                            physicalDeletionReminderState.DirectoryVersionId
+                                            physicalDeletionReminderState.RepositoryId
+                                            this.correlationId
+
+                                    match!
+                                        planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
                                             physicalDeletionReminderState.RepositoryId
                                             referenceId
-                                            (directoryVersionDtos
-                                             |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
+                                            physicalDeletionReminderState.DirectoryVersionId
+                                            referenceDto
+                                            (fun () -> directoryVersionActorProxy.GetRecursiveDirectoryVersions false this.correlationId)
                                             this.correlationId
                                         with
                                     | Error graceError -> return Error graceError
@@ -722,9 +802,10 @@ module Reference =
                                 let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false metadata.CorrelationId
 
                                 match
-                                    planManifestSaveBoundaryForDirectoryVersions
+                                    planManifestSaveBoundaryForRecursiveDirectoryVersions
                                         repositoryId
                                         referenceId
+                                        directoryId
                                         (directoryVersionDtos
                                          |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
                                         metadata.CorrelationId
@@ -741,12 +822,13 @@ module Reference =
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
                                 let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false metadata.CorrelationId
 
-                                match
-                                    planManifestSaveExpiryBoundaryForDirectoryVersions
+                                match!
+                                    planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
                                         repositoryId
                                         referenceId
-                                        (directoryVersionDtos
-                                         |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
+                                        directoryId
+                                        referenceDto
+                                        (fun () -> Task.FromResult directoryVersionDtos)
                                         metadata.CorrelationId
                                     with
                                 | Error graceError -> return Error graceError

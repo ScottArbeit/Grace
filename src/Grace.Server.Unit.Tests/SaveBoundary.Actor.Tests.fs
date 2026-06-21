@@ -711,6 +711,59 @@ type SaveBoundaryActorTests() =
         | _ -> Assert.Fail("Expected nested child manifest planning to add stored-pool manifest ownership.")
 
     [<Test>]
+    member _.RecursiveSaveBoundaryPlanningRejectsMissingRootDirectoryVersion() =
+        let childManifest = finalizedManifestInPool archiveStoragePoolId
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryVersionId
+                (RelativePath "/src/")
+                []
+                [
+                    manifestFileAt "/src/large.bin" childManifest
+                ]
+
+        let result =
+            ReferenceActor.planManifestSaveBoundaryForRecursiveDirectoryVersions
+                repositoryId
+                referenceId
+                directoryVersionId
+                [ childDirectory ]
+                "corr-recursive-missing-root"
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected recursive save boundary planning to reject traversal results without the root directory.")
+        | Error error -> Assert.That(error.Error, Does.Contain("did not include the root DirectoryVersion"))
+
+    [<Test>]
+    member _.RecursiveSaveBoundaryPlanningRejectsDeclaredChildMissingFromTraversal() =
+        let rootManifest = finalizedManifest ()
+        let childManifest = finalizedManifestInPool archiveStoragePoolId
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryVersionId
+                (RelativePath "/src/")
+                []
+                [
+                    manifestFileAt "/src/large.bin" childManifest
+                ]
+
+        let rootDirectory = hashedDirectory directoryVersionId (RelativePath "/") [ childDirectory ] [ manifestFile rootManifest ]
+
+        let result =
+            ReferenceActor.planManifestSaveBoundaryForRecursiveDirectoryVersions
+                repositoryId
+                referenceId
+                directoryVersionId
+                [ rootDirectory ]
+                "corr-recursive-missing-child"
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected recursive save boundary planning to reject traversal results missing a declared child directory.")
+        | Error error -> Assert.That(error.Error, Does.Contain("did not include a declared child DirectoryVersion"))
+
+    [<Test>]
     member _.ReferenceBoundaryDeduplicatesRecursiveManifestReferencesByStoredPoolAndManifestAddress() =
         let manifest = finalizedManifestInPool archiveStoragePoolId
 
@@ -1056,3 +1109,28 @@ type SaveBoundaryActorTests() =
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Commit), Is.False)
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)
+
+    [<Test>]
+    member _.SaveExpiryReferencePlanningSkipsRecursiveFetchForCheckpointReferences() =
+        task {
+            let mutable fetchCalled = false
+
+            let getRecursiveDirectoryVersions () =
+                fetchCalled <- true
+                Task.FromResult Array.empty<Grace.Types.DirectoryVersion.DirectoryVersionDto>
+
+            let! result =
+                ReferenceActor.planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
+                    repositoryId
+                    referenceId
+                    directoryVersionId
+                    (referenceDto ReferenceType.Checkpoint)
+                    getRecursiveDirectoryVersions
+                    "corr-checkpoint-expiry-skip"
+
+            match result with
+            | Error error -> Assert.Fail($"Expected checkpoint expiry planning to skip manifest traversal, got {error.Error}.")
+            | Ok plans -> Assert.That(plans, Is.Empty)
+
+            Assert.That(fetchCalled, Is.False)
+        }
