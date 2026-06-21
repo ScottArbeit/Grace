@@ -199,7 +199,12 @@ type StorageContentBlockSdkContract() =
         let rootScopeSelected =
             Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress rootScopeState
 
-        Assert.That(rootScopeSelected, Is.EqualTo(Some metadata))
+        Assert.That(rootScopeSelected, Is.EqualTo(None))
+
+        let exactRootScopeSelected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId "/" manifestAddress contentBlockAddress rootScopeState
+
+        Assert.That(exactRootScopeSelected, Is.EqualTo(Some metadata))
 
         let namesakeSiblingRejected =
             Storage.tryFindFinalizedScopedContentBlockMetadata
@@ -235,6 +240,21 @@ type StorageContentBlockSdkContract() =
             Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId otherRepositoryId authorizedScope manifestAddress contentBlockAddress state
 
         Assert.That(crossRepositoryRejected, Is.EqualTo(None))
+
+    [<Test>]
+    member _.ConfirmContentBlockUploadRejectsBlankOperationIdBeforeMaterialization() =
+        let parameters = Parameters.Storage.ConfirmContentBlockUploadParameters()
+        parameters.OperationId <- "   "
+
+        match Storage.validateConfirmCommandBeforeMaterialization parameters "corr-confirm-operation-id" with
+        | Ok () -> Assert.Fail("Expected blank OperationId to be rejected before staged bytes can be materialized.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("UploadSession command requires a non-empty operation id."))
+
+        parameters.OperationId <- "op-confirm-valid"
+
+        match Storage.validateConfirmCommandBeforeMaterialization parameters "corr-confirm-operation-id" with
+        | Ok () -> ()
+        | Error error -> Assert.Fail($"Expected non-empty OperationId to pass pre-materialization validation, got {error.Error}.")
 
     [<Test>]
     member _.DownloadPlacementResolutionKeepsHistoricalPathManifestEvidenceAfterReplacement() =
@@ -866,7 +886,7 @@ type StorageContentBlockSdkContract() =
         )
 
     [<Test>]
-    member _.ConfirmActorRejectionDoesNotDeleteFinalCasPlacement() =
+    member _.ConfirmActorRejectionDeletesFinalCasPlacement() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
 
@@ -877,4 +897,4 @@ type StorageContentBlockSdkContract() =
                 .Replace(" ", String.Empty)
 
         Assert.That(storageServerSource, Does.Not.Contain("shouldDeleteCreatedFinalContentBlockPayload"))
-        Assert.That(compactedSource, Does.Not.Contain("deleteContentBlockPayloadBestEffortfinalMaterialization.StoragePlacement"))
+        Assert.That(compactedSource, Does.Contain("deleteContentBlockPayloadBestEffortfinalMaterialization.StoragePlacement"))
