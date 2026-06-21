@@ -544,7 +544,7 @@ module DedupeIndex =
            || String.IsNullOrWhiteSpace requestedScope then
             false
         elif finalizedScope = "/" then
-            true
+            String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal)
         elif String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal) then
             true
         else

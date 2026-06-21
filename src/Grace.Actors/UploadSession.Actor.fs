@@ -1689,14 +1689,15 @@ module UploadSession =
 
                                         if not finalizationEvents.IsEmpty then do! this.ApplyEvents finalizationEvents
 
+                                        if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
+
+                                        do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+
                                         let! metadataMergeResult = this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
 
                                         match metadataMergeResult with
                                         | Error error -> return Error error
                                         | Ok mergedMetadata ->
-                                            if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
-
-                                            do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
                                             do! this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata
 
                                             let returnValue =

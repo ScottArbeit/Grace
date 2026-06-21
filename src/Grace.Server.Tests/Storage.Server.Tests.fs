@@ -1303,7 +1303,7 @@ type StorageManifestUploadSessionRoutes() =
         }
 
     [<Test>]
-    member _.ConfirmContentBlockUploadDeletesStagingWhenActorRejectsAfterConfirmRace() =
+    member _.ConfirmContentBlockUploadDeletesFinalCasWhenActorRejectsAfterConfirmRace() =
         task {
             let repositoryId = repositoryIds[0]
             let correlationId = generateCorrelationId ()
@@ -1422,10 +1422,10 @@ type StorageManifestUploadSessionRoutes() =
             let! racingResponse = racingConfirmTask
             let! racingBody = racingResponse.Content.ReadAsStringAsync()
             Assert.That(racingResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), racingBody)
-            Assert.That(racingBody, Does.Contain("UploadSession must be active"))
+            Assert.That(racingBody, Does.Contain("RetentionPending"))
 
-            let! stagingExists = contentBlockExistsAtPlacement racingUploadUri racingStagingPlacement
-            Assert.That(stagingExists, Is.False)
+            let! finalBlockExists = finalContentBlockExistsByAddress racingUploadUri racingBlock.Address
+            Assert.That(finalBlockExists, Is.False)
         }
 
     [<Test>]

@@ -1741,10 +1741,10 @@ type UploadSessionActorTests() =
         Assert.That(revalidateIndex, Is.GreaterThan(prevalidateIndex), "New finalization must revalidate metadata before durable finalization.")
         Assert.That(splitEventsIndex, Is.GreaterThan(revalidateIndex), "Finalize events must be split only after all metadata checks pass.")
         Assert.That(applyFinalizedIndex, Is.GreaterThan(splitEventsIndex), "The durable Finalized event must be persisted before metadata side effects.")
-        Assert.That(mergePrevalidatedIndex, Is.GreaterThan(applyFinalizedIndex), "Metadata merge side effects must run after durable Finalized exists.")
-        Assert.That(applyRetentionIndex, Is.GreaterThan(mergePrevalidatedIndex), "Retention cleanup must not be persisted until metadata side effects succeed.")
+        Assert.That(applyRetentionIndex, Is.GreaterThan(applyFinalizedIndex), "Retention cleanup must be persisted before metadata side effects can fail.")
         Assert.That(scheduleCleanupIndex, Is.GreaterThan(applyRetentionIndex), "Cleanup scheduling must follow the durable cleanup event.")
-        Assert.That(dedupeIndex, Is.GreaterThan(scheduleCleanupIndex), "Dedupe registration should still use the persisted finalize decision.")
+        Assert.That(mergePrevalidatedIndex, Is.GreaterThan(scheduleCleanupIndex), "Metadata merge side effects must run after cleanup scheduling is durable.")
+        Assert.That(dedupeIndex, Is.GreaterThan(mergePrevalidatedIndex), "Dedupe registration should still use the persisted finalize decision.")
 
         let loadStart = actorSource.IndexOf("member private this.LoadAuthoritativeFinalizedManifestMetadata", StringComparison.Ordinal)
         let registerStart = actorSource.IndexOf("member private this.RegisterFinalizedManifestInDedupe", loadStart, StringComparison.Ordinal)
