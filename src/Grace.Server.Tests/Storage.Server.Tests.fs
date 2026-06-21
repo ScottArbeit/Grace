@@ -758,7 +758,7 @@ type StorageManifestUploadSessionRoutes() =
 
     let encodeBlock bytes = encodeBlockAt 0L bytes
 
-    let manifestFor (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
+    let manifestForStoragePool storagePoolId (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
         let contentBlock = ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
 
         let manifest =
@@ -767,10 +767,13 @@ type StorageManifestUploadSessionRoutes() =
                 ChunkingSuiteId RabinChunking.SuiteName,
                 FileContentHash(ContentAddress.computeBlake3Hex bytes),
                 int64 bytes.Length,
+                storagePoolId,
                 [ contentBlock ]
             )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let manifestFor bytes block = manifestForStoragePool (StoragePoolId Constants.DefaultStoragePoolId) bytes block
 
     let setStorageParameters (parameters: Parameters.Storage.StorageParameters) repositoryId correlationId =
         parameters.OwnerId <- ownerId
@@ -1049,6 +1052,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let! startResult = postUploadSessionDecision "/storage/startManifestUploadSession" start
             Assert.That(startResult.ReturnValue.Session.UploadSessionId, Is.EqualTo(sessionId))
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId payload block
 
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
@@ -1128,6 +1132,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters downloadUriParameters repositoryId correlationId
             downloadUriParameters.AuthorizedScope <- "/"
             downloadUriParameters.ContentBlockAddress <- block.Address
+            downloadUriParameters.StoragePoolId <- manifest.StoragePoolId
             downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
 
             let! downloadUriResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent downloadUriParameters)
@@ -1258,7 +1263,8 @@ type StorageManifestUploadSessionRoutes() =
             start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
             start.OperationId <- "start-actor-race"
 
-            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let! startResult = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId acceptedPayload acceptedBlock
 
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
@@ -1383,7 +1389,8 @@ type StorageManifestUploadSessionRoutes() =
             start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
             start.OperationId <- "start-terminal-confirm"
 
-            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let! startResult = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId firstPayload firstBlock
 
             let registerBlock index (block: ContentBlockFormat.EncodedContentBlock) logicalLength =
                 task {
@@ -1763,7 +1770,8 @@ type StorageManifestUploadSessionRoutes() =
             start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
             start.OperationId <- "start"
 
-            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let! startResult = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId payload block
 
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
@@ -1848,7 +1856,8 @@ type StorageManifestUploadSessionRoutes() =
             start.SamplingPolicySnapshot <- "sdk-no-global-dedupe-v1"
             start.OperationId <- "start"
 
-            let! _ = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let! startResult = postUploadSessionDecision "/storage/startManifestUploadSession" start
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId payload block
 
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
@@ -1904,6 +1913,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters downloadUriParameters repositoryId correlationId
             downloadUriParameters.AuthorizedScope <- pathA
             downloadUriParameters.ContentBlockAddress <- block.Address
+            downloadUriParameters.StoragePoolId <- manifest.StoragePoolId
             downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
 
             use pathAReader = createClientWithClaims [ readerClaim ]

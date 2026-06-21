@@ -13,6 +13,7 @@ Name | Type | Description | Notes
 **repository_id** | Option<**String**> |  | [optional]
 **repository_name** | Option<**String**> |  | [optional]
 **authorized_scope** | Option<**String**> |  | [optional]
+**storage_pool_id** | Option<**String**> | StoragePool-wide CAS scope identifier. | [optional]
 **content_block_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional]
 **manifest_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived FileManifest address. | [optional]
 

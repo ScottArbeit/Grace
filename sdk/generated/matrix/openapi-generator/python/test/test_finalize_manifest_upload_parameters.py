@@ -52,6 +52,7 @@ class TestFinalizeManifestUploadParameters(unittest.TestCase):
                     manifest_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
                     chunking_suite_id = 'rabin-v1', 
                     file_content_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
+                    storage_pool_id = '', 
                     size = 56, 
                     blocks = [
                         grace_generated_openapi_probe.models.content_block.ContentBlock(
