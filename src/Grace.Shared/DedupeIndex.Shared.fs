@@ -520,6 +520,36 @@ module DedupeIndex =
                    not (isNull (box block))
                    && block.Address = contentBlockAddress))
 
+    let private normalizeScopePath (path: RelativePath) =
+        let normalized = (Utilities.normalizeFilePath $"{path}").Trim()
+
+        if String.IsNullOrWhiteSpace normalized then
+            String.Empty
+        elif normalized = "/" then
+            "/"
+        else
+            let withLeadingSlash =
+                if normalized.StartsWith("/", StringComparison.Ordinal) then
+                    normalized
+                else
+                    $"/{normalized}"
+
+            withLeadingSlash.TrimEnd('/')
+
+    let private finalizedScopeContainsRequestedScope finalizedScope requestedScope =
+        let finalizedScope = normalizeScopePath finalizedScope
+        let requestedScope = normalizeScopePath requestedScope
+
+        if String.IsNullOrWhiteSpace finalizedScope
+           || String.IsNullOrWhiteSpace requestedScope then
+            false
+        elif finalizedScope = "/" then
+            true
+        elif String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal) then
+            true
+        else
+            requestedScope.StartsWith($"{finalizedScope}/", StringComparison.Ordinal)
+
     let finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
         (normalizeState state).FinalizedManifests
         |> Array.exists (fun registration ->
@@ -528,7 +558,7 @@ module DedupeIndex =
             && registration.ManifestAddress = manifestAddress
             && not (isNull (box registration.Session))
             && registration.Session.RepositoryId = repositoryId
-            && registration.Session.AuthorizedScope = authorizedScope
+            && finalizedScopeContainsRequestedScope registration.Session.AuthorizedScope authorizedScope
             && not (isNull registration.Blocks)
             && registration.Blocks
                |> Array.exists (fun block ->
