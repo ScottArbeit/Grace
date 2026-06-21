@@ -22,6 +22,10 @@ type ReferenceActorHashValidationTests() =
     let sha256Hash = Sha256Hash "root-sha256"
     let blake3Hash = Blake3Hash "root-blake3"
 
+    let branchId = Guid.Parse("55555555-bbbb-4444-8888-555555555555")
+    let referenceId = Guid.Parse("66666666-bbbb-4444-8888-666666666666")
+    let referenceText = ReferenceText "matching replay"
+
     let directoryVersionWithHashes sha blake3 =
         DirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -109,10 +113,65 @@ type ReferenceActorHashValidationTests() =
         | _ -> Assert.Fail("Expected both mismatched hash validations to fail.")
 
     [<Test>]
+    member _.CreateCommandReplayMatchesDurableCreatedReference() =
+        let links =
+            [
+                ReferenceLinkType.BasedOn(Guid.Parse("77777777-bbbb-4444-8888-777777777777"))
+            ]
+
+        let referenceDto =
+            { ReferenceDto.Default with
+                ReferenceId = referenceId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                BranchId = branchId
+                DirectoryId = directoryVersionId
+                Sha256Hash = sha256Hash
+                Blake3Hash = blake3Hash
+                ReferenceType = ReferenceType.Commit
+                ReferenceText = referenceText
+                Links = links
+                UpdatedAt = Some(getCurrentInstant ())
+            }
+
+        let matchingCommand =
+            ReferenceCommand.Create(
+                referenceId,
+                ownerId,
+                organizationId,
+                repositoryId,
+                branchId,
+                directoryVersionId,
+                sha256Hash,
+                blake3Hash,
+                ReferenceType.Commit,
+                referenceText,
+                links
+            )
+
+        let mismatchedCommand =
+            ReferenceCommand.Create(
+                referenceId,
+                ownerId,
+                organizationId,
+                repositoryId,
+                branchId,
+                directoryVersionId,
+                sha256Hash,
+                Blake3Hash "different-blake3",
+                ReferenceType.Commit,
+                referenceText,
+                links
+            )
+
+        Assert.That(createCommandMatchesReference referenceDto matchingCommand, Is.True)
+        Assert.That(createCommandMatchesReference referenceDto mismatchedCommand, Is.False)
+        Assert.That(createCommandMatchesReference ReferenceDto.Default matchingCommand, Is.False)
+
+    [<Test>]
     member _.LegacyCreatedEventWithEmptyBlake3HydratesFromMatchingRootDirectoryVersion() =
         task {
-            let referenceId = Guid.Parse("55555555-bbbb-4444-8888-555555555555")
-            let branchId = Guid.Parse("66666666-bbbb-4444-8888-666666666666")
             let directoryVersion = directoryVersionWithHashes sha256Hash blake3Hash
 
             let legacyCreatedEvent =
