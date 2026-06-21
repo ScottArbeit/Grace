@@ -112,6 +112,24 @@ module UploadSession =
             { Event = UploadSessionEventType.CleanupReminderScheduled(cleanupOperationId, reminderTime); Metadata = metadata }
         ]
 
+    let internal shouldScheduleFinalizeCleanupReminder (session: UploadSessionDto) (finalize: FinalizeManifest) =
+        if
+            isNull (box finalize)
+            || session.LifecycleState = UploadSessionLifecycleState.StateDeleted
+        then
+            false
+        else
+            let expectedCleanupOperationId = createCleanupOperationId finalize.OperationId
+
+            match session.CleanupReminderOperationId with
+            | None -> true
+            | Some cleanupOperationId when
+                session.LifecycleState = UploadSessionLifecycleState.RetentionPending
+                && cleanupOperationId = expectedCleanupOperationId
+                ->
+                true
+            | Some _ -> false
+
     let private splitFinalizeEvents (events: UploadSessionEvent list) =
         let finalizedEvents = ResizeArray<UploadSessionEvent>()
         let retentionEvents = ResizeArray<UploadSessionEvent>()
@@ -1563,14 +1581,13 @@ module UploadSession =
 
         member private this.EnsureFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
-                if decision.Session.LifecycleState
-                   <> UploadSessionLifecycleState.StateDeleted
-                   && decision.Session.CleanupReminderOperationId.IsNone then
-                    let retentionEvents = cleanupEvents decision.Session finalize.OperationId metadata
-
-                    if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
-
+                if shouldScheduleFinalizeCleanupReminder decision.Session finalize then
                     do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+
+                    if decision.Session.CleanupReminderOperationId.IsNone then
+                        let retentionEvents = cleanupEvents decision.Session finalize.OperationId metadata
+
+                        if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
             }
 
         interface IGraceReminderWithGuidKey with
@@ -1689,9 +1706,9 @@ module UploadSession =
 
                                         if not finalizationEvents.IsEmpty then do! this.ApplyEvents finalizationEvents
 
-                                        if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
-
                                         do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+
+                                        if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
 
                                         let! metadataMergeResult = this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
 

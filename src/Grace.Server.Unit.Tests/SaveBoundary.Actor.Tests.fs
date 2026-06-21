@@ -917,6 +917,6 @@ type SaveBoundaryActorTests() =
     [<Test>]
     member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveSaveReferences() =
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
-        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Commit), Is.True)
-        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.True)
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Commit), Is.False)
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)

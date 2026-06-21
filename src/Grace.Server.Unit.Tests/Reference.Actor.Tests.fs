@@ -351,5 +351,30 @@ type ReferenceActorHashValidationTests() =
         Assert.That(
             boundaryIndex,
             Is.GreaterThan(applyEventIndex),
-            "Manifest contribution side effects for created Save/Commit/Checkpoint references must run only after ApplyEvent succeeds."
+            "Manifest contribution side effects for created Save references must run only after ApplyEvent succeeds."
         )
+
+    [<Test>]
+    member _.ManifestExpiryBoundaryOnlyAppliesToSaveReferencesUntilCommitCheckpointFanoutIsWired() =
+        let referenceOfType referenceType = { ReferenceDto.Default with ReferenceId = Guid.NewGuid(); ReferenceType = referenceType }
+
+        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Save), Is.True)
+        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Commit), Is.False)
+        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Checkpoint), Is.False)
+        Assert.That(shouldApplyManifestExpiryBoundary ReferenceDto.Default, Is.False)
+
+    [<Test>]
+    member _.ManifestContributionBoundaryPredicateKeepsCommitCheckpointOutOfUnwiredWorkflow() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+        let predicateStart = actorSource.IndexOf("let appliesManifestBoundary referenceType =", StringComparison.Ordinal)
+        let boundaryStart = actorSource.IndexOf("let applyReferenceManifestBoundary", predicateStart, StringComparison.Ordinal)
+
+        Assert.That(predicateStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor manifest-boundary predicate must be present.")
+        Assert.That(boundaryStart, Is.GreaterThan(predicateStart), "The manifest-boundary predicate slice must be bounded.")
+
+        let predicateSource = actorSource.Substring(predicateStart, boundaryStart - predicateStart)
+
+        Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Save"))
+        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
+        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
