@@ -355,7 +355,7 @@ module UploadSession =
 
     let activeRangesForFinalizedManifest (ranges: ContentBlockMetadataRange array) =
         ranges
-        |> Array.map (fun range -> { range with ActiveManifestCount = 1 })
+        |> Array.map (fun range -> { range with ActiveManifestCount = range.ActiveManifestCount + 1 })
 
     let private blockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
         session.ConfirmedBlockUploads

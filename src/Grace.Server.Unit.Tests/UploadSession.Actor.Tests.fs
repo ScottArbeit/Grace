@@ -879,7 +879,7 @@ type UploadSessionActorTests() =
             Assert.That(merge.Ranges[0].OrdinalCount, Is.EqualTo(metadataRange.OrdinalCount))
             Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(metadataRange.PhysicalOffset))
             Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(metadataRange.PhysicalLength))
-            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(metadataRange.ActiveManifestCount + 1))
             Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
             Assert.That(merge.RequireMissingMetadata, Is.False)
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| metadataRange |]))
@@ -971,7 +971,7 @@ type UploadSessionActorTests() =
             Assert.That(
                 merge.Ranges
                 |> Array.map (fun range -> range.ActiveManifestCount),
-                Is.All.EqualTo(1)
+                Is.All.EqualTo(3)
             )
 
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| firstRange; secondRange |]))
@@ -1332,7 +1332,7 @@ type UploadSessionActorTests() =
                 Assert.That(merge.StoragePlacement, Is.EqualTo(freshMetadata.StoragePlacement))
                 Assert.That(merge.Ranges, Has.Length.EqualTo(1))
                 Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(int64 fileBytes.Length))
-                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(freshRange.ActiveManifestCount + 1))
                 Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
                 Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| freshRange |]))
                 Assert.That(merge.IsFinalizeContribution, Is.True)
@@ -1503,7 +1503,7 @@ type UploadSessionActorTests() =
         Assert.That(
             secondDecision.Metadata.Ranges[0]
                 .ActiveManifestCount,
-            Is.EqualTo(2)
+            Is.EqualTo(3)
         )
 
     [<Test>]
@@ -1629,7 +1629,7 @@ type UploadSessionActorTests() =
 
         let activeRanges = UploadSessionActor.activeRangesForFinalizedManifest ranges
 
-        Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(3))
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     [<Test>]
@@ -1904,7 +1904,7 @@ type UploadSessionActorTests() =
         Assert.That(rebasedMerge.Ranges[0].OrdinalCount, Is.EqualTo(activeCurrentRange.OrdinalCount))
         Assert.That(rebasedMerge.Ranges[0].PhysicalOffset, Is.EqualTo(activeCurrentRange.PhysicalOffset))
         Assert.That(rebasedMerge.Ranges[0].PhysicalLength, Is.EqualTo(activeCurrentRange.PhysicalLength))
-        Assert.That(rebasedMerge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(rebasedMerge.Ranges[0].ActiveManifestCount, Is.EqualTo(activeCurrentRange.ActiveManifestCount + 1))
 
         Assert.That(
             rebasedMerge.Ranges
@@ -1977,7 +1977,7 @@ type UploadSessionActorTests() =
         | Ok (Some (ContentBlockMetadataCommand.MergePhysicalRanges merge)) ->
             Assert.That(merge.Ranges, Has.Length.EqualTo(1))
             Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(activeRelocatedRange.PhysicalOffset))
-            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(activeRelocatedRange.ActiveManifestCount + 1))
             Assert.That(merge.ExpectedMetadataVersion, Is.EqualTo(None))
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| activeRelocatedRange |]))
         | Ok _ -> Assert.Fail("Expected active relocated metadata to produce a claimed merge command.")

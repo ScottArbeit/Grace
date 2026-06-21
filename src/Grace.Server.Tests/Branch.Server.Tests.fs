@@ -1224,7 +1224,9 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
 
-            let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty child.Sha256Hash
+            let childOnlyPrefix = BranchServerTestHelpers.shortestUniquePrefix child.Sha256Hash [ root.Sha256Hash ]
+
+            let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty (Sha256Hash childOnlyPrefix)
             let! responseBody = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
             Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion does not exist."))
@@ -1241,7 +1243,15 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
 
-            let! response = BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId branch DirectoryVersionId.Empty child.Blake3Hash
+            let childOnlyPrefix =
+                BranchServerTestHelpers.shortestUniqueBlake3Prefix
+                    child.Blake3Hash
+                    [
+                        root.Blake3Hash
+                        parentBranch.BasedOn.Blake3Hash
+                    ]
+
+            let! response = BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId branch DirectoryVersionId.Empty (Blake3Hash childOnlyPrefix)
 
             let! responseBody = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
