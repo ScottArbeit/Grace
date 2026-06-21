@@ -378,3 +378,41 @@ type ReferenceActorHashValidationTests() =
         Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Save"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
+
+    [<Test>]
+    member _.ManifestContributionBoundaryTraversalsForceRegenerationInsteadOfCachedRecursiveResults() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+
+        let assertBoundaryForcesRegeneration (boundaryStartText: string) (boundaryEndText: string) =
+            let boundaryStart = actorSource.IndexOf(boundaryStartText, StringComparison.Ordinal)
+
+            Assert.That(boundaryStart, Is.GreaterThanOrEqualTo(0), $"Expected ReferenceActor boundary `{boundaryStartText}` to be present.")
+
+            let boundaryEnd = actorSource.IndexOf(boundaryEndText, boundaryStart, StringComparison.Ordinal)
+
+            Assert.That(boundaryEnd, Is.GreaterThan(boundaryStart), $"Expected ReferenceActor boundary `{boundaryStartText}` to have a bounded source slice.")
+
+            let boundarySource = actorSource.Substring(boundaryStart, boundaryEnd - boundaryStart)
+
+            Assert.That(
+                boundarySource,
+                Does.Contain("GetRecursiveDirectoryVersions true"),
+                $"Expected ReferenceActor boundary `{boundaryStartText}` to bypass cached partial recursive directory results."
+            )
+
+            Assert.That(
+                boundarySource,
+                Does.Not.Contain("GetRecursiveDirectoryVersions false"),
+                $"ReferenceActor boundary `{boundaryStartText}` must not trust cached partial recursive directory results."
+            )
+
+        assertBoundaryForcesRegeneration "let! boundaryResult =" "match boundaryResult with"
+
+        assertBoundaryForcesRegeneration
+            "let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType ="
+            "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
+
+        assertBoundaryForcesRegeneration
+            "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
+            "let existingReferenceReturnValue () ="
