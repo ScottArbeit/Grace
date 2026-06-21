@@ -11,6 +11,7 @@ open NUnit.Framework
 open System
 open System.IO
 open System.Reflection
+open System.Text
 open System.Threading.Tasks
 
 [<Parallelizable(ParallelScope.All)>]
@@ -18,6 +19,40 @@ type StorageContentBlockSdkContract() =
 
     let getStorageParameterType typeName =
         typeof<Parameters.Storage.StorageParameters>.Assembly.GetType ($"Grace.Shared.Parameters.Storage+{typeName}", throwOnError = false)
+
+    let bytes (value: string) = Encoding.UTF8.GetBytes value
+
+    let expectEncodedOk (result: Result<ContentBlockFormat.EncodedContentBlock, ContentBlockFormat.ContentBlockFormatError>) =
+        match result with
+        | Ok value -> value
+        | Error error ->
+            Assert.Fail($"Expected ContentBlockFormat.encode Ok but got {error}.")
+            Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+    let contentBlockPayload physicalOffset payloadBytes : ContentBlockFormat.EncodedContentBlock =
+        ContentBlockFormat.encode [ ContentBlockFormat.createChunk physicalOffset payloadBytes ]
+        |> expectEncodedOk
+
+    let buildManifest chunkingSuiteId payloadBytes (blockPayloads: ContentBlockFormat.EncodedContentBlock array) =
+        let mutable offset = 0L
+
+        let blocks =
+            blockPayloads
+            |> Array.map (fun payload ->
+                let contentLength =
+                    payload.Chunks
+                    |> Array.sumBy (fun chunk -> chunk.Length)
+                    |> int64
+
+                let block = ContentBlock.Create(payload.Address, offset, contentLength)
+                offset <- offset + contentLength
+                block)
+            |> Array.toList
+
+        let fileContentHash = FileContentHash(ContentAddress.computeBlake3Hex payloadBytes)
+        let manifest = FileManifest.Create(ManifestAddress String.Empty, chunkingSuiteId, fileContentHash, int64 payloadBytes.Length, blocks)
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
     let assertContentBlockParameterShape typeName =
         let parameterType = getStorageParameterType typeName
@@ -185,6 +220,51 @@ type StorageContentBlockSdkContract() =
         | Ok () -> Assert.Pass()
 
     [<Test>]
+    member _.FinalizeReplayPreHydrationValidationAcceptsPayloadlessDurableManifest() =
+        let payloadBytes = bytes "payload-less finalize replay"
+        let block = contentBlockPayload 0L payloadBytes
+        let manifest = buildManifest RabinChunking.SuiteName payloadBytes [| block |]
+
+        let session =
+            { UploadSessionDto.Default with
+                ExpectedSize = manifest.Size
+                FileContentHash = manifest.FileContentHash
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+            }
+
+        match Storage.validateFinalizeReplayManifestBeforeHydration session manifest.ManifestAddress manifest "corr-payloadless-replay" with
+        | Ok () -> Assert.Pass()
+        | Error error -> Assert.Fail($"Expected payload-less replay manifest shape to validate before hydration, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeReplayPreHydrationValidationRejectsTamperedBlockListWithoutPayloads() =
+        let payloadBytes = bytes "payload-less finalize replay"
+        let block = contentBlockPayload 0L payloadBytes
+        let manifest = buildManifest RabinChunking.SuiteName payloadBytes [| block |]
+
+        let session =
+            { UploadSessionDto.Default with
+                ExpectedSize = manifest.Size
+                FileContentHash = manifest.FileContentHash
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+            }
+
+        let tamperedBlock = ContentBlock.Create(ContentBlockAddress "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", 0L, manifest.Size)
+
+        let tamperedManifest =
+            { manifest with
+                Blocks =
+                    [ tamperedBlock ]
+                    |> System.Collections.Generic.List<ContentBlock>
+            }
+
+        match Storage.validateFinalizeReplayManifestBeforeHydration session manifest.ManifestAddress tamperedManifest "corr-tampered-replay" with
+        | Ok () -> Assert.Fail("Expected payload-less replay with a tampered block list to fail before hydration.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("stable replay manifest address"))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-tampered-replay"))
+
+    [<Test>]
     member _.FinalizeManifestHydratesAndValidatesReplayEvidenceBeforeActorSideEffects() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
@@ -241,9 +321,17 @@ type StorageContentBlockSdkContract() =
         Assert.That(
             compactedStorageSource,
             Does.Contain(
+                "validateFinalizeReplayManifestBeforeHydration requestContext.SessionForScope finalizedManifestAddress parameters.Manifest correlationId"
+            ),
+            "Finalize replay must validate retry manifest shape and address before reading authoritative metadata/blob placements."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does.Not.Contain(
                 "validateFinalizeReplayManifestBeforeHydration requestContext.SessionForScope finalizedManifestAddress parameters.Manifest parameters.BlockPayloads correlationId"
             ),
-            "Finalize replay must validate the retry manifest against its payload evidence before reading authoritative metadata/blob placements."
+            "Payload-less finalize replays must not validate request BlockPayloads before authoritative replay hydration."
         )
 
         Assert.That(

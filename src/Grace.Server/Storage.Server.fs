@@ -993,13 +993,7 @@ module Storage =
                             correlationId
                     ))
 
-    let private validateFinalizeReplayManifestBeforeHydration
-        (session: UploadSessionDto)
-        finalizedManifestAddress
-        (manifest: FileManifest)
-        (blockPayloads: FinalizeManifestBlockPayload array)
-        correlationId
-        =
+    let internal validateFinalizeReplayManifestBeforeHydration (session: UploadSessionDto) finalizedManifestAddress (manifest: FileManifest) correlationId =
         validateFinalizeReplayManifestAddress finalizedManifestAddress manifest correlationId
         |> Result.bind (fun () ->
             if manifest.Size <> session.ExpectedSize then
@@ -1022,21 +1016,61 @@ module Storage =
                         $"Finalize replay FileManifest ChunkingSuiteId must match UploadSession ChunkingSuiteId. Expected {session.ChunkingSuiteId}, actual {manifest.ChunkingSuiteId}."
                         correlationId
                 )
+            elif isNull manifest.Blocks
+                 || manifest.Blocks.Count = 0 then
+                Error(GraceError.Create "Finalize replay FileManifest must include ContentBlocks before hydration." correlationId)
             else
-                let replayPayloads =
-                    if isNull blockPayloads then
-                        Unchecked.defaultof<ManifestValidation.ManifestBlockPayload array>
-                    else
-                        blockPayloads
-                        |> Array.map (fun payload ->
-                            if isNull (box payload) then
-                                Unchecked.defaultof<ManifestValidation.ManifestBlockPayload>
-                            else
-                                ManifestValidation.createBlockPayload payload.Address payload.Payload)
+                let mutable expectedOffset = 0L
+                let mutable error = None
+                let mutable index = 0
 
-                match ManifestValidation.validate session.ChunkingSuiteId manifest replayPayloads with
-                | Ok _ -> Ok()
-                | Error validationError -> Error(GraceError.Create $"Finalize replay manifest must validate before hydration: {validationError}." correlationId))
+                while index < manifest.Blocks.Count
+                      && Option.isNone error do
+                    let block = manifest.Blocks[index]
+
+                    if isNull (box block) then
+                        error <- Some(GraceError.Create $"Finalize replay FileManifest block {index} is required before hydration." correlationId)
+                    elif not (ContentAddress.isValidAddress block.Address) then
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"Finalize replay FileManifest block {index} has an invalid ContentBlockAddress before hydration."
+                                    correlationId
+                            )
+                    elif block.Size <= 0L then
+                        error <- Some(GraceError.Create $"Finalize replay FileManifest block {index} must have a positive Size before hydration." correlationId)
+                    elif block.Offset <> expectedOffset then
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"Finalize replay FileManifest block {index} must be contiguous before hydration. Expected offset {expectedOffset}, actual {block.Offset}."
+                                    correlationId
+                            )
+                    else
+                        expectedOffset <- expectedOffset + block.Size
+
+                    index <- index + 1
+
+                match error with
+                | Some error -> Error error
+                | None when expectedOffset <> manifest.Size ->
+                    Error(
+                        GraceError.Create
+                            $"Finalize replay FileManifest blocks must cover Size before hydration. Expected {manifest.Size}, actual {expectedOffset}."
+                            correlationId
+                    )
+                | None ->
+                    let expectedManifestAddress = ContentAddress.computeManifestAddressForManifest manifest
+
+                    if manifest.ManifestAddress
+                       <> expectedManifestAddress then
+                        Error(
+                            GraceError.Create
+                                $"Finalize replay ManifestAddress must match stable replay manifest address before hydration. Expected {expectedManifestAddress}, actual {manifest.ManifestAddress}."
+                                correlationId
+                        )
+                    else
+                        Ok())
 
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
         {
@@ -1802,7 +1836,6 @@ module Storage =
                                         requestContext.SessionForScope
                                         finalizedManifestAddress
                                         parameters.Manifest
-                                        parameters.BlockPayloads
                                         correlationId
                                     with
                                 | Error error -> return! context |> result400BadRequest error
