@@ -326,6 +326,30 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected abandon replay to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.FinalizeReplayReschedulesCleanupWhenOnlyCleanupEventWasPersisted() =
+        let finalize = { OperationId = "op-finalize"; Manifest = FileManifest.Default; BlockPayloads = Array.empty; ClaimedMetadata = Array.empty }
+
+        let eventOnlySession =
+            { UploadSessionDto.Default with
+                LifecycleState = UploadSessionLifecycleState.RetentionPending
+                CleanupReminderOperationId = Some "op-finalize:cleanup"
+            }
+
+        Assert.That(
+            UploadSessionActor.shouldScheduleFinalizeCleanupReminder eventOnlySession finalize,
+            Is.True,
+            "Replay must reschedule when durable state has the cleanup event but the reminder creation may have crashed."
+        )
+
+        let stateDeletedSession = { eventOnlySession with LifecycleState = UploadSessionLifecycleState.StateDeleted }
+
+        Assert.That(UploadSessionActor.shouldScheduleFinalizeCleanupReminder stateDeletedSession finalize, Is.False)
+
+        let wrongCleanupOperation = { eventOnlySession with CleanupReminderOperationId = Some "op-other:cleanup" }
+
+        Assert.That(UploadSessionActor.shouldScheduleFinalizeCleanupReminder wrongCleanupOperation finalize, Is.False)
+
+    [<Test>]
     member _.ExpireMovesStartedSessionToRetentionPendingAndSchedulesCleanup() =
         let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
 
@@ -1741,8 +1765,8 @@ type UploadSessionActorTests() =
         Assert.That(revalidateIndex, Is.GreaterThan(prevalidateIndex), "New finalization must revalidate metadata before durable finalization.")
         Assert.That(splitEventsIndex, Is.GreaterThan(revalidateIndex), "Finalize events must be split only after all metadata checks pass.")
         Assert.That(applyFinalizedIndex, Is.GreaterThan(splitEventsIndex), "The durable Finalized event must be persisted before metadata side effects.")
-        Assert.That(applyRetentionIndex, Is.GreaterThan(applyFinalizedIndex), "Retention cleanup must be persisted before metadata side effects can fail.")
-        Assert.That(scheduleCleanupIndex, Is.GreaterThan(applyRetentionIndex), "Cleanup scheduling must follow the durable cleanup event.")
+        Assert.That(scheduleCleanupIndex, Is.GreaterThan(applyFinalizedIndex), "Cleanup scheduling must follow the durable Finalized event.")
+        Assert.That(applyRetentionIndex, Is.GreaterThan(scheduleCleanupIndex), "Retention cleanup must be persisted after cleanup scheduling succeeds.")
         Assert.That(mergePrevalidatedIndex, Is.GreaterThan(scheduleCleanupIndex), "Metadata merge side effects must run after cleanup scheduling is durable.")
         Assert.That(dedupeIndex, Is.GreaterThan(mergePrevalidatedIndex), "Dedupe registration should still use the persisted finalize decision.")
 

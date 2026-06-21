@@ -367,6 +367,28 @@ module Storage =
         else
             Ok()
 
+    let internal validateStartManifestUploadSessionAuthorizedScope correlationId (authorizedScope: RelativePath) =
+        let normalizedScope = (normalizeFilePath $"{authorizedScope}").Trim()
+
+        if String.IsNullOrWhiteSpace normalizedScope then
+            Error(GraceError.Create "StartManifestUploadSession AuthorizedScope must be an exact file path." correlationId)
+        elif normalizedScope = "/" then
+            Error(GraceError.Create "StartManifestUploadSession AuthorizedScope must not be the repository root; use the exact file path." correlationId)
+        elif normalizedScope.EndsWith("/", StringComparison.Ordinal) then
+            Error(GraceError.Create "StartManifestUploadSession AuthorizedScope must not be a directory path; use the exact file path." correlationId)
+        else
+            let lastSeparator = normalizedScope.LastIndexOf("/", StringComparison.Ordinal)
+            let leaf = normalizedScope.Substring(lastSeparator + 1)
+
+            if leaf.Contains(".", StringComparison.Ordinal) then
+                Ok()
+            else
+                Error(
+                    GraceError.Create
+                        "StartManifestUploadSession AuthorizedScope must include the target file name, not a broader repository or directory scope."
+                        correlationId
+                )
+
     let private validateUploadSessionScope requestContext (parameters: UploadSessionStorageParameters) correlationId requireExistingSession =
         task {
             let! sessionForScope = loadSessionForScope requestContext.UploadSessionActor correlationId
@@ -1591,23 +1613,26 @@ module Storage =
                             match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok storagePoolId ->
-                                let command =
-                                    UploadSessionCommand.Start
-                                        {
-                                            UploadSessionId = parameters.UploadSessionId
-                                            OwnerId = ownerId
-                                            OrganizationId = organizationId
-                                            RepositoryId = repositoryId
-                                            StoragePoolId = storagePoolId
-                                            AuthorizedScope = parameters.AuthorizedScope
-                                            FileContentHash = parameters.FileContentHash
-                                            ExpectedSize = parameters.ExpectedSize
-                                            ChunkingSuiteId = parameters.ChunkingSuiteId
-                                            SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
-                                            OperationId = parameters.OperationId
-                                        }
+                                match validateStartManifestUploadSessionAuthorizedScope correlationId parameters.AuthorizedScope with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok () ->
+                                    let command =
+                                        UploadSessionCommand.Start
+                                            {
+                                                UploadSessionId = parameters.UploadSessionId
+                                                OwnerId = ownerId
+                                                OrganizationId = organizationId
+                                                RepositoryId = repositoryId
+                                                StoragePoolId = storagePoolId
+                                                AuthorizedScope = parameters.AuthorizedScope
+                                                FileContentHash = parameters.FileContentHash
+                                                ExpectedSize = parameters.ExpectedSize
+                                                ChunkingSuiteId = parameters.ChunkingSuiteId
+                                                SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
+                                                OperationId = parameters.OperationId
+                                            }
 
-                                return! handleUploadSessionCommand context parameters command correlationId
+                                    return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex

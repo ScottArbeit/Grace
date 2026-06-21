@@ -123,9 +123,7 @@ module Reference =
 
     let shouldApplyManifestExpiryBoundary (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
-        && (referenceDto.ReferenceType = ReferenceType.Save
-            || referenceDto.ReferenceType = ReferenceType.Commit
-            || referenceDto.ReferenceType = ReferenceType.Checkpoint)
+        && referenceDto.ReferenceType = ReferenceType.Save
 
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
         let rootRelativePath = directoryVersion.RelativePath
@@ -685,10 +683,7 @@ module Reference =
                     }
 
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
-                    let appliesManifestBoundary referenceType =
-                        referenceType = ReferenceType.Save
-                        || referenceType = ReferenceType.Commit
-                        || referenceType = ReferenceType.Checkpoint
+                    let appliesManifestBoundary referenceType = referenceType = ReferenceType.Save
 
                     let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType =
                         task {

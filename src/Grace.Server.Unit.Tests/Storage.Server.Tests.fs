@@ -426,6 +426,22 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected matching repository session to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
 
+    [<TestCase("/", "repository root")>]
+    [<TestCase("/team", "broader repository or directory scope")>]
+    [<TestCase("/team/", "directory path")>]
+    member _.StartManifestUploadSessionRejectsBroadAuthorizedScope(scope: string, expectedMessage: string) =
+        match Storage.validateStartManifestUploadSessionAuthorizedScope "corr-broad-start-scope" scope with
+        | Ok () -> Assert.Fail($"Expected broad AuthorizedScope '{scope}' to be rejected.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain(expectedMessage))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-broad-start-scope"))
+
+    [<Test>]
+    member _.StartManifestUploadSessionAcceptsExactFileAuthorizedScope() =
+        match Storage.validateStartManifestUploadSessionAuthorizedScope "corr-exact-start-scope" "/team/file.bin" with
+        | Error error -> Assert.Fail($"Expected exact file AuthorizedScope to be accepted, got {error.Error}.")
+        | Ok () -> Assert.Pass()
+
     [<Test>]
     member _.FinalizeReplayPreHydrationValidationAcceptsPayloadlessDurableManifest() =
         let payloadBytes = bytes "payload-less finalize replay"
