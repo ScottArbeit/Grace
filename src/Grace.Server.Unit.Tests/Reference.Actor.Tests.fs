@@ -8,6 +8,7 @@ open Grace.Types.Reference
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 open System.Threading.Tasks
 
 [<Parallelizable(ParallelScope.All)>]
@@ -243,3 +244,53 @@ type ReferenceActorHashValidationTests() =
             Assert.That(nonRootWasRepaired, Is.False)
             Assert.That(wrongPrefixWasRepaired, Is.False)
         }
+
+    [<Test>]
+    member _.CreatePersistsReferenceBeforeManifestContributionBoundary() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+        let eventPlanningStart = actorSource.IndexOf("let! (referenceEventTypeResult", StringComparison.Ordinal)
+
+        Assert.That(eventPlanningStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor event-planning block must be present.")
+
+        let createBranchStart = actorSource.IndexOf("| Create (referenceId,", eventPlanningStart, StringComparison.Ordinal)
+
+        Assert.That(createBranchStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor Create branch must be present.")
+
+        let addLinkBranchStart = actorSource.IndexOf("| AddLink link ->", createBranchStart, StringComparison.Ordinal)
+
+        Assert.That(addLinkBranchStart, Is.GreaterThan(createBranchStart), "The ReferenceActor Create branch must have a bounded source slice.")
+
+        let createBranch = actorSource.Substring(createBranchStart, addLinkBranchStart - createBranchStart)
+
+        Assert.That(
+            createBranch,
+            Does.Not.Contain("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType"),
+            "Create must not apply manifest contribution side effects before the Created event is durable."
+        )
+
+        let applyResultStart = actorSource.IndexOf("match referenceEventTypeResult with", addLinkBranchStart, StringComparison.Ordinal)
+
+        Assert.That(applyResultStart, Is.GreaterThan(addLinkBranchStart), "ReferenceActor must apply the selected event after command planning.")
+
+        let handleEnd = actorSource.IndexOf("match! isValid command metadata with", applyResultStart, StringComparison.Ordinal)
+
+        Assert.That(handleEnd, Is.GreaterThan(applyResultStart), "ReferenceActor event application must have a bounded source slice.")
+
+        let applyResultSlice = actorSource.Substring(applyResultStart, handleEnd - applyResultStart)
+        let applyEventIndex = applyResultSlice.IndexOf("let! returnValue = this.ApplyEvent referenceEvent", StringComparison.Ordinal)
+
+        Assert.That(applyEventIndex, Is.GreaterThanOrEqualTo(0), "ReferenceActor must persist the reference event through ApplyEvent.")
+
+        let boundaryIndex =
+            applyResultSlice.IndexOf(
+                "applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType",
+                applyEventIndex,
+                StringComparison.Ordinal
+            )
+
+        Assert.That(
+            boundaryIndex,
+            Is.GreaterThan(applyEventIndex),
+            "Manifest contribution side effects for created Save/Commit/Checkpoint references must run only after ApplyEvent succeeds."
+        )

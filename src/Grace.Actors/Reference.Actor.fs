@@ -727,25 +727,22 @@ module Reference =
                                           links) ->
                                     match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
                                     | Ok () ->
-                                        match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
-                                        | Ok () ->
-                                            return
-                                                Ok(
-                                                    Created(
-                                                        referenceId,
-                                                        ownerId,
-                                                        organizationId,
-                                                        repositoryId,
-                                                        branchId,
-                                                        directoryId,
-                                                        sha256Hash,
-                                                        blake3Hash,
-                                                        referenceType,
-                                                        referenceText,
-                                                        links
-                                                    )
+                                        return
+                                            Ok(
+                                                Created(
+                                                    referenceId,
+                                                    ownerId,
+                                                    organizationId,
+                                                    repositoryId,
+                                                    branchId,
+                                                    directoryId,
+                                                    sha256Hash,
+                                                    blake3Hash,
+                                                    referenceType,
+                                                    referenceText,
+                                                    links
                                                 )
-                                        | Error graceError -> return Error graceError
+                                            )
                                     | Error graceError -> return Error graceError
                                 | AddLink link -> return Ok(LinkAdded link)
                                 | RemoveLink link -> return Ok(LinkRemoved link)
@@ -814,7 +811,13 @@ module Reference =
                         | Ok referenceEventType ->
                             let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
                             let! returnValue = this.ApplyEvent referenceEvent
-                            return returnValue
+
+                            match returnValue, referenceEventType with
+                            | Ok graceReturnValue, Created (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) ->
+                                match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
+                                | Ok () -> return Ok graceReturnValue
+                                | Error graceError -> return Error graceError
+                            | _ -> return returnValue
                         | Error graceError -> return Error graceError
                     }
 
