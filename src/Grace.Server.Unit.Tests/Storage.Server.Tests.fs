@@ -183,6 +183,35 @@ type StorageContentBlockSdkContract() =
         Assert.That(selected, Is.EqualTo(Some metadata))
         Assert.That(selected.Value.StoragePlacement, Is.Not.EqualTo(currentRoutePlacement))
 
+        let parentScopeRegistration = { registration with Session = { registration.Session with AuthorizedScope = "/download" } }
+
+        let parentScopeState = { state with FinalizedManifests = [| parentScopeRegistration |] }
+
+        let parentScopeSelected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress parentScopeState
+
+        Assert.That(parentScopeSelected, Is.EqualTo(Some metadata))
+
+        let rootScopeRegistration = { registration with Session = { registration.Session with AuthorizedScope = "/" } }
+
+        let rootScopeState = { state with FinalizedManifests = [| rootScopeRegistration |] }
+
+        let rootScopeSelected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress rootScopeState
+
+        Assert.That(rootScopeSelected, Is.EqualTo(Some metadata))
+
+        let namesakeSiblingRejected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata
+                storagePoolId
+                repositoryId
+                "/download-sibling/recorded-placement.bin"
+                manifestAddress
+                contentBlockAddress
+                parentScopeState
+
+        Assert.That(namesakeSiblingRejected, Is.EqualTo(None))
+
         let rejected =
             Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId "/other/scope.bin" manifestAddress contentBlockAddress state
 
