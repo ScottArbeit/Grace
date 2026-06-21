@@ -45,6 +45,7 @@ class TestGetContentBlockDownloadUriParameters(unittest.TestCase):
                 repository_id = '',
                 repository_name = '',
                 authorized_scope = '',
+                storage_pool_id = '',
                 content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
                 manifest_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b'
             )

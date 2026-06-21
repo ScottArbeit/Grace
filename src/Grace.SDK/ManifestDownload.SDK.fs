@@ -61,10 +61,13 @@ module ManifestDownload =
         parameters.AuthorizedScope <- request.FileVersion.RelativePath
         parameters.ContentBlockAddress <- contentBlockAddress
 
-        parameters.ManifestAddress <-
-            request.FileVersion.ContentReference.Manifest
-            |> Option.map (fun manifest -> manifest.ManifestAddress)
-            |> Option.defaultValue String.Empty
+        match request.FileVersion.ContentReference.Manifest with
+        | Some manifest ->
+            parameters.StoragePoolId <- manifest.StoragePoolId
+            parameters.ManifestAddress <- manifest.ManifestAddress
+        | None ->
+            parameters.StoragePoolId <- String.Empty
+            parameters.ManifestAddress <- String.Empty
 
         parameters
 

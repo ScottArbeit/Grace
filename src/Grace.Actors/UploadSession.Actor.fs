@@ -946,6 +946,14 @@ module UploadSession =
                     correlationId
                     $"FileManifest ChunkingSuiteId must match UploadSession ChunkingSuiteId. Expected {session.ChunkingSuiteId}, actual {manifest.ChunkingSuiteId}."
             )
+        elif String.IsNullOrWhiteSpace manifest.StoragePoolId then
+            Error(graceError correlationId "FileManifest StoragePoolId must be recorded before finalization.")
+        elif manifest.StoragePoolId <> session.StoragePoolId then
+            Error(
+                graceError
+                    correlationId
+                    $"FileManifest StoragePoolId must match UploadSession StoragePoolId. Expected {session.StoragePoolId}, actual {manifest.StoragePoolId}."
+            )
         else
             Ok()
 
