@@ -505,15 +505,22 @@ module Storage =
 
     type private HydratedFinalizeEvidence = { BlockPayloads: FinalizeManifestBlockPayload array; ClaimedMetadata: ContentBlockMetadata array }
 
-    let private manifestBlockAddresses (manifest: FileManifest) =
-        if isNull (box manifest) || isNull manifest.Blocks then
-            Array.empty
-        else
-            manifest.Blocks
-            |> Seq.filter (fun block -> not (isNull (box block)))
-            |> Seq.map (fun block -> block.Address)
-            |> Seq.distinct
-            |> Seq.toArray
+    let private manifestBlocksForPayloadHydration (manifest: FileManifest) =
+        let seen = HashSet<ContentBlockAddress>()
+        let blocks = ResizeArray<ContentBlock>()
+
+        if
+            not (isNull (box manifest))
+            && not (isNull manifest.Blocks)
+        then
+            for block in manifest.Blocks do
+                if
+                    not (isNull (box block))
+                    && seen.Add(block.Address)
+                then
+                    blocks.Add block
+
+        blocks.ToArray()
 
     let private manifestBlockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
         session.ConfirmedBlockUploads
@@ -781,7 +788,7 @@ module Storage =
                 for payload in parameters.BlockPayloads do
                     if not (isNull (box payload)) then requestPayloads[payload.Address] <- payload
 
-            let blockAddresses = manifestBlockAddresses manifest
+            let manifestBlocks = manifestBlocksForPayloadHydration manifest
 
             let confirmedBlockUploads =
                 if isNull requestContext.SessionForScope.ConfirmedBlockUploads then
@@ -789,9 +796,10 @@ module Storage =
                 else
                     requestContext.SessionForScope.ConfirmedBlockUploads
 
-            while index < blockAddresses.Length
+            while index < manifestBlocks.Length
                   && Option.isNone error do
-                let address = blockAddresses[index]
+                let block = manifestBlocks[index]
+                let address = block.Address
 
                 let claimedMetadataForAddress =
                     claimedMetadata
@@ -805,7 +813,7 @@ module Storage =
                 | None ->
                     match requestPayloads.TryGetValue address with
                     | true, payload -> payloads.Add payload
-                    | false, _ ->
+                    | false, _ when manifestBlockWasUploaded requestContext.SessionForScope block ->
                         match! tryReadFinalizeBlockPayloadFromAuthoritativeMetadata requestContext address correlationId with
                         | Error downloadError -> error <- Some downloadError
                         | Ok (Some payload) -> payloads.Add payload
@@ -819,6 +827,7 @@ module Storage =
                                 | Ok payload -> payloads.Add payload
                                 | Error downloadError -> error <- Some downloadError
                             | None -> ()
+                    | false, _ -> ()
 
                 index <- index + 1
 

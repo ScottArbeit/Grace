@@ -1105,15 +1105,9 @@ module UploadSession =
                                                     $"Authoritative ContentBlockMetadata revalidation produced an unsupported command for claimed reuse range {merge.ContentBlockAddress}."
                                             )
                             | None ->
-                                let uploadedMerge =
-                                    match currentMetadata with
-                                    | Some authoritativeMetadata ->
-                                        { merge with ExpectedMetadataVersion = Some authoritativeMetadata.MetadataVersion; RequireMissingMetadata = false }
-                                    | None -> { merge with ExpectedMetadataVersion = None; RequireMissingMetadata = true }
-
-                                match ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata uploadedMerge metadata.Timestamp with
+                                match ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata merge metadata.Timestamp with
                                 | Ok _ ->
-                                    prevalidatedMerges.Add(metadataActor, uploadedMerge)
+                                    prevalidatedMerges.Add(metadataActor, merge)
                                     Ok()
                                 | Error error -> Error error
 

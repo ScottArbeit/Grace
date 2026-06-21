@@ -251,7 +251,7 @@ type StorageContentBlockSdkContract() =
 
         let authoritativeUploadedHydrationIndex =
             compactedStorageSource.IndexOf(
-                "tryReadFinalizeBlockPayloadFromAuthoritativeMetadata requestContext address correlationId",
+                "manifestBlockWasUploaded requestContext.SessionForScope block -> match! tryReadFinalizeBlockPayloadFromAuthoritativeMetadata requestContext address correlationId",
                 StringComparison.Ordinal
             )
 
@@ -260,7 +260,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(
             authoritativeUploadedHydrationIndex,
             Is.GreaterThanOrEqualTo(0),
-            "Uploaded replay hydration must try current authoritative metadata before stale session upload placement."
+            "Uploaded replay hydration must prove session ownership before trying current authoritative metadata."
         )
 
         Assert.That(

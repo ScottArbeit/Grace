@@ -215,8 +215,17 @@ type UploadSessionActorTests() =
             prevalidateSource,
             Does
                 .Contain("let! currentMetadata = metadataActor.Get metadata.CorrelationId")
-                .And.Contain("ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata uploadedMerge metadata.Timestamp"),
+                .And.Contain("ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata merge metadata.Timestamp"),
             "Finalize must validate uploaded metadata merges against current authoritative metadata before side-effecting merge calls."
+        )
+
+        Assert.That(
+            prevalidateSource,
+            Does
+                .Not
+                .Contain("ExpectedMetadataVersion = Some authoritativeMetadata.MetadataVersion")
+                .And.Not.Contain("RequireMissingMetadata = true"),
+            "Uploaded finalize contributions must merge against compatible current metadata instead of freezing a stale prevalidation snapshot."
         )
 
         Assert.That(
