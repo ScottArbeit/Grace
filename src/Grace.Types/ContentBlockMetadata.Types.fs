@@ -187,6 +187,14 @@ module ContentBlockMetadata =
             StoragePlacement: ContentBlockStoragePlacement
             [<Id(5u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(6u)>]
+            ExpectedMetadataVersion: MetadataVersion option
+            [<Id(7u)>]
+            RequireMissingMetadata: bool
+            [<Id(8u)>]
+            ExpectedRanges: ContentBlockMetadataRange array
+            [<Id(9u)>]
+            IsFinalizeContribution: bool
         }
 
     [<GenerateSerializer>]

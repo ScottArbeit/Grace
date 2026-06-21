@@ -136,7 +136,13 @@ module UploadSession =
     type FinalizeManifestBlockPayload = { Address: ContentBlockAddress; Payload: byte array }
 
     [<GenerateSerializer>]
-    type FinalizeManifest = { OperationId: UploadSessionOperationId; Manifest: FileManifest; BlockPayloads: FinalizeManifestBlockPayload array }
+    type FinalizeManifest =
+        {
+            OperationId: UploadSessionOperationId
+            Manifest: FileManifest
+            BlockPayloads: FinalizeManifestBlockPayload array
+            ClaimedMetadata: ContentBlockMetadata array
+        }
 
     [<KnownType("GetKnownTypes")>]
     type UploadSessionCommand =
