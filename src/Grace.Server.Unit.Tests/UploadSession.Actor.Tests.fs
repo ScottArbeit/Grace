@@ -229,8 +229,10 @@ type UploadSessionActorTests() =
         Assert.That(
             prevalidateSource,
             Does
-                .Not
-                .Contain("ExpectedMetadataVersion = Some authoritativeMetadata.MetadataVersion")
+                .Contain("tryCreateContentBlockMetadataMergeCommandsForFinalizedBlocks")
+                .And.Contain("rebaseUploadedMergeOnCurrentMetadata currentMetadata")
+                .And.Contain("withFinalizeMergePrecondition")
+                .And.Not.Contain("ExpectedMetadataVersion = Some authoritativeMetadata.MetadataVersion")
                 .And.Not.Contain("RequireMissingMetadata = true"),
             "Uploaded finalize contributions must merge against compatible current metadata instead of freezing a stale prevalidation snapshot."
         )
@@ -969,7 +971,7 @@ type UploadSessionActorTests() =
         | _ -> Assert.Fail("Expected multi-range claimed reuse finalization to create one MergePhysicalRanges command.")
 
     [<Test>]
-    member _.FinalizeManifestAcceptsMixedVersionClaimedReuseRangeCoverFromCurrentMetadata() =
+    member _.FinalizeManifestRejectsMixedVersionClaimedReuseRangeCover() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first mixed claimed chunk")
         let secondBytes = Text.Encoding.UTF8.GetBytes("second mixed claimed chunk")
         let fileBytes = Array.concat [ firstBytes; secondBytes ]
@@ -1016,29 +1018,80 @@ type UploadSessionActorTests() =
         let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize-mixed-cover")
 
         match result with
-        | Ok decision ->
-            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
-            Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
-        | Error error -> Assert.Fail($"Expected mixed-version claimed reuse cover to finalize, got {error.Error}.")
+        | Ok _ -> Assert.Fail("Expected mixed-version claimed reuse cover to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("must come from one authoritative metadata version"))
 
         let commands =
-            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+            UploadSessionActor.tryCreateContentBlockMetadataMergeCommandsForFinalizedBlocks
+                "corr-finalize-mixed-cover"
                 sessionStoragePoolId
                 "op-finalize"
                 session
                 manifest
                 [| currentMetadata |]
 
-        Assert.That(commands, Has.Length.EqualTo(1))
+        match commands with
+        | Ok _ -> Assert.Fail("Expected mixed-version claimed reuse cover command creation to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("must come from one authoritative metadata version"))
 
-        match commands[0] with
-        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-            Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
-            Assert.That(merge.BlockFormatVersion, Is.EqualTo(currentMetadata.BlockFormatVersion))
-            Assert.That(merge.StoragePlacement, Is.EqualTo(currentMetadata.StoragePlacement))
-            Assert.That(merge.Ranges, Has.Length.EqualTo(2))
-            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| firstRange; secondRange |]))
-        | _ -> Assert.Fail("Expected mixed-version claimed reuse finalization to create one MergePhysicalRanges command.")
+    [<Test>]
+    member _.FinalizeManifestRejectsSplitClaimedMetadataEvidenceInsteadOfDroppingMerge() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("first split claimed chunk")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("second split claimed chunk")
+        let fileBytes = Array.concat [ firstBytes; secondBytes ]
+
+        let block =
+            encodedBlockFromChunks [ ContentBlockFormat.createChunk 4096L firstBytes
+                                     ContentBlockFormat.createChunk 16384L secondBytes ]
+
+        let manifest = manifestFor fileBytes [| block |]
+
+        let firstRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 4096L; PhysicalLength = int64 firstBytes.Length }
+
+        let secondRange = { OrdinalStart = 1; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 16384L; PhysicalLength = int64 secondBytes.Length }
+
+        let claimedRange (range: ContentBlockMetadataRange) : ClaimedReuseRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = range.OrdinalStart
+                OrdinalCount = range.OrdinalCount
+                PhysicalOffset = range.PhysicalOffset
+                PhysicalLength = range.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = timestamp.Plus(Duration.FromSeconds(int64 range.OrdinalStart))
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges =
+                    [|
+                        claimedRange firstRange
+                        claimedRange secondRange
+                    |]
+            }
+
+        let firstEvidence = reuseMetadataFor block.Address 7L [| firstRange |]
+        let secondEvidence = reuseMetadataFor block.Address 7L [| secondRange |]
+
+        let result =
+            UploadSessionActor.tryCreateContentBlockMetadataMergeCommandsForFinalizedBlocks
+                "corr-finalize-split-cover"
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| firstEvidence; secondEvidence |]
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected split claimed metadata evidence to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("range cover is split or changed"))
 
     [<Test>]
     member _.FinalizeManifestRejectsGappedClaimedReuseRangeCoverForMultiChunkBlock() =
@@ -1495,9 +1548,9 @@ type UploadSessionActorTests() =
                 Assert.Fail("Expected uploaded block finalization to create ContentBlockMetadata merge commands.")
                 Unchecked.defaultof<MergeContentBlockPhysicalRanges>
 
-        let firstMerge = UploadSessionActor.withCurrentMetadataMergePrecondition None (mergeAt 0)
+        let firstMerge = UploadSessionActor.withFinalizeMergePrecondition (mergeAt 0)
         let secondMetadataAtPrevalidation = reuseMetadataFor secondBlock.Address 7L [| secondRange |]
-        let secondMerge = UploadSessionActor.withCurrentMetadataMergePrecondition (Some secondMetadataAtPrevalidation) (mergeAt 1)
+        let secondMerge = UploadSessionActor.withFinalizeMergePrecondition (mergeAt 1)
 
         let firstResult =
             ContentBlockMetadataActor.decideCommand
@@ -1517,16 +1570,18 @@ type UploadSessionActorTests() =
 
         let secondMetadataAtMergeTime = { secondMetadataAtPrevalidation with MetadataVersion = 8L }
 
-        let staleSecondResult =
+        let advancedSecondResult =
             ContentBlockMetadataActor.decideCommand
                 []
                 { ContentBlockMetadataDto.Empty with Metadata = Some secondMetadataAtMergeTime }
                 (ContentBlockMetadataCommand.MergePhysicalRanges secondMerge)
                 (metadata "corr-second-stale")
 
-        match staleSecondResult with
-        | Ok _ -> Assert.Fail("Expected the second metadata merge to reject the stale prevalidated version.")
-        | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata merge rejected"))
+        match advancedSecondResult with
+        | Ok decision ->
+            Assert.That(decision.WasIdempotentReplay, Is.False)
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        | Error error -> Assert.Fail($"Expected versionless finalized merge to tolerate advanced metadata, got {error.Error}.")
 
         let firstMetadataDto =
             firstResult.Events
@@ -1544,7 +1599,7 @@ type UploadSessionActorTests() =
         Assert.That(firstRetry.Events, Is.Empty)
         Assert.That(firstRetry.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
 
-        let secondRetryMerge = UploadSessionActor.withCurrentMetadataMergePrecondition (Some secondMetadataAtMergeTime) (mergeAt 1)
+        let secondRetryMerge = UploadSessionActor.withFinalizeMergePrecondition (mergeAt 1)
 
         let secondRetry =
             ContentBlockMetadataActor.decideCommand
@@ -1722,7 +1777,7 @@ type UploadSessionActorTests() =
         Assert.That(mergePrevalidatedIndex, Is.GreaterThan(revalidateIndex), "Finalize must apply metadata merges only after all revalidation succeeds.")
 
     [<Test>]
-    member _.FinalizeUploadedMergePreconditionsRequireCurrentSnapshotAtMergeTime() =
+    member _.FinalizeUploadedMergePreconditionsDoNotFreezeCurrentSnapshotAtMergeTime() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("uploaded merge preconditions")
         let block = encodedBlock fileBytes
         let manifest = manifestFor fileBytes [| block |]
@@ -1749,16 +1804,15 @@ type UploadSessionActorTests() =
 
         match commands[0] with
         | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-            let missingPrecondition = UploadSessionActor.withCurrentMetadataMergePrecondition None merge
+            let missingPrecondition = UploadSessionActor.withFinalizeMergePrecondition merge
 
-            Assert.That(missingPrecondition.RequireMissingMetadata, Is.True)
+            Assert.That(missingPrecondition.RequireMissingMetadata, Is.False)
             Assert.That(missingPrecondition.ExpectedMetadataVersion, Is.EqualTo(None))
 
-            let currentMetadata = reuseMetadataFor block.Address 12L [| confirmedRange |]
-            let currentPrecondition = UploadSessionActor.withCurrentMetadataMergePrecondition (Some currentMetadata) merge
+            let currentPrecondition = UploadSessionActor.withFinalizeMergePrecondition merge
 
             Assert.That(currentPrecondition.RequireMissingMetadata, Is.False)
-            Assert.That(currentPrecondition.ExpectedMetadataVersion, Is.EqualTo(Some currentMetadata.MetadataVersion))
+            Assert.That(currentPrecondition.ExpectedMetadataVersion, Is.EqualTo(None))
         | _ -> Assert.Fail("Expected uploaded block finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     [<Test>]
