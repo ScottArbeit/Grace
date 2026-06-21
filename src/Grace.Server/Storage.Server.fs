@@ -1369,33 +1369,36 @@ module Storage =
 
     let private validateManifestForContentBlockDownload repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
         task {
-            match validateManifestAddress correlationId parameters.ManifestAddress with
-            | Error error -> return Error error
-            | Ok () ->
-                if String.IsNullOrWhiteSpace parameters.StoragePoolId then
-                    return Error(GraceError.Create "StoragePoolId is required for ContentBlock manifest download authorization." correlationId)
-                else
-                    let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+            if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
+                return Error(GraceError.Create "AuthorizedScope is required for ContentBlock manifest download authorization." correlationId)
+            else
+                match validateManifestAddress correlationId parameters.ManifestAddress with
+                | Error error -> return Error error
+                | Ok () ->
+                    if String.IsNullOrWhiteSpace parameters.StoragePoolId then
+                        return Error(GraceError.Create "StoragePoolId is required for ContentBlock manifest download authorization." correlationId)
+                    else
+                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
 
-                    match!
-                        dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
-                            (
-                                parameters.StoragePoolId,
-                                repositoryId,
-                                parameters.AuthorizedScope,
-                                parameters.ManifestAddress,
-                                parameters.ContentBlockAddress,
-                                correlationId
-                            )
-                        with
-                    | Some metadata -> return Ok metadata.StoragePlacement
-                    | None ->
-                        return
-                            Error(
-                                GraceError.Create
-                                    $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository, storage pool, and authorized scope."
+                        match!
+                            dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                                (
+                                    parameters.StoragePoolId,
+                                    repositoryId,
+                                    parameters.AuthorizedScope,
+                                    parameters.ManifestAddress,
+                                    parameters.ContentBlockAddress,
                                     correlationId
-                            )
+                                )
+                            with
+                        | Some metadata -> return Ok metadata.StoragePlacement
+                        | None ->
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository, storage pool, and authorized scope."
+                                        correlationId
+                                )
         }
 
     /// Gets a download URI for the specified file version that can be used by a Grace client.
