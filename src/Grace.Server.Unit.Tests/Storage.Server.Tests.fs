@@ -11,6 +11,7 @@ open NUnit.Framework
 open System
 open System.IO
 open System.Reflection
+open System.Text
 open System.Threading.Tasks
 
 [<Parallelizable(ParallelScope.All)>]
@@ -18,6 +19,40 @@ type StorageContentBlockSdkContract() =
 
     let getStorageParameterType typeName =
         typeof<Parameters.Storage.StorageParameters>.Assembly.GetType ($"Grace.Shared.Parameters.Storage+{typeName}", throwOnError = false)
+
+    let bytes (value: string) = Encoding.UTF8.GetBytes value
+
+    let expectEncodedOk (result: Result<ContentBlockFormat.EncodedContentBlock, ContentBlockFormat.ContentBlockFormatError>) =
+        match result with
+        | Ok value -> value
+        | Error error ->
+            Assert.Fail($"Expected ContentBlockFormat.encode Ok but got {error}.")
+            Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+    let contentBlockPayload physicalOffset payloadBytes : ContentBlockFormat.EncodedContentBlock =
+        ContentBlockFormat.encode [ ContentBlockFormat.createChunk physicalOffset payloadBytes ]
+        |> expectEncodedOk
+
+    let buildManifest chunkingSuiteId payloadBytes (blockPayloads: ContentBlockFormat.EncodedContentBlock array) =
+        let mutable offset = 0L
+
+        let blocks =
+            blockPayloads
+            |> Array.map (fun payload ->
+                let contentLength =
+                    payload.Chunks
+                    |> Array.sumBy (fun chunk -> chunk.Length)
+                    |> int64
+
+                let block = ContentBlock.Create(payload.Address, offset, contentLength)
+                offset <- offset + contentLength
+                block)
+            |> Array.toList
+
+        let fileContentHash = FileContentHash(ContentAddress.computeBlake3Hex payloadBytes)
+        let manifest = FileManifest.Create(ManifestAddress String.Empty, chunkingSuiteId, fileContentHash, int64 payloadBytes.Length, blocks)
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
     let assertContentBlockParameterShape typeName =
         let parameterType = getStorageParameterType typeName
@@ -183,6 +218,444 @@ type StorageContentBlockSdkContract() =
         match Storage.validateUploadSessionRepositoryId recordedRepositoryId session "corr-same-repo-session" with
         | Error error -> Assert.Fail($"Expected matching repository session to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
+
+    [<Test>]
+    member _.FinalizeReplayPreHydrationValidationAcceptsPayloadlessDurableManifest() =
+        let payloadBytes = bytes "payload-less finalize replay"
+        let block = contentBlockPayload 0L payloadBytes
+        let manifest = buildManifest RabinChunking.SuiteName payloadBytes [| block |]
+
+        let session =
+            { UploadSessionDto.Default with
+                ExpectedSize = manifest.Size
+                FileContentHash = manifest.FileContentHash
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+            }
+
+        match Storage.validateFinalizeReplayManifestBeforeHydration session manifest.ManifestAddress manifest "corr-payloadless-replay" with
+        | Ok () -> Assert.Pass()
+        | Error error -> Assert.Fail($"Expected payload-less replay manifest shape to validate before hydration, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeReplayPreHydrationValidationRejectsTamperedBlockListWithoutPayloads() =
+        let payloadBytes = bytes "payload-less finalize replay"
+        let block = contentBlockPayload 0L payloadBytes
+        let manifest = buildManifest RabinChunking.SuiteName payloadBytes [| block |]
+
+        let session =
+            { UploadSessionDto.Default with
+                ExpectedSize = manifest.Size
+                FileContentHash = manifest.FileContentHash
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+            }
+
+        let tamperedBlock = ContentBlock.Create(ContentBlockAddress "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc", 0L, manifest.Size)
+
+        let tamperedManifest =
+            { manifest with
+                Blocks =
+                    [ tamperedBlock ]
+                    |> System.Collections.Generic.List<ContentBlock>
+            }
+
+        match Storage.validateFinalizeReplayManifestBeforeHydration session manifest.ManifestAddress tamperedManifest "corr-tampered-replay" with
+        | Ok () -> Assert.Fail("Expected payload-less replay with a tampered block list to fail before hydration.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("stable replay manifest address"))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-tampered-replay"))
+
+    [<Test>]
+    member _.FinalizeManifestHydratesAndValidatesReplayEvidenceBeforeActorSideEffects() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let finalizeStart = storageServerSource.IndexOf("let FinalizeManifestUpload", StringComparison.Ordinal)
+        let finalizeEnd = storageServerSource.IndexOf("let GetUploadUris", finalizeStart, StringComparison.Ordinal)
+
+        Assert.That(finalizeStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(finalizeEnd, Is.GreaterThan(finalizeStart))
+
+        let finalizeSource = storageServerSource.Substring(finalizeStart, finalizeEnd - finalizeStart)
+        let compactedStorageSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+        let scopeValidationIndex = finalizeSource.IndexOf("validateUploadSessionScope requestContext parameters correlationId true", StringComparison.Ordinal)
+
+        let replayEventIndex = finalizeSource.IndexOf("getFinalizeReplayState requestContext parameters.OperationId correlationId", StringComparison.Ordinal)
+
+        let replayPreHydrationValidateIndex =
+            finalizeSource.IndexOf("validateFinalizeReplayManifestBeforeHydration", replayEventIndex, StringComparison.Ordinal)
+
+        let replayHydrateIndex =
+            finalizeSource.IndexOf("hydrateFinalizeReplayEvidence requestContext parameters parameters.Manifest correlationId", StringComparison.Ordinal)
+
+        let replayValidateIndex = finalizeSource.IndexOf("validateFinalizeReplayEvidence", StringComparison.Ordinal)
+
+        let actorHandleIndex =
+            finalizeSource.IndexOf(
+                "requestContext.UploadSessionActor.Handle (createFinalizeCommand evidence) requestContext.Metadata",
+                StringComparison.Ordinal
+            )
+
+        let normalHydrateIndex =
+            finalizeSource.IndexOf("hydrateFinalizeEvidence requestContext parameters parameters.Manifest true correlationId", StringComparison.Ordinal)
+
+        Assert.That(scopeValidationIndex, Is.GreaterThanOrEqualTo(0))
+        Assert.That(replayEventIndex, Is.GreaterThan(scopeValidationIndex))
+        Assert.That(replayPreHydrationValidateIndex, Is.GreaterThan(replayEventIndex))
+        Assert.That(replayHydrateIndex, Is.GreaterThan(replayPreHydrationValidateIndex))
+        Assert.That(replayValidateIndex, Is.GreaterThan(replayHydrateIndex))
+        Assert.That(actorHandleIndex, Is.GreaterThan(replayValidateIndex))
+        Assert.That(normalHydrateIndex, Is.GreaterThan(actorHandleIndex))
+        Assert.That(finalizeSource, Does.Not.Contain("hydrateFinalizeBlockPayloads context"))
+
+        Assert.That(
+            finalizeSource,
+            Does.Not.Contain("ClaimedMetadata = Array.empty"),
+            "Same-operation finalize replay side effects must not run with empty claimed metadata."
+        )
+
+        Assert.That(
+            finalizeSource,
+            Does.Not.Contain("BlockPayloads = parameters.BlockPayloads"),
+            "Same-operation finalize replay side effects must not run with retry-supplied block payloads."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does.Contain(
+                "validateFinalizeReplayManifestBeforeHydration requestContext.SessionForScope finalizedManifestAddress parameters.Manifest correlationId"
+            ),
+            "Finalize replay must validate retry manifest shape and address before reading authoritative metadata/blob placements."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does.Not.Contain(
+                "validateFinalizeReplayManifestBeforeHydration requestContext.SessionForScope finalizedManifestAddress parameters.Manifest parameters.BlockPayloads correlationId"
+            ),
+            "Payload-less finalize replays must not validate request BlockPayloads before authoritative replay hydration."
+        )
+
+        Assert.That(
+            finalizeSource,
+            Does.Contain("operationAlreadyAppliedToDifferentUploadSessionEventError parameters.OperationId correlationId"),
+            "Finalize must not let actor replay semantics turn a non-finalize operation-id collision into side effects."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does
+                .Contain("&& not (isNull parameters.BlockPayloads)")
+                .And.Contain("requestPayloads[payload.Address] <- payload")
+                .And.Contain("match requestPayloads.TryGetValue address with"),
+            "Fresh finalization may still use request payloads for non-claimed blocks; replay hydration opts out through the false flag."
+        )
+
+        let authoritativeUploadedHydrationIndex =
+            compactedStorageSource.IndexOf(
+                "manifestBlockWasUploaded requestContext.SessionForScope block -> match! tryReadFinalizeBlockPayloadFromAuthoritativeMetadata requestContext address correlationId",
+                StringComparison.Ordinal
+            )
+
+        let confirmedUploadFallbackIndex = compactedStorageSource.IndexOf("confirmedBlockUploads |> Array.tryFind", StringComparison.Ordinal)
+
+        Assert.That(
+            authoritativeUploadedHydrationIndex,
+            Is.GreaterThanOrEqualTo(0),
+            "Uploaded replay hydration must prove session ownership before trying current authoritative metadata."
+        )
+
+        Assert.That(
+            confirmedUploadFallbackIndex,
+            Is.GreaterThan(authoritativeUploadedHydrationIndex),
+            "ConfirmedBlockUploads must remain only a fallback after current authoritative uploaded metadata is unavailable."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does.Contain("| Some metadata -> match! readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement correlationId"),
+            "Claimed reuse payload hydration must read authoritative storage placement even when request payloads exist."
+        )
+
+        Assert.That(
+            finalizeSource,
+            Does.Not.Contain("hydrateFinalizeEvidence requestContext parameters parameters.Manifest false correlationId"),
+            "Same-operation finalize replay must not call the fresh claimed-metadata validation path."
+        )
+
+        Assert.That(
+            storageServerSource,
+            Does.Not.Contain("match! loadClaimedMetadataForFinalizeReplay requestContext manifest correlationId"),
+            "Same-operation finalize replay must not rebuild repair evidence from upload-session claimed ranges that cleanup removes."
+        )
+
+        Assert.That(
+            storageServerSource,
+            Does.Not.Contain("{ authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion }"),
+            "Finalize hydration must preserve current authoritative metadata versions so mixed-version claimed covers remain valid."
+        )
+
+    [<Test>]
+    member _.FinalizeManifestLoadsClaimedReuseEvidenceFromAuthoritativeMetadataActorKey() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("ContentBlockMetadataActorKey.Create claimedRange.StoragePoolId claimedRange.ContentBlockAddress"),
+            "Finalize must load claimed reuse proof by the authoritative StoragePoolId + ContentBlockAddress key."
+        )
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("readFinalizeBlockPayloadFromPlacement address metadata.StoragePlacement"),
+            "Claimed reuse payload hydration must use authoritative metadata placement, not a recomputed route."
+        )
+
+    [<Test>]
+    member _.FinalizeClaimedReuseEvidenceAllowsEquivalentCurrentStateButFailsClosedOnUnsafeDrift() =
+        let storagePoolId = StoragePoolId "pool-finalize-replay"
+        let contentBlockAddress = ContentBlockAddress "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
+        let placement =
+            {
+                StorageAccountName = "cas-account"
+                StorageContainerName = StorageContainerName "cas-container"
+                ObjectKey = "cas/content/bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                ETag = Some "etag-current"
+            }
+
+        let durableRange = { OrdinalStart = 4; OrdinalCount = 8; ActiveManifestCount = 1; PhysicalOffset = 1024L; PhysicalLength = 4096L }
+
+        let claimedRange: ClaimedReuseRange =
+            {
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                OrdinalStart = durableRange.OrdinalStart
+                OrdinalCount = durableRange.OrdinalCount
+                PhysicalOffset = durableRange.PhysicalOffset
+                PhysicalLength = durableRange.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = NodaTime.Instant.FromUtc(2026, 6, 1, 12, 0)
+            }
+
+        let currentMetadata =
+            { ContentBlockMetadata.Empty with
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                BlockFormatVersion = 1s
+                StoragePlacement = placement
+                Ranges = [| durableRange |]
+                MetadataVersion = 8L
+            }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange currentMetadata,
+            Is.True,
+            "Replay hydration must not reject only because finalization advanced MetadataVersion after the original claim."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalize claimedRange currentMetadata,
+            Is.True,
+            "Fresh finalization must accept an already-finalized equivalent actor state when metadata version advanced."
+        )
+
+        let inactiveExactRange = { durableRange with ActiveManifestCount = 0 }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalize claimedRange { currentMetadata with Ranges = [| inactiveExactRange |] },
+            Is.True,
+            "Fresh finalization may accept current exact range evidence even when metadata version advanced after the claim."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with StoragePoolId = StoragePoolId "pool-other" },
+            Is.False,
+            "Replay hydration must fail closed for the wrong storage pool."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay
+                claimedRange
+                { currentMetadata with ContentBlockAddress = ContentBlockAddress "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc" },
+            Is.False,
+            "Replay hydration must fail closed for the wrong content block address."
+        )
+
+        let relocatedFinalizedRange = { durableRange with PhysicalOffset = durableRange.PhysicalOffset + 1L }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with Ranges = [| relocatedFinalizedRange |] },
+            Is.True,
+            "Replay hydration must accept the actor's current finalized location after the original range was relocated."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalize claimedRange { currentMetadata with Ranges = [| relocatedFinalizedRange |] },
+            Is.True,
+            "Fresh finalization must accept a finalized equivalent logical range after benign metadata churn."
+        )
+
+        let inactiveRelocatedRange = { relocatedFinalizedRange with ActiveManifestCount = 0 }
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay claimedRange { currentMetadata with Ranges = [| inactiveRelocatedRange |] },
+            Is.False,
+            "Replay hydration must fail closed when relocated metadata is not an active finalized range."
+        )
+
+        Assert.That(
+            Storage.authoritativeClaimedRangeMatchesForFinalizeReplay
+                claimedRange
+                { currentMetadata with StoragePlacement = ContentBlockStoragePlacement.Empty },
+            Is.False,
+            "Replay hydration must fail closed when authoritative placement is missing."
+        )
+
+    [<Test>]
+    member _.FinalizeClaimedReuseCoverUsesLogicalOrdinalWindowsAndRejectsPartialCovers() =
+        let storagePoolId = StoragePoolId "pool-cover"
+        let contentBlockAddress = ContentBlockAddress "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        let claimedAt = NodaTime.Instant.FromUtc(2026, 6, 20, 12, 0)
+
+        let claimedRange ordinalStart ordinalCount physicalOffset physicalLength metadataVersion =
+            {
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                OrdinalStart = ordinalStart
+                OrdinalCount = ordinalCount
+                PhysicalOffset = physicalOffset
+                PhysicalLength = physicalLength
+                MetadataVersion = metadataVersion
+                ClaimedAt = claimedAt.Plus(NodaTime.Duration.FromSeconds(int64 ordinalStart))
+            }
+
+        let wholeBlockWithSourceOffset = claimedRange 0 1 4096L 10L 11L
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock 10L [| wholeBlockWithSourceOffset |],
+            Is.True,
+            "Fresh finalization must not treat a source PhysicalOffset as the manifest-local logical byte offset."
+        )
+
+        let first = claimedRange 0 1 4096L 4L 11L
+        let second = claimedRange 1 1 16384L 6L 12L
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock 10L [| second; first |],
+            Is.True,
+            "Fresh finalization must accept mixed-version claimed ranges that cover adjacent logical ordinal windows."
+        )
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock
+                10L
+                [|
+                    first
+                    { second with OrdinalStart = 2 }
+                |],
+            Is.False,
+            "Fresh finalization must reject claimed-range covers with an ordinal gap."
+        )
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock
+                10L
+                [|
+                    first
+                    { second with OrdinalStart = 0 }
+                |],
+            Is.False,
+            "Fresh finalization must reject overlapping ordinal windows that do not form a complete block cover."
+        )
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock
+                10L
+                [|
+                    first
+                    { second with PhysicalLength = 7L }
+                |],
+            Is.False,
+            "Fresh finalization must reject claimed ranges that run past the manifest block length."
+        )
+
+    [<Test>]
+    member _.FinalizeClaimedReuseFreshHydrationSelectsCoverWithoutWholeBlockLengthFilter() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedSource,
+            Does
+                .Contain("claimedRangesForManifestBlockNewestFirst requestContext.SessionForScope block.Address")
+                .And.Contain("trySelectClaimedRangeCover block.Size validatedClaims"),
+            "Fresh finalization must validate the set of claimed ranges that covers the block."
+        )
+
+        Assert.That(
+            compactedSource,
+            Does.Not.Contain("&& claimedRange.PhysicalLength = physicalLength"),
+            "Fresh finalization must not require a single claimed range to equal the whole manifest block length."
+        )
+
+    [<Test>]
+    member _.FinalizeReplayHydratesRepairEvidenceFromCurrentManifestMetadataAfterSessionCleanup() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let replayStart = storageServerSource.IndexOf("let private hydrateFinalizeReplayEvidenceFromCurrentMetadata", StringComparison.Ordinal)
+
+        let replayEnd =
+            storageServerSource.IndexOf(
+                "let private hydrateFinalizeReplayEvidence",
+                replayStart
+                + "let private hydrateFinalizeReplayEvidenceFromCurrentMetadata"
+                    .Length,
+                StringComparison.Ordinal
+            )
+
+        Assert.That(replayStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(replayEnd, Is.GreaterThan(replayStart))
+
+        let replaySource = storageServerSource.Substring(replayStart, replayEnd - replayStart)
+        let compactedReplaySource = String.Join(" ", replaySource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedReplaySource,
+            Does
+                .Contain("let manifestBlocks = manifestBlocksForPayloadHydration manifest")
+                .And.Contain("tryLoadAuthoritativeContentBlockMetadataForFinalize requestContext block.Address correlationId")
+                .And.Contain("readFinalizeBlockPayloadFromPlacement block.Address authoritativeMetadata.StoragePlacement correlationId")
+                .And.Contain("confirmedBlockUploads |> Array.tryFind")
+                .And.Contain("readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId")
+                .And.Contain("no confirmed upload placement remains in the upload session")
+                .And.Contain("ClaimedMetadata = metadata.ToArray()"),
+            "Finalize replay repair must prefer current metadata, fall back to retained confirmed upload placement, and fail closed after cleanup."
+        )
+
+        Assert.That(
+            replaySource,
+            Does
+                .Not
+                .Contain("manifestBlocksRequiringClaimedMetadata")
+                .And.Not.Contain("ClaimedReuseRanges"),
+            "Cleanup removes transient claimed-reuse arrays, so replay repair cannot depend on them."
+        )
+
+    [<Test>]
+    member _.FinalizeManifestHydratesClaimedMetadataOnlyForBlocksNotSatisfiedByConfirmedUploads() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(compactedSource, Does.Contain("manifestBlocksRequiringClaimedMetadata requestContext.SessionForScope manifest"))
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("not (manifestBlockWasUploaded session block)"),
+            "Claimed metadata hydration must skip stale claims for manifest blocks already satisfied by confirmed uploads."
+        )
 
     [<Test>]
     member _.DownloadAuthorizationUsesTargetedDedupeIndexLookupInsteadOfFullSnapshotState() =
