@@ -36,6 +36,14 @@ Read these files on demand:
 | Server integration tests, CLI tests, contract tests, authorization tests, validation commands | [tests.md](references/tests.md) |
 | README, CONTRIBUTING, AGENTS, Markdown, HTML/process docs, contributor guidance | [docs-and-contributing.md](references/docs-and-contributing.md) |
 
+## Sub-skill Router
+
+Use these sibling skills when the task needs a specialized workflow:
+
+| Task | Load |
+| ---- | ---- |
+| Repeated Codex Code Review Bot findings, review/fix loop monitoring, stabilization ledgers, hard-stop review thresholds | [code-review-stabilizer](../code-review-stabilizer/SKILL.md) |
+
 ## Grace Defaults
 
 - Prefer repo evidence over memory, guesses, or old plans.
