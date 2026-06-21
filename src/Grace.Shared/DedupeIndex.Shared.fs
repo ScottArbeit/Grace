@@ -536,19 +536,15 @@ module DedupeIndex =
 
             withLeadingSlash.TrimEnd('/')
 
-    let private finalizedScopeContainsRequestedScope finalizedScope requestedScope =
+    let private finalizedScopeMatchesRequestedScope finalizedScope requestedScope =
         let finalizedScope = normalizeScopePath finalizedScope
         let requestedScope = normalizeScopePath requestedScope
 
         if String.IsNullOrWhiteSpace finalizedScope
            || String.IsNullOrWhiteSpace requestedScope then
             false
-        elif finalizedScope = "/" then
-            String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal)
-        elif String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal) then
-            true
         else
-            requestedScope.StartsWith($"{finalizedScope}/", StringComparison.Ordinal)
+            String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal)
 
     let finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
         (normalizeState state).FinalizedManifests
@@ -558,7 +554,7 @@ module DedupeIndex =
             && registration.ManifestAddress = manifestAddress
             && not (isNull (box registration.Session))
             && registration.Session.RepositoryId = repositoryId
-            && finalizedScopeContainsRequestedScope registration.Session.AuthorizedScope authorizedScope
+            && finalizedScopeMatchesRequestedScope registration.Session.AuthorizedScope authorizedScope
             && not (isNull registration.Blocks)
             && registration.Blocks
                |> Array.exists (fun block ->

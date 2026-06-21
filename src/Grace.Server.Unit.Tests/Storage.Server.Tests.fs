@@ -187,10 +187,21 @@ type StorageContentBlockSdkContract() =
 
         let parentScopeState = { state with FinalizedManifests = [| parentScopeRegistration |] }
 
-        let parentScopeSelected =
+        let parentScopeRejected =
             Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress parentScopeState
 
-        Assert.That(parentScopeSelected, Is.EqualTo(Some metadata))
+        Assert.That(parentScopeRejected, Is.EqualTo(None))
+
+        let sameDirectorySiblingRejected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata
+                storagePoolId
+                repositoryId
+                "/download/sibling.bin"
+                manifestAddress
+                contentBlockAddress
+                parentScopeState
+
+        Assert.That(sameDirectorySiblingRejected, Is.EqualTo(None))
 
         let rootScopeRegistration = { registration with Session = { registration.Session with AuthorizedScope = "/" } }
 
