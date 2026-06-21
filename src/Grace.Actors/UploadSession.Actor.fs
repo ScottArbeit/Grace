@@ -456,7 +456,45 @@ module UploadSession =
                                 $"Authoritative ContentBlockMetadata range is absent or changed for claimed reuse range {claimedRange.ContentBlockAddress}."
                         ))
 
-    let private trySelectClaimedRangeMetadata
+    let private compareClaimedRangeNewestFirst (left: ClaimedReuseRange) (right: ClaimedReuseRange) =
+        let versionComparison = compare right.MetadataVersion left.MetadataVersion
+
+        if versionComparison <> 0 then
+            versionComparison
+        else
+            compare right.ClaimedAt left.ClaimedAt
+
+    let private trySelectClaimedRangeCover physicalLength (claimedRanges: ClaimedReuseRange array) =
+        if physicalLength <= 0L || isNull claimedRanges then
+            None
+        else
+            let candidates =
+                claimedRanges
+                |> Array.filter (fun claimedRange ->
+                    not (isNull (box claimedRange))
+                    && claimedRange.PhysicalOffset >= 0L
+                    && claimedRange.PhysicalLength > 0L
+                    && claimedRange.PhysicalLength <= physicalLength
+                    && claimedRange.PhysicalOffset
+                       <= physicalLength - claimedRange.PhysicalLength)
+
+            let rec selectCover nextOffset selected selectedMetadataVersion =
+                if nextOffset = physicalLength then
+                    selected |> List.rev |> List.toArray |> Some
+                else
+                    candidates
+                    |> Array.filter (fun claimedRange ->
+                        claimedRange.PhysicalOffset = nextOffset
+                        && match selectedMetadataVersion with
+                           | Some metadataVersion -> claimedRange.MetadataVersion = metadataVersion
+                           | None -> true)
+                    |> Array.sortWith compareClaimedRangeNewestFirst
+                    |> Array.tryPick (fun claimedRange ->
+                        selectCover (nextOffset + claimedRange.PhysicalLength) (claimedRange :: selected) (Some claimedRange.MetadataVersion))
+
+            selectCover 0L [] None
+
+    let private trySelectClaimedRangeMetadataCover
         correlationId
         storagePoolId
         (claimedMetadata: Dictionary<string, ContentBlockMetadata>)
@@ -467,31 +505,25 @@ module UploadSession =
         let candidates =
             claimedRanges
             |> Array.filter (fun claimedRange ->
-                claimedRange.ContentBlockAddress = contentBlockAddress
-                && claimedRange.PhysicalLength = physicalLength)
-            |> Array.sortWith (fun left right ->
-                let versionComparison = compare right.MetadataVersion left.MetadataVersion
+                not (isNull (box claimedRange))
+                && claimedRange.ContentBlockAddress = contentBlockAddress)
+            |> Array.sortWith compareClaimedRangeNewestFirst
 
-                if versionComparison <> 0 then
-                    versionComparison
-                else
-                    compare right.ClaimedAt left.ClaimedAt)
-
-        let mutable selected = None
+        let validatedClaims = ResizeArray<ClaimedReuseRange>()
         let mutable firstError = None
         let mutable index = 0
 
-        while selected.IsNone && index < candidates.Length do
+        while index < candidates.Length do
             let claimedRange = candidates[index]
 
             match validateClaimedRangeMetadata correlationId storagePoolId claimedMetadata claimedRange with
-            | Ok () -> selected <- Some claimedRange
+            | Ok () -> validatedClaims.Add claimedRange
             | Error validationError -> if firstError.IsNone then firstError <- Some validationError
 
             index <- index + 1
 
-        match selected with
-        | Some claimedRange -> Ok claimedRange
+        match trySelectClaimedRangeCover physicalLength (validatedClaims.ToArray()) with
+        | Some claimedRanges -> Ok claimedRanges
         | None ->
             match firstError with
             | Some validationError -> Error validationError
@@ -499,7 +531,7 @@ module UploadSession =
                 Error(
                     graceError
                         correlationId
-                        $"A claimed reuse range covering manifest block {contentBlockAddress} length {physicalLength} is required before finalization."
+                        $"A claimed reuse range set covering manifest block {contentBlockAddress} length {physicalLength} is required before finalization."
                 )
 
     let private validateClaimedMetadataForFinalize correlationId storagePoolId (session: UploadSessionDto) (manifest: FileManifest) claimedMetadata =
@@ -516,7 +548,7 @@ module UploadSession =
 
         for block in manifestBlocks do
             if error.IsNone then
-                match trySelectClaimedRangeMetadata correlationId storagePoolId metadata claimedRanges block.Address block.Size with
+                match trySelectClaimedRangeMetadataCover correlationId storagePoolId metadata claimedRanges block.Address block.Size with
                 | Ok _ -> ()
                 | Error validationError -> error <- Some validationError
 
@@ -548,45 +580,62 @@ module UploadSession =
                 else
                     session.ClaimedReuseRanges
 
-            match trySelectClaimedRangeMetadata correlationId storagePoolId metadata claimedRanges block.Address block.Size with
+            match trySelectClaimedRangeMetadataCover correlationId storagePoolId metadata claimedRanges block.Address block.Size with
             | Error validationError -> Error validationError
-            | Ok claimedRange ->
+            | Ok claimedRanges ->
+                let firstClaimedRange = claimedRanges[0]
+
                 if authoritativeMetadata.StoragePoolId
-                   <> claimedRange.StoragePoolId then
+                   <> firstClaimedRange.StoragePoolId then
                     Error(graceError correlationId "Authoritative ContentBlockMetadata StoragePoolId does not match the claimed reuse range.")
                 elif authoritativeMetadata.ContentBlockAddress
-                     <> claimedRange.ContentBlockAddress then
+                     <> firstClaimedRange.ContentBlockAddress then
                     Error(graceError correlationId "Authoritative ContentBlockMetadata ContentBlockAddress does not match the claimed reuse range.")
                 elif authoritativeMetadata.BlockFormatVersion <= 0s then
                     Error(graceError correlationId "Authoritative ContentBlockMetadata BlockFormatVersion is required before finalizing claimed reuse.")
                 else
                     validateAuthoritativeStoragePlacement correlationId authoritativeMetadata.StoragePlacement
                     |> Result.bind (fun () ->
-                        match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
-                        | Some physicalRange ->
+                        let physicalRanges = ResizeArray<ContentBlockMetadataRange>()
+                        let mutable rangeError = None
+                        let mutable rangeIndex = 0
+
+                        while rangeError.IsNone
+                              && rangeIndex < claimedRanges.Length do
+                            let claimedRange = claimedRanges[rangeIndex]
+
+                            match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
+                            | Some physicalRange -> physicalRanges.Add physicalRange
+                            | None ->
+                                rangeError <-
+                                    Some(
+                                        graceError
+                                            correlationId
+                                            $"Authoritative ContentBlockMetadata range is absent or changed for claimed reuse range {claimedRange.ContentBlockAddress}."
+                                    )
+
+                            rangeIndex <- rangeIndex + 1
+
+                        match rangeError with
+                        | Some error -> Error error
+                        | None ->
                             Ok(
                                 Some(
                                     ContentBlockMetadataCommand.MergePhysicalRanges
                                         {
                                             OperationId =
-                                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{claimedRange.ContentBlockAddress}"
+                                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
                                             StoragePoolId = storagePoolId
-                                            ContentBlockAddress = claimedRange.ContentBlockAddress
+                                            ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                             BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
                                             StoragePlacement = authoritativeMetadata.StoragePlacement
-                                            Ranges = activeRangesForFinalizedManifest [| physicalRange |]
+                                            Ranges = activeRangesForFinalizedManifest (physicalRanges.ToArray())
                                             ExpectedMetadataVersion = None
                                             RequireMissingMetadata = false
-                                            ExpectedRanges = [| physicalRange |]
+                                            ExpectedRanges = physicalRanges.ToArray()
                                             IsFinalizeContribution = true
                                         }
                                 )
-                            )
-                        | None ->
-                            Error(
-                                graceError
-                                    correlationId
-                                    $"Authoritative ContentBlockMetadata range is absent or changed for claimed reuse range {claimedRange.ContentBlockAddress}."
                             ))
 
     let createContentBlockMetadataMergeCommandsForFinalizedUploads storagePoolId finalizeOperationId (session: UploadSessionDto) (manifest: FileManifest) =
@@ -659,31 +708,44 @@ module UploadSession =
 
         for block in manifestBlocks do
             if seen.Add block.Address then
-                match trySelectClaimedRangeMetadata String.Empty storagePoolId metadata claimedRanges block.Address block.Size with
-                | Ok claimedRange ->
-                    let key = claimedMetadataKey claimedRange.StoragePoolId claimedRange.ContentBlockAddress claimedRange.MetadataVersion
+                match trySelectClaimedRangeMetadataCover String.Empty storagePoolId metadata claimedRanges block.Address block.Size with
+                | Ok claimedRanges ->
+                    let firstClaimedRange = claimedRanges[0]
+                    let key = claimedMetadataKey firstClaimedRange.StoragePoolId firstClaimedRange.ContentBlockAddress firstClaimedRange.MetadataVersion
 
                     match metadata.TryGetValue key with
                     | true, authoritativeMetadata ->
-                        match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
-                        | Some physicalRange ->
+                        let physicalRanges = ResizeArray<ContentBlockMetadataRange>()
+                        let mutable rangeError = None
+                        let mutable rangeIndex = 0
+
+                        while rangeError.IsNone
+                              && rangeIndex < claimedRanges.Length do
+                            let claimedRange = claimedRanges[rangeIndex]
+
+                            match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
+                            | Some physicalRange -> physicalRanges.Add physicalRange
+                            | None -> rangeError <- Some()
+
+                            rangeIndex <- rangeIndex + 1
+
+                        if rangeError.IsNone then
                             commands.Add(
                                 ContentBlockMetadataCommand.MergePhysicalRanges
                                     {
                                         OperationId =
-                                            $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{claimedRange.ContentBlockAddress}"
+                                            $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
                                         StoragePoolId = storagePoolId
-                                        ContentBlockAddress = claimedRange.ContentBlockAddress
+                                        ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                         BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
                                         StoragePlacement = authoritativeMetadata.StoragePlacement
-                                        Ranges = activeRangesForFinalizedManifest [| physicalRange |]
+                                        Ranges = activeRangesForFinalizedManifest (physicalRanges.ToArray())
                                         ExpectedMetadataVersion = None
                                         RequireMissingMetadata = false
-                                        ExpectedRanges = [| physicalRange |]
+                                        ExpectedRanges = physicalRanges.ToArray()
                                         IsFinalizeContribution = true
                                     }
                             )
-                        | None -> ()
                     | false, _ -> ()
                 | Error _ -> ()
 
@@ -714,10 +776,18 @@ module UploadSession =
         | ManifestValidation.ManifestSizeMismatch (expected, actual) -> $"FileManifest Size mismatch. Expected {expected}, actual {actual}."
 
     let private blockWasClaimed (session: UploadSessionDto) (block: ContentBlock) =
-        session.ClaimedReuseRanges
-        |> Array.exists (fun claimedRange ->
-            claimedRange.ContentBlockAddress = block.Address
-            && claimedRange.PhysicalLength = block.Size)
+        let claimedRanges =
+            if isNull session.ClaimedReuseRanges then
+                Array.empty
+            else
+                session.ClaimedReuseRanges
+
+        claimedRanges
+        |> Array.filter (fun claimedRange ->
+            not (isNull (box claimedRange))
+            && claimedRange.ContentBlockAddress = block.Address)
+        |> trySelectClaimedRangeCover block.Size
+        |> Option.isSome
 
     let private validateManifestBlockPresence correlationId (session: UploadSessionDto) (manifest: FileManifest) =
         if isNull (box manifest) then

@@ -601,21 +601,57 @@ module Storage =
               && hasAuthoritativeClaimedRange claimedRange metadata)
              || hasAuthoritativeFinalizedLogicalRange claimedRange metadata))
 
-    let private claimedRangesForManifestBlockNewestFirst (session: UploadSessionDto) contentBlockAddress physicalLength =
+    let private compareClaimedRangeNewestFirst (left: ClaimedReuseRange) (right: ClaimedReuseRange) =
+        let versionComparison = compare right.MetadataVersion left.MetadataVersion
+
+        if versionComparison <> 0 then
+            versionComparison
+        else
+            compare right.ClaimedAt left.ClaimedAt
+
+    let private trySelectClaimedRangeCover physicalLength (claimedRanges: ClaimedReuseRange array) =
+        if physicalLength <= 0L || isNull claimedRanges then
+            None
+        else
+            let candidates =
+                claimedRanges
+                |> Array.filter (fun claimedRange ->
+                    not (isNull (box claimedRange))
+                    && claimedRange.PhysicalOffset >= 0L
+                    && claimedRange.PhysicalLength > 0L
+                    && claimedRange.PhysicalLength <= physicalLength
+                    && claimedRange.PhysicalOffset
+                       <= physicalLength - claimedRange.PhysicalLength)
+
+            let rec selectCover nextOffset selected selectedMetadataVersion =
+                if nextOffset = physicalLength then
+                    selected |> List.rev |> List.toArray |> Some
+                else
+                    candidates
+                    |> Array.filter (fun claimedRange ->
+                        claimedRange.PhysicalOffset = nextOffset
+                        && match selectedMetadataVersion with
+                           | Some metadataVersion -> claimedRange.MetadataVersion = metadataVersion
+                           | None -> true)
+                    |> Array.sortWith compareClaimedRangeNewestFirst
+                    |> Array.tryPick (fun claimedRange ->
+                        selectCover (nextOffset + claimedRange.PhysicalLength) (claimedRange :: selected) (Some claimedRange.MetadataVersion))
+
+            selectCover 0L [] None
+
+    let internal claimedReuseRangesCoverManifestBlock physicalLength claimedRanges =
+        trySelectClaimedRangeCover physicalLength claimedRanges
+        |> Option.isSome
+
+    let private claimedRangesForManifestBlockNewestFirst (session: UploadSessionDto) contentBlockAddress =
         if isNull session.ClaimedReuseRanges then
             Array.empty
         else
             session.ClaimedReuseRanges
             |> Array.filter (fun claimedRange ->
-                claimedRange.ContentBlockAddress = contentBlockAddress
-                && claimedRange.PhysicalLength = physicalLength)
-            |> Array.sortWith (fun left right ->
-                let versionComparison = compare right.MetadataVersion left.MetadataVersion
-
-                if versionComparison <> 0 then
-                    versionComparison
-                else
-                    compare right.ClaimedAt left.ClaimedAt)
+                not (isNull (box claimedRange))
+                && claimedRange.ContentBlockAddress = contentBlockAddress)
+            |> Array.sortWith compareClaimedRangeNewestFirst
 
     let private tryLoadAuthoritativeContentBlockMetadataForFinalize (requestContext: UploadSessionRequestContext) contentBlockAddress correlationId =
         task {
@@ -706,13 +742,12 @@ module Storage =
 
             while error.IsNone && index < manifestBlocks.Length do
                 let block = manifestBlocks[index]
-                let candidates = claimedRangesForManifestBlockNewestFirst requestContext.SessionForScope block.Address block.Size
-                let mutable selected = None
+                let candidates = claimedRangesForManifestBlockNewestFirst requestContext.SessionForScope block.Address
+                let validatedCandidates = ResizeArray<ClaimedReuseRange * ContentBlockMetadata>()
                 let mutable firstError = None
                 let mutable candidateIndex = 0
 
-                while selected.IsNone
-                      && candidateIndex < candidates.Length do
+                while candidateIndex < candidates.Length do
                     let claimedRange = candidates[candidateIndex]
 
                     if claimedRange.StoragePoolId <> storagePoolId then
@@ -744,12 +779,26 @@ module Storage =
                         | Some authoritativeMetadata when not (rangeMatches claimedRange authoritativeMetadata) ->
                             if firstError.IsNone then
                                 firstError <- Some(GraceError.Create $"{staleOrIncompleteMessage} {claimedRange.ContentBlockAddress}." correlationId)
-                        | Some authoritativeMetadata -> selected <- Some(evidenceMetadata claimedRange authoritativeMetadata)
+                        | Some authoritativeMetadata -> validatedCandidates.Add(claimedRange, authoritativeMetadata)
 
                     candidateIndex <- candidateIndex + 1
 
-                match selected with
-                | Some authoritativeMetadata -> metadata.Add authoritativeMetadata
+                let validatedClaims = validatedCandidates |> Seq.map fst |> Seq.toArray
+
+                match trySelectClaimedRangeCover block.Size validatedClaims with
+                | Some coveredClaims ->
+                    let mutable coveredClaimIndex = 0
+
+                    while coveredClaimIndex < coveredClaims.Length do
+                        let coveredClaim = coveredClaims[coveredClaimIndex]
+
+                        match validatedCandidates
+                              |> Seq.tryFind (fun (validatedClaim, _) -> validatedClaim = coveredClaim)
+                            with
+                        | Some (validatedClaim, authoritativeMetadata) -> metadata.Add(evidenceMetadata validatedClaim authoritativeMetadata)
+                        | None -> ()
+
+                        coveredClaimIndex <- coveredClaimIndex + 1
                 | None ->
                     match firstError with
                     | Some validationError -> error <- Some validationError
@@ -757,7 +806,7 @@ module Storage =
                         error <-
                             Some(
                                 GraceError.Create
-                                    $"A claimed reuse range covering manifest block {block.Address} length {block.Size} is required before finalization."
+                                    $"A claimed reuse range set covering manifest block {block.Address} length {block.Size} is required before finalization."
                                     correlationId
                             )
 
@@ -868,6 +917,13 @@ module Storage =
             let payloads = ResizeArray<FinalizeManifestBlockPayload>()
             let metadata = ResizeArray<ContentBlockMetadata>()
             let manifestBlocks = manifestBlocksForPayloadHydration manifest
+
+            let confirmedBlockUploads =
+                if isNull requestContext.SessionForScope.ConfirmedBlockUploads then
+                    Array.empty
+                else
+                    requestContext.SessionForScope.ConfirmedBlockUploads
+
             let mutable error = None
             let mutable index = 0
 
@@ -875,14 +931,29 @@ module Storage =
                   && Option.isNone error do
                 let block = manifestBlocks[index]
 
-                match! loadAuthoritativeContentBlockMetadataForFinalize requestContext block.Address correlationId with
+                match! tryLoadAuthoritativeContentBlockMetadataForFinalize requestContext block.Address correlationId with
                 | Error metadataError -> error <- Some metadataError
-                | Ok authoritativeMetadata ->
+                | Ok (Some authoritativeMetadata) ->
                     metadata.Add authoritativeMetadata
 
                     match! readFinalizeBlockPayloadFromPlacement block.Address authoritativeMetadata.StoragePlacement correlationId with
                     | Ok payload -> payloads.Add payload
                     | Error payloadError -> error <- Some payloadError
+                | Ok None ->
+                    match confirmedBlockUploads
+                          |> Array.tryFind (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = block.Address)
+                        with
+                    | Some confirmedBlock ->
+                        match! readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId with
+                        | Ok payload -> payloads.Add payload
+                        | Error payloadError -> error <- Some payloadError
+                    | None ->
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"Authoritative ContentBlockMetadata is absent for finalized manifest block {block.Address}, and no confirmed upload placement remains in the upload session."
+                                    correlationId
+                            )
 
                 index <- index + 1
 

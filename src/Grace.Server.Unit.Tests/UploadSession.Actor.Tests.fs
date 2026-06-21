@@ -59,6 +59,13 @@ type UploadSessionActorTests() =
             Assert.Fail($"Expected test content block to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    let encodedBlockFromChunks chunks =
+        match ContentBlockFormat.encode chunks with
+        | Ok block -> block
+        | Error error ->
+            Assert.Fail($"Expected test content block to encode, got {error}.")
+            Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
     let intentAtWithLength operationId blockAddress payloadLength logicalOffset logicalLength : RegisterBlockUploadIntent =
         {
             OperationId = operationId
@@ -868,6 +875,170 @@ type UploadSessionActorTests() =
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| metadataRange |]))
             Assert.That(merge.IsFinalizeContribution, Is.True)
         | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
+
+    [<Test>]
+    member _.FinalizeManifestAcceptsClaimedReuseRangeCoverForMultiChunkBlock() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("first claimed chunk")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("second claimed chunk")
+        let fileBytes = Array.concat [ firstBytes; secondBytes ]
+
+        let block =
+            encodedBlockFromChunks [ ContentBlockFormat.createChunk 0L firstBytes
+                                     ContentBlockFormat.createChunk (int64 firstBytes.Length) secondBytes ]
+
+        let manifest = manifestFor fileBytes [| block |]
+
+        let firstRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = int64 firstBytes.Length }
+
+        let secondRange =
+            { OrdinalStart = 1; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = int64 firstBytes.Length; PhysicalLength = int64 secondBytes.Length }
+
+        let claimedRange (range: ContentBlockMetadataRange) : ClaimedReuseRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = range.OrdinalStart
+                OrdinalCount = range.OrdinalCount
+                PhysicalOffset = range.PhysicalOffset
+                PhysicalLength = range.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = timestamp.Plus(Duration.FromSeconds(int64 range.OrdinalStart))
+            }
+
+        let claimedRanges =
+            [|
+                claimedRange secondRange
+                claimedRange firstRange
+            |]
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = claimedRanges
+            }
+
+        let authoritativeMetadata = reuseMetadataFor block.Address 7L [| firstRange; secondRange |]
+
+        let decision =
+            UploadSessionActor.decideCommand
+                []
+                session
+                (finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| authoritativeMetadata |])
+                (metadata "corr-finalize-cover")
+
+        match decision with
+        | Ok decision ->
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+            Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+        | Error error -> Assert.Fail($"Expected multi-range claimed reuse cover to finalize, got {error.Error}.")
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| authoritativeMetadata |]
+
+        Assert.That(commands, Has.Length.EqualTo(1))
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(merge.Ranges, Has.Length.EqualTo(2))
+
+            Assert.That(
+                merge.Ranges
+                |> Array.map (fun range -> range.OrdinalStart),
+                Is.EquivalentTo([| 0; 1 |])
+            )
+
+            Assert.That(
+                merge.Ranges
+                |> Array.map (fun range -> range.ActiveManifestCount),
+                Is.All.EqualTo(1)
+            )
+
+            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| firstRange; secondRange |]))
+        | _ -> Assert.Fail("Expected multi-range claimed reuse finalization to create one MergePhysicalRanges command.")
+
+    [<Test>]
+    member _.FinalizeManifestRejectsGappedClaimedReuseRangeCoverForMultiChunkBlock() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("first claimed chunk")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("second claimed chunk")
+        let fileBytes = Array.concat [ firstBytes; secondBytes ]
+
+        let block =
+            encodedBlockFromChunks [ ContentBlockFormat.createChunk 0L firstBytes
+                                     ContentBlockFormat.createChunk (int64 firstBytes.Length) secondBytes ]
+
+        let manifest = manifestFor fileBytes [| block |]
+
+        let firstRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = int64 firstBytes.Length }
+
+        let gappedSecondRange =
+            {
+                OrdinalStart = 1
+                OrdinalCount = 1
+                ActiveManifestCount = 2
+                PhysicalOffset = int64 firstBytes.Length + 1L
+                PhysicalLength = int64 secondBytes.Length
+            }
+
+        let claimedRange (range: ContentBlockMetadataRange) : ClaimedReuseRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = range.OrdinalStart
+                OrdinalCount = range.OrdinalCount
+                PhysicalOffset = range.PhysicalOffset
+                PhysicalLength = range.PhysicalLength
+                MetadataVersion = 7L
+                ClaimedAt = timestamp.Plus(Duration.FromSeconds(int64 range.OrdinalStart))
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges =
+                    [|
+                        claimedRange firstRange
+                        claimedRange gappedSecondRange
+                    |]
+            }
+
+        let authoritativeMetadata = reuseMetadataFor block.Address 7L [| firstRange; gappedSecondRange |]
+
+        let decision =
+            UploadSessionActor.decideCommand
+                []
+                session
+                (finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| authoritativeMetadata |])
+                (metadata "corr-finalize-gap")
+
+        match decision with
+        | Ok _ -> Assert.Fail("Expected gapped claimed reuse cover to be rejected.")
+        | Error error -> Assert.That(error.Error, Does.Contain("was not uploaded or claimed by this UploadSession"))
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| authoritativeMetadata |]
+
+        Assert.That(commands, Is.Empty)
 
     [<Test>]
     member _.FinalizeManifestSkipsStaleClaimedMetadataWhenConfirmedUploadSatisfiesBlock() =

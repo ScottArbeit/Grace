@@ -513,6 +513,86 @@ type StorageContentBlockSdkContract() =
         )
 
     [<Test>]
+    member _.FinalizeClaimedReuseCoverAcceptsMultiRangeBlocksAndRejectsGapsOrOverlaps() =
+        let storagePoolId = StoragePoolId "pool-cover"
+        let contentBlockAddress = ContentBlockAddress "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
+        let claimedAt = NodaTime.Instant.FromUtc(2026, 6, 20, 12, 0)
+
+        let claimedRange ordinalStart physicalOffset physicalLength =
+            {
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                OrdinalStart = ordinalStart
+                OrdinalCount = 1
+                PhysicalOffset = physicalOffset
+                PhysicalLength = physicalLength
+                MetadataVersion = 11L
+                ClaimedAt = claimedAt.Plus(NodaTime.Duration.FromSeconds(int64 ordinalStart))
+            }
+
+        let first = claimedRange 0 0L 4L
+        let second = claimedRange 1 4L 6L
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock 10L [| second; first |],
+            Is.True,
+            "Fresh finalization must accept a set of claimed ranges that covers a multi-chunk manifest block."
+        )
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock
+                10L
+                [|
+                    first
+                    { second with PhysicalOffset = 5L }
+                |],
+            Is.False,
+            "Fresh finalization must reject claimed-range covers with a gap."
+        )
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock
+                10L
+                [|
+                    first
+                    { second with PhysicalOffset = 3L }
+                |],
+            Is.False,
+            "Fresh finalization must reject overlapping ranges that do not form a complete block cover."
+        )
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock
+                10L
+                [|
+                    first
+                    { second with PhysicalLength = 7L }
+                |],
+            Is.False,
+            "Fresh finalization must reject claimed ranges that run past the manifest block length."
+        )
+
+    [<Test>]
+    member _.FinalizeClaimedReuseFreshHydrationSelectsCoverWithoutWholeBlockLengthFilter() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let compactedSource = String.Join(" ", storageServerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedSource,
+            Does
+                .Contain("claimedRangesForManifestBlockNewestFirst requestContext.SessionForScope block.Address")
+                .And.Contain("trySelectClaimedRangeCover block.Size validatedClaims"),
+            "Fresh finalization must validate the set of claimed ranges that covers the block."
+        )
+
+        Assert.That(
+            compactedSource,
+            Does.Not.Contain("&& claimedRange.PhysicalLength = physicalLength"),
+            "Fresh finalization must not require a single claimed range to equal the whole manifest block length."
+        )
+
+    [<Test>]
     member _.FinalizeReplayHydratesRepairEvidenceFromCurrentManifestMetadataAfterSessionCleanup() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
@@ -537,10 +617,13 @@ type StorageContentBlockSdkContract() =
             compactedReplaySource,
             Does
                 .Contain("let manifestBlocks = manifestBlocksForPayloadHydration manifest")
-                .And.Contain("loadAuthoritativeContentBlockMetadataForFinalize requestContext block.Address correlationId")
+                .And.Contain("tryLoadAuthoritativeContentBlockMetadataForFinalize requestContext block.Address correlationId")
                 .And.Contain("readFinalizeBlockPayloadFromPlacement block.Address authoritativeMetadata.StoragePlacement correlationId")
+                .And.Contain("confirmedBlockUploads |> Array.tryFind")
+                .And.Contain("readFinalizeBlockPayloadFromPlacement confirmedBlock.ContentBlockAddress confirmedBlock.StoragePlacement correlationId")
+                .And.Contain("no confirmed upload placement remains in the upload session")
                 .And.Contain("ClaimedMetadata = metadata.ToArray()"),
-            "Finalize replay repair must hydrate block payloads and metadata from the durable manifest plus current ContentBlockMetadata actors."
+            "Finalize replay repair must prefer current metadata, fall back to retained confirmed upload placement, and fail closed after cleanup."
         )
 
         Assert.That(
@@ -548,9 +631,8 @@ type StorageContentBlockSdkContract() =
             Does
                 .Not
                 .Contain("manifestBlocksRequiringClaimedMetadata")
-                .And.Not.Contain("ClaimedReuseRanges")
-                .And.Not.Contain("ConfirmedBlockUploads"),
-            "Cleanup removes transient upload-session arrays, so replay repair cannot depend on them."
+                .And.Not.Contain("ClaimedReuseRanges"),
+            "Cleanup removes transient claimed-reuse arrays, so replay repair cannot depend on them."
         )
 
     [<Test>]
