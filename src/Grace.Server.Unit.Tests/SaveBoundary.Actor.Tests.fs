@@ -9,6 +9,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 open System.Text
 open System.Threading.Tasks
 
@@ -1134,3 +1135,50 @@ type SaveBoundaryActorTests() =
 
             Assert.That(fetchCalled, Is.False)
         }
+
+    [<Test>]
+    member _.RecursiveDirectoryTraversalCompletenessRejectsMissingDeclaredChildBeforeCacheWrite() =
+        let rootDirectory =
+            DirectoryVersion.CreateWithHashes
+                directoryVersionId
+                ownerId
+                organizationId
+                repositoryId
+                (RelativePath ".")
+                (Sha256Hash "root-sha256")
+                (Blake3Hash "root-blake3")
+                (List<DirectoryVersionId>([ childDirectoryVersionId ]))
+                (List<FileVersion>())
+                0L
+
+        let rootDto = { Grace.Types.DirectoryVersion.DirectoryVersionDto.Default with DirectoryVersion = rootDirectory }
+
+        match DirectoryVersionActor.validateRecursiveDirectoryVersionsComplete directoryVersionId [ rootDto ] "corr-cache-poison-missing-child" with
+        | Ok _ -> Assert.Fail("Expected incomplete recursive traversal to be rejected before cache write.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("declared child DirectoryVersion"))
+            Assert.That(error.Properties["ParentDirectoryVersionId"], Is.EqualTo(string directoryVersionId))
+            Assert.That(error.Properties["ChildDirectoryVersionId"], Is.EqualTo(string childDirectoryVersionId))
+
+    [<Test>]
+    member _.RecursiveDirectoryVersionsCachesOnlyCompleteTraversalResults() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "DirectoryVersion.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+
+        let traversalListStart = actorSource.IndexOf("let subdirectoryVersionsList =", StringComparison.Ordinal)
+
+        Assert.That(traversalListStart, Is.GreaterThanOrEqualTo(0), "Expected recursive traversal list assembly to exist.")
+
+        let validationStart = actorSource.IndexOf("match validateRecursiveDirectoryVersionsComplete", traversalListStart, StringComparison.Ordinal)
+
+        Assert.That(validationStart, Is.GreaterThan(traversalListStart), "Expected cache writes to be gated by traversal completeness.")
+
+        let cacheWriteStart = actorSource.IndexOf("OpenWriteAsync", validationStart, StringComparison.Ordinal)
+
+        Assert.That(cacheWriteStart, Is.GreaterThan(validationStart), "Expected recursive cache write to remain present.")
+
+        let guardedSlice = actorSource.Substring(validationStart, cacheWriteStart - validationStart)
+
+        Assert.That(guardedSlice, Does.Contain("| Error graceError ->"))
+        Assert.That(guardedSlice, Does.Contain("Skipping recursive directory version cache write"))
+        Assert.That(guardedSlice, Does.Contain("| Ok completeSubdirectoryVersionsList ->"))
