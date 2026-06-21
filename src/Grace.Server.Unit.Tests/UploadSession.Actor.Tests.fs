@@ -1838,6 +1838,77 @@ type UploadSessionActorTests() =
         | _ -> Assert.Fail("Expected uploaded block finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     [<Test>]
+    member _.FinalizeUploadedMergeRebaseDoesNotReactivateHistoricalDuplicateRanges() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("uploaded duplicate authoritative metadata")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let confirmedRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                ConfirmedBlockUploads =
+                    [|
+                        {
+                            ContentBlockAddress = block.Address
+                            PayloadLength = block.Payload.LongLength
+                            StoragePlacement = placementFor block.Address (Some "etag-confirmed")
+                            Ranges = [| confirmedRange |]
+                            ConfirmedAt = timestamp
+                        }
+                    |]
+            }
+
+        let commands = UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads sessionStoragePoolId "op-finalize" session manifest
+
+        let uploadedMerge =
+            match commands[0] with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge
+            | _ ->
+                Assert.Fail("Expected uploaded block finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
+                Unchecked.defaultof<MergeContentBlockPhysicalRanges>
+
+        let activeCurrentRange = { confirmedRange with ActiveManifestCount = 2; PhysicalOffset = 8192L }
+
+        let inactiveHistoricalDuplicate = { confirmedRange with ActiveManifestCount = 0; PhysicalOffset = 16384L }
+
+        let authoritativeMetadata =
+            { reuseMetadataFor
+                  block.Address
+                  8L
+                  [|
+                      activeCurrentRange
+                      inactiveHistoricalDuplicate
+                  |] with
+                StoragePlacement = placementFor block.Address (Some "etag-current")
+                ActivePhysicalBytes = activeCurrentRange.PhysicalLength
+                TotalPhysicalBytes =
+                    activeCurrentRange.PhysicalLength
+                    + inactiveHistoricalDuplicate.PhysicalLength
+            }
+
+        let rebasedMerge = UploadSessionActor.rebaseUploadedMergeOnCurrentMetadata (Some authoritativeMetadata) uploadedMerge
+
+        Assert.That(rebasedMerge.StoragePlacement.ETag, Is.EqualTo(authoritativeMetadata.StoragePlacement.ETag))
+        Assert.That(rebasedMerge.Ranges, Has.Length.EqualTo(1))
+        Assert.That(rebasedMerge.Ranges[0].OrdinalStart, Is.EqualTo(activeCurrentRange.OrdinalStart))
+        Assert.That(rebasedMerge.Ranges[0].OrdinalCount, Is.EqualTo(activeCurrentRange.OrdinalCount))
+        Assert.That(rebasedMerge.Ranges[0].PhysicalOffset, Is.EqualTo(activeCurrentRange.PhysicalOffset))
+        Assert.That(rebasedMerge.Ranges[0].PhysicalLength, Is.EqualTo(activeCurrentRange.PhysicalLength))
+        Assert.That(rebasedMerge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+
+        Assert.That(
+            rebasedMerge.Ranges
+            |> Array.exists (fun range -> range.PhysicalOffset = inactiveHistoricalDuplicate.PhysicalOffset),
+            Is.False
+        )
+
+        Assert.That(rebasedMerge.ExpectedRanges, Is.Empty)
+        Assert.That(rebasedMerge.IsFinalizeContribution, Is.True)
+
+    [<Test>]
     member _.RevalidatedClaimedMetadataMergeRejectsRemovedRangeBeforeSideEffect() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("reuse range bytes")
         let block = encodedBlock fileBytes

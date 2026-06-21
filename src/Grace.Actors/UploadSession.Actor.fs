@@ -720,16 +720,45 @@ module UploadSession =
             ExpectedRanges = if isNull merge.ExpectedRanges then Array.empty else merge.ExpectedRanges
         }
 
-    let private rebaseUploadedMergeOnCurrentMetadata (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
+    let private trySelectActiveCurrentRangesForUploadedMerge (authoritativeMetadata: ContentBlockMetadata) (uploadedRanges: ContentBlockMetadataRange array) =
+        if isNull uploadedRanges || uploadedRanges.Length = 0 then
+            None
+        else
+            let selectedRanges = ResizeArray<ContentBlockMetadataRange>()
+            let mutable index = 0
+            let mutable allRangesFound = true
+
+            while allRangesFound && index < uploadedRanges.Length do
+                let uploadedRange = uploadedRanges[index]
+                let query = { OrdinalStart = uploadedRange.OrdinalStart; OrdinalCount = uploadedRange.OrdinalCount }
+
+                match Grace.Types.ContentBlockMetadata.findRanges authoritativeMetadata query
+                      |> Array.filter (fun range ->
+                          range.ActiveManifestCount > 0
+                          && range.PhysicalLength = uploadedRange.PhysicalLength)
+                      |> Array.sortBy (fun range -> range.PhysicalOffset, range.PhysicalLength)
+                      |> Array.tryHead
+                    with
+                | Some activeRange -> selectedRanges.Add activeRange
+                | None -> allRangesFound <- false
+
+                index <- index + 1
+
+            if allRangesFound then Some(selectedRanges.ToArray()) else None
+
+    let internal rebaseUploadedMergeOnCurrentMetadata (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
         match currentMetadata with
         | None -> merge
         | Some authoritativeMetadata ->
-            { merge with
-                BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
-                StoragePlacement = authoritativeMetadata.StoragePlacement
-                Ranges = activeRangesForFinalizedManifest authoritativeMetadata.Ranges
-                ExpectedRanges = Array.empty
-            }
+            match trySelectActiveCurrentRangesForUploadedMerge authoritativeMetadata merge.Ranges with
+            | None -> merge
+            | Some activeCurrentRanges ->
+                { merge with
+                    BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
+                    StoragePlacement = authoritativeMetadata.StoragePlacement
+                    Ranges = activeRangesForFinalizedManifest activeCurrentRanges
+                    ExpectedRanges = Array.empty
+                }
 
     let tryCreateContentBlockMetadataMergeCommandsForFinalizedBlocks
         correlationId
