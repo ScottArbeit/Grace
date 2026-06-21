@@ -123,6 +123,17 @@ module ManifestContributionWorkflow =
         else
             None
 
+    let private validateStartRange correlationId storagePoolId range =
+        match validateRange correlationId range with
+        | Some error -> Some error
+        | None when range.StoragePoolId <> storagePoolId ->
+            Some(
+                graceError
+                    correlationId
+                    $"ManifestContributionWorkflow range StoragePoolId must match workflow StoragePoolId. Expected {storagePoolId}, actual {range.StoragePoolId}."
+            )
+        | None -> None
+
     let private hasDuplicateRanges (ranges: ManifestContributionWorkflowRange array) =
         let seen = HashSet<ManifestContributionWorkflowRange>()
 
@@ -153,7 +164,7 @@ module ManifestContributionWorkflow =
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow ranges must be unique.")
         else
             start.Ranges
-            |> Array.tryPick (validateRange metadata.CorrelationId)
+            |> Array.tryPick (validateStartRange metadata.CorrelationId start.StoragePoolId)
 
     let private validateProgressTarget
         expectedPrimaryKey

@@ -103,6 +103,22 @@ type ManifestContributionWorkflowActorTests() =
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow ranges must be unique."))
 
     [<Test>]
+    member _.StartRejectsRangesFromDifferentStoragePool() =
+        let foreignRange = { range1 with StoragePoolId = otherStoragePoolId }
+        let crossPoolStart = startWithRanges ManifestContributionDirection.Increment [| range0; foreignRange |]
+
+        let result =
+            ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default crossPoolStart (metadata "corr-cross-pool-range")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected workflow start with a foreign storage-pool range to reject.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Is.EqualTo("ManifestContributionWorkflow range StoragePoolId must match workflow StoragePoolId. Expected pool-main, actual pool-archive.")
+            )
+
+    [<Test>]
     member _.ReusedStartOperationIdWithDifferentPayloadRejectsInsteadOfReplaying() =
         let started =
             ManifestContributionWorkflowActor.decideCommand

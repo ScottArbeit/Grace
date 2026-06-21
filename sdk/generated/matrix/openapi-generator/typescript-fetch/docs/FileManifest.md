@@ -11,6 +11,7 @@ Name | Type
 `manifestAddress` | string
 `chunkingSuiteId` | string
 `fileContentHash` | string
+`storagePoolId` | string
 `size` | number
 `blocks` | [Array&lt;ContentBlock&gt;](ContentBlock.md)
 
@@ -25,6 +26,7 @@ const example = {
   "manifestAddress": null,
   "chunkingSuiteId": rabin-v1,
   "fileContentHash": null,
+  "storagePoolId": null,
   "size": null,
   "blocks": null,
 } satisfies FileManifest

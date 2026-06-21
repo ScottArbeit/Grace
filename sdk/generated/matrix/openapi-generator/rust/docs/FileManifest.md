@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 **manifest_address** | **String** | Lowercase 64-character BLAKE3-derived FileManifest address. | 
 **chunking_suite_id** | **String** | Versioned chunking suite identifier. | 
 **file_content_hash** | **String** | Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes. | 
+**storage_pool_id** | **String** | StoragePool-wide CAS scope identifier. | 
 **size** | **i64** |  | 
 **blocks** | [**Vec<models::ContentBlock>**](ContentBlock.md) |  | 
 

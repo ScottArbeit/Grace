@@ -52,7 +52,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 143887."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 143969."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -153,15 +153,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "429e288ee96a161e6520b706324573935e9ceb309ca17b85314c36bd9b796d12"
+      "manifestSha256": "15f427bb8ff30d232959a31ceaba11fc235d4c772cf8cb84ba1b07e6ff1748d6"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "936d1a22bb528fff28e30c68afd423164808567d2fd0726b8561a07815b9d3cf"
+      "manifestSha256": "f68f5efee52b4f02ff6dfaf14c97980544b6459883fdd456aa20d50d28399f7f"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "17283133de8a6bd41fdef844124fab4e3b398127e146156947075d9c5a68612a"
+      "manifestSha256": "910a3f89af348f2b87640aa2cc2b23be5afe4680eba4ae72ccd9d71cb42a94ed"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",
