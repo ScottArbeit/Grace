@@ -317,10 +317,25 @@ module DoctorCliTests =
         else
             None
 
+    let private isVolatileLocalStateSidecarSnapshotPath (relativePath: string) =
+        let localStateDbRelativePath = Path.Combine(Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+        [| "-shm"; "-wal"; "-journal" |]
+        |> Array.exists (fun suffix -> relativePath.Equals(localStateDbRelativePath + suffix, StringComparison.OrdinalIgnoreCase))
+
+    let private snapshotLastWriteTime relativePath lastWriteTimeUtc =
+        if isVolatileLocalStateSidecarSnapshotPath relativePath then
+            DateTime.UnixEpoch
+        else
+            lastWriteTimeUtc
+
     let private snapshotFiles root =
         if Directory.Exists(root) then
             Directory.GetFiles(root, "*", SearchOption.AllDirectories)
-            |> Array.map (fun path -> Path.GetRelativePath(root, path), File.GetLastWriteTimeUtc(path), FileInfo(path).Length)
+            |> Array.map (fun path ->
+                let relativePath = Path.GetRelativePath(root, path)
+                let lastWriteTimeUtc = snapshotLastWriteTime relativePath (File.GetLastWriteTimeUtc(path))
+                relativePath, lastWriteTimeUtc, FileInfo(path).Length)
             |> Array.sortBy (fun (relativePath, _, _) -> relativePath)
         else
             Array.empty
