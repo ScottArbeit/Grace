@@ -222,6 +222,23 @@ module Reference =
             | _ -> return referenceEvent, false
         }
 
+    let internal createCommandMatchesReference (referenceDto: ReferenceDto) command =
+        match command with
+        | Create (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, blake3Hash, referenceType, referenceText, links) ->
+            referenceDto.UpdatedAt.IsSome
+            && referenceDto.ReferenceId = referenceId
+            && referenceDto.OwnerId = ownerId
+            && referenceDto.OrganizationId = organizationId
+            && referenceDto.RepositoryId = repositoryId
+            && referenceDto.BranchId = branchId
+            && referenceDto.DirectoryId = directoryId
+            && referenceDto.Sha256Hash = sha256Hash
+            && referenceDto.Blake3Hash = blake3Hash
+            && referenceDto.ReferenceType = referenceType
+            && referenceDto.ReferenceText = referenceText
+            && (referenceDto.Links |> Seq.toArray) = (links |> Seq.toArray)
+        | _ -> false
+
     let tryCreateManifestContributionStart plan intent =
         match intent with
         | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
@@ -640,7 +657,10 @@ module Reference =
                 let isValid (command: ReferenceCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
+                            if createCommandMatchesReference referenceDto command then
+                                return Ok command
+                            else
+                                return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | Create (referenceId,
@@ -655,6 +675,7 @@ module Reference =
                                       referenceText,
                                       links) ->
                                 match referenceDto.UpdatedAt with
+                                | Some _ when createCommandMatchesReference referenceDto command -> return Ok command
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage ReferenceError.ReferenceAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
@@ -695,6 +716,32 @@ module Reference =
                                 | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
 
+                    let existingReferenceReturnValue () =
+                        (GraceReturnValue.Create referenceDto metadata.CorrelationId)
+                            .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                            .enhance(nameof BranchId, referenceDto.BranchId)
+                            .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                            .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                            .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                            .enhance (
+                                nameof ReferenceEventType,
+                                getDiscriminatedUnionFullName (
+                                    Created(
+                                        referenceDto.ReferenceId,
+                                        referenceDto.OwnerId,
+                                        referenceDto.OrganizationId,
+                                        referenceDto.RepositoryId,
+                                        referenceDto.BranchId,
+                                        referenceDto.DirectoryId,
+                                        referenceDto.Sha256Hash,
+                                        referenceDto.Blake3Hash,
+                                        referenceDto.ReferenceType,
+                                        referenceDto.ReferenceText,
+                                        referenceDto.Links
+                                    )
+                                )
+                            )
+
                     let validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash =
                         task {
                             let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
@@ -711,114 +758,122 @@ module Reference =
                         }
 
                     task {
-                        let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
-                            task {
-                                match command with
-                                | Create (referenceId,
-                                          ownerId,
-                                          organizationId,
-                                          repositoryId,
-                                          branchId,
-                                          directoryId,
-                                          sha256Hash,
-                                          blake3Hash,
-                                          referenceType,
-                                          referenceText,
-                                          links) ->
-                                    match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
-                                    | Ok () ->
-                                        return
-                                            Ok(
-                                                Created(
-                                                    referenceId,
-                                                    ownerId,
-                                                    organizationId,
-                                                    repositoryId,
-                                                    branchId,
-                                                    directoryId,
-                                                    sha256Hash,
-                                                    blake3Hash,
-                                                    referenceType,
-                                                    referenceText,
-                                                    links
+                        match command with
+                        | Create (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) when
+                            createCommandMatchesReference referenceDto command
+                            ->
+                            match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
+                            | Ok () -> return Ok(existingReferenceReturnValue ())
+                            | Error graceError -> return Error graceError
+                        | _ ->
+                            let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
+                                task {
+                                    match command with
+                                    | Create (referenceId,
+                                              ownerId,
+                                              organizationId,
+                                              repositoryId,
+                                              branchId,
+                                              directoryId,
+                                              sha256Hash,
+                                              blake3Hash,
+                                              referenceType,
+                                              referenceText,
+                                              links) ->
+                                        match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
+                                        | Ok () ->
+                                            return
+                                                Ok(
+                                                    Created(
+                                                        referenceId,
+                                                        ownerId,
+                                                        organizationId,
+                                                        repositoryId,
+                                                        branchId,
+                                                        directoryId,
+                                                        sha256Hash,
+                                                        blake3Hash,
+                                                        referenceType,
+                                                        referenceText,
+                                                        links
+                                                    )
                                                 )
-                                            )
-                                    | Error graceError -> return Error graceError
-                                | AddLink link -> return Ok(LinkAdded link)
-                                | RemoveLink link -> return Ok(LinkRemoved link)
-                                | DeleteLogical (force, deleteReason) ->
-                                    let tryGetLogicalDeleteDaysFromMetadata () =
-                                        match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
-                                        | true, value ->
-                                            let mutable parsed = 0.0f
+                                        | Error graceError -> return Error graceError
+                                    | AddLink link -> return Ok(LinkAdded link)
+                                    | RemoveLink link -> return Ok(LinkRemoved link)
+                                    | DeleteLogical (force, deleteReason) ->
+                                        let tryGetLogicalDeleteDaysFromMetadata () =
+                                            match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
+                                            | true, value ->
+                                                let mutable parsed = 0.0f
 
-                                            if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
-                                                Some parsed
-                                            else
-                                                None
-                                        | _ -> None
+                                                if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
+                                                    Some parsed
+                                                else
+                                                    None
+                                            | _ -> None
 
-                                    let! logicalDeleteDays =
-                                        match tryGetLogicalDeleteDaysFromMetadata () with
-                                        | Some days -> Task.FromResult days
-                                        | None ->
-                                            task {
-                                                let repositoryActorProxy =
-                                                    Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId this.correlationId
+                                        let! logicalDeleteDays =
+                                            match tryGetLogicalDeleteDaysFromMetadata () with
+                                            | Some days -> Task.FromResult days
+                                            | None ->
+                                                task {
+                                                    let repositoryActorProxy =
+                                                        Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId this.correlationId
 
-                                                let! repositoryDto = repositoryActorProxy.Get this.correlationId
-                                                return repositoryDto.LogicalDeleteDays
+                                                    let! repositoryDto = repositoryActorProxy.Get this.correlationId
+                                                    return repositoryDto.LogicalDeleteDays
+                                                }
+
+                                        let reminderState: PhysicalDeletionReminderState =
+                                            {
+                                                RepositoryId = referenceDto.RepositoryId
+                                                BranchId = referenceDto.BranchId
+                                                DirectoryVersionId = referenceDto.DirectoryId
+                                                Sha256Hash = referenceDto.Sha256Hash
+                                                Blake3Hash = referenceDto.Blake3Hash
+                                                DeleteReason = deleteReason
+                                                CorrelationId = metadata.CorrelationId
                                             }
 
-                                    let reminderState: PhysicalDeletionReminderState =
-                                        {
-                                            RepositoryId = referenceDto.RepositoryId
-                                            BranchId = referenceDto.BranchId
-                                            DirectoryVersionId = referenceDto.DirectoryId
-                                            Sha256Hash = referenceDto.Sha256Hash
-                                            Blake3Hash = referenceDto.Blake3Hash
-                                            DeleteReason = deleteReason
-                                            CorrelationId = metadata.CorrelationId
-                                        }
+                                        do!
+                                            (this :> IGraceReminderWithGuidKey)
+                                                .ScheduleReminderAsync
+                                                ReminderTypes.PhysicalDeletion
+                                                (Duration.FromDays(float logicalDeleteDays))
+                                                (ReminderState.ReferencePhysicalDeletion reminderState)
+                                                metadata.CorrelationId
 
-                                    do!
-                                        (this :> IGraceReminderWithGuidKey)
-                                            .ScheduleReminderAsync
-                                            ReminderTypes.PhysicalDeletion
-                                            (Duration.FromDays(float logicalDeleteDays))
-                                            (ReminderState.ReferencePhysicalDeletion reminderState)
-                                            metadata.CorrelationId
+                                        return Ok(LogicalDeleted(force, deleteReason))
+                                    | DeletePhysical ->
+                                        match!
+                                            applyReferenceManifestExpiryBoundary
+                                                referenceDto.ReferenceId
+                                                referenceDto.RepositoryId
+                                                referenceDto.DirectoryId
+                                                referenceDto.ReferenceType
+                                            with
+                                        | Ok () ->
+                                            // Delete the actor state and mark the actor as deactivated.
+                                            do! state.ClearStateAsync()
+                                            this.DeactivateOnIdle()
+                                            return Ok PhysicalDeleted
+                                        | Error graceError -> return Error graceError
+                                    | Undelete -> return Ok Undeleted
+                                }
 
-                                    return Ok(LogicalDeleted(force, deleteReason))
-                                | DeletePhysical ->
-                                    match!
-                                        applyReferenceManifestExpiryBoundary
-                                            referenceDto.ReferenceId
-                                            referenceDto.RepositoryId
-                                            referenceDto.DirectoryId
-                                            referenceDto.ReferenceType
-                                        with
-                                    | Ok () ->
-                                        // Delete the actor state and mark the actor as deactivated.
-                                        do! state.ClearStateAsync()
-                                        this.DeactivateOnIdle()
-                                        return Ok PhysicalDeleted
+                            match referenceEventTypeResult with
+                            | Ok referenceEventType ->
+                                let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
+                                let! returnValue = this.ApplyEvent referenceEvent
+
+                                match returnValue, referenceEventType with
+                                | Ok graceReturnValue, Created (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) ->
+                                    match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
+                                    | Ok () -> return Ok graceReturnValue
                                     | Error graceError -> return Error graceError
-                                | Undelete -> return Ok Undeleted
-                            }
-
-                        match referenceEventTypeResult with
-                        | Ok referenceEventType ->
-                            let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
-                            let! returnValue = this.ApplyEvent referenceEvent
-
-                            match returnValue, referenceEventType with
-                            | Ok graceReturnValue, Created (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) ->
-                                match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
-                                | Ok () -> return Ok graceReturnValue
-                                | Error graceError -> return Error graceError
-                            | _ -> return returnValue
-                        | Error graceError -> return Error graceError
+                                | _ -> return returnValue
+                            | Error graceError -> return Error graceError
                     }
 
                 task {
