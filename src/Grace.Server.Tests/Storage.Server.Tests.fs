@@ -48,20 +48,30 @@ module private StoragePlacementTestHelpers =
             || IPAddress.TryParse(blobUriWithSasToken.Host)
                |> fst
 
+        let accountFragment = fragmentParameter "graceStorageAccount" blobUriWithSasToken
+
         let accountName =
-            if isPathStyleAzurite && pathSegments.Length >= 3 then
-                pathSegments[0]
-            else if (fragmentParameter "graceStorageAccount" blobUriWithSasToken)
-                .IsSome then
-                (fragmentParameter "graceStorageAccount" blobUriWithSasToken)
-                    .Value
-            else
+            match accountFragment with
+            | Some accountName -> accountName
+            | None when isPathStyleAzurite && pathSegments.Length >= 3 -> pathSegments[0]
+            | None ->
                 let host = blobUriWithSasToken.Host
                 let firstDot = host.IndexOf('.')
 
                 if firstDot > 0 then host.Substring(0, firstDot) else host
 
-        let containerIndex = if isPathStyleAzurite then 1 else 0
+        let containerIndex =
+            match accountFragment with
+            | Some accountName when
+                isPathStyleAzurite
+                && pathSegments.Length >= 3
+                && pathSegments[0]
+                    .Equals(accountName, StringComparison.OrdinalIgnoreCase)
+                ->
+                1
+            | Some _ -> 0
+            | None when isPathStyleAzurite -> 1
+            | None -> 0
 
         {
             StorageAccountName = accountName
@@ -396,6 +406,35 @@ type StorageContentBlockSasRoutes() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
             Assert.That(body, Does.Contain(expected))
         }
+
+    [<Test>]
+    member _.ContentBlockPlacementParserUsesShardFragmentForIpHostCustomEndpoint() =
+        let contentBlockAddress = ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+
+        let objectKey = StorageKeys.contentBlockObjectKey contentBlockAddress
+        let uri = Uri($"http://127.0.0.1:10000/grace-cas/{objectKey}?sv=test#graceStorageAccount=cas-shard-a")
+
+        let placement = StoragePlacementTestHelpers.contentBlockPlacementFromUri uri (Some "etag-ip-shard")
+
+        Assert.That(placement.StorageAccountName, Is.EqualTo("cas-shard-a"))
+        Assert.That(placement.StorageAccountName, Is.Not.EqualTo("grace-cas"))
+        Assert.That(placement.StorageContainerName, Is.EqualTo(StorageContainerName "grace-cas"))
+        Assert.That(placement.StorageContainerName, Is.Not.EqualTo(StorageContainerName "cas"))
+        Assert.That(placement.ObjectKey, Is.EqualTo(objectKey))
+        Assert.That(placement.ETag, Is.EqualTo(Some "etag-ip-shard"))
+
+    [<Test>]
+    member _.ContentBlockPlacementParserKeepsAzuritePathStyleWhenFragmentNamesSameAccount() =
+        let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+        let objectKey = StorageKeys.contentBlockObjectKey contentBlockAddress
+        let uri = Uri($"http://127.0.0.1:10000/devstoreaccount1/grace-cas/{objectKey}?sv=test#graceStorageAccount=devstoreaccount1")
+
+        let placement = StoragePlacementTestHelpers.contentBlockPlacementFromUri uri None
+
+        Assert.That(placement.StorageAccountName, Is.EqualTo("devstoreaccount1"))
+        Assert.That(placement.StorageContainerName, Is.EqualTo(StorageContainerName "grace-cas"))
+        Assert.That(placement.ObjectKey, Is.EqualTo(objectKey))
 
     [<Test>]
     member _.ContentBlockUploadUriRequiresPathWriteAndFailsClosedWithoutUploadSessionIntent() =
@@ -1188,6 +1227,17 @@ type StorageManifestUploadSessionRoutes() =
                 confirmResult.ReturnValue.Session.ConfirmedBlockUploads[0]
                     .StoragePlacement
 
+            Assert.That(confirmedPlacement.ObjectKey, Is.EqualTo(StorageKeys.contentBlockObjectKey block.Address))
+            Assert.That(confirmedPlacement.ObjectKey, Does.Not.Contain("cas/content-blocks"))
+            Assert.That(confirmedPlacement.ObjectKey, Does.Not.Contain("staging/repositories"))
+            Assert.That(confirmedPlacement.ObjectKey, Does.Not.Contain(repositoryId.ToString()))
+            Assert.That(confirmedPlacement.ObjectKey, Does.Not.Contain(sessionId.ToString("N")))
+            Assert.That(confirmedPlacement.ObjectKey, Does.Not.Contain(exactUploadScope sessionId))
+            Assert.That(confirmedPlacement.ObjectKey, Does.Not.Contain("ContentBlockAddress"))
+            Assert.That(confirmedPlacement.ObjectKey, Does.Not.Contain("content-block-"))
+            Assert.That(confirmedPlacement.StorageContainerName, Is.EqualTo(StorageContainerName Constants.DefaultCasStorageContainerName))
+            Assert.That(confirmedPlacement.StorageContainerName, Is.Not.EqualTo(StorageContainerName $"{repositoryId}"))
+
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
             finalize.UploadSessionId <- sessionId
@@ -1217,6 +1267,14 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(downloadPlacement.ObjectKey, Is.EqualTo(confirmedPlacement.ObjectKey))
             Assert.That(downloadPlacement.StorageAccountName, Is.EqualTo(confirmedPlacement.StorageAccountName))
             Assert.That(downloadPlacement.StorageContainerName, Is.EqualTo(confirmedPlacement.StorageContainerName))
+            Assert.That(downloadPlacement.ObjectKey, Is.EqualTo(StorageKeys.contentBlockObjectKey block.Address))
+            Assert.That(downloadPlacement.ObjectKey, Does.Not.Contain("cas/content-blocks"))
+            Assert.That(downloadPlacement.ObjectKey, Does.Not.Contain("staging/repositories"))
+            Assert.That(downloadPlacement.ObjectKey, Does.Not.Contain(repositoryId.ToString()))
+            Assert.That(downloadPlacement.ObjectKey, Does.Not.Contain(sessionId.ToString("N")))
+            Assert.That(downloadPlacement.ObjectKey, Does.Not.Contain(exactUploadScope sessionId))
+            Assert.That(downloadPlacement.ObjectKey, Does.Not.Contain("ContentBlockAddress"))
+            Assert.That(downloadPlacement.ObjectKey, Does.Not.Contain("content-block-"))
 
             Assert.That(Convert.ToHexString(downloadedPayload), Is.EqualTo(Convert.ToHexString(block.Payload)))
 
