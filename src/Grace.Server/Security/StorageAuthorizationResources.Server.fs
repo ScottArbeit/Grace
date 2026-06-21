@@ -31,14 +31,14 @@ module internal StorageAuthorizationResources =
 
         pathResource ownerId organizationId repositoryId path
 
-    let contentBlockDownloadResource ownerId organizationId repositoryId (parameters: Storage.GetContentBlockDownloadUriParameters) =
-        let path =
-            if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
-                StorageKeys.contentBlockObjectKey parameters.ContentBlockAddress
-            else
-                parameters.AuthorizedScope
+    let private contentBlockDownloadResource ownerId organizationId repositoryId (parameters: Storage.GetContentBlockDownloadUriParameters) =
+        pathResource ownerId organizationId repositoryId parameters.AuthorizedScope
 
-        pathResource ownerId organizationId repositoryId path
+    let tryContentBlockDownloadResource correlationId ownerId organizationId repositoryId (parameters: Storage.GetContentBlockDownloadUriParameters) =
+        if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
+            Error(GraceError.Create "AuthorizedScope is required for ContentBlock manifest download authorization." correlationId)
+        else
+            Ok(contentBlockDownloadResource ownerId organizationId repositoryId parameters)
 
     let uploadSessionResource ownerId organizationId repositoryId (parameters: Storage.UploadSessionStorageParameters) =
         pathResource ownerId organizationId repositoryId parameters.AuthorizedScope

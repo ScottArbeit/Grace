@@ -28,6 +28,17 @@ type StorageAuthorizationResourcesTests() =
             Assert.That(actualPath, Is.EqualTo(expectedPath))
         | other -> Assert.Fail($"Expected Resource.Path but received {other}.")
 
+    let assertMissingDownloadScope (authorizedScope: RelativePath) =
+        let parameters = Storage.GetContentBlockDownloadUriParameters()
+        parameters.ContentBlockAddress <- "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        parameters.AuthorizedScope <- authorizedScope
+
+        let result = StorageAuthorizationResources.tryContentBlockDownloadResource "unit-test-correlation" ownerId organizationId repositoryId parameters
+
+        match result with
+        | Error error -> Assert.That(error.Error, Is.EqualTo("AuthorizedScope is required for ContentBlock manifest download authorization."))
+        | Ok resource -> Assert.Fail($"Expected missing AuthorizedScope to be rejected but received {resource}.")
+
     [<Test>]
     member _.UploadMetadataFileVersionsMapToPathResources() =
         let parameters = Storage.GetUploadMetadataForFilesParameters()
@@ -90,13 +101,22 @@ type StorageAuthorizationResourcesTests() =
         assertPathResource (StorageKeys.contentBlockObjectKey "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") resource
 
     [<Test>]
-    member _.ContentBlockDownloadUsesContentBlockObjectKey() =
+    member _.ContentBlockDownloadUsesExplicitAuthorizedScope() =
         let parameters = Storage.GetContentBlockDownloadUriParameters()
         parameters.ContentBlockAddress <- "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        parameters.AuthorizedScope <- "manifest/download.bin"
 
-        let resource = StorageAuthorizationResources.contentBlockDownloadResource ownerId organizationId repositoryId parameters
+        let result = StorageAuthorizationResources.tryContentBlockDownloadResource "unit-test-correlation" ownerId organizationId repositoryId parameters
 
-        assertPathResource (StorageKeys.contentBlockObjectKey "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") resource
+        match result with
+        | Ok resource -> assertPathResource "manifest/download.bin" resource
+        | Error error -> Assert.Fail($"Expected explicit AuthorizedScope to create a path resource but received {error.Error}.")
+
+    [<Test>]
+    member _.ContentBlockDownloadRejectsMissingAuthorizedScopeBeforePathResourceCreation() =
+        assertMissingDownloadScope null
+        assertMissingDownloadScope String.Empty
+        assertMissingDownloadScope "   "
 
     [<Test>]
     member _.UploadSessionStorageUsesAuthorizedScope() =
