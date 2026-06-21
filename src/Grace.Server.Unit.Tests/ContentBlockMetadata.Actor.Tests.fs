@@ -829,6 +829,66 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected duplicate contribution merge to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.MergePhysicalRangesPreservesExistingActiveCountForSingleNonFinalizeRange() =
+        let existingActive = { activeRange with ActiveManifestCount = 1 }
+        let currentMetadata = recordWithTotals [| existingActive |] existingActive.PhysicalLength existingActive.PhysicalLength timestamp 7L
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let repairEvidence = { existingActive with ActiveManifestCount = 1 }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (merge "op-repair-single-existing-active" [| repairEvidence |])
+                (metadata "corr-repair-single-existing-active")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges, Has.Length.EqualTo(1))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(decision.Metadata.ActivePhysicalBytes, Is.EqualTo(existingActive.PhysicalLength))
+        | Error error -> Assert.Fail($"Expected single existing active repair merge to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.MergePhysicalRangesPreservesExistingActiveCountsForAllExistingNonFinalizeRanges() =
+        let firstActive = { activeRange with ActiveManifestCount = 1 }
+        let secondActive = { reclaimableRange with ActiveManifestCount = 1 }
+
+        let currentMetadata =
+            recordWithTotals
+                [| firstActive; secondActive |]
+                (firstActive.PhysicalLength
+                 + secondActive.PhysicalLength)
+                (firstActive.PhysicalLength
+                 + secondActive.PhysicalLength)
+                timestamp
+                7L
+
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let result =
+            ContentBlockMetadataActor.decideCommand
+                []
+                currentDto
+                (merge "op-repair-all-existing-active" [| firstActive; secondActive |])
+                (metadata "corr-repair-all-existing-active")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.Ranges, Has.Length.EqualTo(2))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(decision.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(1))
+
+            Assert.That(
+                decision.Metadata.ActivePhysicalBytes,
+                Is.EqualTo(
+                    firstActive.PhysicalLength
+                    + secondActive.PhysicalLength
+                )
+            )
+        | Error error -> Assert.Fail($"Expected all-existing active repair merge to succeed, got {error.Error}.")
+
+    [<Test>]
     member _.MergePhysicalRangesAddsMultiRangeFinalizeContributionsToExistingRanges() =
         let currentMetadata =
             record [| activeRange
@@ -915,17 +975,13 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected mixed finalize contribution merge to succeed, got {error.Error}.")
 
     [<Test>]
-    member _.MergePhysicalRangesReactivatesExactReclaimableRangeContribution() =
+    member _.MergePhysicalRangesReactivatesExactReclaimableRangeWithoutFinalizeContribution() =
         let currentMetadata = record [| reclaimableRange |]
         let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
-        let contribution = { reclaimableRange with ActiveManifestCount = 1 }
+        let repairEvidence = { reclaimableRange with ActiveManifestCount = 1 }
 
         let result =
-            ContentBlockMetadataActor.decideCommand
-                []
-                currentDto
-                (finalizeMerge "op-finalize-reclaimable" [| contribution |])
-                (metadata "corr-finalize-reclaimable")
+            ContentBlockMetadataActor.decideCommand [] currentDto (merge "op-repair-reclaimable" [| repairEvidence |]) (metadata "corr-repair-reclaimable")
 
         match result with
         | Ok decision ->
@@ -937,7 +993,7 @@ type ContentBlockMetadataActorTests() =
                 ContentBlockMetadataTypes.rangePresence decision.Metadata { OrdinalStart = 8; OrdinalCount = 4 },
                 Is.EqualTo(ContentBlockRangePresence.Active)
             )
-        | Error error -> Assert.Fail($"Expected reclaimable contribution merge to succeed, got {error.Error}.")
+        | Error error -> Assert.Fail($"Expected reclaimable repair merge to succeed, got {error.Error}.")
 
     [<Test>]
     member _.MergePhysicalRangesCoalescesDuplicateEvidenceWithinOneCommand() =

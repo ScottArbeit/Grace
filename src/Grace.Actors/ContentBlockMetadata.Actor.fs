@@ -213,18 +213,9 @@ module ContentBlockMetadata =
         existingRanges |> Array.iter addExistingRange
         incomingRanges |> Array.iter addIncomingRange
 
-        let incomingDistinctRangeCount = incoming.Values.Count
-
-        let incomingContainsNewRange =
-            incoming.Values
-            |> Seq.exists (fun range ->
-                let key = rangeKey range
-                not (merged.ContainsKey key))
-
-        let incomingIsAllExistingFinalizeContribution =
-            not incomingContainsNewRange
-            && incoming.Values
-               |> Seq.forall (fun range -> range.ActiveManifestCount = 1)
+        let isExactReactivation (existing: ContentBlockMetadataRange) (range: ContentBlockMetadataRange) =
+            existing.ActiveManifestCount = 0
+            && range.ActiveManifestCount > 0
 
         incoming.Values
         |> Seq.iter (fun range ->
@@ -233,8 +224,7 @@ module ContentBlockMetadata =
             match merged.TryGetValue key with
             | true, existing ->
                 if isFinalizeContribution
-                   || incomingDistinctRangeCount = 1
-                   || incomingIsAllExistingFinalizeContribution then
+                   || isExactReactivation existing range then
                     merged[key] <- mergeActiveCount existing range
                 else
                     merged[key] <- existing
