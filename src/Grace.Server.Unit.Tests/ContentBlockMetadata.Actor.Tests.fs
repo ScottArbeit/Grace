@@ -829,6 +829,44 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.Fail($"Expected duplicate contribution merge to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.FinalizeMergeCanUseExpectedRangeEvidenceWithoutFreezingMetadataVersion() =
+        let currentRange = { activeRange with ActiveManifestCount = 1 }
+        let currentMetadata = recordWithTotals [| currentRange |] currentRange.PhysicalLength currentRange.PhysicalLength timestamp 8L
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+        let contribution = { currentRange with ActiveManifestCount = 1 }
+
+        let evidenceOnlyCommand =
+            mergeWithPreconditions "op-finalize-evidence-only" None false [| currentRange |] [| contribution |]
+            |> function
+                | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                    ContentBlockMetadataCommand.MergePhysicalRanges { merge with IsFinalizeContribution = true }
+                | command -> command
+
+        let result = ContentBlockMetadataActor.decideCommand [] currentDto evidenceOnlyCommand (metadata "corr-finalize-evidence-only")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Metadata.MetadataVersion, Is.EqualTo(9L))
+            Assert.That(decision.Metadata.Ranges, Has.Length.EqualTo(1))
+            Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(2))
+        | Error error -> Assert.Fail($"Expected exact expected-range evidence to permit finalize merge, got {error.Error}.")
+
+        let movedRange = { currentRange with PhysicalOffset = currentRange.PhysicalOffset + 128L }
+
+        let staleEvidenceCommand =
+            mergeWithPreconditions "op-finalize-stale-evidence" None false [| movedRange |] [| contribution |]
+            |> function
+                | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                    ContentBlockMetadataCommand.MergePhysicalRanges { merge with IsFinalizeContribution = true }
+                | command -> command
+
+        let staleResult = ContentBlockMetadataActor.decideCommand [] currentDto staleEvidenceCommand (metadata "corr-finalize-stale-evidence")
+
+        match staleResult with
+        | Ok _ -> Assert.Fail("Expected changed expected-range evidence to fail closed.")
+        | Error error -> Assert.That(error.Error, Does.Contain("expected range evidence is absent or changed"))
+
+    [<Test>]
     member _.MergePhysicalRangesPreservesExistingActiveCountForSingleNonFinalizeRange() =
         let existingActive = { activeRange with ActiveManifestCount = 1 }
         let currentMetadata = recordWithTotals [| existingActive |] existingActive.PhysicalLength existingActive.PhysicalLength timestamp 7L

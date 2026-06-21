@@ -617,7 +617,7 @@ module Storage =
                 else
                     compare right.ClaimedAt left.ClaimedAt)
 
-    let private tryReadFinalizeBlockPayloadFromAuthoritativeMetadata (requestContext: UploadSessionRequestContext) contentBlockAddress correlationId =
+    let private tryLoadAuthoritativeContentBlockMetadataForFinalize (requestContext: UploadSessionRequestContext) contentBlockAddress correlationId =
         task {
             let metadataActor =
                 grainFactory.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(
@@ -663,10 +663,28 @@ module Storage =
                             $"Authoritative ContentBlockMetadata StoragePlacement is incomplete for finalized manifest block {contentBlockAddress}."
                             correlationId
                     )
-            | Some metadata ->
+            | Some metadata -> return Ok(Some metadata)
+        }
+
+    let private loadAuthoritativeContentBlockMetadataForFinalize requestContext contentBlockAddress correlationId =
+        task {
+            match! tryLoadAuthoritativeContentBlockMetadataForFinalize requestContext contentBlockAddress correlationId with
+            | Ok (Some metadata) -> return Ok metadata
+            | Ok None ->
+                return
+                    Error(GraceError.Create $"Authoritative ContentBlockMetadata is absent for finalized manifest block {contentBlockAddress}." correlationId)
+            | Error error -> return Error error
+        }
+
+    let private tryReadFinalizeBlockPayloadFromAuthoritativeMetadata (requestContext: UploadSessionRequestContext) contentBlockAddress correlationId =
+        task {
+            match! tryLoadAuthoritativeContentBlockMetadataForFinalize requestContext contentBlockAddress correlationId with
+            | Ok (Some metadata) ->
                 match! readFinalizeBlockPayloadFromPlacement contentBlockAddress metadata.StoragePlacement correlationId with
                 | Ok payload -> return Ok(Some payload)
                 | Error error -> return Error error
+            | Ok None -> return Ok None
+            | Error error -> return Error error
         }
 
     let private loadClaimedMetadataForFinalizeWith
@@ -759,15 +777,6 @@ module Storage =
             manifest
             correlationId
 
-    let private loadClaimedMetadataForFinalizeReplay (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
-        loadClaimedMetadataForFinalizeWith
-            authoritativeClaimedRangeMatchesForFinalizeReplay
-            (fun claimedRange authoritativeMetadata -> { authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion })
-            "Authoritative ContentBlockMetadata is absent, incomplete, or no longer matches durable finalized range for claimed reuse range"
-            requestContext
-            manifest
-            correlationId
-
     let private hydrateFinalizeEvidenceFromClaimedMetadata
         (requestContext: UploadSessionRequestContext)
         (parameters: FinalizeManifestUploadParameters)
@@ -850,17 +859,45 @@ module Storage =
                 return! hydrateFinalizeEvidenceFromClaimedMetadata requestContext parameters manifest claimedMetadata useRequestBlockPayloads correlationId
         }
 
-    let private hydrateFinalizeReplayEvidence
+    let private hydrateFinalizeReplayEvidenceFromCurrentMetadata
         (requestContext: UploadSessionRequestContext)
-        (parameters: FinalizeManifestUploadParameters)
         (manifest: FileManifest)
         (correlationId: CorrelationId)
         =
         task {
-            match! loadClaimedMetadataForFinalizeReplay requestContext manifest correlationId with
-            | Error error -> return Error error
-            | Ok claimedMetadata -> return! hydrateFinalizeEvidenceFromClaimedMetadata requestContext parameters manifest claimedMetadata false correlationId
+            let payloads = ResizeArray<FinalizeManifestBlockPayload>()
+            let metadata = ResizeArray<ContentBlockMetadata>()
+            let manifestBlocks = manifestBlocksForPayloadHydration manifest
+            let mutable error = None
+            let mutable index = 0
+
+            while index < manifestBlocks.Length
+                  && Option.isNone error do
+                let block = manifestBlocks[index]
+
+                match! loadAuthoritativeContentBlockMetadataForFinalize requestContext block.Address correlationId with
+                | Error metadataError -> error <- Some metadataError
+                | Ok authoritativeMetadata ->
+                    metadata.Add authoritativeMetadata
+
+                    match! readFinalizeBlockPayloadFromPlacement block.Address authoritativeMetadata.StoragePlacement correlationId with
+                    | Ok payload -> payloads.Add payload
+                    | Error payloadError -> error <- Some payloadError
+
+                index <- index + 1
+
+            match error with
+            | Some error -> return Error error
+            | None -> return Ok { BlockPayloads = payloads.ToArray(); ClaimedMetadata = metadata.ToArray() }
         }
+
+    let private hydrateFinalizeReplayEvidence
+        (requestContext: UploadSessionRequestContext)
+        (_parameters: FinalizeManifestUploadParameters)
+        (manifest: FileManifest)
+        (correlationId: CorrelationId)
+        =
+        hydrateFinalizeReplayEvidenceFromCurrentMetadata requestContext manifest correlationId
 
     let private getFinalizeReplayState requestContext operationId correlationId =
         task {

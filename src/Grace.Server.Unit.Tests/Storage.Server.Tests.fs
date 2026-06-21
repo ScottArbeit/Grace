@@ -283,6 +283,12 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(
             storageServerSource,
+            Does.Not.Contain("match! loadClaimedMetadataForFinalizeReplay requestContext manifest correlationId"),
+            "Same-operation finalize replay must not rebuild repair evidence from upload-session claimed ranges that cleanup removes."
+        )
+
+        Assert.That(
+            storageServerSource,
             Does.Contain("{ authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion }"),
             "Finalize hydration must validate current authoritative metadata while preserving the durable claim key for side-effect repair."
         )
@@ -404,6 +410,47 @@ type StorageContentBlockSdkContract() =
                 { currentMetadata with StoragePlacement = ContentBlockStoragePlacement.Empty },
             Is.False,
             "Replay hydration must fail closed when authoritative placement is missing."
+        )
+
+    [<Test>]
+    member _.FinalizeReplayHydratesRepairEvidenceFromCurrentManifestMetadataAfterSessionCleanup() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let replayStart = storageServerSource.IndexOf("let private hydrateFinalizeReplayEvidenceFromCurrentMetadata", StringComparison.Ordinal)
+
+        let replayEnd =
+            storageServerSource.IndexOf(
+                "let private hydrateFinalizeReplayEvidence",
+                replayStart
+                + "let private hydrateFinalizeReplayEvidenceFromCurrentMetadata"
+                    .Length,
+                StringComparison.Ordinal
+            )
+
+        Assert.That(replayStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(replayEnd, Is.GreaterThan(replayStart))
+
+        let replaySource = storageServerSource.Substring(replayStart, replayEnd - replayStart)
+        let compactedReplaySource = String.Join(" ", replaySource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedReplaySource,
+            Does
+                .Contain("let manifestBlocks = manifestBlocksForPayloadHydration manifest")
+                .And.Contain("loadAuthoritativeContentBlockMetadataForFinalize requestContext block.Address correlationId")
+                .And.Contain("readFinalizeBlockPayloadFromPlacement block.Address authoritativeMetadata.StoragePlacement correlationId")
+                .And.Contain("ClaimedMetadata = metadata.ToArray()"),
+            "Finalize replay repair must hydrate block payloads and metadata from the durable manifest plus current ContentBlockMetadata actors."
+        )
+
+        Assert.That(
+            replaySource,
+            Does
+                .Not
+                .Contain("manifestBlocksRequiringClaimedMetadata")
+                .And.Not.Contain("ClaimedReuseRanges")
+                .And.Not.Contain("ConfirmedBlockUploads"),
+            "Cleanup removes transient upload-session arrays, so replay repair cannot depend on them."
         )
 
     [<Test>]
