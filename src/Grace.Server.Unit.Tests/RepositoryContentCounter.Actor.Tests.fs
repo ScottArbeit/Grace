@@ -15,6 +15,8 @@ type RepositoryContentCounterActorTests() =
     let timestamp = Instant.FromUtc(2026, 5, 24, 13, 0)
     let repositoryId = Guid.Parse("75ce5e36-25f6-4da0-afdd-ad4ad56540d5")
     let otherRepositoryId = Guid.Parse("41ff01d0-8f4c-41e7-875d-1c4f7b519c11")
+    let storagePoolId = StoragePoolId "pool-main"
+    let otherStoragePoolId = StoragePoolId "pool-archive"
     let manifestAddress = "manifest:blake3:alpha"
     let otherManifestAddress = "manifest:blake3:beta"
 
@@ -27,9 +29,9 @@ type RepositoryContentCounterActorTests() =
             Properties = Dictionary<string, string>()
         }
 
-    let add operationId = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifestAddress)
+    let add operationId = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, storagePoolId, manifestAddress)
 
-    let remove operationId = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, manifestAddress)
+    let remove operationId = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, storagePoolId, manifestAddress)
 
     let applyAll events dto =
         events
@@ -46,7 +48,11 @@ type RepositoryContentCounterActorTests() =
             Assert.That(decision.Counter.LifecycleState, Is.EqualTo(RepositoryContentCounterLifecycleState.Referenced))
             Assert.That(decision.Events.Length, Is.EqualTo(1))
             Assert.That(decision.Intents.Length, Is.EqualTo(1))
-            Assert.That(decision.Intents[0], Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifestAddress)))
+
+            Assert.That(
+                decision.Intents[0],
+                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress))
+            )
 
             let dto = applyAll decision.Events RepositoryContentCounterDto.Default
             let replay = RepositoryContentCounterActor.decideCommand decision.Events dto (add "op-add-1") (metadata "corr-add-retry")
@@ -103,7 +109,11 @@ type RepositoryContentCounterActorTests() =
             Assert.That(decision.Counter.ReferenceCount, Is.EqualTo(0L))
             Assert.That(decision.Counter.LifecycleState, Is.EqualTo(RepositoryContentCounterLifecycleState.NotReferenced))
             Assert.That(decision.Intents.Length, Is.EqualTo(1))
-            Assert.That(decision.Intents[0], Is.EqualTo(RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifestAddress)))
+
+            Assert.That(
+                decision.Intents[0],
+                Is.EqualTo(RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifestAddress))
+            )
         | Error error -> Assert.Fail($"Expected final remove to succeed, got {error.Error}.")
 
     [<Test>]
@@ -139,7 +149,7 @@ type RepositoryContentCounterActorTests() =
 
     [<Test>]
     member _.FirstWriteRejectsCommandTargetThatDoesNotMatchGrainKey() =
-        let wrongKey = RepositoryContentCounterActor.primaryKey otherRepositoryId manifestAddress
+        let wrongKey = RepositoryContentCounterActor.primaryKey otherRepositoryId storagePoolId manifestAddress
 
         let result =
             RepositoryContentCounterActor.decideCommandForKey (Some wrongKey) [] RepositoryContentCounterDto.Default (add "op-add-1") (metadata "corr-key")
@@ -159,7 +169,7 @@ type RepositoryContentCounterActorTests() =
                 Assert.Fail($"Expected add to succeed, got {error.Error}.")
                 RepositoryContentCounterDto.Default, []
 
-        let mismatchedCommand = RepositoryContentCounterCommand.AddReference("op-add-1", repositoryId, otherManifestAddress)
+        let mismatchedCommand = RepositoryContentCounterCommand.AddReference("op-add-1", repositoryId, storagePoolId, otherManifestAddress)
         let replay = RepositoryContentCounterActor.decideCommand firstEvents afterFirst mismatchedCommand (metadata "corr-add-reused")
 
         match replay with
@@ -182,3 +192,19 @@ type RepositoryContentCounterActorTests() =
         match reused with
         | Ok _ -> Assert.Fail("Expected reused operation id with a different command to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter operation id was already used for a different command."))
+
+    [<Test>]
+    member _.PrimaryKeyAndTargetsDistinguishSameManifestAddressAcrossStoragePools() =
+        let defaultKey = RepositoryContentCounterActor.primaryKey repositoryId storagePoolId manifestAddress
+        let archiveKey = RepositoryContentCounterActor.primaryKey repositoryId otherStoragePoolId manifestAddress
+
+        Assert.That(archiveKey, Is.Not.EqualTo(defaultKey))
+
+        let archiveAdd = RepositoryContentCounterCommand.AddReference("op-add-archive", repositoryId, otherStoragePoolId, manifestAddress)
+
+        let result =
+            RepositoryContentCounterActor.decideCommandForKey (Some defaultKey) [] RepositoryContentCounterDto.Default archiveAdd (metadata "corr-cross-pool")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected cross-pool command on same manifest address to reject against the wrong grain key.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter command target does not match the grain key."))

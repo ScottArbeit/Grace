@@ -4572,6 +4572,8 @@ components:
           $ref: '#/components/schemas/ChunkingSuiteId'
         FileContentHash:
           $ref: '#/components/schemas/FileContentHash'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         Size:
           type: integer
           format: int64
@@ -4584,6 +4586,7 @@ components:
         - ManifestAddress
         - ChunkingSuiteId
         - FileContentHash
+        - StoragePoolId
         - Size
         - Blocks
     ContentBlock:

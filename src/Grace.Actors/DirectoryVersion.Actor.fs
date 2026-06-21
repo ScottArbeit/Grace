@@ -44,8 +44,6 @@ open Azure.Storage
 
 module DirectoryVersion =
 
-    let private DefaultStoragePoolId = "default"
-
     /// Result of validating a single whole-file content reference.
     type FileValidationResult =
         | Valid of fileVersion: FileVersion * computedSha256Hash: Sha256Hash * computedBlake3Hash: Blake3Hash * elapsedMs: float
@@ -407,6 +405,8 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must be finalized before Save.")
             elif not (ContentAddress.isValidAddress manifest.ManifestAddress) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid ManifestAddress before Save.")
+            elif String.IsNullOrWhiteSpace manifest.StoragePoolId then
+                Error(manifestValidationError correlationId fileVersion "must include a StoragePoolId before Save.")
             elif String.IsNullOrWhiteSpace manifest.ChunkingSuiteId then
                 Error(manifestValidationError correlationId fileVersion "must include a ChunkingSuiteId before Save.")
             elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
@@ -438,7 +438,7 @@ module DirectoryVersion =
         | ex -> Error(GraceError.CreateWithException ex $"FileManifest reference for '{fileVersion.RelativePath}' is invalid before Save." correlationId)
 
     let getManifestReferencesForSaveBoundary (directoryVersion: DirectoryVersion) correlationId =
-        let manifests = Dictionary<ManifestAddress, FileManifest>()
+        let manifests = Dictionary<StoragePoolId * ManifestAddress, FileManifest>()
         let mutable index = 0
         let mutable error: GraceError option = None
 
@@ -453,8 +453,10 @@ module DirectoryVersion =
                 | Some manifest ->
                     match validateManifestBackedFileForSaveBoundary correlationId fileVersion manifest with
                     | Ok () ->
-                        if not (manifests.ContainsKey manifest.ManifestAddress) then
-                            manifests.Add(manifest.ManifestAddress, manifest)
+                        let manifestKey = manifest.StoragePoolId, manifest.ManifestAddress
+
+                        if not (manifests.ContainsKey manifestKey) then
+                            manifests.Add(manifestKey, manifest)
                     | Error graceError -> error <- Some graceError
 
             index <- index + 1
@@ -463,12 +465,10 @@ module DirectoryVersion =
         | Some graceError -> Error graceError
         | None -> Ok(manifests.Values |> Seq.toList)
 
-    let contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress =
-        let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
-        $"{storagePoolId}|{contentBlockAddress}"
+    let contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
 
     let validateManifestReferencesForSaveBoundaryWithResolver
-        (getRangePresence: ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
+        (getRangePresence: StoragePoolId -> ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
         correlationId
         (manifests: FileManifest seq)
         =
@@ -485,7 +485,7 @@ module DirectoryVersion =
                 while blockIndex < manifest.Blocks.Count && error.IsNone do
                     let block = manifest.Blocks[blockIndex]
                     let query: ContentBlockRangeQuery = { OrdinalStart = 0; OrdinalCount = 1 }
-                    let! presence = getRangePresence block.Address query
+                    let! presence = getRangePresence manifest.StoragePoolId block.Address query
 
                     if presence = ContentBlockRangePresence.Absent then
                         error <-
@@ -506,8 +506,8 @@ module DirectoryVersion =
         }
 
     let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifests =
-        let getRangePresence contentBlockAddress query =
-            let actorKey = contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
+        let getRangePresence storagePoolId contentBlockAddress query =
+            let actorKey = contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress
             let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
 
             metadataActor.GetRangePresence query correlationId

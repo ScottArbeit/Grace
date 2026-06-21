@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "6b63cb8a10459a62286eb40e2008890c186bf7ba3fe6d04ea78e9d2715e36c7f",
+  "sourceProjectionSha256": "2f9d482dda4d96c3b946cbda335457f58ba6aa9e48467c1db16e45a389d169bc",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.2",

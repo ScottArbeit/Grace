@@ -26,6 +26,8 @@ type SaveBoundaryActorTests() =
     let repositoryId = Guid.Parse("e34f8949-6306-4fb1-89ca-e9eb831022b0")
     let directoryVersionId = Guid.Parse("29e93e9b-3e5f-4b6e-b8c3-2a964d8d33f3")
     let referenceId = Guid.Parse("9b26f91a-fd44-46b3-9cc7-17645bb388a2")
+    let storagePoolId = StoragePoolId Constants.DefaultStoragePoolId
+    let archiveStoragePoolId = StoragePoolId "pool-archive"
 
     let metadata correlationId =
         {
@@ -62,6 +64,8 @@ type SaveBoundaryActorTests() =
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
     let finalizedManifest () = finalizedManifestWithBlockCopies 1
+
+    let finalizedManifestInPool storagePoolId = { finalizedManifest () with StoragePoolId = storagePoolId }
 
     let manifestFile (manifest: FileManifest) =
         let fileVersion = FileVersion.Create "/large.bin" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
@@ -415,7 +419,7 @@ type SaveBoundaryActorTests() =
     member _.ManifestSaveBoundaryRejectsAbsentContentBlockMetadataRanges() =
         let manifest = finalizedManifest ()
 
-        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Absent
+        let getRangePresence _ _ _ = Task.FromResult ContentBlockRangePresence.Absent
 
         match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-absent-block" [ manifest ])
             .Result
@@ -427,7 +431,7 @@ type SaveBoundaryActorTests() =
     member _.ManifestSaveBoundaryAcceptsExistingReclaimableContentBlockMetadataRanges() =
         let manifest = finalizedManifest ()
 
-        let getRangePresence _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
+        let getRangePresence _ _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
 
         match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-reclaimable-block" [ manifest ])
             .Result
@@ -440,7 +444,7 @@ type SaveBoundaryActorTests() =
         let manifest = finalizedManifestWithBlockCopies 2
         let queries = ResizeArray<ContentBlockRangeQuery>()
 
-        let getRangePresence _ query =
+        let getRangePresence _ _ query =
             queries.Add(query)
             Task.FromResult ContentBlockRangePresence.Reclaimable
 
@@ -458,13 +462,28 @@ type SaveBoundaryActorTests() =
         | Error error -> Assert.Fail($"Expected multi-block manifest metadata checks to use content-block ordinal zero, got {error.Error}.")
 
     [<Test>]
-    member _.ManifestSaveBoundaryUsesDefaultContentBlockMetadataPool() =
+    member _.ManifestSaveBoundaryUsesManifestStoragePoolForContentBlockMetadata() =
         let contentBlockAddress = ContentBlockAddress "block-address"
-        let expected = $"{DedupeIndex.storagePoolIdForRepositoryId repositoryId}|{contentBlockAddress}"
+        let expected = $"{archiveStoragePoolId}|{contentBlockAddress}"
 
-        let actual = DirectoryVersionActor.contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
+        let actual = DirectoryVersionActor.contentBlockMetadataActorKeyForSaveBoundary archiveStoragePoolId contentBlockAddress
 
         Assert.That(actual, Is.EqualTo(expected))
+
+    [<Test>]
+    member _.ManifestSaveBoundaryResolverUsesStoredManifestPoolAfterRouteDrift() =
+        let manifest = finalizedManifestInPool archiveStoragePoolId
+        let requestedPools = ResizeArray<StoragePoolId>()
+
+        let getRangePresence storagePoolId _ _ =
+            requestedPools.Add(storagePoolId)
+            Task.FromResult ContentBlockRangePresence.Reclaimable
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-route-drift" [ manifest ])
+            .Result
+            with
+        | Ok () -> Assert.That(requestedPools, Is.EquivalentTo([ archiveStoragePoolId ]))
+        | Error error -> Assert.Fail($"Expected manifest-stored pool to validate despite repository route drift, got {error.Error}.")
 
     [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =
@@ -481,7 +500,11 @@ type SaveBoundaryActorTests() =
         | Ok decision ->
             Assert.That(decision.Counter.ReferenceCount, Is.EqualTo(1L))
             Assert.That(decision.Intents, Has.Length.EqualTo(1))
-            Assert.That(decision.Intents[0], Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)))
+
+            Assert.That(
+                decision.Intents[0],
+                Is.EqualTo(RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
+            )
         | Error error -> Assert.Fail($"Expected repository content counter increment to succeed, got {error.Error}.")
 
     [<Test>]
@@ -535,7 +558,7 @@ type SaveBoundaryActorTests() =
             ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-fanout"
             |> expectPlan
 
-        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
 
         match ReferenceActor.tryCreateManifestContributionStart plan intent with
         | Some startCommand ->
@@ -550,10 +573,32 @@ type SaveBoundaryActorTests() =
         | None -> Assert.Fail("Expected increment intent to start manifest contribution workflow fan-out.")
 
     [<Test>]
+    member _.ReferenceBoundaryPlansCommitAndCheckpointManifestOwnership() =
+        let manifest = finalizedManifest ()
+        let directoryVersion = directoryWith [ manifestFile manifest ]
+
+        let commitPlan =
+            ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-commit"
+            |> expectPlan
+
+        Assert.That(commitPlan.Manifest.StoragePoolId, Is.EqualTo(storagePoolId))
+        Assert.That(commitPlan.WorkflowRanges[0].StoragePoolId, Is.EqualTo(storagePoolId))
+
+        let checkpointPlan =
+            ReferenceActor.planManifestSaveExpiryBoundary repositoryId referenceId directoryVersion "corr-checkpoint-expiry"
+            |> expectPlan
+
+        match checkpointPlan.CounterCommand with
+        | RepositoryContentCounterCommand.RemoveReference (_, _, commandStoragePoolId, manifestAddress) ->
+            Assert.That(commandStoragePoolId, Is.EqualTo(storagePoolId))
+            Assert.That(manifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        | _ -> Assert.Fail("Expected checkpoint expiry planning to remove manifest ownership.")
+
+    [<Test>]
     member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
         let manifest = finalizedManifestWithBlockCopies 2
         let directoryVersion = directoryWith [ manifestFile manifest ]
-        let expectedStoragePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+        let expectedStoragePoolId = manifest.StoragePoolId
 
         let plan =
             ReferenceActor.planManifestSaveBoundary repositoryId referenceId directoryVersion "corr-repeated-block"
@@ -570,7 +615,7 @@ type SaveBoundaryActorTests() =
             Is.True
         )
 
-        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
 
         match ReferenceActor.tryCreateManifestContributionStart plan intent with
         | Some startCommand ->
@@ -595,13 +640,14 @@ type SaveBoundaryActorTests() =
             { savePlan with
                 CounterCommand =
                     RepositoryContentCounterCommand.RemoveReference(
-                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        RepositoryContentCounterOperationId $"reference-expiry:{referenceId:N}:{storagePoolId}:{manifest.ManifestAddress}",
                         repositoryId,
+                        storagePoolId,
                         manifest.ManifestAddress
                     )
             }
 
-        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress)
+        let intent = RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress)
 
         match ReferenceActor.tryCreateManifestContributionStart decrementPlan intent with
         | Some startCommand ->
@@ -628,7 +674,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     savePlan
-                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.IncrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
                 with
             | Some command -> command
             | None ->
@@ -647,8 +693,9 @@ type SaveBoundaryActorTests() =
             { savePlan with
                 CounterCommand =
                     RepositoryContentCounterCommand.RemoveReference(
-                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        RepositoryContentCounterOperationId $"reference-expiry:{referenceId:N}:{storagePoolId}:{manifest.ManifestAddress}",
                         repositoryId,
+                        storagePoolId,
                         manifest.ManifestAddress
                     )
             }
@@ -657,7 +704,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     decrementPlan
-                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
                 with
             | Some command -> command
             | None ->
@@ -697,8 +744,9 @@ type SaveBoundaryActorTests() =
             { savePlan with
                 CounterCommand =
                     RepositoryContentCounterCommand.RemoveReference(
-                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        RepositoryContentCounterOperationId $"reference-expiry:{referenceId:N}:{storagePoolId}:{manifest.ManifestAddress}",
                         repositoryId,
+                        storagePoolId,
                         manifest.ManifestAddress
                     )
             }
@@ -751,8 +799,9 @@ type SaveBoundaryActorTests() =
             { savePlan with
                 CounterCommand =
                     RepositoryContentCounterCommand.RemoveReference(
-                        RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{manifest.ManifestAddress}",
+                        RepositoryContentCounterOperationId $"reference-expiry:{referenceId:N}:{storagePoolId}:{manifest.ManifestAddress}",
                         repositoryId,
+                        storagePoolId,
                         manifest.ManifestAddress
                     )
             }
@@ -761,7 +810,7 @@ type SaveBoundaryActorTests() =
             match
                 ReferenceActor.tryCreateManifestContributionStart
                     decrementPlan
-                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, manifest.ManifestAddress))
+                    (RepositoryContentCounterIntent.DecrementManifestReferenceCount(repositoryId, storagePoolId, manifest.ManifestAddress))
                 with
             | Some command -> command
             | None ->
@@ -782,6 +831,7 @@ type SaveBoundaryActorTests() =
             {
                 OperationId = ManifestContributionWorkflowOperationId "range-expiry-done"
                 RepositoryId = repositoryId
+                StoragePoolId = storagePoolId
                 ManifestAddress = manifest.ManifestAddress
                 Range = range
             }
@@ -811,6 +861,7 @@ type SaveBoundaryActorTests() =
 
     [<Test>]
     member _.PhysicalDeletionReminderAppliesExpiryBoundaryOnlyForLiveSaveReferences() =
-        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
-        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
-        Assert.That(ReferenceActor.shouldApplySaveExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Save), Is.True)
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Commit), Is.True)
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.True)
+        Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)

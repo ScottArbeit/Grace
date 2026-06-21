@@ -1045,6 +1045,14 @@ module Storage =
                         $"Finalize replay FileManifest ChunkingSuiteId must match UploadSession ChunkingSuiteId. Expected {session.ChunkingSuiteId}, actual {manifest.ChunkingSuiteId}."
                         correlationId
                 )
+            elif String.IsNullOrWhiteSpace manifest.StoragePoolId then
+                Error(GraceError.Create "Finalize replay FileManifest StoragePoolId must be recorded before hydration." correlationId)
+            elif manifest.StoragePoolId <> session.StoragePoolId then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest StoragePoolId must match UploadSession StoragePoolId. Expected {session.StoragePoolId}, actual {manifest.StoragePoolId}."
+                        correlationId
+                )
             else
                 let blockPayloads =
                     evidence.BlockPayloads
@@ -1084,6 +1092,14 @@ module Storage =
                 Error(
                     GraceError.Create
                         $"Finalize replay FileManifest ChunkingSuiteId must match UploadSession ChunkingSuiteId. Expected {session.ChunkingSuiteId}, actual {manifest.ChunkingSuiteId}."
+                        correlationId
+                )
+            elif String.IsNullOrWhiteSpace manifest.StoragePoolId then
+                Error(GraceError.Create "Finalize replay FileManifest StoragePoolId must be recorded before hydration." correlationId)
+            elif manifest.StoragePoolId <> session.StoragePoolId then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest StoragePoolId must match UploadSession StoragePoolId. Expected {session.StoragePoolId}, actual {manifest.StoragePoolId}."
                         correlationId
                 )
             elif isNull manifest.Blocks

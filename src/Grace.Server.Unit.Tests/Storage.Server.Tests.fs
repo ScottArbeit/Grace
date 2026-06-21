@@ -227,6 +227,7 @@ type StorageContentBlockSdkContract() =
 
         let session =
             { UploadSessionDto.Default with
+                StoragePoolId = manifest.StoragePoolId
                 ExpectedSize = manifest.Size
                 FileContentHash = manifest.FileContentHash
                 ChunkingSuiteId = manifest.ChunkingSuiteId
@@ -244,6 +245,7 @@ type StorageContentBlockSdkContract() =
 
         let session =
             { UploadSessionDto.Default with
+                StoragePoolId = manifest.StoragePoolId
                 ExpectedSize = manifest.Size
                 FileContentHash = manifest.FileContentHash
                 ChunkingSuiteId = manifest.ChunkingSuiteId

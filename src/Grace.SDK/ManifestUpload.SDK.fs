@@ -280,7 +280,8 @@ module ManifestUpload =
 
                         match! client.StartSession(buildStartParameters request uploadSessionId plan) with
                         | Error error -> return Error error
-                        | Ok _ ->
+                        | Ok startResult ->
+                            let manifest = { manifest with StoragePoolId = startResult.ReturnValue.Session.StoragePoolId }
                             let claimedBlockAddresses = HashSet<ContentBlockAddress>()
 
                             match! client.DiscoverContentBlocks(buildDiscoveryParameters request plan) with

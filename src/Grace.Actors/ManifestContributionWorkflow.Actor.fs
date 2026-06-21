@@ -16,7 +16,8 @@ open System.Threading.Tasks
 
 module ManifestContributionWorkflow =
 
-    let primaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+    let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
     let commandName command =
         match command with
@@ -48,6 +49,7 @@ module ManifestContributionWorkflow =
 
     let private startMatches (existing: StartManifestContributionWorkflow) (candidate: StartManifestContributionWorkflow) =
         existing.RepositoryId = candidate.RepositoryId
+        && existing.StoragePoolId = candidate.StoragePoolId
         && existing.ManifestAddress = candidate.ManifestAddress
         && existing.Direction = candidate.Direction
         && rangesEqual existing.Ranges candidate.Ranges
@@ -78,15 +80,17 @@ module ManifestContributionWorkflow =
 
     let private isKnownRange (workflow: ManifestContributionWorkflowDto) range = workflow.Ranges |> Array.exists ((=) range)
 
-    let private targetMismatch (workflow: ManifestContributionWorkflowDto) (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) =
+    let private targetMismatch (workflow: ManifestContributionWorkflowDto) (repositoryId: RepositoryId) storagePoolId (manifestAddress: ManifestAddress) =
         (workflow.RepositoryId <> RepositoryId.Empty
          && workflow.RepositoryId <> repositoryId)
+        || (not (String.IsNullOrWhiteSpace workflow.StoragePoolId)
+            && workflow.StoragePoolId <> storagePoolId)
         || (not (String.IsNullOrWhiteSpace workflow.ManifestAddress)
             && workflow.ManifestAddress <> manifestAddress)
 
-    let private expectedPrimaryKeyMismatch expectedPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) =
+    let private expectedPrimaryKeyMismatch expectedPrimaryKey (repositoryId: RepositoryId) storagePoolId (manifestAddress: ManifestAddress) =
         match expectedPrimaryKey with
-        | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId manifestAddress, StringComparison.Ordinal))
+        | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId storagePoolId manifestAddress, StringComparison.Ordinal))
         | None -> false
 
     let private activeCountDelta direction =
@@ -107,7 +111,7 @@ module ManifestContributionWorkflow =
 
     let private graceError correlationId message = GraceError.Create message correlationId
 
-    let private validateRange correlationId range =
+    let private validateRange correlationId (range: ManifestContributionWorkflowRange) =
         if String.IsNullOrWhiteSpace range.StoragePoolId then
             Some(graceError correlationId "ManifestContributionWorkflow range requires a non-empty StoragePoolId.")
         elif String.IsNullOrWhiteSpace range.ContentBlockAddress then
@@ -119,7 +123,7 @@ module ManifestContributionWorkflow =
         else
             None
 
-    let private hasDuplicateRanges ranges =
+    let private hasDuplicateRanges (ranges: ManifestContributionWorkflowRange array) =
         let seen = HashSet<ManifestContributionWorkflowRange>()
 
         ranges
@@ -133,11 +137,13 @@ module ManifestContributionWorkflow =
         =
         if start.RepositoryId = RepositoryId.Empty then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty RepositoryId.")
+        elif String.IsNullOrWhiteSpace start.StoragePoolId then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty StoragePoolId.")
         elif String.IsNullOrWhiteSpace start.ManifestAddress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty ManifestAddress.")
-        elif expectedPrimaryKeyMismatch expectedPrimaryKey start.RepositoryId start.ManifestAddress then
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey start.RepositoryId start.StoragePoolId start.ManifestAddress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the grain key.")
-        elif targetMismatch workflow start.RepositoryId start.ManifestAddress then
+        elif targetMismatch workflow start.RepositoryId start.StoragePoolId start.ManifestAddress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the initialized workflow.")
         elif workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow has already been started.")
@@ -149,14 +155,23 @@ module ManifestContributionWorkflow =
             start.Ranges
             |> Array.tryPick (validateRange metadata.CorrelationId)
 
-    let private validateProgressTarget expectedPrimaryKey (workflow: ManifestContributionWorkflowDto) repositoryId manifestAddress (metadata: EventMetadata) =
+    let private validateProgressTarget
+        expectedPrimaryKey
+        (workflow: ManifestContributionWorkflowDto)
+        repositoryId
+        storagePoolId
+        manifestAddress
+        (metadata: EventMetadata)
+        =
         if repositoryId = RepositoryId.Empty then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty RepositoryId.")
+        elif String.IsNullOrWhiteSpace storagePoolId then
+            Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty StoragePoolId.")
         elif String.IsNullOrWhiteSpace manifestAddress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow requires a non-empty ManifestAddress.")
-        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId manifestAddress then
+        elif expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId storagePoolId manifestAddress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the grain key.")
-        elif targetMismatch workflow repositoryId manifestAddress then
+        elif targetMismatch workflow repositoryId storagePoolId manifestAddress then
             Some(graceError metadata.CorrelationId "ManifestContributionWorkflow command target does not match the initialized workflow.")
         else
             None
@@ -192,7 +207,7 @@ module ManifestContributionWorkflow =
                         let workflowEvent = { Event = ManifestContributionWorkflowEventType.WorkflowStarted start; Metadata = metadata }
                         okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow started."
                 | ManifestContributionWorkflowCommand.RecordRangeSucceeded progress ->
-                    match validateProgressTarget expectedPrimaryKey workflow progress.RepositoryId progress.ManifestAddress metadata with
+                    match validateProgressTarget expectedPrimaryKey workflow progress.RepositoryId progress.StoragePoolId progress.ManifestAddress metadata with
                     | Some error -> Error error
                     | None ->
                         if workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted then
@@ -211,7 +226,7 @@ module ManifestContributionWorkflow =
 
                             okDecision workflow operationId [ workflowEvent ] intents false "Manifest contribution workflow range completed."
                 | ManifestContributionWorkflowCommand.RecordRangeFailed failure ->
-                    match validateProgressTarget expectedPrimaryKey workflow failure.RepositoryId failure.ManifestAddress metadata with
+                    match validateProgressTarget expectedPrimaryKey workflow failure.RepositoryId failure.StoragePoolId failure.ManifestAddress metadata with
                     | Some error -> Error error
                     | None ->
                         if workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.NotStarted then
@@ -264,6 +279,7 @@ module ManifestContributionWorkflow =
                 this.correlationId <- correlationId
 
                 (workflow.RepositoryId <> RepositoryId.Empty
+                 && not (String.IsNullOrWhiteSpace workflow.StoragePoolId)
                  && not (String.IsNullOrWhiteSpace workflow.ManifestAddress))
                 |> returnTask
 
@@ -297,6 +313,7 @@ module ManifestContributionWorkflow =
                         let returnValue =
                             (GraceReturnValue.Create decision metadata.CorrelationId)
                                 .enhance(nameof RepositoryId, decision.Workflow.RepositoryId)
+                                .enhance(nameof StoragePoolId, decision.Workflow.StoragePoolId)
                                 .enhance(nameof ManifestAddress, decision.Workflow.ManifestAddress)
                                 .enhance (nameof ManifestContributionWorkflowLifecycleState, decision.Workflow.LifecycleState)
 

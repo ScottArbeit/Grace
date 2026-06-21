@@ -888,6 +888,8 @@ FileManifest:
       $ref: '#/ChunkingSuiteId'
     FileContentHash:
       $ref: '#/FileContentHash'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     Size:
       type: integer
       format: int64
@@ -900,6 +902,7 @@ FileManifest:
     - ManifestAddress
     - ChunkingSuiteId
     - FileContentHash
+    - StoragePoolId
     - Size
     - Blocks
 
