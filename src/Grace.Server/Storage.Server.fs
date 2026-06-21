@@ -1285,6 +1285,12 @@ module Storage =
                 return None
         }
 
+    let internal validateConfirmCommandBeforeMaterialization (parameters: ConfirmContentBlockUploadParameters) correlationId =
+        if String.IsNullOrWhiteSpace parameters.OperationId then
+            Error(GraceError.Create "UploadSession command requires a non-empty operation id." correlationId)
+        else
+            Ok()
+
     let private validateActiveConfirmSession requestContext (parameters: ConfirmContentBlockUploadParameters) correlationId =
         let session = requestContext.SessionForScope
 
@@ -1829,58 +1835,66 @@ module Storage =
                                     | Some (Ok returnValue) -> return! context |> result200Ok returnValue
                                     | Some (Error error) -> return! context |> result400BadRequest error
                                     | None ->
-                                        match validateActiveConfirmSession requestContext parameters correlationId with
-                                        | Error error ->
-                                            do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
-                                            return! context |> result400BadRequest error
+                                        match validateConfirmCommandBeforeMaterialization parameters correlationId with
+                                        | Error error -> return! context |> result400BadRequest error
                                         | Ok () ->
-                                            match! readContentBlockPayloadFromPlacement parameters.StoragePlacement correlationId with
-                                            | Error error -> return! context |> result400BadRequest error
-                                            | Ok (stagedPayload, _) ->
-                                                if
-                                                    not (isNull parameters.Payload)
-                                                    && parameters.Payload.Length > 0
-                                                    && not (parameters.Payload.SequenceEqual(stagedPayload))
-                                                then
-                                                    do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
-
-                                                    return!
-                                                        context
-                                                        |> result400BadRequest (
-                                                            GraceError.Create
-                                                                "ConfirmContentBlockUpload Payload must match the staged uploaded bytes."
-                                                                correlationId
-                                                        )
-                                                else
-                                                    match validateConfirmIntentAgainstPayload requestContext parameters stagedPayload correlationId with
-                                                    | Error error ->
+                                            match validateActiveConfirmSession requestContext parameters correlationId with
+                                            | Error error ->
+                                                do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                return! context |> result400BadRequest error
+                                            | Ok () ->
+                                                match! readContentBlockPayloadFromPlacement parameters.StoragePlacement correlationId with
+                                                | Error error -> return! context |> result400BadRequest error
+                                                | Ok (stagedPayload, _) ->
+                                                    if
+                                                        not (isNull parameters.Payload)
+                                                        && parameters.Payload.Length > 0
+                                                        && not (parameters.Payload.SequenceEqual(stagedPayload))
+                                                    then
                                                         do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
-                                                        return! context |> result400BadRequest error
-                                                    | Ok () ->
-                                                        match! materializeValidatedContentBlock route parameters.ContentBlockAddress stagedPayload correlationId
-                                                            with
+
+                                                        return!
+                                                            context
+                                                            |> result400BadRequest (
+                                                                GraceError.Create
+                                                                    "ConfirmContentBlockUpload Payload must match the staged uploaded bytes."
+                                                                    correlationId
+                                                            )
+                                                    else
+                                                        match validateConfirmIntentAgainstPayload requestContext parameters stagedPayload correlationId with
                                                         | Error error ->
                                                             do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                             return! context |> result400BadRequest error
-                                                        | Ok finalMaterialization ->
-                                                            let command =
-                                                                UploadSessionCommand.ConfirmBlockUploaded
-                                                                    {
-                                                                        OperationId = parameters.OperationId
-                                                                        ContentBlockAddress = parameters.ContentBlockAddress
-                                                                        Payload = stagedPayload
-                                                                        StoragePlacement = finalMaterialization.StoragePlacement
-                                                                    }
-
-                                                            let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
-
-                                                            match result with
-                                                            | Ok returnValue ->
-                                                                do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
-                                                                return! context |> result200Ok returnValue
+                                                        | Ok () ->
+                                                            match!
+                                                                materializeValidatedContentBlock
+                                                                    route
+                                                                    parameters.ContentBlockAddress
+                                                                    stagedPayload
+                                                                    correlationId
+                                                                with
                                                             | Error error ->
                                                                 do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                                 return! context |> result400BadRequest error
+                                                            | Ok finalMaterialization ->
+                                                                let command =
+                                                                    UploadSessionCommand.ConfirmBlockUploaded
+                                                                        {
+                                                                            OperationId = parameters.OperationId
+                                                                            ContentBlockAddress = parameters.ContentBlockAddress
+                                                                            Payload = stagedPayload
+                                                                            StoragePlacement = finalMaterialization.StoragePlacement
+                                                                        }
+
+                                                                let! result = requestContext.UploadSessionActor.Handle command requestContext.Metadata
+
+                                                                match result with
+                                                                | Ok returnValue ->
+                                                                    do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
+                                                                    return! context |> result200Ok returnValue
+                                                                | Error error ->
+                                                                    do! deleteContentBlockPayloadBestEffort finalMaterialization.StoragePlacement correlationId
+                                                                    return! context |> result400BadRequest error
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
