@@ -569,7 +569,7 @@ module Reference =
                                             referenceId
                                             physicalDeletionReminderState.DirectoryVersionId
                                             referenceDto
-                                            (fun () -> directoryVersionActorProxy.GetRecursiveDirectoryVersions false this.correlationId)
+                                            (fun () -> directoryVersionActorProxy.GetRecursiveDirectoryVersions true this.correlationId)
                                             this.correlationId
                                         with
                                     | Error graceError -> return Error graceError
@@ -799,7 +799,7 @@ module Reference =
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
-                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false metadata.CorrelationId
+                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions true metadata.CorrelationId
 
                                 match
                                     planManifestSaveBoundaryForRecursiveDirectoryVersions
@@ -820,7 +820,7 @@ module Reference =
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
-                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false metadata.CorrelationId
+                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions true metadata.CorrelationId
 
                                 match!
                                     planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
