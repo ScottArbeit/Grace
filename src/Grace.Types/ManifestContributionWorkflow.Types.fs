@@ -60,6 +60,7 @@ module ManifestContributionWorkflow =
         {
             OperationId: ManifestContributionWorkflowOperationId
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             ManifestAddress: ManifestAddress
             Direction: ManifestContributionDirection
             Ranges: ManifestContributionWorkflowRange array
@@ -70,6 +71,7 @@ module ManifestContributionWorkflow =
         {
             OperationId: ManifestContributionWorkflowOperationId
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             ManifestAddress: ManifestAddress
             Range: ManifestContributionWorkflowRange
         }
@@ -79,6 +81,7 @@ module ManifestContributionWorkflow =
         {
             OperationId: ManifestContributionWorkflowOperationId
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             ManifestAddress: ManifestAddress
             Range: ManifestContributionWorkflowRange
             Message: string
@@ -114,6 +117,7 @@ module ManifestContributionWorkflow =
         {
             Class: string
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             ManifestAddress: ManifestAddress
             Direction: ManifestContributionDirection
             Ranges: ManifestContributionWorkflowRange array
@@ -127,6 +131,7 @@ module ManifestContributionWorkflow =
             {
                 Class = nameof ManifestContributionWorkflowDto
                 RepositoryId = RepositoryId.Empty
+                StoragePoolId = String.Empty
                 ManifestAddress = String.Empty
                 Direction = ManifestContributionDirection.Increment
                 Ranges = Array.empty
@@ -161,6 +166,7 @@ module ManifestContributionWorkflow =
 
                 { current with
                     RepositoryId = start.RepositoryId
+                    StoragePoolId = start.StoragePoolId
                     ManifestAddress = start.ManifestAddress
                     Direction = start.Direction
                     Ranges = Array.copy start.Ranges
