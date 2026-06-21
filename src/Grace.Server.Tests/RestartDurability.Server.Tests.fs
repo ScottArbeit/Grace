@@ -181,7 +181,7 @@ module private RestartDurabilityHelpers =
             Assert.Fail($"Expected test ContentBlock to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
-    let manifestFor (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
+    let manifestForStoragePool storagePoolId (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
         let contentBlock = ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
 
         let manifest =
@@ -190,10 +190,13 @@ module private RestartDurabilityHelpers =
                 ChunkingSuiteId RabinChunking.SuiteName,
                 FileContentHash(ContentAddress.computeBlake3Hex bytes),
                 int64 bytes.Length,
+                storagePoolId,
                 [ contentBlock ]
             )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let manifestFor bytes block = manifestForStoragePool (StoragePoolId Constants.DefaultStoragePoolId) bytes block
 
     let setStorageParameters (parameters: Parameters.Storage.StorageParameters) repositoryId correlationId =
         parameters.OwnerId <- ownerId
@@ -239,6 +242,7 @@ module private RestartDurabilityHelpers =
 
             let! startResult = postUploadSessionDecisionAsync "/storage/startManifestUploadSession" start
             Assert.That(startResult.ReturnValue.Session.UploadSessionId, Is.EqualTo(sessionId))
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId payload block
 
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId

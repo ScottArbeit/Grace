@@ -120,7 +120,14 @@ type UploadSessionActorTests() =
         let fileContentHash = FileContentHash(ContentAddress.computeBlake3Hex fileBytes)
 
         let manifest =
-            FileManifest.Create(ManifestAddress String.Empty, RabinChunking.SuiteName, fileContentHash, int64 fileBytes.Length, List.ofSeq contentBlocks)
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                RabinChunking.SuiteName,
+                fileContentHash,
+                int64 fileBytes.Length,
+                sessionStoragePoolId,
+                List.ofSeq contentBlocks
+            )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 

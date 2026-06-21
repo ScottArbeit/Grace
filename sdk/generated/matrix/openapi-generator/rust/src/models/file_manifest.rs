@@ -25,6 +25,9 @@ pub struct FileManifest {
     /// Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.
     #[serde(rename = "FileContentHash")]
     pub file_content_hash: String,
+    /// StoragePool-wide CAS scope identifier.
+    #[serde(rename = "StoragePoolId")]
+    pub storage_pool_id: String,
     #[serde(rename = "Size")]
     pub size: i64,
     #[serde(rename = "Blocks")]
@@ -33,12 +36,13 @@ pub struct FileManifest {
 
 impl FileManifest {
     /// Server-accepted reconstruction contract for one manifest-backed file.
-    pub fn new(class: Class, manifest_address: String, chunking_suite_id: String, file_content_hash: String, size: i64, blocks: Vec<models::ContentBlock>) -> FileManifest {
+    pub fn new(class: Class, manifest_address: String, chunking_suite_id: String, file_content_hash: String, storage_pool_id: String, size: i64, blocks: Vec<models::ContentBlock>) -> FileManifest {
         FileManifest {
             class,
             manifest_address,
             chunking_suite_id,
             file_content_hash,
+            storage_pool_id,
             size,
             blocks,
         }

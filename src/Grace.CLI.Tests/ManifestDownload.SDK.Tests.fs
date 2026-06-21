@@ -206,6 +206,7 @@ type ManifestDownloadSdkTests() =
                         fun parameters ->
                             requestCount <- requestCount + 1
                             Assert.That(parameters.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+                            Assert.That(parameters.StoragePoolId, Is.EqualTo(manifest.StoragePoolId))
                             let manifestProperty = parameters.GetType().GetProperty("Manifest")
                             Assert.That(manifestProperty, Is.Null)
                             Task.FromResult(Ok(GraceReturnValue.Create $"https://example.test/{parameters.ContentBlockAddress}" correlationId))
