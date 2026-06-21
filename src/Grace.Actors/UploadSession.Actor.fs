@@ -920,6 +920,40 @@ module UploadSession =
         else
             Ok()
 
+    let private validateFinalizeReplayManifestIdentity correlationId (session: UploadSessionDto) (manifest: FileManifest) finalizedManifestAddress =
+        validateFinalizeSessionFields correlationId session manifest
+        |> Result.bind (fun () ->
+            if isNull manifest.Blocks
+               || manifest.Blocks.Count = 0 then
+                Error(graceError correlationId "FinalizeManifest replay manifest must include accepted ContentBlocks.")
+            else
+                let missingBlockIndex =
+                    manifest.Blocks
+                    |> Seq.mapi (fun index block -> index, block)
+                    |> Seq.tryFind (fun (_, block) -> isNull (box block))
+
+                match missingBlockIndex with
+                | Some (index, _) -> Error(graceError correlationId $"FinalizeManifest replay manifest Blocks[{index}] is required.")
+                | None ->
+                    let expectedManifestAddress = ContentAddress.computeManifestAddressForManifest manifest
+
+                    if manifest.ManifestAddress
+                       <> expectedManifestAddress then
+                        Error(
+                            graceError
+                                correlationId
+                                $"FinalizeManifest replay ManifestAddress must match manifest content. Expected {expectedManifestAddress}, actual {manifest.ManifestAddress}."
+                        )
+                    elif manifest.ManifestAddress
+                         <> finalizedManifestAddress then
+                        Error(
+                            graceError
+                                correlationId
+                                $"FinalizeManifest replay ManifestAddress must match durable finalized manifest address. Expected {finalizedManifestAddress}, actual {manifest.ManifestAddress}."
+                        )
+                    else
+                        Ok())
+
     let private finalizeBlockPayload (payload: FinalizeManifestBlockPayload) =
         if isNull (box payload) then
             Unchecked.defaultof<ManifestValidation.ManifestBlockPayload>
@@ -959,27 +993,7 @@ module UploadSession =
         else
             match session.FinalizedManifestAddress with
             | None -> Error(graceError metadata.CorrelationId "Durable finalized manifest address is required for FinalizeManifest replay.")
-            | Some finalizedManifestAddress ->
-                validateFinalizeSessionFields metadata.CorrelationId session finalize.Manifest
-                |> Result.bind (fun () ->
-                    if finalize.Manifest.ManifestAddress
-                       <> finalizedManifestAddress then
-                        Error(
-                            graceError
-                                metadata.CorrelationId
-                                $"FinalizeManifest replay ManifestAddress must match durable finalized manifest address. Expected {finalizedManifestAddress}, actual {finalize.Manifest.ManifestAddress}."
-                        )
-                    else
-                        let blockPayloads =
-                            if isNull finalize.BlockPayloads then
-                                Unchecked.defaultof<ManifestValidation.ManifestBlockPayload array>
-                            else
-                                finalize.BlockPayloads
-                                |> Array.map finalizeBlockPayload
-
-                        match ManifestValidation.validate session.ChunkingSuiteId finalize.Manifest blockPayloads with
-                        | Ok _ -> Ok()
-                        | Error error -> Error(graceError metadata.CorrelationId (manifestValidationErrorMessage error)))
+            | Some finalizedManifestAddress -> validateFinalizeReplayManifestIdentity metadata.CorrelationId session finalize.Manifest finalizedManifestAddress
 
     let private confirmBlockUpload (session: UploadSessionDto) (confirmation: ConfirmBlockUploaded) (metadata: EventMetadata) =
         if String.IsNullOrWhiteSpace confirmation.ContentBlockAddress then

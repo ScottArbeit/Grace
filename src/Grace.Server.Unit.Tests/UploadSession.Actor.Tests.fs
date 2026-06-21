@@ -1750,6 +1750,28 @@ type UploadSessionActorTests() =
         )
 
     [<Test>]
+    member _.FinalizeManifestReplayValidationAllowsPayloadlessSdkStyleRetry() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+        let replayValidationStart = actorSource.IndexOf("let private validateFinalizeReplayManifestAgainstDurableState", StringComparison.Ordinal)
+        let confirmStart = actorSource.IndexOf("let private confirmBlockUpload", replayValidationStart, StringComparison.Ordinal)
+
+        Assert.That(replayValidationStart, Is.GreaterThanOrEqualTo(0), "Replay validation helper must be present.")
+        Assert.That(confirmStart, Is.GreaterThan(replayValidationStart), "Replay validation source slice must be bounded.")
+
+        let replayValidationSource = actorSource.Substring(replayValidationStart, confirmStart - replayValidationStart)
+
+        Assert.That(
+            replayValidationSource,
+            Does
+                .Contain("validateFinalizeReplayManifestIdentity")
+                .And.Contain("Durable finalized manifest address")
+                .And.Not.Contain("ManifestValidation.validate")
+                .And.Not.Contain("finalize.BlockPayloads"),
+            "Finalize replay must validate durable manifest identity without requiring replay payload bytes."
+        )
+
+    [<Test>]
     member _.FinalizeManifestPrevalidatesClaimedMetadataBeforeApplyingAnyMetadataMerge() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
