@@ -1081,6 +1081,8 @@ type StorageManifestUploadSessionRoutes() =
             MetadataVersion = 1L
         }
 
+    let exactUploadScope (sessionId: Guid) = $"/storage-tests/upload-sessions/{sessionId:N}/content.bin"
+
     let postUploadSessionDecision (route: string) parameters =
         task {
             let! response = Client.PostAsync(route, createJsonContent parameters)
@@ -1112,7 +1114,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1126,7 +1128,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-0"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -1139,7 +1141,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1174,7 +1176,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -1189,7 +1191,7 @@ type StorageManifestUploadSessionRoutes() =
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
             finalize.UploadSessionId <- sessionId
-            finalize.AuthorizedScope <- "/"
+            finalize.AuthorizedScope <- exactUploadScope sessionId
             finalize.OperationId <- "finalize"
             finalize.Manifest <- manifest
 
@@ -1199,7 +1201,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters downloadUriParameters repositoryId correlationId
-            downloadUriParameters.AuthorizedScope <- "/"
+            downloadUriParameters.AuthorizedScope <- exactUploadScope sessionId
             downloadUriParameters.ContentBlockAddress <- block.Address
             downloadUriParameters.StoragePoolId <- manifest.StoragePoolId
             downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
@@ -1245,7 +1247,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1257,7 +1259,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-confirm-replay"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -1270,7 +1272,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1282,7 +1284,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-replayed-after-staging-delete"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -1325,7 +1327,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1338,7 +1340,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-accepted"
             register.ContentBlockAddress <- acceptedBlock.Address
             register.LogicalOffset <- 0L
@@ -1351,7 +1353,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- acceptedBlock.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1363,7 +1365,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-accepted"
             confirm.ContentBlockAddress <- acceptedBlock.Address
             confirm.Payload <- acceptedBlock.Payload
@@ -1374,7 +1376,7 @@ type StorageManifestUploadSessionRoutes() =
             let registerRacing = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters registerRacing repositoryId correlationId
             registerRacing.UploadSessionId <- sessionId
-            registerRacing.AuthorizedScope <- "/"
+            registerRacing.AuthorizedScope <- exactUploadScope sessionId
             registerRacing.OperationId <- "register-racing"
             registerRacing.ContentBlockAddress <- racingBlock.Address
             registerRacing.LogicalOffset <- int64 acceptedPayload.Length
@@ -1387,7 +1389,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters racingUploadUriParameters repositoryId correlationId
             racingUploadUriParameters.UploadSessionId <- sessionId
             racingUploadUriParameters.ContentBlockAddress <- racingBlock.Address
-            racingUploadUriParameters.AuthorizedScope <- "/"
+            racingUploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! racingUploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent racingUploadUriParameters)
             let! racingUploadUriBody = racingUploadUriResponse.Content.ReadAsStringAsync()
@@ -1400,7 +1402,7 @@ type StorageManifestUploadSessionRoutes() =
             let racingConfirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters racingConfirm repositoryId correlationId
             racingConfirm.UploadSessionId <- sessionId
-            racingConfirm.AuthorizedScope <- "/"
+            racingConfirm.AuthorizedScope <- exactUploadScope sessionId
             racingConfirm.OperationId <- "confirm-racing"
             racingConfirm.ContentBlockAddress <- racingBlock.Address
             racingConfirm.Payload <- racingBlock.Payload
@@ -1412,7 +1414,7 @@ type StorageManifestUploadSessionRoutes() =
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
             finalize.UploadSessionId <- sessionId
-            finalize.AuthorizedScope <- "/"
+            finalize.AuthorizedScope <- exactUploadScope sessionId
             finalize.OperationId <- "finalize-during-confirm-race"
             finalize.Manifest <- manifest
 
@@ -1451,7 +1453,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1466,7 +1468,7 @@ type StorageManifestUploadSessionRoutes() =
                     let register = Parameters.Storage.RegisterContentBlockUploadParameters()
                     setStorageParameters register repositoryId correlationId
                     register.UploadSessionId <- sessionId
-                    register.AuthorizedScope <- "/"
+                    register.AuthorizedScope <- exactUploadScope sessionId
                     register.OperationId <- $"register-terminal-confirm-{index}"
                     register.ContentBlockAddress <- block.Address
                     register.LogicalOffset <- 0L
@@ -1484,7 +1486,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- firstBlock.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! firstUploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! firstUploadUriBody = firstUploadUriResponse.Content.ReadAsStringAsync()
@@ -1503,7 +1505,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirmFirst = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirmFirst repositoryId correlationId
             confirmFirst.UploadSessionId <- sessionId
-            confirmFirst.AuthorizedScope <- "/"
+            confirmFirst.AuthorizedScope <- exactUploadScope sessionId
             confirmFirst.OperationId <- "confirm-terminal-first"
             confirmFirst.ContentBlockAddress <- firstBlock.Address
             confirmFirst.Payload <- firstBlock.Payload
@@ -1514,7 +1516,7 @@ type StorageManifestUploadSessionRoutes() =
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
             finalize.UploadSessionId <- sessionId
-            finalize.AuthorizedScope <- "/"
+            finalize.AuthorizedScope <- exactUploadScope sessionId
             finalize.OperationId <- "finalize-terminal-confirm"
             finalize.Manifest <- manifest
 
@@ -1524,7 +1526,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirmSecond = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirmSecond repositoryId correlationId
             confirmSecond.UploadSessionId <- sessionId
-            confirmSecond.AuthorizedScope <- "/"
+            confirmSecond.AuthorizedScope <- exactUploadScope sessionId
             confirmSecond.OperationId <- "confirm-terminal-second"
             confirmSecond.ContentBlockAddress <- secondBlock.Address
             confirmSecond.Payload <- secondBlock.Payload
@@ -1553,7 +1555,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1565,7 +1567,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-intent-mismatch"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -1578,7 +1580,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1590,7 +1592,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-intent-mismatch"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -1623,7 +1625,7 @@ type StorageManifestUploadSessionRoutes() =
                     let start = Parameters.Storage.StartManifestUploadSessionParameters()
                     setStorageParameters start repositoryId correlationId
                     start.UploadSessionId <- sessionId
-                    start.AuthorizedScope <- "/"
+                    start.AuthorizedScope <- exactUploadScope sessionId
                     start.FileContentHash <- manifest.FileContentHash
                     start.ExpectedSize <- manifest.Size
                     start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1639,7 +1641,7 @@ type StorageManifestUploadSessionRoutes() =
                     let register = Parameters.Storage.RegisterContentBlockUploadParameters()
                     setStorageParameters register repositoryId correlationId
                     register.UploadSessionId <- sessionId
-                    register.AuthorizedScope <- "/"
+                    register.AuthorizedScope <- exactUploadScope sessionId
                     register.OperationId <- $"register-staging-scope-{repositoryId}"
                     register.ContentBlockAddress <- block.Address
                     register.LogicalOffset <- 0L
@@ -1656,7 +1658,7 @@ type StorageManifestUploadSessionRoutes() =
                     setStorageParameters uploadUriParameters repositoryId correlationId
                     uploadUriParameters.UploadSessionId <- sessionId
                     uploadUriParameters.ContentBlockAddress <- block.Address
-                    uploadUriParameters.AuthorizedScope <- "/"
+                    uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
                     let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
                     let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1696,7 +1698,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1708,7 +1710,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-equivalent-final"
             register.ContentBlockAddress <- stagedBlock.Address
             register.LogicalOffset <- 0L
@@ -1721,7 +1723,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- stagedBlock.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1734,7 +1736,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-equivalent-final"
             confirm.ContentBlockAddress <- stagedBlock.Address
             confirm.Payload <- stagedBlock.Payload
@@ -1761,7 +1763,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1773,7 +1775,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-poisoned-final"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -1786,7 +1788,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1807,7 +1809,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-poisoned-final"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -1832,7 +1834,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -1845,7 +1847,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-0"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -1858,7 +1860,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -1870,7 +1872,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -1881,7 +1883,7 @@ type StorageManifestUploadSessionRoutes() =
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
             finalize.UploadSessionId <- sessionId
-            finalize.AuthorizedScope <- "/"
+            finalize.AuthorizedScope <- exactUploadScope sessionId
             finalize.OperationId <- "finalize"
             finalize.Manifest <- manifest
 
@@ -2160,7 +2162,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -2172,7 +2174,7 @@ type StorageManifestUploadSessionRoutes() =
             let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
             setStorageParameters issue repositoryId correlationId
             issue.UploadSessionId <- sessionId
-            issue.AuthorizedScope <- "/"
+            issue.AuthorizedScope <- exactUploadScope sessionId
             issue.OperationId <- "discovery-active"
 
             issue.ExpiresAt <-
@@ -2187,7 +2189,7 @@ type StorageManifestUploadSessionRoutes() =
             let claim = Parameters.Storage.ClaimReuseRangesParameters()
             setStorageParameters claim repositoryId correlationId
             claim.UploadSessionId <- sessionId
-            claim.AuthorizedScope <- "/"
+            claim.AuthorizedScope <- exactUploadScope sessionId
             claim.OperationId <- "claim"
             claim.DiscoveryOperationId <- "discovery-stale"
             claim.Hints <- [| reuseHint 1 |]
@@ -2259,7 +2261,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -2271,7 +2273,7 @@ type StorageManifestUploadSessionRoutes() =
             let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
             setStorageParameters issue repositoryId correlationId
             issue.UploadSessionId <- sessionId
-            issue.AuthorizedScope <- "/"
+            issue.AuthorizedScope <- exactUploadScope sessionId
             issue.OperationId <- "discovery"
 
             issue.ExpiresAt <-
@@ -2300,7 +2302,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -2312,7 +2314,7 @@ type StorageManifestUploadSessionRoutes() =
             let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
             setStorageParameters issue repositoryId correlationId
             issue.UploadSessionId <- sessionId
-            issue.AuthorizedScope <- "/"
+            issue.AuthorizedScope <- exactUploadScope sessionId
             issue.OperationId <- "discovery"
 
             issue.ExpiresAt <-
@@ -2341,7 +2343,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -2353,7 +2355,7 @@ type StorageManifestUploadSessionRoutes() =
             let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
             setStorageParameters issue repositoryId correlationId
             issue.UploadSessionId <- sessionId
-            issue.AuthorizedScope <- "/"
+            issue.AuthorizedScope <- exactUploadScope sessionId
             issue.OperationId <- "discovery-active"
 
             issue.ExpiresAt <-
@@ -2368,7 +2370,7 @@ type StorageManifestUploadSessionRoutes() =
             let claim = Parameters.Storage.ClaimReuseRangesParameters()
             setStorageParameters claim repositoryId correlationId
             claim.UploadSessionId <- sessionId
-            claim.AuthorizedScope <- "/"
+            claim.AuthorizedScope <- exactUploadScope sessionId
             claim.OperationId <- "claim"
             claim.DiscoveryOperationId <- "discovery-active"
             claim.Hints <- null
@@ -2392,7 +2394,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -2404,7 +2406,7 @@ type StorageManifestUploadSessionRoutes() =
             let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
             setStorageParameters issue repositoryId correlationId
             issue.UploadSessionId <- sessionId
-            issue.AuthorizedScope <- "/"
+            issue.AuthorizedScope <- exactUploadScope sessionId
             issue.OperationId <- "discovery-active"
 
             issue.ExpiresAt <-
@@ -2419,7 +2421,7 @@ type StorageManifestUploadSessionRoutes() =
             let claim = Parameters.Storage.ClaimReuseRangesParameters()
             setStorageParameters claim repositoryId correlationId
             claim.UploadSessionId <- sessionId
-            claim.AuthorizedScope <- "/"
+            claim.AuthorizedScope <- exactUploadScope sessionId
             claim.OperationId <- "claim"
             claim.DiscoveryOperationId <- "discovery-active"
             claim.Hints <- [| reuseHint 2 |]
@@ -2463,7 +2465,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -2475,7 +2477,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-0"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -2488,7 +2490,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -2497,7 +2499,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -2524,7 +2526,7 @@ type StorageManifestUploadSessionRoutes() =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -2536,7 +2538,7 @@ type StorageManifestUploadSessionRoutes() =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-0"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -2549,7 +2551,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
@@ -2562,7 +2564,7 @@ type StorageManifestUploadSessionRoutes() =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload

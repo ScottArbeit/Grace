@@ -198,6 +198,8 @@ module private RestartDurabilityHelpers =
 
     let manifestFor bytes block = manifestForStoragePool (StoragePoolId Constants.DefaultStoragePoolId) bytes block
 
+    let exactUploadScope (sessionId: Guid) = $"/restart-durability/upload-sessions/{sessionId:N}/content.bin"
+
     let setStorageParameters (parameters: Parameters.Storage.StorageParameters) repositoryId correlationId =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
@@ -233,7 +235,7 @@ module private RestartDurabilityHelpers =
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
             start.UploadSessionId <- sessionId
-            start.AuthorizedScope <- "/"
+            start.AuthorizedScope <- exactUploadScope sessionId
             start.FileContentHash <- manifest.FileContentHash
             start.ExpectedSize <- manifest.Size
             start.ChunkingSuiteId <- manifest.ChunkingSuiteId
@@ -247,7 +249,7 @@ module private RestartDurabilityHelpers =
             let register = Parameters.Storage.RegisterContentBlockUploadParameters()
             setStorageParameters register repositoryId correlationId
             register.UploadSessionId <- sessionId
-            register.AuthorizedScope <- "/"
+            register.AuthorizedScope <- exactUploadScope sessionId
             register.OperationId <- "register-0"
             register.ContentBlockAddress <- block.Address
             register.LogicalOffset <- 0L
@@ -260,7 +262,7 @@ module private RestartDurabilityHelpers =
             setStorageParameters uploadUriParameters repositoryId correlationId
             uploadUriParameters.UploadSessionId <- sessionId
             uploadUriParameters.ContentBlockAddress <- block.Address
-            uploadUriParameters.AuthorizedScope <- "/"
+            uploadUriParameters.AuthorizedScope <- exactUploadScope sessionId
 
             let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
             let! uploadUriBody = requireOkAsync uploadUriResponse
@@ -272,7 +274,7 @@ module private RestartDurabilityHelpers =
             let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
             setStorageParameters confirm repositoryId correlationId
             confirm.UploadSessionId <- sessionId
-            confirm.AuthorizedScope <- "/"
+            confirm.AuthorizedScope <- exactUploadScope sessionId
             confirm.OperationId <- "confirm-0"
             confirm.ContentBlockAddress <- block.Address
             confirm.Payload <- block.Payload
@@ -289,7 +291,7 @@ module private RestartDurabilityHelpers =
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
             finalize.UploadSessionId <- sessionId
-            finalize.AuthorizedScope <- "/"
+            finalize.AuthorizedScope <- exactUploadScope sessionId
             finalize.OperationId <- "finalize"
             finalize.Manifest <- manifest
 
