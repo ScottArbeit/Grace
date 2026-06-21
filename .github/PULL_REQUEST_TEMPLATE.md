@@ -77,6 +77,14 @@ Choose one:
 
 ## Residual risks
 
+## Review Status
+
+- Current head SHA:
+- Codex Code Review Bot state for current head:
+- Manual trigger decision:
+- Manual trigger lock:
+- Detailed review/fix comments:
+
 ## Review/fix prevention
 
 For each Codex Code Review Bot or GitHub review finding fixed in this PR, include:

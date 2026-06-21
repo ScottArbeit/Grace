@@ -524,8 +524,9 @@ From that point on, review findings, review fixes, validation evidence, and bot-
 not only on the issue. Use the issue for claim, planning, parent/epic coordination, and pre-PR evidence; use the pull
 request as the durable code-review ledger once it exists. Whenever the orchestrator adds or updates code-review comments
 on a pull request, it must update the pull request body's `Review Status` section in the same turn. That section should
-stay high-level: bot reviews observed, current open findings, fix commits already pushed, final no-issues bot status,
-and links to detailed review/fix comments.
+stay high-level: current head SHA, bot state for the current head, manual trigger decision, manual trigger lock text,
+bot reviews observed, current open findings, fix commits already pushed, final no-issues bot status, and links to
+detailed review/fix comments.
 
 The implementation subagent must stop after committing, validating, and pushing the slice branch, then return a
 [Ready For Review handoff](#ready-for-review-handoff) to the parent/orchestrator thread. The parent/orchestrator is
@@ -545,6 +546,36 @@ inline pull-request-review comments:
 The orchestrator must verify that the bot signal applies to the latest pushed commit before treating the review gate as
 complete. Do not merge, close, or call a task review-complete while the latest bot state is still 👀, while a bot comment
 is unresolved, or while the bot has not yet reacted to the current head commit.
+
+### Manual Codex Review Trigger Lock
+
+The manual Codex review trigger lock prevents duplicate review requests while Codex Code Review Bot is already working
+on the current pull request head. If 👀 appears at any point for the current head commit, the only valid action is to
+wait for either a 👍🏻 no-issues reaction or bot findings. Do not run `codex review`, ask GitHub `@codex review`, or use
+any other manual trigger path while that lock is active.
+
+The lock is active for the current head when any of these states exist:
+
+- 👀 is present on the pull request body for the current head.
+- 👍🏻 is present on the pull request body for the current head.
+- Codex Code Review Bot has submitted a review for the current head.
+- Codex Code Review Bot has written a top-level pull request comment or inline review comment for the current head.
+- The available GitHub data is ambiguous, stale, incomplete, or cannot prove the bot state for the current head.
+
+The missed-ack exception is the only allowed manual trigger path. It is available only after the minimum wait window has
+elapsed since the current head commit or pull request update and the orchestrator has verified all of these conditions
+for the current head:
+
+- no 👀 reaction exists
+- no 👍🏻 reaction exists
+- no Codex Code Review Bot review exists
+- no Codex Code Review Bot top-level comment exists
+- no Codex Code Review Bot inline review comment exists
+
+Use `pwsh ./scripts/guard-codex-review-trigger.ps1 -PullRequest <number>` before any missed-ack manual trigger decision.
+The script is a one-shot guard, not a watcher. It prints a pasteable `Review Status` block and exits successfully only
+when the missed-ack exception is allowed. A nonzero exit means the lock is active, the wait window has not elapsed, or
+the state is ambiguous; in all of those cases, do not manually trigger review.
 
 Do not rely on `gh pr view --json comments` alone when checking for bot findings. That field only covers top-level PR
 comments and can miss inline comments stored under the pull request review. Inspect the latest bot review and its inline
@@ -587,6 +618,8 @@ The review loop is blocking:
    or a bot review comment.
    Use repeated checks no longer than 120 seconds each; do not run one long sleep, watch, `wait_agent`, or poll command
    while waiting for the bot.
+   If 👀 appears at any point for the current head, the manual trigger lock is active and the only valid action is to
+   wait for 👍🏻 or findings.
 3. If the bot switches the PR-body reaction to 👍🏻 and there are no unresolved bot review comments for the current head,
    record that no-issues state in `Review Status` and continue toward merge readiness.
 4. If the bot writes a top-level PR comment or inline pull-request-review comment with findings, update
@@ -645,10 +678,12 @@ return this handoff to the parent/orchestrator thread:
 ### Review Request
 
 Please monitor Codex Code Review Bot on the pull request. Do not run local review-only subagents, `codex review`, or
-`@codex review` for the normal Grace completion gate. Wait for the bot to acknowledge the latest commit with 👀, then
-wait for either a 👍🏻 no-issues reaction or a PR comment with findings. If the bot comments with findings, route the fix
-to a fresh implementation subagent, reply to the bot comment with the fix commit and validation evidence, resolve the
-conversation, and wait for the next bot review on the new head commit.
+`@codex review` for the normal Grace completion gate. Manual trigger not attempted. The orchestrator must use the pull
+request `Review Status` lock and `scripts/guard-codex-review-trigger.ps1` missed-ack guard before any manual trigger
+path. Wait for the bot to acknowledge the latest commit with 👀, then wait for either a 👍🏻 no-issues reaction or a PR
+comment with findings. If 👀 appears at any point, the only valid action is to wait for 👍🏻 or findings. If the bot
+comments with findings, route the fix to a fresh implementation subagent, reply to the bot comment with the fix commit
+and validation evidence, resolve the conversation, and wait for the next bot review on the new head commit.
 ```
 
 If Codex Code Review Bot finds issues, the parent/orchestrator sends those findings to an implementation subagent. The
@@ -804,7 +839,8 @@ comments as the review loop continues:
 - final no-issues bot review result for the latest commit
 - replies to each Codex Code Review Bot comment that required a fix, including the issue, fix, fix commit, validation,
   and resolved conversation state
-- a `Review Status` section that summarizes the current review/fix state and links to detailed review/fix comments
+- a `Review Status` section that summarizes the current review/fix state, current head SHA, bot state for the current
+  head, manual trigger decision, manual trigger lock text, and links to detailed review/fix comments
 - docs impact
 - residual risk
 - rollback or recovery notes when the change touches runtime or data

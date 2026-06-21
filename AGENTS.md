@@ -138,6 +138,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   top-level PR comments alone; inspect review comments attached to the bot review before merging. For high-risk slices,
   the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that is cheaper than a
   likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
+- Never manually trigger Codex Code Review Bot while 👀 is present for the current pull request head. A manual trigger is
+  allowed only through the documented missed-ack exception after verifying that no 👀, no 👍🏻, no bot review, and no bot
+  comment exists for the current head commit.
 - After each fix subagent completes a bot-requested fix and hands off, the orchestrator replies to the Codex Code Review
   Bot comment with the outcome, fix commit, and validation evidence, resolves the GitHub conversation, updates the PR
   body's `Review Status` section, includes the required prevention line from `docs/Development process.md`, and waits
