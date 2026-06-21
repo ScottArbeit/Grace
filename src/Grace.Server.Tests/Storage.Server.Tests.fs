@@ -866,8 +866,33 @@ type StorageManifestUploadSessionRoutes() =
 
     let encodeBlock bytes = encodeBlockAt 0L bytes
 
-    let manifestForStoragePool storagePoolId (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
-        let contentBlock = ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
+    let encodeChunkedBlock (chunks: byte array array) =
+        let mutable physicalOffset = 0L
+
+        let inputChunks =
+            chunks
+            |> Array.map (fun chunk ->
+                let input: ContentBlockFormat.ContentBlockInputChunk = { PhysicalOffset = physicalOffset; Bytes = chunk }
+                physicalOffset <- physicalOffset + int64 chunk.Length
+                input)
+
+        match ContentBlockFormat.encode inputChunks with
+        | Ok block -> block
+        | Error error ->
+            Assert.Fail($"Expected chunked test ContentBlock to encode, got {error}.")
+            Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+    let chunkedPayload label chunkCount =
+        [|
+            for index in 0 .. chunkCount - 1 do
+                Encoding.UTF8.GetBytes($"{label}-chunk-{index:D2}-{Guid.NewGuid():N}-{String('x', 256)}")
+        |]
+
+    let manifestForBlocks storagePoolId bytes (blocks: (ContentBlockFormat.EncodedContentBlock * int64 * int64) array) =
+        let contentBlocks =
+            blocks
+            |> Array.map (fun (block, offset, length) -> ContentBlock.Create(block.Address, offset, length))
+            |> Array.toList
 
         let manifest =
             FileManifest.Create(
@@ -876,10 +901,13 @@ type StorageManifestUploadSessionRoutes() =
                 FileContentHash(ContentAddress.computeBlake3Hex bytes),
                 int64 bytes.Length,
                 storagePoolId,
-                [ contentBlock ]
+                contentBlocks
             )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    let manifestForStoragePool storagePoolId (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
+        manifestForBlocks storagePoolId bytes [| block, 0L, int64 bytes.Length |]
 
     let manifestFor bytes block = manifestForStoragePool (StoragePoolId Constants.DefaultStoragePoolId) bytes block
 
@@ -1138,6 +1166,82 @@ type StorageManifestUploadSessionRoutes() =
             return body
         }
 
+    let startManifestUploadSession repositoryId correlationId sessionId authorizedScope operationId manifest samplingPolicySnapshot =
+        task {
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- sessionId
+            start.AuthorizedScope <- authorizedScope
+            start.FileContentHash <- manifest.FileContentHash
+            start.ExpectedSize <- manifest.Size
+            start.ChunkingSuiteId <- manifest.ChunkingSuiteId
+            start.SamplingPolicySnapshot <- samplingPolicySnapshot
+            start.OperationId <- operationId
+
+            return! postUploadSessionDecision "/storage/startManifestUploadSession" start
+        }
+
+    let confirmUploadedBlock
+        repositoryId
+        correlationId
+        sessionId
+        authorizedScope
+        (block: ContentBlockFormat.EncodedContentBlock)
+        logicalOffset
+        logicalLength
+        registerOperationId
+        confirmOperationId
+        =
+        task {
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- sessionId
+            register.AuthorizedScope <- authorizedScope
+            register.OperationId <- registerOperationId
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- logicalOffset
+            register.LogicalLength <- logicalLength
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecision "/storage/registerContentBlockUpload" register
+
+            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- sessionId
+            uploadUriParameters.ContentBlockAddress <- block.Address
+            uploadUriParameters.AuthorizedScope <- authorizedScope
+
+            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+
+            let uploadUri = Uri uploadUriBody
+            let! uploadETag = uploadContentBlockWithSas block.Payload uploadUri
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- sessionId
+            confirm.AuthorizedScope <- authorizedScope
+            confirm.OperationId <- confirmOperationId
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+            confirm.StoragePlacement <- StoragePlacementTestHelpers.contentBlockPlacementFromUri uploadUri (Some uploadETag)
+
+            return! postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
+        }
+
+    let finalizeManifestUpload repositoryId correlationId sessionId authorizedScope operationId manifest =
+        task {
+            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
+            setStorageParameters finalize repositoryId correlationId
+            finalize.UploadSessionId <- sessionId
+            finalize.AuthorizedScope <- authorizedScope
+            finalize.OperationId <- operationId
+            finalize.Manifest <- manifest
+
+            return! postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
+        }
+
     [<Test>]
     member _.LargeManifestUploadCanUploadBlobConfirmFinalizeAndDownloadContentBlock() =
         task {
@@ -1288,6 +1392,92 @@ type StorageManifestUploadSessionRoutes() =
                 with
             | Ok reconstructedBytes -> Assert.That(Convert.ToHexString(reconstructedBytes), Is.EqualTo(Convert.ToHexString(payload)))
             | Error error -> Assert.Fail($"Expected downloaded ContentBlock to reconstruct the manifest bytes, got {error}.")
+        }
+
+    [<Test>]
+    member _.FinalizedUploadMetadataAuthorizesOnlyRecordedSessionStoragePool() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let otherRepositoryId = repositoryIds[1]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let authorizedScope = exactUploadScope sessionId
+            let chunks = chunkedPayload $"recorded-pool-upload-{sessionId:N}" 12
+            let payload = Array.concat chunks
+            let block = encodeChunkedBlock chunks
+            let manifestForStart = manifestFor payload block
+
+            let! startResult =
+                startManifestUploadSession repositoryId correlationId sessionId authorizedScope "start-recorded-pool" manifestForStart "sdk-recorded-pool-proof"
+
+            let recordedPoolId = startResult.ReturnValue.Session.StoragePoolId
+            let manifest = manifestForStoragePool recordedPoolId payload block
+
+            Assert.That(recordedPoolId, Is.Not.EqualTo(StoragePoolId Constants.DefaultStoragePoolId))
+
+            let! _ =
+                confirmUploadedBlock
+                    repositoryId
+                    correlationId
+                    sessionId
+                    authorizedScope
+                    block
+                    0L
+                    (int64 payload.Length)
+                    "register-recorded-pool"
+                    "confirm-recorded-pool"
+
+            let! finalizeResult = finalizeManifestUpload repositoryId correlationId sessionId authorizedScope "finalize-recorded-pool" manifest
+            Assert.That(finalizeResult.ReturnValue.Session.StoragePoolId, Is.EqualTo(recordedPoolId))
+            Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+
+            let wrongPoolDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
+            setStorageParameters wrongPoolDownload repositoryId correlationId
+            wrongPoolDownload.AuthorizedScope <- authorizedScope
+            wrongPoolDownload.ContentBlockAddress <- block.Address
+            wrongPoolDownload.StoragePoolId <- StoragePoolId Constants.DefaultStoragePoolId
+            wrongPoolDownload.ManifestAddress <- manifest.ManifestAddress
+
+            let! wrongPoolDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent wrongPoolDownload)
+            let! wrongPoolDownloadBody = wrongPoolDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(wrongPoolDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), wrongPoolDownloadBody)
+            Assert.That(wrongPoolDownloadBody, Does.Contain("storage pool"))
+
+            let crossRepositoryDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
+            setStorageParameters crossRepositoryDownload otherRepositoryId correlationId
+            crossRepositoryDownload.AuthorizedScope <- authorizedScope
+            crossRepositoryDownload.ContentBlockAddress <- block.Address
+            crossRepositoryDownload.StoragePoolId <- recordedPoolId
+            crossRepositoryDownload.ManifestAddress <- manifest.ManifestAddress
+
+            let! crossRepositoryDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent crossRepositoryDownload)
+            let! crossRepositoryDownloadBody = crossRepositoryDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(crossRepositoryDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), crossRepositoryDownloadBody)
+            Assert.That(crossRepositoryDownloadBody, Does.Contain("repository, storage pool, and authorized scope"))
+
+            let correctDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
+            setStorageParameters correctDownload repositoryId correlationId
+            correctDownload.AuthorizedScope <- authorizedScope
+            correctDownload.ContentBlockAddress <- block.Address
+            correctDownload.StoragePoolId <- recordedPoolId
+            correctDownload.ManifestAddress <- manifest.ManifestAddress
+
+            let! correctDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent correctDownload)
+            let! correctDownloadBody = correctDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(correctDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), correctDownloadBody)
+
+            let! downloadedPayload = downloadContentBlockWithSas (Uri correctDownloadBody)
+
+            match
+                ManifestValidation.validate
+                    RabinChunking.SuiteName
+                    manifest
+                    [
+                        ManifestValidation.createBlockPayload block.Address downloadedPayload
+                    ]
+                with
+            | Ok reconstructedBytes -> Assert.That(Convert.ToHexString(reconstructedBytes), Is.EqualTo(Convert.ToHexString(payload)))
+            | Error error -> Assert.Fail($"Expected recorded-pool ContentBlock to reconstruct the manifest bytes, got {error}.")
         }
 
     [<Test>]
