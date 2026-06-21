@@ -243,6 +243,10 @@ module Services =
             && hashMatchesPrefix normalizedBlake3HashPrefix (getBlake3Hash candidate))
         |> resolveVersionHashPrefixMatches
 
+    let private isRootDirectoryVersion (directoryVersion: DirectoryVersion) =
+        directoryVersion.RelativePath = Constants.RootDirectoryPath
+        || directoryVersion.RelativePath = RelativePath "/"
+
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
     let private serviceBusClient =
@@ -2900,7 +2904,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return resolveScopedVersionHashPrefix hashPrefix getHash directoryVersions
+            return
+                directoryVersions
+                |> Seq.filter isRootDirectoryVersion
+                |> resolveScopedVersionHashPrefix hashPrefix getHash
         }
 
     /// Resolves a Root DirectoryVersion by searching using a Sha256Hash value.
@@ -3018,12 +3025,13 @@ module Services =
             | MongoDB -> ()
 
             return
-                resolveScopedVersionHashPrefixes
+                directoryVersions
+                |> Seq.filter isRootDirectoryVersion
+                |> resolveScopedVersionHashPrefixes
                     sha256Hash
                     (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash)
                     blake3Hash
                     (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
-                    directoryVersions
         }
 
     let getRootDirectoryVersionResolutionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
