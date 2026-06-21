@@ -886,7 +886,7 @@ type StorageContentBlockSdkContract() =
         )
 
     [<Test>]
-    member _.ConfirmActorRejectionDeletesFinalCasPlacement() =
+    member _.ConfirmActorRejectionKeepsFinalCasPlacement() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
 
@@ -897,4 +897,5 @@ type StorageContentBlockSdkContract() =
                 .Replace(" ", String.Empty)
 
         Assert.That(storageServerSource, Does.Not.Contain("shouldDeleteCreatedFinalContentBlockPayload"))
-        Assert.That(compactedSource, Does.Contain("deleteContentBlockPayloadBestEffortfinalMaterialization.StoragePlacement"))
+        Assert.That(compactedSource, Does.Not.Contain("deleteContentBlockPayloadBestEffortfinalMaterialization.StoragePlacement"))
+        Assert.That(compactedSource, Does.Contain("deleteContentBlockStagingPayloadparameters.StoragePlacement"))
