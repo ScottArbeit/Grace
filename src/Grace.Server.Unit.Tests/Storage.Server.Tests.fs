@@ -188,10 +188,126 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(rejected, Is.EqualTo(None))
 
+        let blankScopeRejected = Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId "   " manifestAddress contentBlockAddress state
+
+        Assert.That(blankScopeRejected, Is.EqualTo(None))
+
+        let wrongManifestRejected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope "manifest-other" contentBlockAddress state
+
+        Assert.That(wrongManifestRejected, Is.EqualTo(None))
+
+        let wrongPoolRejected =
+            Storage.tryFindFinalizedScopedContentBlockMetadata "pool-other" repositoryId authorizedScope manifestAddress contentBlockAddress state
+
+        Assert.That(wrongPoolRejected, Is.EqualTo(None))
+
         let crossRepositoryRejected =
             Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId otherRepositoryId authorizedScope manifestAddress contentBlockAddress state
 
         Assert.That(crossRepositoryRejected, Is.EqualTo(None))
+
+    [<Test>]
+    member _.DownloadPlacementResolutionKeepsHistoricalPathManifestEvidenceAfterReplacement() =
+        let repositoryId = Guid.Parse("2cd698a1-8642-4e0d-a963-e76f48afec1e")
+        let authorizedScope = "/download/history-replaced.bin"
+        let storagePoolId = StoragePoolId "pool-history"
+        let otherStoragePoolId = StoragePoolId "pool-history-other"
+        let oldManifestAddress = ManifestAddress "manifest-history-old"
+        let newManifestAddress = ManifestAddress "manifest-history-new"
+        let oldContentBlockAddress = ContentBlockAddress "1111111111111111111111111111111111111111111111111111111111111111"
+        let newContentBlockAddress = ContentBlockAddress "2222222222222222222222222222222222222222222222222222222222222222"
+
+        let metadata
+            (storagePoolId: StoragePoolId)
+            (contentBlockAddress: ContentBlockAddress)
+            (account: StorageAccountName)
+            (container: string)
+            objectKey
+            version
+            : ContentBlockMetadata
+            =
+            { ContentBlockMetadata.Empty with
+                StoragePoolId = storagePoolId
+                ContentBlockAddress = contentBlockAddress
+                StoragePlacement =
+                    {
+                        StorageAccountName = account
+                        StorageContainerName = StorageContainerName container
+                        ObjectKey = objectKey
+                        ETag = Some $"etag-{version}"
+                    }
+                MetadataVersion = version
+            }
+
+        let registration
+            (storagePoolId: StoragePoolId)
+            (manifestAddress: ManifestAddress)
+            (contentBlockAddress: ContentBlockAddress)
+            : DedupeIndex.RuntimeFinalizedManifestRegistration
+            =
+            {
+                StoragePoolId = storagePoolId
+                Session = { UploadSessionDto.Default with RepositoryId = repositoryId; AuthorizedScope = authorizedScope }
+                ManifestAddress = manifestAddress
+                Blocks =
+                    [|
+                        { Address = contentBlockAddress; ChunkAddresses = Array.empty }
+                    |]
+            }
+
+        let oldMetadata = metadata storagePoolId oldContentBlockAddress "old-account" "old-container" "historical/cas/content/old" 11L
+
+        let replacementMetadata = metadata storagePoolId newContentBlockAddress "new-account" "new-container" "historical/cas/content/new" 12L
+
+        let otherPoolMetadata = metadata otherStoragePoolId oldContentBlockAddress "other-pool-account" "other-pool-container" "other-pool/cas/content/old" 21L
+
+        let state =
+            { DedupeIndex.DedupeIndexState.Empty with
+                FinalizedManifests =
+                    [|
+                        registration storagePoolId oldManifestAddress oldContentBlockAddress
+                        registration storagePoolId newManifestAddress newContentBlockAddress
+                        registration otherStoragePoolId oldManifestAddress oldContentBlockAddress
+                    |]
+                MetadataRecords =
+                    [|
+                        oldMetadata
+                        replacementMetadata
+                        otherPoolMetadata
+                    |]
+            }
+
+        let oldSelection =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope oldManifestAddress oldContentBlockAddress state
+
+        Assert.That(oldSelection, Is.EqualTo(Some oldMetadata))
+
+        let replacementSelection =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope newManifestAddress newContentBlockAddress state
+
+        Assert.That(replacementSelection, Is.EqualTo(Some replacementMetadata))
+
+        let otherPoolSelection =
+            Storage.tryFindFinalizedScopedContentBlockMetadata otherStoragePoolId repositoryId authorizedScope oldManifestAddress oldContentBlockAddress state
+
+        Assert.That(otherPoolSelection, Is.EqualTo(Some otherPoolMetadata))
+
+        let mismatchedPathSelection =
+            Storage.tryFindFinalizedScopedContentBlockMetadata
+                storagePoolId
+                repositoryId
+                "/download/other-path.bin"
+                oldManifestAddress
+                oldContentBlockAddress
+                state
+
+        Assert.That(mismatchedPathSelection, Is.EqualTo(None))
+
+        let mismatchedBlockSelection =
+            Storage.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope oldManifestAddress newContentBlockAddress state
+
+        Assert.That(mismatchedBlockSelection, Is.EqualTo(None))
 
     [<Test>]
     member _.DefaultRepositoryDedupePoolResolutionUsesRepositoryScopedPool() =

@@ -278,11 +278,16 @@ module Application =
                 | Ok contentBlockAddress ->
                     parameters.ContentBlockAddress <- contentBlockAddress
 
-                    return
-                        Ok(
-                            Operation.PathRead,
-                            StorageAuthorizationResources.contentBlockDownloadResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
-                        )
+                    match
+                        StorageAuthorizationResources.tryContentBlockDownloadResource
+                            correlationId
+                            graceIds.OwnerId
+                            graceIds.OrganizationId
+                            graceIds.RepositoryId
+                            parameters
+                        with
+                    | Error error -> return Error error
+                    | Ok resource -> return Ok(Operation.PathRead, resource)
             }
 
         let uploadSessionPathResourceFromContext (context: HttpContext) =
