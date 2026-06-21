@@ -72,6 +72,9 @@ type SaveBoundaryActorTests() =
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
 
+    let manifestReference (manifest: FileManifest) : DirectoryVersionActor.ManifestReferenceForSaveBoundary =
+        { Manifest = manifest; AuthorizedScope = RelativePath "/large.bin" }
+
     let wholeFile () = FileVersion.Create "/small.txt" "abcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcdefabcd" String.Empty false 42L
 
     let fileWithHashes (relativePath: string) (sha256Hash: string) (blake3Hash: string) size =
@@ -419,21 +422,29 @@ type SaveBoundaryActorTests() =
     member _.ManifestSaveBoundaryRejectsAbsentContentBlockMetadataRanges() =
         let manifest = finalizedManifest ()
 
-        let getRangePresence _ _ _ = Task.FromResult ContentBlockRangePresence.Absent
+        let getRangePresence _ _ _ _ _ _ = Task.FromResult ContentBlockRangePresence.Absent
 
-        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-absent-block" [ manifest ])
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver
+                   getRangePresence
+                   repositoryId
+                   "corr-absent-block"
+                   [ manifestReference manifest ])
             .Result
             with
         | Ok () -> Assert.Fail("Expected manifest-backed save to reject absent ContentBlock metadata before Save.")
-        | Error error -> Assert.That(error.Error, Does.Contain("no finalized ContentBlock metadata range exists"))
+        | Error error -> Assert.That(error.Error, Does.Contain("no finalized scoped ContentBlock metadata range exists"))
 
     [<Test>]
     member _.ManifestSaveBoundaryAcceptsExistingReclaimableContentBlockMetadataRanges() =
         let manifest = finalizedManifest ()
 
-        let getRangePresence _ _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
+        let getRangePresence _ _ _ _ _ _ = Task.FromResult ContentBlockRangePresence.Reclaimable
 
-        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-reclaimable-block" [ manifest ])
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver
+                   getRangePresence
+                   repositoryId
+                   "corr-reclaimable-block"
+                   [ manifestReference manifest ])
             .Result
             with
         | Ok () -> ()
@@ -444,11 +455,15 @@ type SaveBoundaryActorTests() =
         let manifest = finalizedManifestWithBlockCopies 2
         let queries = ResizeArray<ContentBlockRangeQuery>()
 
-        let getRangePresence _ _ query =
+        let getRangePresence _ _ _ _ _ query =
             queries.Add(query)
             Task.FromResult ContentBlockRangePresence.Reclaimable
 
-        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-ordinal-zero" [ manifest ])
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver
+                   getRangePresence
+                   repositoryId
+                   "corr-ordinal-zero"
+                   [ manifestReference manifest ])
             .Result
             with
         | Ok () ->
@@ -475,15 +490,55 @@ type SaveBoundaryActorTests() =
         let manifest = finalizedManifestInPool archiveStoragePoolId
         let requestedPools = ResizeArray<StoragePoolId>()
 
-        let getRangePresence storagePoolId _ _ =
+        let getRangePresence storagePoolId _ _ _ _ _ =
             requestedPools.Add(storagePoolId)
             Task.FromResult ContentBlockRangePresence.Reclaimable
 
-        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver getRangePresence "corr-route-drift" [ manifest ])
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver
+                   getRangePresence
+                   repositoryId
+                   "corr-route-drift"
+                   [ manifestReference manifest ])
             .Result
             with
         | Ok () -> Assert.That(requestedPools, Is.EquivalentTo([ archiveStoragePoolId ]))
         | Error error -> Assert.Fail($"Expected manifest-stored pool to validate despite repository route drift, got {error.Error}.")
+
+    [<Test>]
+    member _.ManifestSaveBoundaryResolverCarriesRepositoryScopeAndManifestPoolBeforeRangeTrust() =
+        let manifest = finalizedManifestInPool archiveStoragePoolId
+        let observed = ResizeArray<StoragePoolId * RepositoryId * RelativePath * ManifestAddress * ContentBlockAddress>()
+
+        let getRangePresence storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress _ =
+            observed.Add((storagePoolId, repositoryId, authorizedScope, manifestAddress, contentBlockAddress))
+            Task.FromResult ContentBlockRangePresence.Absent
+
+        match (DirectoryVersionActor.validateManifestReferencesForSaveBoundaryWithResolver
+                   getRangePresence
+                   repositoryId
+                   "corr-scoped-pool-proof"
+                   [ manifestReference manifest ])
+            .Result
+            with
+        | Ok () -> Assert.Fail("Expected missing scoped finalization evidence to reject before trusting the recorded pool.")
+        | Error error ->
+            let block = manifest.Blocks[0]
+
+            Assert.That(
+                error.Error,
+                Does
+                    .Contain("repository")
+                    .And.Contain("authorized scope")
+            )
+
+            Assert.That(
+                observed,
+                Is.EquivalentTo(
+                    [
+                        (archiveStoragePoolId, repositoryId, RelativePath "/large.bin", manifest.ManifestAddress, block.Address)
+                    ]
+                )
+            )
 
     [<Test>]
     member _.SaveBoundaryAcceptsFinalizedManifestAfterDurableIncrementIntent() =

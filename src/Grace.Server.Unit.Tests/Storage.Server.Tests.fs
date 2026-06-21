@@ -106,6 +106,12 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(
             (getStorageParameterType "GetContentBlockDownloadUriParameters")
+                .GetProperty("StoragePoolId"),
+            Is.Not.Null
+        )
+
+        Assert.That(
+            (getStorageParameterType "GetContentBlockDownloadUriParameters")
                 .GetProperty("Manifest"),
             Is.Null
         )
@@ -685,7 +691,8 @@ type StorageContentBlockSdkContract() =
         )
 
         Assert.That(storageServerSource, Does.Contain("StoragePoolId = storagePoolId"))
-        Assert.That(storageServerSource, Does.Contain("validateManifestForContentBlockDownload storagePoolId repositoryId"))
+        Assert.That(storageServerSource, Does.Contain("parameters.StoragePoolId"))
+        Assert.That(storageServerSource, Does.Contain("validateManifestForContentBlockDownload repositoryId parameters"))
         Assert.That(storageServerSource, Does.Contain("DedupeIndex.discover storagePoolId"))
 
     [<Test>]

@@ -437,8 +437,10 @@ module DirectoryVersion =
         with
         | ex -> Error(GraceError.CreateWithException ex $"FileManifest reference for '{fileVersion.RelativePath}' is invalid before Save." correlationId)
 
+    type ManifestReferenceForSaveBoundary = { Manifest: FileManifest; AuthorizedScope: RelativePath }
+
     let getManifestReferencesForSaveBoundary (directoryVersion: DirectoryVersion) correlationId =
-        let manifests = Dictionary<StoragePoolId * ManifestAddress, FileManifest>()
+        let manifests = Dictionary<StoragePoolId * ManifestAddress * RelativePath, ManifestReferenceForSaveBoundary>()
         let mutable index = 0
         let mutable error: GraceError option = None
 
@@ -453,10 +455,10 @@ module DirectoryVersion =
                 | Some manifest ->
                     match validateManifestBackedFileForSaveBoundary correlationId fileVersion manifest with
                     | Ok () ->
-                        let manifestKey = manifest.StoragePoolId, manifest.ManifestAddress
+                        let manifestKey = manifest.StoragePoolId, manifest.ManifestAddress, fileVersion.RelativePath
 
                         if not (manifests.ContainsKey manifestKey) then
-                            manifests.Add(manifestKey, manifest)
+                            manifests.Add(manifestKey, { Manifest = manifest; AuthorizedScope = fileVersion.RelativePath })
                     | Error graceError -> error <- Some graceError
 
             index <- index + 1
@@ -468,30 +470,46 @@ module DirectoryVersion =
     let contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
 
     let validateManifestReferencesForSaveBoundaryWithResolver
-        (getRangePresence: StoragePoolId -> ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
+        (getScopedRangePresence: StoragePoolId
+                                     -> RepositoryId
+                                     -> RelativePath
+                                     -> ManifestAddress
+                                     -> ContentBlockAddress
+                                     -> ContentBlockRangeQuery
+                                     -> Task<ContentBlockRangePresence>)
+        repositoryId
         correlationId
-        (manifests: FileManifest seq)
+        (manifestReferences: ManifestReferenceForSaveBoundary seq)
         =
         task {
-            let manifestArray = manifests |> Seq.toArray
+            let manifestReferenceArray = manifestReferences |> Seq.toArray
             let mutable manifestIndex = 0
             let mutable error: GraceError option = None
 
-            while manifestIndex < manifestArray.Length
+            while manifestIndex < manifestReferenceArray.Length
                   && error.IsNone do
-                let manifest = manifestArray[manifestIndex]
+                let manifestReference = manifestReferenceArray[manifestIndex]
+                let manifest = manifestReference.Manifest
                 let mutable blockIndex = 0
 
                 while blockIndex < manifest.Blocks.Count && error.IsNone do
                     let block = manifest.Blocks[blockIndex]
                     let query: ContentBlockRangeQuery = { OrdinalStart = 0; OrdinalCount = 1 }
-                    let! presence = getRangePresence manifest.StoragePoolId block.Address query
+
+                    let! presence =
+                        getScopedRangePresence
+                            manifest.StoragePoolId
+                            repositoryId
+                            manifestReference.AuthorizedScope
+                            manifest.ManifestAddress
+                            block.Address
+                            query
 
                     if presence = ContentBlockRangePresence.Absent then
                         error <-
                             Some(
                                 GraceError.Create
-                                    $"FileManifest '{manifest.ManifestAddress}' references ContentBlock '{block.Address}' at manifest block index {blockIndex}, but no finalized ContentBlock metadata range exists at content-block ordinal 0."
+                                    $"FileManifest '{manifest.ManifestAddress}' references ContentBlock '{block.Address}' at manifest block index {blockIndex}, but no finalized scoped ContentBlock metadata range exists for repository '{repositoryId}' and authorized scope '{manifestReference.AuthorizedScope}' at content-block ordinal 0."
                                     correlationId
                             )
 
@@ -505,14 +523,27 @@ module DirectoryVersion =
                 | None -> Ok()
         }
 
-    let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifests =
-        let getRangePresence storagePoolId contentBlockAddress query =
-            let actorKey = contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress
-            let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
+    let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifestReferences =
+        let getScopedRangePresence storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress query =
+            task {
+                let dedupeIndexActor = orleansClient.CreateActorProxyWithCorrelationId<IDedupeIndexActor>("dedupe-index:v1", correlationId)
 
-            metadataActor.GetRangePresence query correlationId
+                match!
+                    dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                        (
+                            storagePoolId,
+                            repositoryId,
+                            authorizedScope,
+                            manifestAddress,
+                            contentBlockAddress,
+                            correlationId
+                        )
+                    with
+                | Some metadata -> return Grace.Types.ContentBlockMetadata.rangePresence metadata query
+                | None -> return ContentBlockRangePresence.Absent
+            }
 
-        validateManifestReferencesForSaveBoundaryWithResolver getRangePresence correlationId manifests
+        validateManifestReferencesForSaveBoundaryWithResolver getScopedRangePresence repositoryId correlationId manifestReferences
 
     type DirectoryVersionActor
         (

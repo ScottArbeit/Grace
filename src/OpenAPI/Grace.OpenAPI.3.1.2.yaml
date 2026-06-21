@@ -4405,6 +4405,8 @@ components:
       properties:
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
         ManifestAddress:

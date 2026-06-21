@@ -74,6 +74,12 @@ export interface GetContentBlockDownloadUriParameters {
      */
     authorizedScope?: string;
     /**
+     * StoragePool-wide CAS scope identifier.
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    storagePoolId?: string;
+    /**
      * Lowercase 64-character BLAKE3-derived ContentBlock address.
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
@@ -113,6 +119,7 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
+        'storagePoolId': json['StoragePoolId'] == null ? undefined : json['StoragePoolId'],
         'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
         'manifestAddress': json['ManifestAddress'] == null ? undefined : json['ManifestAddress'],
     };
@@ -138,6 +145,7 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'RepositoryId': value['repositoryId'],
         'RepositoryName': value['repositoryName'],
         'AuthorizedScope': value['authorizedScope'],
+        'StoragePoolId': value['storagePoolId'],
         'ContentBlockAddress': value['contentBlockAddress'],
         'ManifestAddress': value['manifestAddress'],
     };

@@ -1367,32 +1367,35 @@ module Storage =
     let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state =
         DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
 
-    let private validateManifestForContentBlockDownload storagePoolId repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
+    let private validateManifestForContentBlockDownload repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
         task {
             match validateManifestAddress correlationId parameters.ManifestAddress with
             | Error error -> return Error error
             | Ok () ->
-                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                if String.IsNullOrWhiteSpace parameters.StoragePoolId then
+                    return Error(GraceError.Create "StoragePoolId is required for ContentBlock manifest download authorization." correlationId)
+                else
+                    let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
 
-                match!
-                    dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
-                        (
-                            storagePoolId,
-                            repositoryId,
-                            parameters.AuthorizedScope,
-                            parameters.ManifestAddress,
-                            parameters.ContentBlockAddress,
-                            correlationId
-                        )
-                    with
-                | Some metadata -> return Ok metadata.StoragePlacement
-                | None ->
-                    return
-                        Error(
-                            GraceError.Create
-                                $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository and authorized scope."
+                    match!
+                        dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                            (
+                                parameters.StoragePoolId,
+                                repositoryId,
+                                parameters.AuthorizedScope,
+                                parameters.ManifestAddress,
+                                parameters.ContentBlockAddress,
                                 correlationId
-                        )
+                            )
+                        with
+                    | Some metadata -> return Ok metadata.StoragePlacement
+                    | None ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository, storage pool, and authorized scope."
+                                    correlationId
+                            )
         }
 
     /// Gets a download URI for the specified file version that can be used by a Grace client.
@@ -1473,21 +1476,16 @@ module Storage =
                     match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok () ->
-                        let organizationId, repositoryId = resolveStorageIds graceIds parameters
-                        let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
-                        let! repositoryDto = repositoryActor.Get correlationId
+                        let _, repositoryId = resolveStorageIds graceIds parameters
 
-                        match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                        match! validateManifestForContentBlockDownload repositoryId parameters correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok storagePoolId ->
-                            match! validateManifestForContentBlockDownload storagePoolId repositoryId parameters correlationId with
+                        | Ok storagePlacement ->
+                            match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok storagePlacement ->
-                                match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId with
-                                | Error error -> return! context |> result400BadRequest error
-                                | Ok downloadUri ->
-                                    context.SetStatusCode StatusCodes.Status200OK
-                                    return! context.WriteStringAsync downloadUri.AbsoluteUri
+                            | Ok downloadUri ->
+                                context.SetStatusCode StatusCodes.Status200OK
+                                return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError

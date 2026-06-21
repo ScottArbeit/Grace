@@ -91,8 +91,11 @@ module Reference =
     let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
         match DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersion correlationId with
         | Error graceError -> Error graceError
-        | Ok manifests ->
-            manifests
+        | Ok manifestReferences ->
+            manifestReferences
+            |> Seq.distinctBy (fun manifestReference -> manifestReference.Manifest.StoragePoolId, manifestReference.Manifest.ManifestAddress)
+            |> Seq.map (fun manifestReference -> manifestReference.Manifest)
+            |> Seq.toList
             |> List.map (fun manifest ->
                 let operationId = manifestContributionOperationId referenceId manifest.StoragePoolId manifest.ManifestAddress
 

@@ -81,6 +81,8 @@ GetContentBlockDownloadUriParameters:
   properties:
     AuthorizedScope:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
     ManifestAddress:
