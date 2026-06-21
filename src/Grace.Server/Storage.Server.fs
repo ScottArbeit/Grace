@@ -290,6 +290,21 @@ module Storage =
         with
         | ex -> Error(GraceError.Create ex.Message correlationId)
 
+    let internal validateRepositoryExistsForStorageRequest requestedRepositoryId (repositoryDto: RepositoryDto) correlationId =
+        if isNull (box repositoryDto)
+           || repositoryDto.RepositoryId = RepositoryId.Empty
+           || repositoryDto.UpdatedAt.IsNone then
+            Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdDoesNotExist) correlationId)
+        elif repositoryDto.RepositoryId
+             <> requestedRepositoryId then
+            Error(
+                GraceError.Create
+                    $"Repository.Get returned repository '{repositoryDto.RepositoryId}' while the storage request targeted '{requestedRepositoryId}'."
+                    correlationId
+            )
+        else
+            Ok()
+
     let private resolveOwnerId (graceIds: GraceIds) (parameters: StorageParameters) =
         if graceIds.OwnerId <> OwnerId.Empty then
             graceIds.OwnerId
@@ -1567,29 +1582,32 @@ module Storage =
                     let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
+                    match validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok _ ->
-                        match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                        match resolveRepositoryStoragePoolRoute repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok storagePoolId ->
-                            let command =
-                                UploadSessionCommand.Start
-                                    {
-                                        UploadSessionId = parameters.UploadSessionId
-                                        OwnerId = ownerId
-                                        OrganizationId = organizationId
-                                        RepositoryId = repositoryId
-                                        StoragePoolId = storagePoolId
-                                        AuthorizedScope = parameters.AuthorizedScope
-                                        FileContentHash = parameters.FileContentHash
-                                        ExpectedSize = parameters.ExpectedSize
-                                        ChunkingSuiteId = parameters.ChunkingSuiteId
-                                        SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
-                                        OperationId = parameters.OperationId
-                                    }
+                        | Ok _ ->
+                            match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok storagePoolId ->
+                                let command =
+                                    UploadSessionCommand.Start
+                                        {
+                                            UploadSessionId = parameters.UploadSessionId
+                                            OwnerId = ownerId
+                                            OrganizationId = organizationId
+                                            RepositoryId = repositoryId
+                                            StoragePoolId = storagePoolId
+                                            AuthorizedScope = parameters.AuthorizedScope
+                                            FileContentHash = parameters.FileContentHash
+                                            ExpectedSize = parameters.ExpectedSize
+                                            ChunkingSuiteId = parameters.ChunkingSuiteId
+                                            SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
+                                            OperationId = parameters.OperationId
+                                        }
 
-                            return! handleUploadSessionCommand context parameters command correlationId
+                                return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex

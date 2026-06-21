@@ -371,6 +371,31 @@ type StorageContentBlockSdkContract() =
             Assert.That(storagePoolId, Is.Not.EqualTo(StoragePoolRouting.defaultStoragePoolId))
 
     [<Test>]
+    member _.StorageSessionRepositoryValidationRejectsMissingOrMismatchedRepositoryBeforeRouting() =
+        let requestRepositoryId = Guid.Parse("5c213e86-a6c5-4961-95d6-c636b0592916")
+        let otherRepositoryId = Guid.Parse("1a43c6b7-164d-47de-810e-940c61133365")
+
+        match Storage.validateRepositoryExistsForStorageRequest requestRepositoryId RepositoryDto.Default "corr-missing-repo-session" with
+        | Ok () -> Assert.Fail("Expected RepositoryDto.Default to be rejected before storage session routing.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("RepositoryId does not exist"))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-missing-repo-session"))
+
+        let mismatchedRepository = { RepositoryDto.Default with RepositoryId = otherRepositoryId; UpdatedAt = Some Constants.DefaultTimestamp }
+
+        match Storage.validateRepositoryExistsForStorageRequest requestRepositoryId mismatchedRepository "corr-mismatched-repo-session" with
+        | Ok () -> Assert.Fail("Expected mismatched Repository.Get result to be rejected.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain($"{otherRepositoryId}"))
+            Assert.That(error.Error, Does.Contain($"{requestRepositoryId}"))
+
+        let matchingRepository = { mismatchedRepository with RepositoryId = requestRepositoryId }
+
+        match Storage.validateRepositoryExistsForStorageRequest requestRepositoryId matchingRepository "corr-existing-repo-session" with
+        | Error error -> Assert.Fail($"Expected existing repository to be accepted, got {error.Error}.")
+        | Ok () -> Assert.Pass()
+
+    [<Test>]
     member _.UploadSessionRepositoryValidationRejectsCrossRepositorySession() =
         let requestRepositoryId = Guid.Parse("89be65f0-fb98-45fb-bbcf-b11683948430")
         let recordedRepositoryId = Guid.Parse("77544495-e6f0-41cf-9dc5-3c23c7921ce9")
