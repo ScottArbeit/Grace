@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "1a9894338ee62325708f99706ed6d6fb8250df55eea42ef93f8e4199e431bd18",
+  "sourceProjectionSha256": "0eaac9f30864848974b7550a53bcce1418d76558529210bc6a640463bd3c2949",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.2",
@@ -52,7 +52,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 144268."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 144304."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."

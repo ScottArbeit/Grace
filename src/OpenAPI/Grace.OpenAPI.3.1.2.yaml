@@ -2833,7 +2833,7 @@ paths:
               examples:
                 signedContentBlockUploadUri:
                   summary: Raw ContentBlock upload URI
-                  value: https://storage.example.net/grace/staging/repositories/ab6f35ef-6e01-440b-8f9b-c343a5272095/upload-sessions/6a67b2a9f6fb45c6a7f89ce5f39f2e14/content-blocks/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example
+                  value: https://storage.example.net/grace/staging/repositories/ab6f35ef-6e01-440b-8f9b-c343a5272095/upload-sessions/6a67b2a9f6fb45c6a7f89ce5f39f2e14/content-blocks/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example#graceStorageAccount=gracestaging001
         '400':
           $ref: '#/components/responses/400'
         '500':
