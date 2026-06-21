@@ -899,6 +899,37 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Not.Contain("SnapshotState correlationId"))
 
     [<Test>]
+    member _.ContentBlockDownloadSasUsesFinalizedPlacementInsteadOfCurrentRoute() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let handlerStart = storageServerSource.IndexOf("let GetContentBlockDownloadUri: HttpHandler =", StringComparison.Ordinal)
+        let handlerEnd = storageServerSource.IndexOf("/// Discovers reusable ContentBlocks", handlerStart, StringComparison.Ordinal)
+
+        Assert.That(handlerStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(handlerEnd, Is.GreaterThan(handlerStart))
+
+        let handlerSource = storageServerSource.Substring(handlerStart, handlerEnd - handlerStart)
+        let compactedSource = String.Join(" ", handlerSource.Split([| '\r'; '\n'; '\t'; ' ' |], StringSplitOptions.RemoveEmptyEntries))
+
+        Assert.That(
+            compactedSource,
+            Does.Contain("Ok storagePlacement -> match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId"),
+            "Download URI generation must use the finalized ContentBlockMetadata.StoragePlacement returned by the DedupeIndex lookup."
+        )
+
+        Assert.That(
+            handlerSource,
+            Does.Not.Contain("expectedContentBlockStoragePlacement"),
+            "Download URI generation must not recompute the CAS object key from the current route after finalization."
+        )
+
+        Assert.That(
+            handlerSource,
+            Does.Not.Contain("resolveUploadSessionStoragePoolRoute"),
+            "Download URI generation must not follow upload-session/current route state after finalized placement is recorded."
+        )
+
+    [<Test>]
     member _.UploadSessionBackedSasUsesRecordedSessionPoolRoute() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
         let storageServerSource = File.ReadAllText(storageServerPath)
