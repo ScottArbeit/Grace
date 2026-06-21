@@ -1893,7 +1893,7 @@ module Storage =
                                                                     do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                                     return! context |> result200Ok returnValue
                                                                 | Error error ->
-                                                                    do! deleteContentBlockPayloadBestEffort finalMaterialization.StoragePlacement correlationId
+                                                                    do! deleteContentBlockStagingPayload parameters.StoragePlacement correlationId
                                                                     return! context |> result400BadRequest error
                 with
                 | ex ->
