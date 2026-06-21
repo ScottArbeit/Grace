@@ -44,6 +44,12 @@ export interface StartUploadSession {
      */
     repositoryId: string;
     /**
+     * StoragePool-wide CAS scope identifier.
+     * @type {string}
+     * @memberof StartUploadSession
+     */
+    storagePoolId: string;
+    /**
      * 
      * @type {string}
      * @memberof StartUploadSession
@@ -89,6 +95,7 @@ export function instanceOfStartUploadSession(value: object): value is StartUploa
     if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
     if (!('organizationId' in value) || value['organizationId'] === undefined) return false;
     if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
+    if (!('storagePoolId' in value) || value['storagePoolId'] === undefined) return false;
     if (!('authorizedScope' in value) || value['authorizedScope'] === undefined) return false;
     if (!('fileContentHash' in value) || value['fileContentHash'] === undefined) return false;
     if (!('expectedSize' in value) || value['expectedSize'] === undefined) return false;
@@ -112,6 +119,7 @@ export function StartUploadSessionFromJSONTyped(json: any, ignoreDiscriminator: 
         'ownerId': json['OwnerId'],
         'organizationId': json['OrganizationId'],
         'repositoryId': json['RepositoryId'],
+        'storagePoolId': json['StoragePoolId'],
         'authorizedScope': json['AuthorizedScope'],
         'fileContentHash': json['FileContentHash'],
         'expectedSize': json['ExpectedSize'],
@@ -136,6 +144,7 @@ export function StartUploadSessionToJSONTyped(value?: StartUploadSession | null,
         'OwnerId': value['ownerId'],
         'OrganizationId': value['organizationId'],
         'RepositoryId': value['repositoryId'],
+        'StoragePoolId': value['storagePoolId'],
         'AuthorizedScope': value['authorizedScope'],
         'FileContentHash': value['fileContentHash'],
         'ExpectedSize': value['expectedSize'],

@@ -15,12 +15,17 @@ module ContentBlockMetadata =
     type ContentBlockStoragePlacement =
         {
             [<Id(0u)>]
-            ObjectKey: string
+            StorageAccountName: StorageAccountName
             [<Id(1u)>]
+            StorageContainerName: StorageContainerName
+            [<Id(2u)>]
+            ObjectKey: string
+            [<Id(3u)>]
             ETag: string option
         }
 
-        static member Empty = { ObjectKey = String.Empty; ETag = None }
+        static member Empty =
+            { StorageAccountName = String.Empty; StorageContainerName = StorageContainerName String.Empty; ObjectKey = String.Empty; ETag = None }
 
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadataRange =
@@ -182,6 +187,14 @@ module ContentBlockMetadata =
             StoragePlacement: ContentBlockStoragePlacement
             [<Id(5u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(6u)>]
+            ExpectedMetadataVersion: MetadataVersion option
+            [<Id(7u)>]
+            RequireMissingMetadata: bool
+            [<Id(8u)>]
+            ExpectedRanges: ContentBlockMetadataRange array
+            [<Id(9u)>]
+            IsFinalizeContribution: bool
         }
 
     [<GenerateSerializer>]

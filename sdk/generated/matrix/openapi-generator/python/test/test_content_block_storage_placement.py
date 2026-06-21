@@ -36,11 +36,15 @@ class TestContentBlockStoragePlacement(unittest.TestCase):
         model = ContentBlockStoragePlacement()
         if include_optional:
             return ContentBlockStoragePlacement(
+                storage_account_name = '',
+                storage_container_name = '',
                 object_key = '',
                 e_tag = ''
             )
         else:
             return ContentBlockStoragePlacement(
+                storage_account_name = '',
+                storage_container_name = '',
                 object_key = '',
         )
         """

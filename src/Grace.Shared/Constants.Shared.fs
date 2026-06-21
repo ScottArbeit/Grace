@@ -587,6 +587,18 @@ module Constants =
     [<Literal>]
     let DefaultObjectStorageAccount = "gracevcsdevelopment"
 
+    /// The default server-owned StoragePool for shared local/Azurite CAS placement.
+    [<Literal>]
+    let DefaultStoragePoolId = "default"
+
+    /// The default container for StoragePool-scoped CAS objects.
+    [<Literal>]
+    let DefaultCasStorageContainerName = "grace-cas"
+
+    /// The default object-key prefix inside the CAS storage container.
+    [<Literal>]
+    let DefaultCasStoragePrefix = ""
+
     /// Values used with Grace's MemoryCache.
     module MemoryCache =
         /// A special Guid value that means "false" or "we know there's no value here". Used in places where the cache entry value is a Guid.

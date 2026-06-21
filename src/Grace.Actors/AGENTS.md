@@ -28,9 +28,9 @@ Start with `../AGENTS.md` for global rules before working on Orleans code.
    Compaction is a whole-record metadata rewrite: keep the `ContentBlockAddress`, preserve active logical ordinal
    windows, remove reclaimed physical ranges, and require fresh `MetadataVersion` evidence plus no active upload,
    finalization, range-claim, or compaction churn.
-6. `ManifestContributionWorkflowActor` is keyed by RepositoryId and ManifestAddress. It owns only durable fan-out progress
-   for active range-count contribution; repository-local reference counts stay in `RepositoryContentCounterActor`, and
-   physical range metadata stays in `ContentBlockMetadataActor`.
+6. `ManifestContributionWorkflowActor` is keyed by RepositoryId, StoragePoolId, and ManifestAddress. It owns only
+   durable fan-out progress for active range-count contribution; repository-local reference counts stay in
+   `RepositoryContentCounterActor`, and physical range metadata stays in `ContentBlockMetadataActor`.
 
 ## Validation
 

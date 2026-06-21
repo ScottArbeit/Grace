@@ -18,22 +18,34 @@ module RepositoryContentCounter =
 
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterCommand =
-        | AddReference of operationId: RepositoryContentCounterOperationId * repositoryId: RepositoryId * manifestAddress: ManifestAddress
-        | RemoveReference of operationId: RepositoryContentCounterOperationId * repositoryId: RepositoryId * manifestAddress: ManifestAddress
+        | AddReference of
+            operationId: RepositoryContentCounterOperationId *
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress
+        | RemoveReference of
+            operationId: RepositoryContentCounterOperationId *
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress
 
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterCommand>()
 
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterEventType =
-        | ReferenceAdded of operationId: RepositoryContentCounterOperationId * repositoryId: RepositoryId * manifestAddress: ManifestAddress
+        | ReferenceAdded of
+            operationId: RepositoryContentCounterOperationId *
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress
         | ReferenceRemoved of operationId: RepositoryContentCounterOperationId
 
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterEventType>()
 
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterIntent =
-        | IncrementManifestReferenceCount of repositoryId: RepositoryId * manifestAddress: ManifestAddress
-        | DecrementManifestReferenceCount of repositoryId: RepositoryId * manifestAddress: ManifestAddress
+        | IncrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
+        | DecrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
 
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterIntent>()
 
@@ -44,6 +56,7 @@ module RepositoryContentCounter =
         {
             Class: string
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             ManifestAddress: ManifestAddress
             ReferenceCount: ReferenceCount
             LifecycleState: RepositoryContentCounterLifecycleState
@@ -54,6 +67,7 @@ module RepositoryContentCounter =
             {
                 Class = nameof RepositoryContentCounterDto
                 RepositoryId = RepositoryId.Empty
+                StoragePoolId = String.Empty
                 ManifestAddress = String.Empty
                 ReferenceCount = 0L
                 LifecycleState = RepositoryContentCounterLifecycleState.NotReferenced
@@ -62,13 +76,18 @@ module RepositoryContentCounter =
 
         static member UpdateDto counterEvent current =
             match counterEvent.Event with
-            | RepositoryContentCounterEventType.ReferenceAdded (operationId, repositoryId, manifestAddress) ->
+            | RepositoryContentCounterEventType.ReferenceAdded (operationId, repositoryId, storagePoolId, manifestAddress) ->
                 { current with
                     RepositoryId =
                         if current.RepositoryId = RepositoryId.Empty then
                             repositoryId
                         else
                             current.RepositoryId
+                    StoragePoolId =
+                        if String.IsNullOrWhiteSpace current.StoragePoolId then
+                            storagePoolId
+                        else
+                            current.StoragePoolId
                     ManifestAddress =
                         if String.IsNullOrWhiteSpace current.ManifestAddress then
                             manifestAddress

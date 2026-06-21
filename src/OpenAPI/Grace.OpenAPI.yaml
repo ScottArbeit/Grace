@@ -2833,7 +2833,7 @@ paths:
               examples:
                 signedContentBlockUploadUri:
                   summary: Raw ContentBlock upload URI
-                  value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
+                  value: https://storage.example.net/grace/staging/repositories/ab6f35ef-6e01-440b-8f9b-c343a5272095/upload-sessions/6a67b2a9f6fb45c6a7f89ce5f39f2e14/content-blocks/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example#graceStorageAccount=gracestaging001
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -2859,7 +2859,7 @@ paths:
               examples:
                 signedContentBlockDownloadUri:
                   summary: Raw ContentBlock download URI
-                  value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
+                  value: https://storage.example.net/grace/cas/content/ab/cd/ef/01/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example
         '400':
           $ref: '#/components/responses/400'
         '500':
@@ -3931,6 +3931,8 @@ components:
           $ref: '#/components/schemas/RepositoryName'
         ObjectStorageProvider:
           $ref: '#/components/schemas/ObjectStorageProvider'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         StorageAccountName:
           type: string
         StorageContainerName:
@@ -4388,6 +4390,9 @@ components:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
       properties:
+        UploadSessionId:
+          type: string
+          format: uuid
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
         AuthorizedScope:
@@ -4398,8 +4403,14 @@ components:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
       properties:
+        AuthorizedScope:
+          $ref: '#/components/schemas/RelativePath'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
+        ManifestAddress:
+          $ref: '#/components/schemas/ManifestAddress'
     DiscoverContentBlocksParameters:
       description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
       allOf:
@@ -4563,6 +4574,8 @@ components:
           $ref: '#/components/schemas/ChunkingSuiteId'
         FileContentHash:
           $ref: '#/components/schemas/FileContentHash'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         Size:
           type: integer
           format: int64
@@ -4575,6 +4588,7 @@ components:
         - ManifestAddress
         - ChunkingSuiteId
         - FileContentHash
+        - StoragePoolId
         - Size
         - Blocks
     ContentBlock:
@@ -6402,12 +6416,18 @@ components:
       description: Object-storage placement metadata for a confirmed ContentBlock payload.
       type: object
       properties:
+        StorageAccountName:
+          $ref: '#/components/schemas/StorageAccountName'
+        StorageContainerName:
+          $ref: '#/components/schemas/StorageContainerName'
         ObjectKey:
           type: string
         ETag:
           type: string
           nullable: true
       required:
+        - StorageAccountName
+        - StorageContainerName
         - ObjectKey
     ContentBlockMetadataRange:
       description: Physical range metadata for ContentBlock reconstruction, reuse, and compaction.
@@ -6543,6 +6563,8 @@ components:
           $ref: '#/components/schemas/OrganizationId'
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
         FileContentHash:
@@ -6594,6 +6616,7 @@ components:
         - OwnerId
         - OrganizationId
         - RepositoryId
+        - StoragePoolId
         - AuthorizedScope
         - FileContentHash
         - ExpectedSize
@@ -6623,6 +6646,8 @@ components:
           $ref: '#/components/schemas/OrganizationId'
         RepositoryId:
           $ref: '#/components/schemas/RepositoryId'
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
         FileContentHash:
@@ -6641,6 +6666,7 @@ components:
         - OwnerId
         - OrganizationId
         - RepositoryId
+        - StoragePoolId
         - AuthorizedScope
         - FileContentHash
         - ExpectedSize

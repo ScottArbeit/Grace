@@ -58,7 +58,17 @@ module ManifestDownload =
     let private buildDownloadUriParameters request contentBlockAddress =
         let parameters = GetContentBlockDownloadUriParameters()
         setStorageParameters request parameters |> ignore
+        parameters.AuthorizedScope <- request.FileVersion.RelativePath
         parameters.ContentBlockAddress <- contentBlockAddress
+
+        match request.FileVersion.ContentReference.Manifest with
+        | Some manifest ->
+            parameters.StoragePoolId <- manifest.StoragePoolId
+            parameters.ManifestAddress <- manifest.ManifestAddress
+        | None ->
+            parameters.StoragePoolId <- String.Empty
+            parameters.ManifestAddress <- String.Empty
+
         parameters
 
     let private describeValidationError validationError =

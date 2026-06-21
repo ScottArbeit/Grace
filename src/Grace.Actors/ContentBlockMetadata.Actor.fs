@@ -90,6 +90,10 @@ module ContentBlockMetadata =
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "StoragePlacement.ObjectKey is required.")
         else
@@ -98,6 +102,10 @@ module ContentBlockMetadata =
     let private validateExistingStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "Existing StoragePlacement is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageAccountName then
+            Some(graceError correlationId "Existing StoragePlacement.StorageAccountName is required.")
+        elif String.IsNullOrWhiteSpace placement.StorageContainerName then
+            Some(graceError correlationId "Existing StoragePlacement.StorageContainerName is required.")
         elif String.IsNullOrWhiteSpace placement.ObjectKey then
             Some(graceError correlationId "Existing StoragePlacement.ObjectKey is required.")
         else
@@ -116,8 +124,15 @@ module ContentBlockMetadata =
             match validateStoragePlacement correlationId merge.StoragePlacement with
             | Some error -> Some error
             | None ->
-                merge.Ranges
-                |> Array.tryPick (validateRange correlationId)
+                match
+                    merge.Ranges
+                    |> Array.tryPick (validateRange correlationId)
+                    with
+                | Some error -> Some error
+                | None when isNull merge.ExpectedRanges -> None
+                | None ->
+                    merge.ExpectedRanges
+                    |> Array.tryPick (validateRange correlationId)
 
     let private validateCompactPhysicalRanges correlationId (compact: CompactContentBlockPhysicalRanges) =
         if isNull (box compact) then
@@ -159,33 +174,69 @@ module ContentBlockMetadata =
 
     let private rangeKey (range: ContentBlockMetadataRange) = $"{range.OrdinalStart}:{range.OrdinalCount}:{range.PhysicalOffset}:{range.PhysicalLength}"
 
-    let private mergeRanges existingRanges incomingRanges =
+    let private mergeRanges correlationId isFinalizeContribution existingRanges incomingRanges =
         let merged = Dictionary<string, ContentBlockMetadataRange>()
+        let incoming = Dictionary<string, ContentBlockMetadataRange>()
+        let mutable error = None
 
-        let addRange preserveActiveCount range =
+        let mergeActiveCount existing range =
+            if range.ActiveManifestCount > Int32.MaxValue - existing.ActiveManifestCount then
+                error <- Some(graceError correlationId "ContentBlockMetadataRange.ActiveManifestCount cannot exceed Int32.MaxValue.")
+                existing
+            else
+                { existing with
+                    ActiveManifestCount =
+                        existing.ActiveManifestCount
+                        + range.ActiveManifestCount
+                }
+
+        let addExistingRange range =
             let key = rangeKey range
 
-            if merged.ContainsKey key then
+            if error.IsSome then
+                ()
+            elif merged.ContainsKey key then
                 let existing = merged[key]
 
-                let activeManifestCount =
-                    if preserveActiveCount then
-                        max existing.ActiveManifestCount range.ActiveManifestCount
-                    else
-                        range.ActiveManifestCount
-
-                merged[key] <- { existing with ActiveManifestCount = activeManifestCount }
+                merged[key] <- mergeActiveCount existing range
             else
                 merged[key] <- range
 
-        existingRanges |> Array.iter (addRange true)
+        let addIncomingRange range =
+            let key = rangeKey range
 
-        incomingRanges |> Array.iter (addRange true)
+            if error.IsNone then
+                match incoming.TryGetValue key with
+                | true, existing -> incoming[key] <- { existing with ActiveManifestCount = max existing.ActiveManifestCount range.ActiveManifestCount }
+                | false, _ -> incoming[key] <- range
 
-        merged.Values
-        |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
-        |> Seq.toArray
-        |> Ok
+        existingRanges |> Array.iter addExistingRange
+        incomingRanges |> Array.iter addIncomingRange
+
+        let isExactReactivation (existing: ContentBlockMetadataRange) (range: ContentBlockMetadataRange) =
+            existing.ActiveManifestCount = 0
+            && range.ActiveManifestCount > 0
+
+        incoming.Values
+        |> Seq.iter (fun range ->
+            let key = rangeKey range
+
+            match merged.TryGetValue key with
+            | true, existing ->
+                if isFinalizeContribution
+                   || isExactReactivation existing range then
+                    merged[key] <- mergeActiveCount existing range
+                else
+                    merged[key] <- existing
+            | false, _ -> merged[key] <- range)
+
+        match error with
+        | Some error -> Error error
+        | None ->
+            merged.Values
+            |> Seq.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+            |> Seq.toArray
+            |> Ok
 
     let private activeLogicalRangeKey (range: ContentBlockMetadataRange) = range.OrdinalStart, range.OrdinalCount, range.ActiveManifestCount
 
@@ -266,7 +317,40 @@ module ContentBlockMetadata =
                             $"Stale ContentBlockMetadata compaction rejected. Expected MetadataVersion {compact.ExpectedMetadataVersion}, current MetadataVersion {existing.MetadataVersion}."
                     )
 
-    let private createMergedMetadata
+    let private expectedRangeExists (existingRanges: ContentBlockMetadataRange array) expectedRange =
+        let expectedKey = rangeKey expectedRange
+
+        existingRanges
+        |> Array.exists (fun existingRange -> rangeKey existingRange = expectedKey)
+
+    let private validateMergePreconditions correlationId (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
+        match currentMetadata, merge.RequireMissingMetadata, merge.ExpectedMetadataVersion with
+        | Some existing, true, _ ->
+            Error(graceError correlationId $"ContentBlockMetadata already exists; merge expected missing metadata for {merge.ContentBlockAddress}.")
+        | None, _, Some expectedVersion -> Error(graceError correlationId $"ContentBlockMetadata does not exist; expected MetadataVersion {expectedVersion}.")
+        | Some existing, false, Some expectedVersion when existing.MetadataVersion <> expectedVersion ->
+            Error(
+                graceError
+                    correlationId
+                    $"Stale ContentBlockMetadata merge rejected. Expected MetadataVersion {expectedVersion}, current MetadataVersion {existing.MetadataVersion}."
+            )
+        | _ ->
+            let expectedRanges = if isNull merge.ExpectedRanges then Array.empty else merge.ExpectedRanges
+
+            match currentMetadata, expectedRanges with
+            | None, [||] -> Ok()
+            | None, _ -> Error(graceError correlationId $"ContentBlockMetadata does not exist; expected range evidence for {merge.ContentBlockAddress}.")
+            | Some existing, expectedRanges ->
+                let missingExpectedRange =
+                    expectedRanges
+                    |> Array.tryFind (fun expectedRange -> not (expectedRangeExists existing.Ranges expectedRange))
+
+                match missingExpectedRange with
+                | Some _ ->
+                    Error(graceError correlationId $"ContentBlockMetadata expected range evidence is absent or changed for {merge.ContentBlockAddress}.")
+                | None -> Ok()
+
+    let internal createMergedMetadata
         correlationId
         (currentMetadata: ContentBlockMetadata option)
         (merge: MergeContentBlockPhysicalRanges)
@@ -276,83 +360,106 @@ module ContentBlockMetadata =
         match validateMergePhysicalRanges correlationId merge with
         | Some error -> Error error
         | None ->
-            match currentMetadata with
-            | Some existing when existing.StoragePoolId <> merge.StoragePoolId ->
-                Error(
-                    graceError correlationId $"ContentBlockMetadata StoragePoolId mismatch. Existing {existing.StoragePoolId}, requested {merge.StoragePoolId}."
-                )
-            | Some existing when
-                existing.ContentBlockAddress
-                <> merge.ContentBlockAddress
-                ->
-                Error(
-                    graceError
-                        correlationId
-                        $"ContentBlockMetadata ContentBlockAddress mismatch. Existing {existing.ContentBlockAddress}, requested {merge.ContentBlockAddress}."
-                )
-            | Some existing when
-                existing.BlockFormatVersion
-                <> merge.BlockFormatVersion
-                ->
-                Error(
-                    graceError
-                        correlationId
-                        $"ContentBlockMetadata BlockFormatVersion mismatch. Existing {existing.BlockFormatVersion}, requested {merge.BlockFormatVersion}."
-                )
-            | Some existing when
-                validateExistingStoragePlacement correlationId existing.StoragePlacement
-                |> Option.isSome
-                ->
-                Error(
+            match validateMergePreconditions correlationId currentMetadata merge with
+            | Error error -> Error error
+            | Ok () ->
+                match currentMetadata with
+                | Some existing when existing.StoragePoolId <> merge.StoragePoolId ->
+                    Error(
+                        graceError
+                            correlationId
+                            $"ContentBlockMetadata StoragePoolId mismatch. Existing {existing.StoragePoolId}, requested {merge.StoragePoolId}."
+                    )
+                | Some existing when
+                    existing.ContentBlockAddress
+                    <> merge.ContentBlockAddress
+                    ->
+                    Error(
+                        graceError
+                            correlationId
+                            $"ContentBlockMetadata ContentBlockAddress mismatch. Existing {existing.ContentBlockAddress}, requested {merge.ContentBlockAddress}."
+                    )
+                | Some existing when
+                    existing.BlockFormatVersion
+                    <> merge.BlockFormatVersion
+                    ->
+                    Error(
+                        graceError
+                            correlationId
+                            $"ContentBlockMetadata BlockFormatVersion mismatch. Existing {existing.BlockFormatVersion}, requested {merge.BlockFormatVersion}."
+                    )
+                | Some existing when
                     validateExistingStoragePlacement correlationId existing.StoragePlacement
-                    |> Option.get
-                )
-            | Some existing when
-                existing.StoragePlacement.ObjectKey
-                <> merge.StoragePlacement.ObjectKey
-                ->
-                Error(
-                    graceError
-                        correlationId
-                        $"ContentBlockMetadata StoragePlacement.ObjectKey mismatch. Existing {existing.StoragePlacement.ObjectKey}, requested {merge.StoragePlacement.ObjectKey}."
-                )
-            | _ ->
-                let existingRanges =
-                    currentMetadata
-                    |> Option.map (fun metadata -> metadata.Ranges)
-                    |> Option.defaultValue Array.empty
+                    |> Option.isSome
+                    ->
+                    Error(
+                        validateExistingStoragePlacement correlationId existing.StoragePlacement
+                        |> Option.get
+                    )
+                | Some existing when
+                    existing.StoragePlacement.StorageAccountName
+                    <> merge.StoragePlacement.StorageAccountName
+                    ->
+                    Error(
+                        graceError
+                            correlationId
+                            $"ContentBlockMetadata StoragePlacement.StorageAccountName mismatch. Existing {existing.StoragePlacement.StorageAccountName}, requested {merge.StoragePlacement.StorageAccountName}."
+                    )
+                | Some existing when
+                    existing.StoragePlacement.StorageContainerName
+                    <> merge.StoragePlacement.StorageContainerName
+                    ->
+                    Error(
+                        graceError
+                            correlationId
+                            $"ContentBlockMetadata StoragePlacement.StorageContainerName mismatch. Existing {existing.StoragePlacement.StorageContainerName}, requested {merge.StoragePlacement.StorageContainerName}."
+                    )
+                | Some existing when
+                    existing.StoragePlacement.ObjectKey
+                    <> merge.StoragePlacement.ObjectKey
+                    ->
+                    Error(
+                        graceError
+                            correlationId
+                            $"ContentBlockMetadata StoragePlacement.ObjectKey mismatch. Existing {existing.StoragePlacement.ObjectKey}, requested {merge.StoragePlacement.ObjectKey}."
+                    )
+                | _ ->
+                    let existingRanges =
+                        currentMetadata
+                        |> Option.map (fun metadata -> metadata.Ranges)
+                        |> Option.defaultValue Array.empty
 
-                match mergeRanges existingRanges merge.Ranges with
-                | Error error -> Error error
-                | Ok ranges ->
-                    match activePhysicalBytes correlationId ranges with
+                    match mergeRanges correlationId merge.IsFinalizeContribution existingRanges merge.Ranges with
                     | Error error -> Error error
-                    | Ok activePhysicalBytes ->
-                        let totalPhysicalBytes = totalPhysicalBytes ranges
+                    | Ok ranges ->
+                        match activePhysicalBytes correlationId ranges with
+                        | Error error -> Error error
+                        | Ok activePhysicalBytes ->
+                            let totalPhysicalBytes = totalPhysicalBytes ranges
 
-                        if activePhysicalBytes > totalPhysicalBytes then
-                            Error(graceError correlationId "ActivePhysicalBytes cannot exceed TotalPhysicalBytes.")
-                        else
-                            let metadataVersion =
-                                currentMetadata
-                                |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
-                                |> Option.defaultValue 1L
+                            if activePhysicalBytes > totalPhysicalBytes then
+                                Error(graceError correlationId "ActivePhysicalBytes cannot exceed TotalPhysicalBytes.")
+                            else
+                                let metadataVersion =
+                                    currentMetadata
+                                    |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
+                                    |> Option.defaultValue 1L
 
-                            let metadata: ContentBlockMetadata =
-                                {
-                                    Class = nameof ContentBlockMetadata
-                                    StoragePoolId = merge.StoragePoolId
-                                    ContentBlockAddress = merge.ContentBlockAddress
-                                    BlockFormatVersion = merge.BlockFormatVersion
-                                    StoragePlacement = merge.StoragePlacement
-                                    Ranges = ranges
-                                    TotalPhysicalBytes = totalPhysicalBytes
-                                    ActivePhysicalBytes = activePhysicalBytes
-                                    MetadataVersion = metadataVersion
-                                    UpdatedAt = timestamp
-                                }
+                                let metadata: ContentBlockMetadata =
+                                    {
+                                        Class = nameof ContentBlockMetadata
+                                        StoragePoolId = merge.StoragePoolId
+                                        ContentBlockAddress = merge.ContentBlockAddress
+                                        BlockFormatVersion = merge.BlockFormatVersion
+                                        StoragePlacement = merge.StoragePlacement
+                                        Ranges = ranges
+                                        TotalPhysicalBytes = totalPhysicalBytes
+                                        ActivePhysicalBytes = activePhysicalBytes
+                                        MetadataVersion = metadataVersion
+                                        UpdatedAt = timestamp
+                                    }
 
-                            Ok metadata
+                                Ok metadata
 
     let private stampMetadata (metadata: ContentBlockMetadata) nextVersion timestamp = { metadata with MetadataVersion = nextVersion; UpdatedAt = timestamp }
 
@@ -379,31 +486,34 @@ module ContentBlockMetadata =
                 match validateMetadata eventMetadata.CorrelationId replace.Metadata with
                 | Some error -> Error error
                 | None ->
-                    match current.Metadata, replace.ExpectedMetadataVersion with
-                    | None, Some expectedVersion ->
-                        Error(graceError eventMetadata.CorrelationId $"ContentBlockMetadata does not exist; expected MetadataVersion {expectedVersion}.")
-                    | Some _, None ->
-                        Error(graceError eventMetadata.CorrelationId "ExpectedMetadataVersion is required when replacing existing ContentBlockMetadata.")
-                    | Some existing, Some expectedVersion when existing.MetadataVersion <> expectedVersion ->
-                        Error(
-                            graceError
-                                eventMetadata.CorrelationId
-                                $"Stale ContentBlockMetadata update rejected. Expected MetadataVersion {expectedVersion}, current MetadataVersion {existing.MetadataVersion}."
-                        )
-                    | currentState, _ ->
-                        let nextVersion =
-                            currentState
-                            |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
-                            |> Option.defaultValue 1L
+                    match validateStoragePlacement eventMetadata.CorrelationId replace.Metadata.StoragePlacement with
+                    | Some error -> Error error
+                    | None ->
+                        match current.Metadata, replace.ExpectedMetadataVersion with
+                        | None, Some expectedVersion ->
+                            Error(graceError eventMetadata.CorrelationId $"ContentBlockMetadata does not exist; expected MetadataVersion {expectedVersion}.")
+                        | Some _, None ->
+                            Error(graceError eventMetadata.CorrelationId "ExpectedMetadataVersion is required when replacing existing ContentBlockMetadata.")
+                        | Some existing, Some expectedVersion when existing.MetadataVersion <> expectedVersion ->
+                            Error(
+                                graceError
+                                    eventMetadata.CorrelationId
+                                    $"Stale ContentBlockMetadata update rejected. Expected MetadataVersion {expectedVersion}, current MetadataVersion {existing.MetadataVersion}."
+                            )
+                        | currentState, _ ->
+                            let nextVersion =
+                                currentState
+                                |> Option.map (fun metadata -> metadata.MetadataVersion + 1L)
+                                |> Option.defaultValue 1L
 
-                        let metadata = stampMetadata replace.Metadata nextVersion eventMetadata.Timestamp
+                            let metadata = stampMetadata replace.Metadata nextVersion eventMetadata.Timestamp
 
-                        let events =
-                            [
-                                { Event = ContentBlockMetadataEventType.WholeRecordReplaced(operationId, metadata); Metadata = eventMetadata }
-                            ]
+                            let events =
+                                [
+                                    { Event = ContentBlockMetadataEventType.WholeRecordReplaced(operationId, metadata); Metadata = eventMetadata }
+                                ]
 
-                        okDecision metadata operationId events false "ContentBlockMetadata whole record replaced."
+                            okDecision metadata operationId events false "ContentBlockMetadata whole record replaced."
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
                 match createMergedMetadata eventMetadata.CorrelationId current.Metadata merge eventMetadata.Timestamp with
                 | Error error -> Error error

@@ -1,5 +1,6 @@
 namespace Grace.Actors
 
+open Azure
 open Azure.Core
 open Azure.Identity
 open Azure.Messaging.ServiceBus
@@ -28,6 +29,7 @@ open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Common
 open Grace.Types.Validation
+open Grace.Types.UploadSession
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
@@ -125,6 +127,41 @@ module Services =
         else
             blobUri
 
+    let internal shardBlobHostForConfiguredHost (accountName: string) (configuredHost: string) =
+        let firstDot = configuredHost.IndexOf('.')
+
+        if firstDot > 0
+           && configuredHost
+               .Substring(firstDot)
+                  .IndexOf(".blob.", StringComparison.OrdinalIgnoreCase)
+              >= 0 then
+            $"{accountName}{configuredHost.Substring(firstDot)}"
+        else
+            $"{accountName}.blob.core.windows.net"
+
+    let private shardBlobEndpointUri (accountName: string) (containerAndObjectPath: string) =
+        let configuredEndpoint = AzureEnvironment.storageEndpoints.BlobEndpoint
+
+        if accountName.Equals(AzureEnvironment.storageEndpoints.AccountName, StringComparison.OrdinalIgnoreCase) then
+            Uri($"{configuredEndpoint.AbsoluteUri.TrimEnd('/')}/{containerAndObjectPath.TrimStart('/')}")
+            |> normalizeLocalAzuriteBlobUri accountName
+        else
+            UriBuilder(
+                configuredEndpoint.Scheme,
+                shardBlobHostForConfiguredHost accountName configuredEndpoint.Host,
+                -1,
+                containerAndObjectPath.TrimStart('/')
+            )
+                .Uri
+
+    let private storageSharedKeyCredentialForShard (shard: StoragePoolRouting.StorageShard) =
+        if StoragePoolRouting.sharedKeyCanSignShard shard then
+            sharedKeyCredential.Value
+        else
+            None
+
+    let internal casUserDelegationSasSigningAccountName (route: StoragePoolRouting.StoragePoolRoute) = route.Shard.StorageAccountName
+
     let private createBlobContainerClientFromEndpoint containerName =
         if AzureEnvironment.useManagedIdentityForStorage then
             Context.blobServiceClient.GetBlobContainerClient(containerName)
@@ -137,6 +174,16 @@ module Services =
 
                 BlobContainerClient(containerUri, credential)
             | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
+
+    let private createBlobContainerClientForShard (shard: StoragePoolRouting.StorageShard) =
+        let containerUri = shardBlobEndpointUri shard.StorageAccountName $"{shard.StorageContainerName}"
+
+        if AzureEnvironment.useManagedIdentityForStorage then
+            BlobContainerClient(containerUri, DefaultAzureCredential())
+        else
+            match storageSharedKeyCredentialForShard shard with
+            | Some credential -> BlobContainerClient(containerUri, credential)
+            | None -> BlobContainerClient(containerUri)
 
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
@@ -195,6 +242,10 @@ module Services =
             hashMatchesPrefix normalizedSha256HashPrefix (getSha256Hash candidate)
             && hashMatchesPrefix normalizedBlake3HashPrefix (getBlake3Hash candidate))
         |> resolveVersionHashPrefixMatches
+
+    let private isRootDirectoryVersion (directoryVersion: DirectoryVersion) =
+        directoryVersion.RelativePath = Constants.RootDirectoryPath
+        || directoryVersion.RelativePath = RelativePath "/"
 
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
@@ -359,6 +410,129 @@ module Services =
             return containerClient.GetBlockBlobClient blobName
         }
 
+    let resolveRepositoryStoragePoolRoute repositoryDto correlationId = StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId
+
+    let resolveUploadSessionStoragePoolRoute repositoryId storagePoolId correlationId =
+        StoragePoolRouting.resolveStoragePoolRouteForStoragePoolId repositoryId storagePoolId correlationId
+
+    let getCasContainerClient (shard: StoragePoolRouting.StorageShard) correlationId =
+        task {
+            match StoragePoolRouting.validateShard correlationId shard with
+            | Error error -> return Error error
+            | Ok () ->
+                let key = $"CasCon:{shard.StorageAccountName}-{shard.StorageContainerName}"
+
+                let! blobContainerClient =
+                    memoryCache.GetOrCreateAsync(
+                        key,
+                        fun cacheEntry ->
+                            task {
+                                let blobContainerClient = createBlobContainerClientForShard shard
+                                let! _ = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None)
+                                cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
+                                return blobContainerClient
+                            }
+                    )
+
+                return Ok blobContainerClient
+        }
+
+    let getAzureContentBlockClient (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) correlationId =
+        task {
+            let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
+
+            match! getCasContainerClient route.Shard correlationId with
+            | Error error -> return Error error
+            | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient objectKey)
+        }
+
+    let getAzureContentBlockClientForPlacement (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
+        task {
+            let shard: StoragePoolRouting.StorageShard =
+                { StorageAccountName = placement.StorageAccountName; StorageContainerName = placement.StorageContainerName; ObjectKeyPrefix = String.Empty }
+
+            match! getCasContainerClient shard correlationId with
+            | Error error -> return Error error
+            | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient placement.ObjectKey)
+        }
+
+    let getContentBlockStagingObjectKey (repositoryId: RepositoryId) (uploadSessionId: UploadSessionId) (contentBlockAddress: ContentBlockAddress) =
+        $"staging/repositories/{repositoryId}/upload-sessions/{uploadSessionId:N}/content-blocks/{contentBlockAddress}"
+
+    let getContentBlockStagingPlacement
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (repositoryId: RepositoryId)
+        (uploadSessionId: UploadSessionId)
+        (contentBlockAddress: ContentBlockAddress)
+        eTag
+        =
+        StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockStagingObjectKey repositoryId uploadSessionId contentBlockAddress) eTag
+
+    let deleteAzureContentBlockPlacementIfExists (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
+        task {
+            try
+                match! getAzureContentBlockClientForPlacement placement correlationId with
+                | Error error -> return Error error
+                | Ok blobClient ->
+                    let! deleted = blobClient.DeleteIfExistsAsync()
+                    return Ok deleted.Value
+            with
+            | :? RequestFailedException as ex ->
+                return Error(GraceError.Create $"ContentBlock payload could not be deleted from object storage: {ex.Message}" correlationId)
+        }
+
+    let deleteUploadSessionStagingPayloadsForRoute (route: StoragePoolRouting.StoragePoolRoute) (session: UploadSessionDto) correlationId =
+        task {
+            if session.UploadSessionId = UploadSessionId.Empty
+               || session.RepositoryId = RepositoryId.Empty
+               || isNull session.BlockUploadIntents
+               || session.BlockUploadIntents.Length = 0 then
+                return Ok 0
+            else
+                let distinctAddresses =
+                    session.BlockUploadIntents
+                    |> Array.choose (fun intent ->
+                        if
+                            isNull (box intent)
+                            || String.IsNullOrWhiteSpace intent.ContentBlockAddress
+                        then
+                            None
+                        else
+                            Some intent.ContentBlockAddress)
+                    |> Array.distinct
+
+                let mutable deletedCount = 0
+                let mutable firstError = None
+                let mutable index = 0
+
+                while index < distinctAddresses.Length
+                      && firstError.IsNone do
+                    let placement = getContentBlockStagingPlacement route session.RepositoryId session.UploadSessionId distinctAddresses[index] None
+
+                    match! deleteAzureContentBlockPlacementIfExists placement correlationId with
+                    | Ok deleted -> if deleted then deletedCount <- deletedCount + 1
+                    | Error error -> firstError <- Some error
+
+                    index <- index + 1
+
+                match firstError with
+                | Some error -> return Error error
+                | None -> return Ok deletedCount
+        }
+
+    let deleteUploadSessionStagingPayloads (session: UploadSessionDto) correlationId =
+        task {
+            if session.UploadSessionId = UploadSessionId.Empty
+               || session.RepositoryId = RepositoryId.Empty
+               || isNull session.BlockUploadIntents
+               || session.BlockUploadIntents.Length = 0 then
+                return Ok 0
+            else
+                match resolveUploadSessionStoragePoolRoute session.RepositoryId session.StoragePoolId correlationId with
+                | Error error -> return Error error
+                | Ok route -> return! deleteUploadSessionStagingPayloadsForRoute route session correlationId
+        }
+
     let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
@@ -442,6 +616,100 @@ module Services =
 
             return UriWithSharedAccessSignature($"{sasUri}")
         }
+
+    let createAzureContentBlockSasUriForObjectKey
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (objectKey: string)
+        (permission: BlobSasPermissions)
+        (correlationId: CorrelationId)
+        =
+        task {
+            match StoragePoolRouting.validateShard correlationId route.Shard with
+            | Error error -> return Error error
+            | Ok () when
+                not AzureEnvironment.useManagedIdentityForStorage
+                && not (StoragePoolRouting.sharedKeyCanSignShard route.Shard)
+                ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"StorageShard '{route.Shard.StorageAccountName}/{route.Shard.StorageContainerName}' cannot be signed with the configured shared-key account '{AzureEnvironment.storageEndpoints.AccountName}'. Configure managed identity for cross-account CAS SAS."
+                            correlationId
+                    )
+            | Ok () ->
+                match! getCasContainerClient route.Shard correlationId with
+                | Error error -> return Error error
+                | Ok blobContainerClient ->
+                    let blobUri = shardBlobEndpointUri route.Shard.StorageAccountName $"{route.Shard.StorageContainerName}/{objectKey}"
+
+                    let blobSasBuilder =
+                        BlobSasBuilder(
+                            permissions = permission,
+                            expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                            StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
+                            BlobContainerName = blobContainerClient.Name,
+                            BlobName = objectKey,
+                            Resource = "b"
+                        )
+
+                    let! sasUri =
+                        if AzureEnvironment.useManagedIdentityForStorage then
+                            task {
+                                let blobServiceClient = blobContainerClient.GetParentBlobServiceClient()
+
+                                let userDelegationKeyOptions =
+                                    BlobGetUserDelegationKeyOptions(
+                                        DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                                        StartsOn = DateTimeOffset.UtcNow
+                                    )
+
+                                let! userDelegationKey = blobServiceClient.GetUserDelegationKeyAsync(userDelegationKeyOptions)
+
+                                let sasQueryParameters =
+                                    blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, casUserDelegationSasSigningAccountName route)
+
+                                return Uri($"{blobUri}?{sasQueryParameters}")
+                            }
+                        else
+                            task {
+                                match storageSharedKeyCredentialForShard route.Shard with
+                                | Some credential ->
+                                    let fullUriBlobClient = BlobClient(blobUri, credential)
+
+                                    let fullUriBlobSasBuilder =
+                                        BlobSasBuilder(
+                                            permissions = permission,
+                                            expiresOn = blobSasBuilder.ExpiresOn,
+                                            StartsOn = blobSasBuilder.StartsOn,
+                                            Resource = "b"
+                                        )
+
+                                    return fullUriBlobClient.GenerateSasUri(fullUriBlobSasBuilder)
+                                | None ->
+                                    let blobClient = blobContainerClient.GetBlobClient objectKey
+
+                                    if blobClient.CanGenerateSasUri then
+                                        return blobClient.GenerateSasUri(blobSasBuilder)
+                                    else
+                                        return
+                                            raise (
+                                                InvalidOperationException(
+                                                    "Azure Blob shared key is not configured and the current blob client cannot generate SAS. Configure grace__azure_storage__key, include AccountKey in grace__azure_storage__connectionstring, or enable managed identity for storage."
+                                                )
+                                            )
+                            }
+
+                    return Ok(UriWithSharedAccessSignature($"{sasUri}"))
+        }
+
+    let createAzureContentBlockSasUri
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (contentBlockAddress: ContentBlockAddress)
+        (permission: BlobSasPermissions)
+        (correlationId: CorrelationId)
+        =
+        let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
+        createAzureContentBlockSasUriForObjectKey route objectKey permission correlationId
 
     let azureBlobReadPermissions =
         (BlobSasPermissions.Read
@@ -2636,7 +2904,10 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            return resolveScopedVersionHashPrefix hashPrefix getHash directoryVersions
+            return
+                directoryVersions
+                |> Seq.filter isRootDirectoryVersion
+                |> resolveScopedVersionHashPrefix hashPrefix getHash
         }
 
     /// Resolves a Root DirectoryVersion by searching using a Sha256Hash value.
@@ -2754,12 +3025,13 @@ module Services =
             | MongoDB -> ()
 
             return
-                resolveScopedVersionHashPrefixes
+                directoryVersions
+                |> Seq.filter isRootDirectoryVersion
+                |> resolveScopedVersionHashPrefixes
                     sha256Hash
                     (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash)
                     blake3Hash
                     (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
-                    directoryVersions
         }
 
     let getRootDirectoryVersionResolutionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =

@@ -83,3 +83,48 @@ module DedupeIndexActor =
                 else
                     Array.copy currentState.Records
                 |> returnTask
+
+            member this.SnapshotState correlationId =
+                this.correlationId <- correlationId
+
+                if isNull (box currentState) then
+                    DedupeIndex.DedupeIndexState.Empty
+                else
+                    {
+                        Records =
+                            if isNull currentState.Records then
+                                Array.empty
+                            else
+                                Array.copy currentState.Records
+                        FinalizedManifests =
+                            if isNull currentState.FinalizedManifests then
+                                Array.empty
+                            else
+                                Array.copy currentState.FinalizedManifests
+                        MetadataRecords =
+                            if isNull currentState.MetadataRecords then
+                                Array.empty
+                            else
+                                Array.copy currentState.MetadataRecords
+                    }
+                |> returnTask
+
+            member this.TryGetFinalizedScopedContentBlockMetadata
+                (
+                    storagePoolId,
+                    repositoryId,
+                    authorizedScope,
+                    manifestAddress,
+                    contentBlockAddress,
+                    correlationId
+                ) =
+                this.correlationId <- correlationId
+
+                DedupeIndex.tryFindFinalizedScopedContentBlockMetadata
+                    storagePoolId
+                    repositoryId
+                    authorizedScope
+                    manifestAddress
+                    contentBlockAddress
+                    currentState
+                |> returnTask

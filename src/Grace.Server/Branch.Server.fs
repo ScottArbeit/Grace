@@ -128,7 +128,7 @@ module Branch =
             match tryFindFileVersion path contents with
             | None -> return Ok None
             | Some fileVersion ->
-                match! AnnotationMaterialization.materializeTargetText repositoryDto fileVersion correlationId context.RequestAborted with
+                match! AnnotationMaterialization.materializeTargetText repositoryDto path fileVersion correlationId context.RequestAborted with
                 | Ok materialized ->
                     let document =
                         { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = materialized.Bytes }

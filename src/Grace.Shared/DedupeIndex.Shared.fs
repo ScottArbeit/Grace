@@ -76,9 +76,18 @@ module DedupeIndex =
             IsAuthoritative = false
         }
 
-    let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolId $"{repositoryId}"
+    let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolRouting.repositoryDedupeStoragePoolId repositoryId
 
-    let storagePoolIdForRepository (repositoryDto: RepositoryDto) = storagePoolIdForRepositoryId repositoryDto.RepositoryId
+    let storagePoolIdForRepository (repositoryDto: RepositoryDto) =
+        if isNull (box repositoryDto) then
+            invalidOp "Repository state is required before resolving a StoragePool route."
+        elif String.IsNullOrWhiteSpace repositoryDto.StoragePoolId then
+            invalidOp "Repository StoragePoolId is not configured."
+        elif repositoryDto.StoragePoolId
+             <> StoragePoolRouting.defaultStoragePoolId then
+            invalidOp $"StoragePoolId '{repositoryDto.StoragePoolId}' is not configured. StoragePool routing fails closed."
+        else
+            storagePoolIdForRepositoryId repositoryDto.RepositoryId
 
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
@@ -498,6 +507,70 @@ module DedupeIndex =
             newRecords)
 
     let snapshot () = lock globalGate (fun () -> Array.copy (normalizeState globalState).Records)
+
+    let finalizedManifestContainsBlock storagePoolId manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        (normalizeState state).FinalizedManifests
+        |> Array.exists (fun registration ->
+            not (isNull (box registration))
+            && registration.StoragePoolId = storagePoolId
+            && registration.ManifestAddress = manifestAddress
+            && not (isNull registration.Blocks)
+            && registration.Blocks
+               |> Array.exists (fun block ->
+                   not (isNull (box block))
+                   && block.Address = contentBlockAddress))
+
+    let private normalizeScopePath (path: RelativePath) =
+        let normalized = (Utilities.normalizeFilePath $"{path}").Trim()
+
+        if String.IsNullOrWhiteSpace normalized then
+            String.Empty
+        elif normalized = "/" then
+            "/"
+        else
+            let withLeadingSlash =
+                if normalized.StartsWith("/", StringComparison.Ordinal) then
+                    normalized
+                else
+                    $"/{normalized}"
+
+            withLeadingSlash.TrimEnd('/')
+
+    let private finalizedScopeMatchesRequestedScope finalizedScope requestedScope =
+        let finalizedScope = normalizeScopePath finalizedScope
+        let requestedScope = normalizeScopePath requestedScope
+
+        if String.IsNullOrWhiteSpace finalizedScope
+           || String.IsNullOrWhiteSpace requestedScope then
+            false
+        else
+            String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal)
+
+    let finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        (normalizeState state).FinalizedManifests
+        |> Array.exists (fun registration ->
+            not (isNull (box registration))
+            && registration.StoragePoolId = storagePoolId
+            && registration.ManifestAddress = manifestAddress
+            && not (isNull (box registration.Session))
+            && registration.Session.RepositoryId = repositoryId
+            && finalizedScopeMatchesRequestedScope registration.Session.AuthorizedScope authorizedScope
+            && not (isNull registration.Blocks)
+            && registration.Blocks
+               |> Array.exists (fun block ->
+                   not (isNull (box block))
+                   && block.Address = contentBlockAddress))
+
+    let tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
+        if finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
+           |> not then
+            None
+        else
+            (normalizeState state).MetadataRecords
+            |> Array.tryFind (fun metadata ->
+                not (isNull (box metadata))
+                && metadata.StoragePoolId = storagePoolId
+                && metadata.ContentBlockAddress = contentBlockAddress)
 
     let private candidateFromRecord matchingKeyChunkCount (record: DedupeIndexRecord) =
         {
