@@ -595,11 +595,8 @@ module Storage =
         || hasAuthoritativeFinalizedLogicalRange claimedRange metadata
 
     let internal authoritativeClaimedRangeMatchesForFinalize (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
-        (not (isNull (box claimedRange))
-         && not (isNull (box metadata))
-         && ((metadata.MetadataVersion = claimedRange.MetadataVersion
-              && hasAuthoritativeClaimedRange claimedRange metadata)
-             || hasAuthoritativeFinalizedLogicalRange claimedRange metadata))
+        hasAuthoritativeClaimedRange claimedRange metadata
+        || hasAuthoritativeFinalizedLogicalRange claimedRange metadata
 
     let private compareClaimedRangeNewestFirst (left: ClaimedReuseRange) (right: ClaimedReuseRange) =
         let versionComparison = compare right.MetadataVersion left.MetadataVersion
@@ -609,35 +606,37 @@ module Storage =
         else
             compare right.ClaimedAt left.ClaimedAt
 
-    let private trySelectClaimedRangeCover physicalLength (claimedRanges: ClaimedReuseRange array) =
-        if physicalLength <= 0L || isNull claimedRanges then
+    let private trySelectClaimedRangeCover blockLength (claimedRanges: ClaimedReuseRange array) =
+        if blockLength <= 0L || isNull claimedRanges then
             None
         else
             let candidates =
                 claimedRanges
                 |> Array.filter (fun claimedRange ->
                     not (isNull (box claimedRange))
+                    && claimedRange.OrdinalStart >= 0
+                    && claimedRange.OrdinalCount > 0
                     && claimedRange.PhysicalOffset >= 0L
                     && claimedRange.PhysicalLength > 0L
-                    && claimedRange.PhysicalLength <= physicalLength
-                    && claimedRange.PhysicalOffset
-                       <= physicalLength - claimedRange.PhysicalLength)
+                    && claimedRange.PhysicalLength <= blockLength)
 
-            let rec selectCover nextOffset selected selectedMetadataVersion =
-                if nextOffset = physicalLength then
+            let rec selectCover nextOrdinal selectedLength selected =
+                if selectedLength = blockLength then
                     selected |> List.rev |> List.toArray |> Some
+                elif selectedLength > blockLength then
+                    None
                 else
                     candidates
-                    |> Array.filter (fun claimedRange ->
-                        claimedRange.PhysicalOffset = nextOffset
-                        && match selectedMetadataVersion with
-                           | Some metadataVersion -> claimedRange.MetadataVersion = metadataVersion
-                           | None -> true)
+                    |> Array.filter (fun claimedRange -> claimedRange.OrdinalStart = nextOrdinal)
                     |> Array.sortWith compareClaimedRangeNewestFirst
                     |> Array.tryPick (fun claimedRange ->
-                        selectCover (nextOffset + claimedRange.PhysicalLength) (claimedRange :: selected) (Some claimedRange.MetadataVersion))
+                        selectCover
+                            (claimedRange.OrdinalStart
+                             + claimedRange.OrdinalCount)
+                            (selectedLength + claimedRange.PhysicalLength)
+                            (claimedRange :: selected))
 
-            selectCover 0L [] None
+            selectCover 0 0L []
 
     let internal claimedReuseRangesCoverManifestBlock physicalLength claimedRanges =
         trySelectClaimedRangeCover physicalLength claimedRanges
@@ -820,7 +819,7 @@ module Storage =
     let private loadClaimedMetadataForFinalize (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
         loadClaimedMetadataForFinalizeWith
             authoritativeClaimedRangeMatchesForFinalize
-            (fun claimedRange authoritativeMetadata -> { authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion })
+            (fun _ authoritativeMetadata -> authoritativeMetadata)
             "Authoritative ContentBlockMetadata is stale or incomplete for claimed reuse range"
             requestContext
             manifest

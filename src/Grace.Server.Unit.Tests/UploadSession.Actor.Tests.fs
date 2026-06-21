@@ -820,13 +820,14 @@ type UploadSessionActorTests() =
     [<Test>]
     member _.FinalizeManifestCreatesSessionPoolMetadataForClaimedReuseRangesWithoutConfirmedUpload() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("claimed authoritative metadata")
-        let block = encodedBlock fileBytes
+        let block = encodedBlockFromChunks [ ContentBlockFormat.createChunk 4096L fileBytes ]
         let manifest = manifestFor fileBytes [| block |]
 
         let metadataRange =
             { reusableMetadataRange with
                 OrdinalStart = 0
                 OrdinalCount = minimumReuseRunLength
+                PhysicalOffset = 4096L
                 PhysicalLength = int64 fileBytes.Length
                 ActiveManifestCount = 2
             }
@@ -968,6 +969,78 @@ type UploadSessionActorTests() =
         | _ -> Assert.Fail("Expected multi-range claimed reuse finalization to create one MergePhysicalRanges command.")
 
     [<Test>]
+    member _.FinalizeManifestAcceptsMixedVersionClaimedReuseRangeCoverFromCurrentMetadata() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("first mixed claimed chunk")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("second mixed claimed chunk")
+        let fileBytes = Array.concat [ firstBytes; secondBytes ]
+
+        let block =
+            encodedBlockFromChunks [ ContentBlockFormat.createChunk 4096L firstBytes
+                                     ContentBlockFormat.createChunk 16384L secondBytes ]
+
+        let manifest = manifestFor fileBytes [| block |]
+
+        let firstRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 4096L; PhysicalLength = int64 firstBytes.Length }
+
+        let secondRange = { OrdinalStart = 1; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 16384L; PhysicalLength = int64 secondBytes.Length }
+
+        let claimedRange metadataVersion (range: ContentBlockMetadataRange) : ClaimedReuseRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = range.OrdinalStart
+                OrdinalCount = range.OrdinalCount
+                PhysicalOffset = range.PhysicalOffset
+                PhysicalLength = range.PhysicalLength
+                MetadataVersion = metadataVersion
+                ClaimedAt = timestamp.Plus(Duration.FromSeconds(int64 range.OrdinalStart))
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges =
+                    [|
+                        claimedRange 7L firstRange
+                        claimedRange 8L secondRange
+                    |]
+            }
+
+        let currentMetadata = reuseMetadataFor block.Address 8L [| firstRange; secondRange |]
+        let finalizeCommand = finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| currentMetadata |]
+        let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize-mixed-cover")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+            Assert.That(decision.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+        | Error error -> Assert.Fail($"Expected mixed-version claimed reuse cover to finalize, got {error.Error}.")
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| currentMetadata |]
+
+        Assert.That(commands, Has.Length.EqualTo(1))
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(merge.BlockFormatVersion, Is.EqualTo(currentMetadata.BlockFormatVersion))
+            Assert.That(merge.StoragePlacement, Is.EqualTo(currentMetadata.StoragePlacement))
+            Assert.That(merge.Ranges, Has.Length.EqualTo(2))
+            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| firstRange; secondRange |]))
+        | _ -> Assert.Fail("Expected mixed-version claimed reuse finalization to create one MergePhysicalRanges command.")
+
+    [<Test>]
     member _.FinalizeManifestRejectsGappedClaimedReuseRangeCoverForMultiChunkBlock() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first claimed chunk")
         let secondBytes = Text.Encoding.UTF8.GetBytes("second claimed chunk")
@@ -982,13 +1055,7 @@ type UploadSessionActorTests() =
         let firstRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = int64 firstBytes.Length }
 
         let gappedSecondRange =
-            {
-                OrdinalStart = 1
-                OrdinalCount = 1
-                ActiveManifestCount = 2
-                PhysicalOffset = int64 firstBytes.Length + 1L
-                PhysicalLength = int64 secondBytes.Length
-            }
+            { OrdinalStart = 2; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = int64 firstBytes.Length; PhysicalLength = int64 secondBytes.Length }
 
         let claimedRange (range: ContentBlockMetadataRange) : ClaimedReuseRange =
             {

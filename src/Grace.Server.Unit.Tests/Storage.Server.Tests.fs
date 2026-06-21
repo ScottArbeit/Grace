@@ -389,8 +389,8 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(
             storageServerSource,
-            Does.Contain("{ authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion }"),
-            "Finalize hydration must validate current authoritative metadata while preserving the durable claim key for side-effect repair."
+            Does.Not.Contain("{ authoritativeMetadata with MetadataVersion = claimedRange.MetadataVersion }"),
+            "Finalize hydration must preserve current authoritative metadata versions so mixed-version claimed covers remain valid."
         )
 
     [<Test>]
@@ -464,8 +464,8 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(
             Storage.authoritativeClaimedRangeMatchesForFinalize claimedRange { currentMetadata with Ranges = [| inactiveExactRange |] },
-            Is.False,
-            "Fresh finalization must not accept stale metadata-version churn unless the actor state is already finalized."
+            Is.True,
+            "Fresh finalization may accept current exact range evidence even when metadata version advanced after the claim."
         )
 
         Assert.That(
@@ -513,30 +513,38 @@ type StorageContentBlockSdkContract() =
         )
 
     [<Test>]
-    member _.FinalizeClaimedReuseCoverAcceptsMultiRangeBlocksAndRejectsGapsOrOverlaps() =
+    member _.FinalizeClaimedReuseCoverUsesLogicalOrdinalWindowsAndRejectsPartialCovers() =
         let storagePoolId = StoragePoolId "pool-cover"
         let contentBlockAddress = ContentBlockAddress "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         let claimedAt = NodaTime.Instant.FromUtc(2026, 6, 20, 12, 0)
 
-        let claimedRange ordinalStart physicalOffset physicalLength =
+        let claimedRange ordinalStart ordinalCount physicalOffset physicalLength metadataVersion =
             {
                 StoragePoolId = storagePoolId
                 ContentBlockAddress = contentBlockAddress
                 OrdinalStart = ordinalStart
-                OrdinalCount = 1
+                OrdinalCount = ordinalCount
                 PhysicalOffset = physicalOffset
                 PhysicalLength = physicalLength
-                MetadataVersion = 11L
+                MetadataVersion = metadataVersion
                 ClaimedAt = claimedAt.Plus(NodaTime.Duration.FromSeconds(int64 ordinalStart))
             }
 
-        let first = claimedRange 0 0L 4L
-        let second = claimedRange 1 4L 6L
+        let wholeBlockWithSourceOffset = claimedRange 0 1 4096L 10L 11L
+
+        Assert.That(
+            Storage.claimedReuseRangesCoverManifestBlock 10L [| wholeBlockWithSourceOffset |],
+            Is.True,
+            "Fresh finalization must not treat a source PhysicalOffset as the manifest-local logical byte offset."
+        )
+
+        let first = claimedRange 0 1 4096L 4L 11L
+        let second = claimedRange 1 1 16384L 6L 12L
 
         Assert.That(
             Storage.claimedReuseRangesCoverManifestBlock 10L [| second; first |],
             Is.True,
-            "Fresh finalization must accept a set of claimed ranges that covers a multi-chunk manifest block."
+            "Fresh finalization must accept mixed-version claimed ranges that cover adjacent logical ordinal windows."
         )
 
         Assert.That(
@@ -544,10 +552,10 @@ type StorageContentBlockSdkContract() =
                 10L
                 [|
                     first
-                    { second with PhysicalOffset = 5L }
+                    { second with OrdinalStart = 2 }
                 |],
             Is.False,
-            "Fresh finalization must reject claimed-range covers with a gap."
+            "Fresh finalization must reject claimed-range covers with an ordinal gap."
         )
 
         Assert.That(
@@ -555,10 +563,10 @@ type StorageContentBlockSdkContract() =
                 10L
                 [|
                     first
-                    { second with PhysicalOffset = 3L }
+                    { second with OrdinalStart = 0 }
                 |],
             Is.False,
-            "Fresh finalization must reject overlapping ranges that do not form a complete block cover."
+            "Fresh finalization must reject overlapping ordinal windows that do not form a complete block cover."
         )
 
         Assert.That(
