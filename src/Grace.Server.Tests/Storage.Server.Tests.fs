@@ -1132,6 +1132,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters downloadUriParameters repositoryId correlationId
             downloadUriParameters.AuthorizedScope <- "/"
             downloadUriParameters.ContentBlockAddress <- block.Address
+            downloadUriParameters.StoragePoolId <- manifest.StoragePoolId
             downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
 
             let! downloadUriResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent downloadUriParameters)
@@ -1912,6 +1913,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters downloadUriParameters repositoryId correlationId
             downloadUriParameters.AuthorizedScope <- pathA
             downloadUriParameters.ContentBlockAddress <- block.Address
+            downloadUriParameters.StoragePoolId <- manifest.StoragePoolId
             downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
 
             use pathAReader = createClientWithClaims [ readerClaim ]
