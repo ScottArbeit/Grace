@@ -1209,6 +1209,118 @@ type UploadSessionActorTests() =
         )
 
     [<Test>]
+    member _.FinalizeMetadataRetryAfterPartialPostFinalizedFailureDoesNotDoubleIncrementEarlierBlock() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("first finalized block")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("second finalized block")
+        let fileBytes = Array.append firstBytes secondBytes
+        let firstBlock = encodedBlock firstBytes
+        let secondBlock = encodedBlock secondBytes
+        let manifest = manifestFor fileBytes [| firstBlock; secondBlock |]
+
+        let confirmedRange (bytes: byte array) =
+            { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 (Array.length bytes) }
+
+        let secondRange = confirmedRange secondBytes
+
+        let confirmedBlock (block: ContentBlockFormat.EncodedContentBlock) (bytes: byte array) eTag =
+            {
+                ContentBlockAddress = block.Address
+                PayloadLength = block.Payload.LongLength
+                StoragePlacement = placementFor block.Address (Some eTag)
+                Ranges = [| confirmedRange bytes |]
+                ConfirmedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.UploadingBlocks
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ConfirmedBlockUploads =
+                    [|
+                        confirmedBlock firstBlock firstBytes "etag-first"
+                        confirmedBlock secondBlock secondBytes "etag-second"
+                    |]
+            }
+
+        let commands = UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads sessionStoragePoolId "op-finalize" session manifest
+
+        Assert.That(commands, Has.Length.EqualTo(2))
+
+        let mergeAt index =
+            match commands[index] with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge
+            | _ ->
+                Assert.Fail("Expected uploaded block finalization to create ContentBlockMetadata merge commands.")
+                Unchecked.defaultof<MergeContentBlockPhysicalRanges>
+
+        let firstMerge = UploadSessionActor.withCurrentMetadataMergePrecondition None (mergeAt 0)
+        let secondMetadataAtPrevalidation = reuseMetadataFor secondBlock.Address 7L [| secondRange |]
+        let secondMerge = UploadSessionActor.withCurrentMetadataMergePrecondition (Some secondMetadataAtPrevalidation) (mergeAt 1)
+
+        let firstResult =
+            ContentBlockMetadataActor.decideCommand
+                []
+                ContentBlockMetadataDto.Empty
+                (ContentBlockMetadataCommand.MergePhysicalRanges firstMerge)
+                (metadata "corr-first-merge")
+            |> decisionOrFail "Expected first metadata merge to succeed"
+
+        Assert.That(firstResult.Metadata.Ranges, Has.Length.EqualTo(1))
+        Assert.That(firstResult.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+
+        let finalizedSession =
+            apply { Event = UploadSessionEventType.Finalized("op-finalize", manifest.ManifestAddress); Metadata = metadata "corr-finalized" } session
+
+        Assert.That(finalizedSession.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+
+        let secondMetadataAtMergeTime = { secondMetadataAtPrevalidation with MetadataVersion = 8L }
+
+        let staleSecondResult =
+            ContentBlockMetadataActor.decideCommand
+                []
+                { ContentBlockMetadataDto.Empty with Metadata = Some secondMetadataAtMergeTime }
+                (ContentBlockMetadataCommand.MergePhysicalRanges secondMerge)
+                (metadata "corr-second-stale")
+
+        match staleSecondResult with
+        | Ok _ -> Assert.Fail("Expected the second metadata merge to reject the stale prevalidated version.")
+        | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata merge rejected"))
+
+        let firstMetadataDto =
+            firstResult.Events
+            |> List.fold (fun current event -> ContentBlockMetadataDto.UpdateDto event current) ContentBlockMetadataDto.Empty
+
+        let firstRetry =
+            ContentBlockMetadataActor.decideCommand
+                firstResult.Events
+                firstMetadataDto
+                (ContentBlockMetadataCommand.MergePhysicalRanges firstMerge)
+                (metadata "corr-first-retry")
+            |> decisionOrFail "Expected first metadata merge retry to be idempotent"
+
+        Assert.That(firstRetry.WasIdempotentReplay, Is.True)
+        Assert.That(firstRetry.Events, Is.Empty)
+        Assert.That(firstRetry.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+
+        let secondRetryMerge = UploadSessionActor.withCurrentMetadataMergePrecondition (Some secondMetadataAtMergeTime) (mergeAt 1)
+
+        let secondRetry =
+            ContentBlockMetadataActor.decideCommand
+                []
+                { ContentBlockMetadataDto.Empty with Metadata = Some secondMetadataAtMergeTime }
+                (ContentBlockMetadataCommand.MergePhysicalRanges secondRetryMerge)
+                (metadata "corr-second-retry")
+            |> decisionOrFail "Expected second metadata merge retry to use the fresh metadata version"
+
+        Assert.That(secondRetry.WasIdempotentReplay, Is.False)
+        Assert.That(secondRetry.Metadata.Ranges, Has.Length.EqualTo(1))
+        Assert.That(secondRetry.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+
+    [<Test>]
     member _.FinalizedUploadRangesEmitSingleReferenceContribution() =
         let ranges =
             [|
@@ -1221,7 +1333,7 @@ type UploadSessionActorTests() =
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
     [<Test>]
-    member _.FinalizeManifestReplayDedupeRepairRefreshesAuthoritativeMetadataBeforeSuccess() =
+    member _.FinalizeManifestReplayRepairsMetadataBeforeDedupeRegistration() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
         let handleStart = actorSource.IndexOf("member this.Handle command metadata", StringComparison.Ordinal)
@@ -1240,20 +1352,36 @@ type UploadSessionActorTests() =
 
         let replayGuardIndex = finalizeBranch.IndexOf("if decision.WasIdempotentReplay then", StringComparison.Ordinal)
 
-        let replayMetadataRefreshIndex =
-            finalizeBranch.IndexOf("this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata", StringComparison.Ordinal)
-
         let replayManifestValidateIndex =
             finalizeBranch.IndexOf("validateFinalizeReplayManifestAgainstDurableState decision.Session finalize metadata", StringComparison.Ordinal)
+
+        let replayMetadataRepairIndex =
+            finalizeBranch.IndexOf("this.MergeFinalizedContentBlockMetadata decision finalize metadata", replayGuardIndex, StringComparison.Ordinal)
+
+        let stateDeletedReplayRefreshIndex =
+            finalizeBranch.IndexOf("this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata", replayGuardIndex, StringComparison.Ordinal)
 
         let replayDedupeRepairIndex =
             finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata", StringComparison.Ordinal)
 
+        let replayCleanupEnsureIndex =
+            finalizeBranch.IndexOf("this.EnsureFinalizeCleanupReminder decision finalize metadata", replayGuardIndex, StringComparison.Ordinal)
+
         let replayReturnIndex = finalizeBranch.IndexOf("return Ok returnValue", replayGuardIndex, StringComparison.Ordinal)
 
-        let mergeIndex = finalizeBranch.IndexOf("this.MergeFinalizedContentBlockMetadata decision finalize metadata", StringComparison.Ordinal)
+        let prevalidateIndex = finalizeBranch.IndexOf("this.PrevalidateFinalizedContentBlockMetadata decision finalize metadata", StringComparison.Ordinal)
 
-        let applyEventsIndex = finalizeBranch.IndexOf("this.ApplyEvents decision.Events", StringComparison.Ordinal)
+        let revalidateIndex = finalizeBranch.IndexOf("this.RevalidatePrevalidatedContentBlockMetadata prevalidatedMerges metadata", StringComparison.Ordinal)
+
+        let splitEventsIndex = finalizeBranch.IndexOf("let finalizationEvents, retentionEvents = splitFinalizeEvents decision.Events", StringComparison.Ordinal)
+
+        let applyFinalizedIndex = finalizeBranch.IndexOf("this.ApplyEvents finalizationEvents", StringComparison.Ordinal)
+
+        let mergePrevalidatedIndex = finalizeBranch.IndexOf("this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata", StringComparison.Ordinal)
+
+        let applyRetentionIndex = finalizeBranch.IndexOf("this.ApplyEvents retentionEvents", StringComparison.Ordinal)
+
+        let scheduleCleanupIndex = finalizeBranch.IndexOf("this.ScheduleFinalizeCleanupReminder decision finalize metadata", StringComparison.Ordinal)
 
         let dedupeIndex = finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata", StringComparison.Ordinal)
 
@@ -1266,23 +1394,41 @@ type UploadSessionActorTests() =
         )
 
         Assert.That(
-            replayMetadataRefreshIndex,
+            replayMetadataRepairIndex,
             Is.GreaterThan(replayManifestValidateIndex),
-            "Finalize replays must load current authoritative ContentBlockMetadata before repairing DedupeIndex metadata records."
+            "Finalize replays must repair ContentBlockMetadata side effects before repairing DedupeIndex metadata records."
+        )
+
+        Assert.That(
+            stateDeletedReplayRefreshIndex,
+            Is.GreaterThan(replayManifestValidateIndex),
+            "Finalize replays after upload coordination cleanup must still load current authoritative ContentBlockMetadata."
         )
 
         Assert.That(
             replayDedupeRepairIndex,
-            Is.GreaterThan(replayMetadataRefreshIndex),
-            "Finalize replays must repair DedupeIndex registration with current authoritative ContentBlockMetadata before returning success."
+            Is.GreaterThan(replayMetadataRepairIndex),
+            "Finalize replays must repair DedupeIndex registration with repaired/current authoritative ContentBlockMetadata before returning success."
         )
+
+        Assert.That(
+            replayCleanupEnsureIndex,
+            Is.GreaterThan(replayMetadataRepairIndex),
+            "Finalize replays that repair post-finalization side effects must ensure retention cleanup before returning success."
+        )
+
+        Assert.That(replayDedupeRepairIndex, Is.GreaterThan(replayCleanupEnsureIndex), "Replay dedupe repair must run after cleanup retention is ensured.")
 
         Assert.That(replayReturnIndex, Is.GreaterThan(replayDedupeRepairIndex), "Finalize replay dedupe repair must complete before returning replay success.")
 
-        Assert.That(mergeIndex, Is.GreaterThanOrEqualTo(0), "Finalization must attempt metadata merge/revalidation in the finalize branch.")
-        Assert.That(mergeIndex, Is.GreaterThan(replayReturnIndex), "Metadata merge/revalidation must be skipped for idempotent finalize replays.")
-        Assert.That(applyEventsIndex, Is.GreaterThan(mergeIndex), "Metadata merge/revalidation must happen before persisting Finalized.")
-        Assert.That(dedupeIndex, Is.GreaterThan(applyEventsIndex), "Dedupe registration should still use the persisted finalize decision.")
+        Assert.That(prevalidateIndex, Is.GreaterThan(replayReturnIndex), "New finalization must prevalidate metadata before durable finalization.")
+        Assert.That(revalidateIndex, Is.GreaterThan(prevalidateIndex), "New finalization must revalidate metadata before durable finalization.")
+        Assert.That(splitEventsIndex, Is.GreaterThan(revalidateIndex), "Finalize events must be split only after all metadata checks pass.")
+        Assert.That(applyFinalizedIndex, Is.GreaterThan(splitEventsIndex), "The durable Finalized event must be persisted before metadata side effects.")
+        Assert.That(mergePrevalidatedIndex, Is.GreaterThan(applyFinalizedIndex), "Metadata merge side effects must run after durable Finalized exists.")
+        Assert.That(applyRetentionIndex, Is.GreaterThan(mergePrevalidatedIndex), "Retention cleanup must not be persisted until metadata side effects succeed.")
+        Assert.That(scheduleCleanupIndex, Is.GreaterThan(applyRetentionIndex), "Cleanup scheduling must follow the durable cleanup event.")
+        Assert.That(dedupeIndex, Is.GreaterThan(scheduleCleanupIndex), "Dedupe registration should still use the persisted finalize decision.")
 
         let loadStart = actorSource.IndexOf("member private this.LoadAuthoritativeFinalizedManifestMetadata", StringComparison.Ordinal)
         let registerStart = actorSource.IndexOf("member private this.RegisterFinalizedManifestInDedupe", loadStart, StringComparison.Ordinal)

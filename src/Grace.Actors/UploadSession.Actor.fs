@@ -112,6 +112,17 @@ module UploadSession =
             { Event = UploadSessionEventType.CleanupReminderScheduled(cleanupOperationId, reminderTime); Metadata = metadata }
         ]
 
+    let private splitFinalizeEvents (events: UploadSessionEvent list) =
+        let finalizedEvents = ResizeArray<UploadSessionEvent>()
+        let retentionEvents = ResizeArray<UploadSessionEvent>()
+
+        for uploadSessionEvent in events do
+            match uploadSessionEvent.Event with
+            | UploadSessionEventType.Finalized _ -> finalizedEvents.Add(uploadSessionEvent)
+            | _ -> retentionEvents.Add(uploadSessionEvent)
+
+        finalizedEvents |> Seq.toList, retentionEvents |> Seq.toList
+
     let private terminalMutationError (session: UploadSessionDto) command correlationId =
         match session.LifecycleState with
         | UploadSessionLifecycleState.Finalized -> Some(graceError correlationId $"UploadSession is finalized and cannot be changed by {commandName command}.")
@@ -1309,17 +1320,28 @@ module UploadSession =
 
         member private this.ScheduleFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
-                if not decision.WasIdempotentReplay then
-                    let reminderState =
-                        createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId finalize.OperationId metadata.CorrelationId
+                let reminderState =
+                    createCleanupReminderState decision.Session.UploadSessionId decision.Session.RepositoryId finalize.OperationId metadata.CorrelationId
 
-                    do!
-                        (this :> IGraceReminderWithGuidKey)
-                            .ScheduleReminderAsync
-                            ReminderTypes.PhysicalDeletion
-                            DefaultPhysicalDeletionReminderDuration
-                            (ReminderState.UploadSessionPhysicalDeletion reminderState)
-                            metadata.CorrelationId
+                do!
+                    (this :> IGraceReminderWithGuidKey)
+                        .ScheduleReminderAsync
+                        ReminderTypes.PhysicalDeletion
+                        DefaultPhysicalDeletionReminderDuration
+                        (ReminderState.UploadSessionPhysicalDeletion reminderState)
+                        metadata.CorrelationId
+            }
+
+        member private this.EnsureFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
+            task {
+                if decision.Session.LifecycleState
+                   <> UploadSessionLifecycleState.StateDeleted
+                   && decision.Session.CleanupReminderOperationId.IsNone then
+                    let retentionEvents = cleanupEvents decision.Session finalize.OperationId metadata
+
+                    if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
+
+                    do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
             }
 
         interface IGraceReminderWithGuidKey with
@@ -1403,11 +1425,16 @@ module UploadSession =
                                 match validateFinalizeReplayManifestAgainstDurableState decision.Session finalize metadata with
                                 | Error error -> return Error error
                                 | Ok () ->
-                                    let! replayMetadataResult = this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata
+                                    let! replayMetadataResult =
+                                        if decision.Session.LifecycleState = UploadSessionLifecycleState.StateDeleted then
+                                            this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata
+                                        else
+                                            this.MergeFinalizedContentBlockMetadata decision finalize metadata
 
                                     match replayMetadataResult with
                                     | Error error -> return Error error
                                     | Ok replayMetadata ->
+                                        do! this.EnsureFinalizeCleanupReminder decision finalize metadata
                                         do! this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata
 
                                         let returnValue =
@@ -1419,24 +1446,38 @@ module UploadSession =
 
                                         return Ok returnValue
                             else
-                                let! metadataMergeResult = this.MergeFinalizedContentBlockMetadata decision finalize metadata
+                                let! prevalidationResult = this.PrevalidateFinalizedContentBlockMetadata decision finalize metadata
 
-                                match metadataMergeResult with
+                                match prevalidationResult with
                                 | Error error -> return Error error
-                                | Ok mergedMetadata ->
-                                    if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
+                                | Ok prevalidatedMerges ->
+                                    let! revalidationResult = this.RevalidatePrevalidatedContentBlockMetadata prevalidatedMerges metadata
 
-                                    do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
-                                    do! this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata
+                                    match revalidationResult with
+                                    | Error error -> return Error error
+                                    | Ok () ->
+                                        let finalizationEvents, retentionEvents = splitFinalizeEvents decision.Events
 
-                                    let returnValue =
-                                        (GraceReturnValue.Create decision metadata.CorrelationId)
-                                            .enhance(nameof RepositoryId, decision.Session.RepositoryId)
-                                            .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
-                                            .enhance(nameof UploadSessionOperationId, decision.OperationId)
-                                            .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+                                        if not finalizationEvents.IsEmpty then do! this.ApplyEvents finalizationEvents
 
-                                    return Ok returnValue
+                                        let! metadataMergeResult = this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
+
+                                        match metadataMergeResult with
+                                        | Error error -> return Error error
+                                        | Ok mergedMetadata ->
+                                            if not retentionEvents.IsEmpty then do! this.ApplyEvents retentionEvents
+
+                                            do! this.ScheduleFinalizeCleanupReminder decision finalize metadata
+                                            do! this.RegisterFinalizedManifestInDedupe decision finalize mergedMetadata metadata
+
+                                            let returnValue =
+                                                (GraceReturnValue.Create decision metadata.CorrelationId)
+                                                    .enhance(nameof RepositoryId, decision.Session.RepositoryId)
+                                                    .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
+                                                    .enhance(nameof UploadSessionOperationId, decision.OperationId)
+                                                    .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+
+                                            return Ok returnValue
                         | _ ->
                             if not decision.Events.IsEmpty then do! this.ApplyEvents decision.Events
 
