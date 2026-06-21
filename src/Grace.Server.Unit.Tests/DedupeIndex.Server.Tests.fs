@@ -482,6 +482,81 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks[0].MetadataVersion, Is.EqualTo(localMetadata.MetadataVersion))
 
     [<Test>]
+    member _.IdenticalContentBlocksRemainReusableOnlyInsideTheSameStoragePool() =
+        let block = encodedBlock "identical-cross-pool" 12
+        let poolA = StoragePoolId "pool-a"
+        let poolB = StoragePoolId "pool-b"
+
+        let manifestForPool storagePoolId =
+            let size =
+                block.Chunks
+                |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
+            let manifest =
+                FileManifest.Create(
+                    ManifestAddress String.Empty,
+                    RabinChunking.SuiteName,
+                    FileContentHash(ContentAddress.computeBlake3Hex block.Payload),
+                    size,
+                    storagePoolId,
+                    [
+                        ContentBlock.Create(block.Address, 0L, size)
+                    ]
+                )
+
+            { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+        let sessionFor storagePoolId manifest =
+            { finalizedSession manifest with StoragePoolId = storagePoolId; FinalizedManifestAddress = Some manifest.ManifestAddress }
+
+        let metadataForPool storagePoolId metadataVersion =
+            { metadataFor 1 metadataVersion block with
+                StoragePoolId = storagePoolId
+                StoragePlacement =
+                    {
+                        StorageAccountName = $"cas-{storagePoolId}"
+                        StorageContainerName = StorageContainerName $"cas-{storagePoolId}"
+                        ObjectKey = $"{storagePoolId}/{StorageKeys.contentBlockObjectKey block.Address}"
+                        ETag = Some $"etag-{metadataVersion}"
+                    }
+            }
+
+        let registrationFor storagePoolId manifest : DedupeIndex.FinalizedManifestRegistration =
+            { StoragePoolId = storagePoolId; Session = sessionFor storagePoolId manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        let manifestA = manifestForPool poolA
+        let manifestB = manifestForPool poolB
+
+        let stateAfterPoolARegistration, _ = DedupeIndex.registerFinalizedManifestInState DedupeIndex.DedupeIndexState.Empty (registrationFor poolA manifestA)
+
+        let stateAfterPoolAMetadata, _ = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterPoolARegistration (metadataForPool poolA 31L)
+
+        let stateAfterPoolBRegistration, _ = DedupeIndex.registerFinalizedManifestInState stateAfterPoolAMetadata (registrationFor poolB manifestB)
+        let stateAfterBothPools, _ = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterPoolBRegistration (metadataForPool poolB 41L)
+
+        let requestedChunk = (decodedChunkAddresses block)[0]
+        let poolAResult = DedupeIndex.discover poolA [| requestedChunk |] timestamp stateAfterBothPools.Records
+        let poolBResult = DedupeIndex.discover poolB [| requestedChunk |] timestamp stateAfterBothPools.Records
+        let defaultPoolResult = DedupeIndex.discover storagePoolId [| requestedChunk |] timestamp stateAfterBothPools.Records
+
+        let poolACandidate =
+            poolAResult.CandidateContentBlocks
+            |> Array.exactlyOne
+
+        let poolBCandidate =
+            poolBResult.CandidateContentBlocks
+            |> Array.exactlyOne
+
+        Assert.That(defaultPoolResult.CandidateContentBlocks, Is.Empty)
+        Assert.That(poolACandidate.StoragePoolId, Is.EqualTo(poolA))
+        Assert.That(poolACandidate.ManifestAddress, Is.EqualTo(manifestA.ManifestAddress))
+        Assert.That(poolACandidate.ContentBlockAddress, Is.EqualTo(block.Address))
+        Assert.That(poolBCandidate.StoragePoolId, Is.EqualTo(poolB))
+        Assert.That(poolBCandidate.ManifestAddress, Is.EqualTo(manifestB.ManifestAddress))
+        Assert.That(poolBCandidate.ContentBlockAddress, Is.EqualTo(block.Address))
+        Assert.That(poolACandidate.ProtectedChunkAddresses[0], Is.Not.EqualTo(poolBCandidate.ProtectedChunkAddresses[0]))
+
+    [<Test>]
     member _.NewerNonAuthoritativeMetadataEvictsOlderCandidateWindows() =
         let block = encodedBlock "metadata-evict" 12
         let manifest = manifestFor block
