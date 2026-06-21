@@ -605,6 +605,16 @@ module UploadSession =
 
         commands.ToArray()
 
+    let withCurrentMetadataMergePrecondition (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
+        match currentMetadata with
+        | Some metadata -> { merge with ExpectedMetadataVersion = Some metadata.MetadataVersion; RequireMissingMetadata = false }
+        | None ->
+            { merge with
+                ExpectedMetadataVersion = None
+                RequireMissingMetadata = true
+                ExpectedRanges = if isNull merge.ExpectedRanges then Array.empty else merge.ExpectedRanges
+            }
+
     let createContentBlockMetadataMergeCommandsForFinalizedBlocks
         storagePoolId
         finalizeOperationId
@@ -782,6 +792,34 @@ module UploadSession =
 
                     okDecision session finalize.OperationId events false "Upload session manifest finalized."
                 | Error error -> Error(graceError metadata.CorrelationId (manifestValidationErrorMessage error)))
+
+    let private validateFinalizeReplayManifestAgainstDurableState (session: UploadSessionDto) (finalize: FinalizeManifest) (metadata: EventMetadata) =
+        if isNull (box finalize) then
+            Error(graceError metadata.CorrelationId "FinalizeManifest payload is required for replay.")
+        else
+            match session.FinalizedManifestAddress with
+            | None -> Error(graceError metadata.CorrelationId "Durable finalized manifest address is required for FinalizeManifest replay.")
+            | Some finalizedManifestAddress ->
+                validateFinalizeSessionFields metadata.CorrelationId session finalize.Manifest
+                |> Result.bind (fun () ->
+                    if finalize.Manifest.ManifestAddress
+                       <> finalizedManifestAddress then
+                        Error(
+                            graceError
+                                metadata.CorrelationId
+                                $"FinalizeManifest replay ManifestAddress must match durable finalized manifest address. Expected {finalizedManifestAddress}, actual {finalize.Manifest.ManifestAddress}."
+                        )
+                    else
+                        let blockPayloads =
+                            if isNull finalize.BlockPayloads then
+                                Unchecked.defaultof<ManifestValidation.ManifestBlockPayload array>
+                            else
+                                finalize.BlockPayloads
+                                |> Array.map finalizeBlockPayload
+
+                        match ManifestValidation.validate session.ChunkingSuiteId finalize.Manifest blockPayloads with
+                        | Ok _ -> Ok()
+                        | Error error -> Error(graceError metadata.CorrelationId (manifestValidationErrorMessage error)))
 
     let private confirmBlockUpload (session: UploadSessionDto) (confirmation: ConfirmBlockUploaded) (metadata: EventMetadata) =
         if String.IsNullOrWhiteSpace confirmation.ContentBlockAddress then
@@ -1087,15 +1125,17 @@ module UploadSession =
                                     | Ok (Some revalidatedCommand) ->
                                         match revalidatedCommand with
                                         | ContentBlockMetadataCommand.MergePhysicalRanges revalidatedMerge ->
+                                            let preconditionedMerge = withCurrentMetadataMergePrecondition currentMetadata revalidatedMerge
+
                                             match
                                                 ContentBlockMetadata.createMergedMetadata
                                                     metadata.CorrelationId
                                                     currentMetadata
-                                                    revalidatedMerge
+                                                    preconditionedMerge
                                                     metadata.Timestamp
                                                 with
                                             | Ok _ ->
-                                                prevalidatedMerges.Add(metadataActor, revalidatedMerge)
+                                                prevalidatedMerges.Add(metadataActor, preconditionedMerge)
                                                 Ok()
                                             | Error error -> Error error
                                         | _ ->
@@ -1105,9 +1145,12 @@ module UploadSession =
                                                     $"Authoritative ContentBlockMetadata revalidation produced an unsupported command for claimed reuse range {merge.ContentBlockAddress}."
                                             )
                             | None ->
-                                match ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata merge metadata.Timestamp with
+                                let preconditionedMerge = withCurrentMetadataMergePrecondition currentMetadata merge
+
+                                match ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata preconditionedMerge metadata.Timestamp
+                                    with
                                 | Ok _ ->
-                                    prevalidatedMerges.Add(metadataActor, merge)
+                                    prevalidatedMerges.Add(metadataActor, preconditionedMerge)
                                     Ok()
                                 | Error error -> Error error
 
@@ -1121,6 +1164,30 @@ module UploadSession =
                 match metadataError with
                 | Some error -> return Error error
                 | None -> return Ok(prevalidatedMerges.ToArray())
+            }
+
+        member private this.RevalidatePrevalidatedContentBlockMetadata
+            (prevalidatedMerges: (IContentBlockMetadataActor * MergeContentBlockPhysicalRanges) array)
+            (metadata: EventMetadata)
+            =
+            task {
+                let mutable metadataIndex = 0
+                let mutable metadataError = None
+
+                while metadataIndex < prevalidatedMerges.Length
+                      && metadataError.IsNone do
+                    let metadataActor, merge = prevalidatedMerges[metadataIndex]
+                    let! currentMetadata = metadataActor.Get metadata.CorrelationId
+
+                    match ContentBlockMetadata.createMergedMetadata metadata.CorrelationId currentMetadata merge metadata.Timestamp with
+                    | Ok _ -> ()
+                    | Error error -> metadataError <- Some error
+
+                    metadataIndex <- metadataIndex + 1
+
+                match metadataError with
+                | Some error -> return Error error
+                | None -> return Ok()
             }
 
         member private this.MergePrevalidatedContentBlockMetadata
@@ -1154,7 +1221,12 @@ module UploadSession =
 
                 match prevalidationResult with
                 | Error error -> return Error error
-                | Ok prevalidatedMerges -> return! this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
+                | Ok prevalidatedMerges ->
+                    let! revalidationResult = this.RevalidatePrevalidatedContentBlockMetadata prevalidatedMerges metadata
+
+                    match revalidationResult with
+                    | Error error -> return Error error
+                    | Ok () -> return! this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
             }
 
         member private this.LoadAuthoritativeFinalizedManifestMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
@@ -1328,21 +1400,24 @@ module UploadSession =
                         match command with
                         | UploadSessionCommand.FinalizeManifest finalize ->
                             if decision.WasIdempotentReplay then
-                                let! replayMetadataResult = this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata
-
-                                match replayMetadataResult with
+                                match validateFinalizeReplayManifestAgainstDurableState decision.Session finalize metadata with
                                 | Error error -> return Error error
-                                | Ok replayMetadata ->
-                                    do! this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata
+                                | Ok () ->
+                                    let! replayMetadataResult = this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata
 
-                                    let returnValue =
-                                        (GraceReturnValue.Create decision metadata.CorrelationId)
-                                            .enhance(nameof RepositoryId, decision.Session.RepositoryId)
-                                            .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
-                                            .enhance(nameof UploadSessionOperationId, decision.OperationId)
-                                            .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+                                    match replayMetadataResult with
+                                    | Error error -> return Error error
+                                    | Ok replayMetadata ->
+                                        do! this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata
 
-                                    return Ok returnValue
+                                        let returnValue =
+                                            (GraceReturnValue.Create decision metadata.CorrelationId)
+                                                .enhance(nameof RepositoryId, decision.Session.RepositoryId)
+                                                .enhance(nameof UploadSessionId, decision.Session.UploadSessionId)
+                                                .enhance(nameof UploadSessionOperationId, decision.OperationId)
+                                                .enhance (nameof UploadSessionLifecycleState, decision.Session.LifecycleState)
+
+                                        return Ok returnValue
                             else
                                 let! metadataMergeResult = this.MergeFinalizedContentBlockMetadata decision finalize metadata
 

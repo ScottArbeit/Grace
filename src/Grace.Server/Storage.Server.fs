@@ -993,6 +993,51 @@ module Storage =
                             correlationId
                     ))
 
+    let private validateFinalizeReplayManifestBeforeHydration
+        (session: UploadSessionDto)
+        finalizedManifestAddress
+        (manifest: FileManifest)
+        (blockPayloads: FinalizeManifestBlockPayload array)
+        correlationId
+        =
+        validateFinalizeReplayManifestAddress finalizedManifestAddress manifest correlationId
+        |> Result.bind (fun () ->
+            if manifest.Size <> session.ExpectedSize then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest Size must match UploadSession ExpectedSize. Expected {session.ExpectedSize}, actual {manifest.Size}."
+                        correlationId
+                )
+            elif manifest.FileContentHash
+                 <> session.FileContentHash then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest FileContentHash must match UploadSession FileContentHash. Expected {session.FileContentHash}, actual {manifest.FileContentHash}."
+                        correlationId
+                )
+            elif manifest.ChunkingSuiteId
+                 <> session.ChunkingSuiteId then
+                Error(
+                    GraceError.Create
+                        $"Finalize replay FileManifest ChunkingSuiteId must match UploadSession ChunkingSuiteId. Expected {session.ChunkingSuiteId}, actual {manifest.ChunkingSuiteId}."
+                        correlationId
+                )
+            else
+                let replayPayloads =
+                    if isNull blockPayloads then
+                        Unchecked.defaultof<ManifestValidation.ManifestBlockPayload array>
+                    else
+                        blockPayloads
+                        |> Array.map (fun payload ->
+                            if isNull (box payload) then
+                                Unchecked.defaultof<ManifestValidation.ManifestBlockPayload>
+                            else
+                                ManifestValidation.createBlockPayload payload.Address payload.Payload)
+
+                match ManifestValidation.validate session.ChunkingSuiteId manifest replayPayloads with
+                | Ok _ -> Ok()
+                | Error validationError -> Error(GraceError.Create $"Finalize replay manifest must validate before hydration: {validationError}." correlationId))
+
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
         {
             MaxKeyChunkAddresses = StorageParameterContracts.MaxDiscoveryKeyChunkAddresses
@@ -1752,26 +1797,36 @@ module Storage =
                             match validateFinalizeReplayManifestAddress finalizedManifestAddress parameters.Manifest correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok () ->
-                                let! evidenceResult = hydrateFinalizeReplayEvidence requestContext parameters parameters.Manifest correlationId
-
-                                match evidenceResult with
+                                match
+                                    validateFinalizeReplayManifestBeforeHydration
+                                        requestContext.SessionForScope
+                                        finalizedManifestAddress
+                                        parameters.Manifest
+                                        parameters.BlockPayloads
+                                        correlationId
+                                    with
                                 | Error error -> return! context |> result400BadRequest error
-                                | Ok evidence ->
-                                    match
-                                        validateFinalizeReplayEvidence
-                                            requestContext.SessionForScope
-                                            finalizedManifestAddress
-                                            parameters.Manifest
-                                            evidence
-                                            correlationId
-                                        with
-                                    | Error error -> return! context |> result400BadRequest error
-                                    | Ok () ->
-                                        let! result = requestContext.UploadSessionActor.Handle (createFinalizeCommand evidence) requestContext.Metadata
+                                | Ok () ->
+                                    let! evidenceResult = hydrateFinalizeReplayEvidence requestContext parameters parameters.Manifest correlationId
 
-                                        match result with
-                                        | Ok returnValue -> return! context |> result200Ok returnValue
+                                    match evidenceResult with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok evidence ->
+                                        match
+                                            validateFinalizeReplayEvidence
+                                                requestContext.SessionForScope
+                                                finalizedManifestAddress
+                                                parameters.Manifest
+                                                evidence
+                                                correlationId
+                                            with
                                         | Error error -> return! context |> result400BadRequest error
+                                        | Ok () ->
+                                            let! result = requestContext.UploadSessionActor.Handle (createFinalizeCommand evidence) requestContext.Metadata
+
+                                            match result with
+                                            | Ok returnValue -> return! context |> result200Ok returnValue
+                                            | Error error -> return! context |> result400BadRequest error
                         | true, None ->
                             return!
                                 context

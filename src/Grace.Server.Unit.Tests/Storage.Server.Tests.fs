@@ -200,6 +200,9 @@ type StorageContentBlockSdkContract() =
 
         let replayEventIndex = finalizeSource.IndexOf("getFinalizeReplayState requestContext parameters.OperationId correlationId", StringComparison.Ordinal)
 
+        let replayPreHydrationValidateIndex =
+            finalizeSource.IndexOf("validateFinalizeReplayManifestBeforeHydration", replayEventIndex, StringComparison.Ordinal)
+
         let replayHydrateIndex =
             finalizeSource.IndexOf("hydrateFinalizeReplayEvidence requestContext parameters parameters.Manifest correlationId", StringComparison.Ordinal)
 
@@ -216,7 +219,8 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(scopeValidationIndex, Is.GreaterThanOrEqualTo(0))
         Assert.That(replayEventIndex, Is.GreaterThan(scopeValidationIndex))
-        Assert.That(replayHydrateIndex, Is.GreaterThan(replayEventIndex))
+        Assert.That(replayPreHydrationValidateIndex, Is.GreaterThan(replayEventIndex))
+        Assert.That(replayHydrateIndex, Is.GreaterThan(replayPreHydrationValidateIndex))
         Assert.That(replayValidateIndex, Is.GreaterThan(replayHydrateIndex))
         Assert.That(actorHandleIndex, Is.GreaterThan(replayValidateIndex))
         Assert.That(normalHydrateIndex, Is.GreaterThan(actorHandleIndex))
@@ -232,6 +236,14 @@ type StorageContentBlockSdkContract() =
             finalizeSource,
             Does.Not.Contain("BlockPayloads = parameters.BlockPayloads"),
             "Same-operation finalize replay side effects must not run with retry-supplied block payloads."
+        )
+
+        Assert.That(
+            compactedStorageSource,
+            Does.Contain(
+                "validateFinalizeReplayManifestBeforeHydration requestContext.SessionForScope finalizedManifestAddress parameters.Manifest parameters.BlockPayloads correlationId"
+            ),
+            "Finalize replay must validate the retry manifest against its payload evidence before reading authoritative metadata/blob placements."
         )
 
         Assert.That(

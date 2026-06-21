@@ -1243,6 +1243,9 @@ type UploadSessionActorTests() =
         let replayMetadataRefreshIndex =
             finalizeBranch.IndexOf("this.LoadAuthoritativeFinalizedManifestMetadata decision finalize metadata", StringComparison.Ordinal)
 
+        let replayManifestValidateIndex =
+            finalizeBranch.IndexOf("validateFinalizeReplayManifestAgainstDurableState decision.Session finalize metadata", StringComparison.Ordinal)
+
         let replayDedupeRepairIndex =
             finalizeBranch.IndexOf("this.RegisterFinalizedManifestInDedupe decision finalize replayMetadata metadata", StringComparison.Ordinal)
 
@@ -1257,8 +1260,14 @@ type UploadSessionActorTests() =
         Assert.That(replayGuardIndex, Is.GreaterThanOrEqualTo(0), "Finalize replays must not derive metadata merge side effects from the replay command body.")
 
         Assert.That(
-            replayMetadataRefreshIndex,
+            replayManifestValidateIndex,
             Is.GreaterThan(replayGuardIndex),
+            "Finalize replays must validate the command manifest against durable finalized state before repairing side effects."
+        )
+
+        Assert.That(
+            replayMetadataRefreshIndex,
+            Is.GreaterThan(replayManifestValidateIndex),
             "Finalize replays must load current authoritative ContentBlockMetadata before repairing DedupeIndex metadata records."
         )
 
@@ -1315,10 +1324,58 @@ type UploadSessionActorTests() =
 
         let mergeSource = actorSource.Substring(mergeStart, registerStart - mergeStart)
         let prevalidateIndex = mergeSource.IndexOf("this.PrevalidateFinalizedContentBlockMetadata decision finalize metadata", StringComparison.Ordinal)
+        let revalidateIndex = mergeSource.IndexOf("this.RevalidatePrevalidatedContentBlockMetadata prevalidatedMerges metadata", StringComparison.Ordinal)
         let mergePrevalidatedIndex = mergeSource.IndexOf("this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata", StringComparison.Ordinal)
 
         Assert.That(prevalidateIndex, Is.GreaterThanOrEqualTo(0), "Finalize must validate all claimed/current metadata before side-effecting merges.")
-        Assert.That(mergePrevalidatedIndex, Is.GreaterThan(prevalidateIndex), "Finalize must apply metadata merges only after all prevalidation succeeds.")
+
+        Assert.That(
+            revalidateIndex,
+            Is.GreaterThan(prevalidateIndex),
+            "Finalize must re-check all prevalidated metadata snapshots before side-effecting merges."
+        )
+
+        Assert.That(mergePrevalidatedIndex, Is.GreaterThan(revalidateIndex), "Finalize must apply metadata merges only after all revalidation succeeds.")
+
+    [<Test>]
+    member _.FinalizeUploadedMergePreconditionsRequireCurrentSnapshotAtMergeTime() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("uploaded merge preconditions")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let confirmedRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                ConfirmedBlockUploads =
+                    [|
+                        {
+                            ContentBlockAddress = block.Address
+                            PayloadLength = block.Payload.LongLength
+                            StoragePlacement = placementFor block.Address (Some "etag-confirmed")
+                            Ranges = [| confirmedRange |]
+                            ConfirmedAt = timestamp
+                        }
+                    |]
+            }
+
+        let commands = UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads sessionStoragePoolId "op-finalize" session manifest
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            let missingPrecondition = UploadSessionActor.withCurrentMetadataMergePrecondition None merge
+
+            Assert.That(missingPrecondition.RequireMissingMetadata, Is.True)
+            Assert.That(missingPrecondition.ExpectedMetadataVersion, Is.EqualTo(None))
+
+            let currentMetadata = reuseMetadataFor block.Address 12L [| confirmedRange |]
+            let currentPrecondition = UploadSessionActor.withCurrentMetadataMergePrecondition (Some currentMetadata) merge
+
+            Assert.That(currentPrecondition.RequireMissingMetadata, Is.False)
+            Assert.That(currentPrecondition.ExpectedMetadataVersion, Is.EqualTo(Some currentMetadata.MetadataVersion))
+        | _ -> Assert.Fail("Expected uploaded block finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     [<Test>]
     member _.RevalidatedClaimedMetadataMergeRejectsRemovedRangeBeforeSideEffect() =
