@@ -92,7 +92,7 @@
             examples:
               signedContentBlockUploadUri:
                 summary: Raw ContentBlock upload URI
-                value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
+                value: https://storage.example.net/grace/cas/content/ab/cd/ef/01/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -119,7 +119,7 @@
             examples:
               signedContentBlockDownloadUri:
                 summary: Raw ContentBlock download URI
-                value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
+                value: https://storage.example.net/grace/cas/content/ab/cd/ef/01/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
