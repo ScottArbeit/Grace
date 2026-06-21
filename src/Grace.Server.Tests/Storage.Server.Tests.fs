@@ -493,6 +493,7 @@ type StorageContentBlockSasRoutes() =
             use unprivilegedClient = createClientWithUserId $"{Guid.NewGuid()}"
 
             let parameters = createContentBlockDownloadParameters repositoryId
+            parameters.AuthorizedScope <- "/download/requires-finalized-manifest.bin"
 
             let! unauthDownload = unauthClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
             Assert.That(unauthDownload.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
@@ -502,6 +503,27 @@ type StorageContentBlockSasRoutes() =
 
             let! allowedDownload = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
             do! assertBadRequestContains "ManifestAddress" allowedDownload
+        }
+
+    [<Test>]
+    member _.ContentBlockDownloadUriRejectsAddressOnlyRequestBeforeSharedCasPlacementLookup() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let pathReader = $"{Guid.NewGuid()}"
+
+            let! grantReader = grantRoleAsync Client "repo" ownerId organizationId repositoryId "" pathReader "RepositoryReader"
+            Assert.That(grantReader.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+
+            use readerClient = createClientWithUserId pathReader
+            let parameters = createContentBlockDownloadParameters repositoryId
+            parameters.StoragePoolId <- "pool-address-only"
+            parameters.ManifestAddress <- ManifestAddress(ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes $"manifest-{Guid.NewGuid():N}"))
+
+            let! response = readerClient.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Contain("AuthorizedScope"))
+            Assert.That(body, Does.Not.Contain("cas/content/"))
         }
 
     [<Test>]
@@ -1951,7 +1973,7 @@ type StorageManifestUploadSessionRoutes() =
             let! downloadUriBody = downloadUriResponse.Content.ReadAsStringAsync()
             Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), downloadUriBody)
             assertJsonContent downloadUriResponse
-            Assert.That(downloadUriBody, Does.Contain("ManifestAddress"))
+            Assert.That(downloadUriBody, Does.Contain("AuthorizedScope"))
 
             let! discoveryResponse =
                 postDiscoveryAsync

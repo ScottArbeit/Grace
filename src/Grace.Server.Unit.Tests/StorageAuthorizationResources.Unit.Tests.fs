@@ -90,13 +90,24 @@ type StorageAuthorizationResourcesTests() =
         assertPathResource (StorageKeys.contentBlockObjectKey "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") resource
 
     [<Test>]
-    member _.ContentBlockDownloadUsesContentBlockObjectKey() =
+    member _.ContentBlockDownloadUsesExplicitAuthorizedScope() =
         let parameters = Storage.GetContentBlockDownloadUriParameters()
         parameters.ContentBlockAddress <- "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        parameters.AuthorizedScope <- "manifest/download.bin"
 
         let resource = StorageAuthorizationResources.contentBlockDownloadResource ownerId organizationId repositoryId parameters
 
-        assertPathResource (StorageKeys.contentBlockObjectKey "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc") resource
+        assertPathResource "manifest/download.bin" resource
+
+    [<Test>]
+    member _.ContentBlockDownloadDoesNotAuthorizeByContentBlockObjectKeyWhenScopeIsBlank() =
+        let parameters = Storage.GetContentBlockDownloadUriParameters()
+        parameters.ContentBlockAddress <- "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        parameters.AuthorizedScope <- "   "
+
+        let resource = StorageAuthorizationResources.contentBlockDownloadResource ownerId organizationId repositoryId parameters
+
+        assertPathResource "   " resource
 
     [<Test>]
     member _.UploadSessionStorageUsesAuthorizedScope() =
