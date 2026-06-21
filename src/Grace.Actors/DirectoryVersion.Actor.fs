@@ -57,6 +57,38 @@ module DirectoryVersion =
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
 
+    let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersionDtos: DirectoryVersionDto seq) correlationId =
+        let directoryVersionDtoArray = directoryVersionDtos |> Seq.toArray
+
+        let directoryVersionIds =
+            HashSet<DirectoryVersionId>(
+                directoryVersionDtoArray
+                |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+            )
+
+        if not (directoryVersionIds.Contains rootDirectoryVersionId) then
+            Error(
+                (GraceError.Create "Recursive directory traversal did not include the root DirectoryVersion." correlationId)
+                    .enhance (nameof DirectoryVersionId, rootDirectoryVersionId)
+            )
+        else
+            let missingChild =
+                directoryVersionDtoArray
+                |> Seq.collect (fun directoryVersionDto ->
+                    directoryVersionDto.DirectoryVersion.Directories
+                    |> Seq.map (fun childDirectoryVersionId -> directoryVersionDto.DirectoryVersion, childDirectoryVersionId))
+                |> Seq.tryFind (fun (_, childDirectoryVersionId) -> not (directoryVersionIds.Contains childDirectoryVersionId))
+
+            match missingChild with
+            | Some (parentDirectoryVersion, childDirectoryVersionId) ->
+                Error(
+                    (GraceError.Create "Recursive directory traversal did not include a declared child DirectoryVersion." correlationId)
+                        .enhance(nameof DirectoryVersionId, rootDirectoryVersionId)
+                        .enhance("ParentDirectoryVersionId", parentDirectoryVersion.DirectoryVersionId)
+                        .enhance ("ChildDirectoryVersionId", childDirectoryVersionId)
+                )
+            | None -> Ok directoryVersionDtoArray
+
     /// Validates a single file's version hashes by downloading from storage and computing.
     /// Note: Non-binary files are stored as GZip-compressed streams, so we need to decompress them first.
     let validateFileSha256 (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
@@ -964,79 +996,90 @@ module DirectoryVersion =
                                     .OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath)
                                     .ToArray()
 
-                            // Save the recursive results to Azure Blob Storage.
-                            let repositoryActorProxy =
-                                Repository.CreateActorProxy
-                                    directoryVersionDto.DirectoryVersion.OrganizationId
-                                    directoryVersionDto.DirectoryVersion.RepositoryId
-                                    correlationId
+                            match validateRecursiveDirectoryVersionsComplete directoryVersion.DirectoryVersionId subdirectoryVersionsList correlationId with
+                            | Error graceError ->
+                                log.LogWarning(
+                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Skipping recursive directory version cache write because traversal was incomplete. Error: {error}",
+                                    getCurrentInstantExtended (),
+                                    getMachineName,
+                                    correlationId,
+                                    this.GetPrimaryKey(),
+                                    graceError
+                                )
+                            | Ok completeSubdirectoryVersionsList ->
+                                // Save the recursive results to Azure Blob Storage only after completeness is known.
+                                let repositoryActorProxy =
+                                    Repository.CreateActorProxy
+                                        directoryVersionDto.DirectoryVersion.OrganizationId
+                                        directoryVersionDto.DirectoryVersion.RepositoryId
+                                        correlationId
 
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                            let tags = Dictionary<string, string>()
-                            tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
-                            tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
-                            tags.Add(nameof RepositoryId, $"{repositoryDto.RepositoryId}")
-                            tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                            tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
-                            tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                            tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
+                                let tags = Dictionary<string, string>()
+                                tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
+                                tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
+                                tags.Add(nameof RepositoryId, $"{repositoryDto.RepositoryId}")
+                                tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
+                                tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
+                                tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                                tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
 
-                            // Write the JSON using MessagePack serialization for efficiency.
-                            let blockBlobOpenWriteOptions =
-                                BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
+                                // Write the JSON using MessagePack serialization for efficiency.
+                                let blockBlobOpenWriteOptions =
+                                    BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
 
-                            let conditionsSummary =
-                                let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty ("Conditions")
+                                let conditionsSummary =
+                                    let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty ("Conditions")
 
-                                if isNull conditionsProperty then
-                                    "not supported"
-                                else
-                                    let conditionsValue = conditionsProperty.GetValue(blockBlobOpenWriteOptions)
-
-                                    if isNull conditionsValue then
-                                        "null"
+                                    if isNull conditionsProperty then
+                                        "not supported"
                                     else
-                                        let conditionProperties = conditionsValue.GetType().GetProperties()
+                                        let conditionsValue = conditionsProperty.GetValue(blockBlobOpenWriteOptions)
 
-                                        conditionProperties
-                                        |> Seq.map (fun propertyInfo ->
-                                            let value = propertyInfo.GetValue(conditionsValue)
-                                            $"{propertyInfo.Name}={value}")
-                                        |> String.concat "; "
+                                        if isNull conditionsValue then
+                                            "null"
+                                        else
+                                            let conditionProperties = conditionsValue.GetType().GetProperties()
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Blob write conditions: {conditionsSummary}.",
-                                this.GetPrimaryKey(),
-                                conditionsSummary
-                            )
+                                            conditionProperties
+                                            |> Seq.map (fun propertyInfo ->
+                                                let value = propertyInfo.GetValue(conditionsValue)
+                                                $"{propertyInfo.Name}={value}")
+                                            |> String.concat "; "
 
-                            use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
-                            do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
-                            do! blobStream.DisposeAsync()
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Blob write conditions: {conditionsSummary}.",
+                                    this.GetPrimaryKey(),
+                                    conditionsSummary
+                                )
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
-                                this.GetPrimaryKey(),
-                                directoryVersionDto.DirectoryVersion.RelativePath
-                            )
+                                use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
+                                do! MessagePackSerializer.SerializeAsync(blobStream, completeSubdirectoryVersionsList, messagePackSerializerOptions)
+                                do! blobStream.DisposeAsync()
 
-                            // Create a reminder to delete the cached state after the configured number of cache days.
-                            let deletionReminderState: PhysicalDeletionReminderState =
-                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
+                                    this.GetPrimaryKey(),
+                                    directoryVersionDto.DirectoryVersion.RelativePath
+                                )
 
-                            do!
-                                (this :> IGraceReminderWithGuidKey)
-                                    .ScheduleReminderAsync
-                                    ReminderTypes.DeleteCachedState
-                                    (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                    (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
-                                    correlationId
+                                // Create a reminder to delete the cached state after the configured number of cache days.
+                                let deletionReminderState: PhysicalDeletionReminderState =
+                                    { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Delete cached state reminder was set.",
-                                this.GetPrimaryKey()
-                            )
+                                do!
+                                    (this :> IGraceReminderWithGuidKey)
+                                        .ScheduleReminderAsync
+                                        ReminderTypes.DeleteCachedState
+                                        (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
+                                        (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
+                                        correlationId
+
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Delete cached state reminder was set.",
+                                    this.GetPrimaryKey()
+                                )
 
                             return subdirectoryVersionsList
                     with
