@@ -33,9 +33,23 @@ jobs:
         run: |
           set -uo pipefail
 
+          dotnet build "src/Grace.slnx" \
+            --configuration Release \
+            --no-restore \
+            -p:GraceBuildKind="${GraceBuildKind}" \
+            -p:GraceBuildNumber="${GraceBuildNumber}" \
+            -p:GraceSourceRevisionId="${GraceSourceRevisionId}" &
+          build_pid=$!
+
           docker info
           docker_info_exit=$?
           if [ "${docker_info_exit}" -ne 0 ]; then
+            build_exit=0
+            wait "${build_pid}" || build_exit=$?
+            if [ "${build_exit}" -ne 0 ]; then
+              echo "Build failed with exit code ${build_exit}" >&2
+            fi
+
             exit "${docker_info_exit}"
           fi
 
@@ -55,12 +69,7 @@ jobs:
           done
 
           build_exit=0
-          dotnet build "src/Grace.slnx" \
-            --configuration Release \
-            --no-restore \
-            -p:GraceBuildKind="${GraceBuildKind}" \
-            -p:GraceBuildNumber="${GraceBuildNumber}" \
-            -p:GraceSourceRevisionId="${GraceSourceRevisionId}" || build_exit=$?
+          wait "${build_pid}" || build_exit=$?
 
           pull_failed=0
           for index in "${!pids[@]}"; do
