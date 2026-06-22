@@ -9,6 +9,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
 open System.Text
 open System.Threading.Tasks
 
@@ -25,6 +26,7 @@ type SaveBoundaryActorTests() =
     let organizationId = Guid.Parse("5a602145-3f0a-47c8-bc7c-f6618425c07f")
     let repositoryId = Guid.Parse("e34f8949-6306-4fb1-89ca-e9eb831022b0")
     let directoryVersionId = Guid.Parse("29e93e9b-3e5f-4b6e-b8c3-2a964d8d33f3")
+    let childDirectoryVersionId = Guid.Parse("599af9a9-cb67-49cb-a6df-7a2b5b63ff78")
     let referenceId = Guid.Parse("9b26f91a-fd44-46b3-9cc7-17645bb388a2")
     let storagePoolId = StoragePoolId Constants.DefaultStoragePoolId
     let archiveStoragePoolId = StoragePoolId "pool-archive"
@@ -67,10 +69,12 @@ type SaveBoundaryActorTests() =
 
     let finalizedManifestInPool storagePoolId = { finalizedManifest () with StoragePoolId = storagePoolId }
 
-    let manifestFile (manifest: FileManifest) =
-        let fileVersion = FileVersion.Create "/large.bin" "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
+    let manifestFileAt relativePath (manifest: FileManifest) =
+        let fileVersion = FileVersion.Create relativePath "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef" String.Empty true manifest.Size
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
+
+    let manifestFile (manifest: FileManifest) = manifestFileAt "/large.bin" manifest
 
     let manifestReference (manifest: FileManifest) : DirectoryVersionActor.ManifestReferenceForSaveBoundary =
         { Manifest = manifest; AuthorizedScope = RelativePath "/large.bin" }
@@ -135,6 +139,13 @@ type SaveBoundaryActorTests() =
         | Error error ->
             Assert.Fail($"Expected save boundary plan to succeed, got {error.Error}.")
             Unchecked.defaultof<ReferenceActor.ManifestSaveContributionPlan>
+
+    let expectPlans result =
+        match result with
+        | Ok plans -> plans |> List.toArray
+        | Error error ->
+            Assert.Fail($"Expected save boundary plans to succeed, got {error.Error}.")
+            Array.empty
 
     [<Test>]
     member _.SaveBoundaryRejectsUnfinalizedManifestReferences() =
@@ -650,6 +661,185 @@ type SaveBoundaryActorTests() =
         | _ -> Assert.Fail("Expected checkpoint expiry planning to remove manifest ownership.")
 
     [<Test>]
+    member _.ReferenceBoundaryPlansNestedChildDirectoryManifestOwnershipByStoredPool() =
+        let rootManifest = finalizedManifest ()
+        let childManifest = finalizedManifestInPool archiveStoragePoolId
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryVersionId
+                (RelativePath "/src/")
+                []
+                [
+                    manifestFileAt "/src/large.bin" childManifest
+                ]
+
+        let rootDirectory = hashedDirectory directoryVersionId (RelativePath "/") [ childDirectory ] [ manifestFile rootManifest ]
+
+        let plans =
+            ReferenceActor.planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId [ rootDirectory; childDirectory ] "corr-recursive-plan"
+            |> expectPlans
+
+        Assert.That(plans, Has.Length.EqualTo(2))
+
+        Assert.That(
+            plans
+            |> Seq.map (fun plan -> plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress),
+            Is.EquivalentTo(
+                [
+                    storagePoolId, rootManifest.ManifestAddress
+                    archiveStoragePoolId, childManifest.ManifestAddress
+                ]
+            )
+        )
+
+        let childPlan =
+            plans
+            |> Seq.find (fun plan -> plan.Manifest.ManifestAddress = childManifest.ManifestAddress)
+
+        Assert.That(childPlan.Manifest.StoragePoolId, Is.EqualTo(archiveStoragePoolId))
+
+        Assert.That(
+            childPlan.WorkflowRanges
+            |> Seq.forall (fun range -> range.StoragePoolId = archiveStoragePoolId),
+            Is.True
+        )
+
+        match childPlan.CounterCommand with
+        | RepositoryContentCounterCommand.AddReference (_, _, commandStoragePoolId, manifestAddress) ->
+            Assert.That(commandStoragePoolId, Is.EqualTo(archiveStoragePoolId))
+            Assert.That(manifestAddress, Is.EqualTo(childManifest.ManifestAddress))
+        | _ -> Assert.Fail("Expected nested child manifest planning to add stored-pool manifest ownership.")
+
+    [<Test>]
+    member _.RecursiveSaveBoundaryPlanningRejectsMissingRootDirectoryVersion() =
+        let childManifest = finalizedManifestInPool archiveStoragePoolId
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryVersionId
+                (RelativePath "/src/")
+                []
+                [
+                    manifestFileAt "/src/large.bin" childManifest
+                ]
+
+        let result =
+            ReferenceActor.planManifestSaveBoundaryForRecursiveDirectoryVersions
+                repositoryId
+                referenceId
+                directoryVersionId
+                [ childDirectory ]
+                "corr-recursive-missing-root"
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected recursive save boundary planning to reject traversal results without the root directory.")
+        | Error error -> Assert.That(error.Error, Does.Contain("did not include the root DirectoryVersion"))
+
+    [<Test>]
+    member _.RecursiveSaveBoundaryPlanningRejectsDeclaredChildMissingFromTraversal() =
+        let rootManifest = finalizedManifest ()
+        let childManifest = finalizedManifestInPool archiveStoragePoolId
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryVersionId
+                (RelativePath "/src/")
+                []
+                [
+                    manifestFileAt "/src/large.bin" childManifest
+                ]
+
+        let rootDirectory = hashedDirectory directoryVersionId (RelativePath "/") [ childDirectory ] [ manifestFile rootManifest ]
+
+        let result =
+            ReferenceActor.planManifestSaveBoundaryForRecursiveDirectoryVersions
+                repositoryId
+                referenceId
+                directoryVersionId
+                [ rootDirectory ]
+                "corr-recursive-missing-child"
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected recursive save boundary planning to reject traversal results missing a declared child directory.")
+        | Error error -> Assert.That(error.Error, Does.Contain("did not include a declared child DirectoryVersion"))
+
+    [<Test>]
+    member _.ReferenceBoundaryDeduplicatesRecursiveManifestReferencesByStoredPoolAndManifestAddress() =
+        let manifest = finalizedManifestInPool archiveStoragePoolId
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryVersionId
+                (RelativePath "/src/")
+                []
+                [
+                    manifestFileAt "/src/large.bin" manifest
+                ]
+
+        let rootDirectory = hashedDirectory directoryVersionId (RelativePath "/") [ childDirectory ] [ manifestFile manifest ]
+
+        let plans =
+            ReferenceActor.planManifestSaveBoundaryForDirectoryVersions
+                repositoryId
+                referenceId
+                [ rootDirectory; childDirectory ]
+                "corr-recursive-duplicate-plan"
+            |> expectPlans
+
+        Assert.That(plans, Has.Length.EqualTo(1))
+        Assert.That(plans[0].Manifest.StoragePoolId, Is.EqualTo(archiveStoragePoolId))
+        Assert.That(plans[0].Manifest.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+
+    [<Test>]
+    member _.SaveExpiryPlanningMatchesRecursiveSaveManifestKeysByStoredPool() =
+        let rootManifest = finalizedManifest ()
+        let childManifest = finalizedManifestInPool archiveStoragePoolId
+
+        let childDirectory =
+            hashedDirectory
+                childDirectoryVersionId
+                (RelativePath "/src/")
+                []
+                [
+                    manifestFileAt "/src/large.bin" childManifest
+                ]
+
+        let rootDirectory = hashedDirectory directoryVersionId (RelativePath "/") [ childDirectory ] [ manifestFile rootManifest ]
+        let recursiveDirectoryVersions = [ rootDirectory; childDirectory ]
+
+        let savePlans =
+            ReferenceActor.planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId recursiveDirectoryVersions "corr-recursive-save-plan"
+            |> expectPlans
+
+        let expiryPlans =
+            ReferenceActor.planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId recursiveDirectoryVersions "corr-recursive-expiry-plan"
+            |> expectPlans
+
+        let saveKeys =
+            savePlans
+            |> Seq.map (fun plan -> plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress)
+            |> Seq.toArray
+
+        let expiryKeys =
+            expiryPlans
+            |> Seq.map (fun plan -> plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress)
+            |> Seq.toArray
+
+        Assert.That(expiryKeys, Is.EquivalentTo(saveKeys))
+
+        Assert.That(
+            expiryPlans
+            |> Seq.forall (fun plan ->
+                match plan.CounterCommand with
+                | RepositoryContentCounterCommand.RemoveReference (_, _, commandStoragePoolId, manifestAddress) ->
+                    commandStoragePoolId = plan.Manifest.StoragePoolId
+                    && manifestAddress = plan.Manifest.ManifestAddress
+                | _ -> false),
+            Is.True
+        )
+
+    [<Test>]
     member _.SaveBoundaryStartsContributionWorkflowForRepeatedManifestBlockOccurrences() =
         let manifest = finalizedManifestWithBlockCopies 2
         let directoryVersion = directoryWith [ manifestFile manifest ]
@@ -920,3 +1110,75 @@ type SaveBoundaryActorTests() =
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Commit), Is.False)
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary (referenceDto ReferenceType.Checkpoint), Is.False)
         Assert.That(ReferenceActor.shouldApplyManifestExpiryBoundary Grace.Types.Reference.ReferenceDto.Default, Is.False)
+
+    [<Test>]
+    member _.SaveExpiryReferencePlanningSkipsRecursiveFetchForCheckpointReferences() =
+        task {
+            let mutable fetchCalled = false
+
+            let getRecursiveDirectoryVersions () =
+                fetchCalled <- true
+                Task.FromResult Array.empty<Grace.Types.DirectoryVersion.DirectoryVersionDto>
+
+            let! result =
+                ReferenceActor.planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
+                    repositoryId
+                    referenceId
+                    directoryVersionId
+                    (referenceDto ReferenceType.Checkpoint)
+                    getRecursiveDirectoryVersions
+                    "corr-checkpoint-expiry-skip"
+
+            match result with
+            | Error error -> Assert.Fail($"Expected checkpoint expiry planning to skip manifest traversal, got {error.Error}.")
+            | Ok plans -> Assert.That(plans, Is.Empty)
+
+            Assert.That(fetchCalled, Is.False)
+        }
+
+    [<Test>]
+    member _.RecursiveDirectoryTraversalCompletenessRejectsMissingDeclaredChildBeforeCacheWrite() =
+        let rootDirectory =
+            DirectoryVersion.CreateWithHashes
+                directoryVersionId
+                ownerId
+                organizationId
+                repositoryId
+                (RelativePath ".")
+                (Sha256Hash "root-sha256")
+                (Blake3Hash "root-blake3")
+                (List<DirectoryVersionId>([ childDirectoryVersionId ]))
+                (List<FileVersion>())
+                0L
+
+        let rootDto = { Grace.Types.DirectoryVersion.DirectoryVersionDto.Default with DirectoryVersion = rootDirectory }
+
+        match DirectoryVersionActor.validateRecursiveDirectoryVersionsComplete directoryVersionId [ rootDto ] "corr-cache-poison-missing-child" with
+        | Ok _ -> Assert.Fail("Expected incomplete recursive traversal to be rejected before cache write.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("declared child DirectoryVersion"))
+            Assert.That(error.Properties["ParentDirectoryVersionId"], Is.EqualTo(string directoryVersionId))
+            Assert.That(error.Properties["ChildDirectoryVersionId"], Is.EqualTo(string childDirectoryVersionId))
+
+    [<Test>]
+    member _.RecursiveDirectoryVersionsCachesOnlyCompleteTraversalResults() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "DirectoryVersion.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+
+        let traversalListStart = actorSource.IndexOf("let subdirectoryVersionsList =", StringComparison.Ordinal)
+
+        Assert.That(traversalListStart, Is.GreaterThanOrEqualTo(0), "Expected recursive traversal list assembly to exist.")
+
+        let validationStart = actorSource.IndexOf("match validateRecursiveDirectoryVersionsComplete", traversalListStart, StringComparison.Ordinal)
+
+        Assert.That(validationStart, Is.GreaterThan(traversalListStart), "Expected cache writes to be gated by traversal completeness.")
+
+        let cacheWriteStart = actorSource.IndexOf("OpenWriteAsync", validationStart, StringComparison.Ordinal)
+
+        Assert.That(cacheWriteStart, Is.GreaterThan(validationStart), "Expected recursive cache write to remain present.")
+
+        let guardedSlice = actorSource.Substring(validationStart, cacheWriteStart - validationStart)
+
+        Assert.That(guardedSlice, Does.Contain("| Error graceError ->"))
+        Assert.That(guardedSlice, Does.Contain("Skipping recursive directory version cache write"))
+        Assert.That(guardedSlice, Does.Contain("| Ok completeSubdirectoryVersionsList ->"))
