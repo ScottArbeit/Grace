@@ -13,4 +13,6 @@ The matrix intentionally records tool-version evidence, generator acceptance or 
 evidence, compile/import probes, transport policy support, and facade-fit notes.
 
 The `openapi-generator/**` subtree is raw third-party generator output. It is covered by path-local Git attributes so
-repository whitespace checks do not require hand edits to generated files.
+repository whitespace checks do not require hand edits to generated files. It is also outside authored MarkdownLint
+coverage because OpenAPI Generator emits Markdown tables, headings, links, and examples that do not follow
+Grace-authored documentation style and are overwritten by the next matrix regeneration.

@@ -70,7 +70,9 @@ final CAS PR targets that #343 epic branch.
 - Run `pwsh ./sdk/scripts/generate-sdk-clients.ps1 -Mode Check` for facade metadata freshness.
 - Run `pwsh ./sdk/scripts/invoke-generator-matrix.ps1` if OpenAPI projection changes require refreshed raw matrix
   client artifacts beyond the projection and facade metadata.
-- Run MarkdownLint for this document with the repo MD013 120-character convention.
+- Run MarkdownLint for authored Markdown with the repo MD013 120-character convention. Raw OpenAPI Generator matrix
+  Markdown under `sdk/generated/matrix/openapi-generator/**` is waived because it is third-party proof output
+  documented in `sdk/generated/matrix/README.md`.
 - Run `git diff --check`.
 - Use `pwsh ./scripts/validate.ps1 -Fast` as the final build/test gate because #444 changes contract/docs/proof
   artifacts only. `-Full` is waived unless a later fix exercises storage-emulator runtime behavior.
@@ -86,3 +88,6 @@ final CAS PR targets that #343 epic branch.
 - New CLI commands or fixtures are waived. The audited storage flow remains SDK-mediated, and there is no CLI public
   command that accepts a physical `StoragePoolId` placement choice.
 - Full storage-emulator validation is waived for this docs/OpenAPI contract slice unless a runtime fix is added.
+- MarkdownLint for raw OpenAPI Generator matrix docs is waived by the documented generated-output convention. The
+  `sdk/generated/matrix/openapi-generator/**` subtree remains committed as reproducible third-party proof output and is
+  documented as outside authored Markdown style in `sdk/generated/matrix/README.md`.
