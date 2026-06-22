@@ -30,7 +30,7 @@ class ClaimedReuseRange(BaseModel):
     """
     Reuse range accepted by the upload-session workflow.
     """ # noqa: E501
-    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
+    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.", alias="StoragePoolId")
     content_block_address: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
     ordinal_start: StrictInt = Field(alias="OrdinalStart")
     ordinal_count: StrictInt = Field(alias="OrdinalCount")

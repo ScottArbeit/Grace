@@ -1,7 +1,7 @@
 
 # FileManifest
 
-Server-accepted reconstruction contract for one manifest-backed file.
+Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
 
 ## Properties
 

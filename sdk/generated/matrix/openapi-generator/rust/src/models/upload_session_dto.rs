@@ -24,7 +24,7 @@ pub struct UploadSessionDto {
     pub organization_id: uuid::Uuid,
     #[serde(rename = "RepositoryId")]
     pub repository_id: uuid::Uuid,
-    /// StoragePool-wide CAS scope identifier.
+    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
     #[serde(rename = "StoragePoolId")]
     pub storage_pool_id: String,
     #[serde(rename = "AuthorizedScope")]

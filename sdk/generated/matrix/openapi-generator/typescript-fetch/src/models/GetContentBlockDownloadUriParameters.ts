@@ -74,7 +74,7 @@ export interface GetContentBlockDownloadUriParameters {
      */
     authorizedScope?: string;
     /**
-     * StoragePool-wide CAS scope identifier.
+     * StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
