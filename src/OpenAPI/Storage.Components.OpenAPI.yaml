@@ -74,7 +74,10 @@ GetContentBlockUploadUriParameters:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
 
 GetContentBlockDownloadUriParameters:
-  description: Parameters for /storage/getContentBlockDownloadUri.
+  description: >-
+    Parameters for /storage/getContentBlockDownloadUri. The request carries the server-accepted StoragePoolId,
+    ManifestAddress, and one ContentBlockAddress for an authorized manifest-backed reconstruction path. It must not
+    embed the full FileManifest for every block request.
   allOf:
     - $ref: '#/StorageParameters'
   type: object
@@ -877,7 +880,9 @@ FinalizeManifestBlockPayload:
       format: byte
 
 FileManifest:
-  description: Server-accepted reconstruction contract for one manifest-backed file.
+  description: >-
+    Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected
+    by Grace Server, not authority for a client to choose physical storage shards.
   type: object
   properties:
     Class:
@@ -951,7 +956,9 @@ FileContentHash:
   pattern: '^[a-f0-9]{64}$'
 
 StoragePoolId:
-  description: StoragePool-wide CAS scope identifier.
+  description: >-
+    StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not
+    use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
   type: string
 
 ChunkingSuiteId:

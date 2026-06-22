@@ -207,8 +207,12 @@ type ManifestDownloadSdkTests() =
                             requestCount <- requestCount + 1
                             Assert.That(parameters.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
                             Assert.That(parameters.StoragePoolId, Is.EqualTo(manifest.StoragePoolId))
+                            Assert.That(parameters.ContentBlockAddress, Is.Not.EqualTo(String.Empty))
+                            Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                             let manifestProperty = parameters.GetType().GetProperty("Manifest")
                             Assert.That(manifestProperty, Is.Null)
+                            let blocksProperty = parameters.GetType().GetProperty("Blocks")
+                            Assert.That(blocksProperty, Is.Null)
                             Task.FromResult(Ok(GraceReturnValue.Create $"https://example.test/{parameters.ContentBlockAddress}" correlationId))
                     DownloadContentBlock =
                         fun contentBlockAddress _ -> Task.FromResult(Ok(GraceReturnValue.Create blockPayloads[contentBlockAddress] correlationId))

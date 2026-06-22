@@ -41,7 +41,7 @@ class UploadSessionDto(BaseModel):
     owner_id: UUID = Field(alias="OwnerId")
     organization_id: UUID = Field(alias="OrganizationId")
     repository_id: UUID = Field(alias="RepositoryId")
-    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
+    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.", alias="StoragePoolId")
     authorized_scope: StrictStr = Field(alias="AuthorizedScope")
     file_content_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.", alias="FileContentHash")
     expected_size: StrictInt = Field(alias="ExpectedSize")

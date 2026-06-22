@@ -22,7 +22,7 @@ import {
 } from './ContentBlock';
 
 /**
- * Server-accepted reconstruction contract for one manifest-backed file.
+ * Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
  * @export
  * @interface FileManifest
  */
@@ -52,7 +52,7 @@ export interface FileManifest {
      */
     fileContentHash: string;
     /**
-     * StoragePool-wide CAS scope identifier.
+     * StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
      * @type {string}
      * @memberof FileManifest
      */
