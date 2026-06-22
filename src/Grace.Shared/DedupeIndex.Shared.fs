@@ -429,6 +429,22 @@ module DedupeIndex =
                 else
                     range.PhysicalOffset + range.PhysicalLength
 
+            let rangesByStart = Dictionary<int * int64, ResizeArray<ContentBlockMetadataRange>>()
+            let rangesWithPredecessors = HashSet<int * int64>()
+
+            for range in sortedRanges do
+                let startKey = range.OrdinalStart, range.PhysicalOffset
+
+                match rangesByStart.TryGetValue startKey with
+                | true, ranges -> ranges.Add range
+                | false, _ ->
+                    let ranges = ResizeArray<ContentBlockMetadataRange>()
+                    ranges.Add range
+                    rangesByStart[startKey] <- ranges
+
+                rangesWithPredecessors.Add(rangeEnd range, rangePhysicalEnd range)
+                |> ignore
+
             let rec collectChains (chain: ContentBlockMetadataRange list) =
                 let current = chain.Head
                 let activeChain = mergeActiveChain chain
@@ -436,14 +452,18 @@ module DedupeIndex =
                 let currentPhysicalEnd = rangePhysicalEnd current
 
                 let nextRanges =
-                    sortedRanges
-                    |> Array.filter (fun candidate ->
-                        candidate.OrdinalStart = currentEnd
-                        && candidate.PhysicalOffset = currentPhysicalEnd
-                        && candidate.OrdinalCount
-                           <= Int32.MaxValue - activeChain.OrdinalCount
-                        && candidate.PhysicalLength
-                           <= Int64.MaxValue - activeChain.PhysicalLength)
+                    let nextKey = currentEnd, currentPhysicalEnd
+
+                    match rangesByStart.TryGetValue nextKey with
+                    | true, ranges ->
+                        ranges
+                        |> Seq.filter (fun candidate ->
+                            candidate.OrdinalCount
+                            <= Int32.MaxValue - activeChain.OrdinalCount
+                            && candidate.PhysicalLength
+                               <= Int64.MaxValue - activeChain.PhysicalLength)
+                        |> Seq.toArray
+                    | false, _ -> Array.empty
 
                 if nextRanges.Length = 0 then
                     output.Add(mergeActiveChain chain)
@@ -451,8 +471,13 @@ module DedupeIndex =
                     for nextRange in nextRanges do
                         collectChains (nextRange :: chain)
 
+            let hasPredecessor (range: ContentBlockMetadataRange) =
+                let startKey = range.OrdinalStart, range.PhysicalOffset
+
+                rangesWithPredecessors.Contains startKey
+
             for range in sortedRanges do
-                collectChains [ range ]
+                if not (hasPredecessor range) then collectChains [ range ]
 
         output
         |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)

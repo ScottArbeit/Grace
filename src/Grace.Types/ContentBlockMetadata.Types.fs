@@ -372,6 +372,49 @@ module ContentBlockMetadata =
                         |> Seq.sumBy (fun range -> range.PhysicalLength)
                 }
 
+    let private trySynthesizeUniformCoveringRange (metadata: ContentBlockMetadata) query =
+        if query.OrdinalStart < 0
+           || query.OrdinalCount <= 1
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
+            None
+        else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) =
+                if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
+                    Int32.MaxValue
+                else
+                    range.OrdinalStart + range.OrdinalCount
+
+            metadata.Ranges
+            |> Array.filter (fun range ->
+                range.ActiveManifestCount > 0
+                && range.OrdinalStart >= 0
+                && range.OrdinalCount > 0
+                && range.OrdinalCount
+                   <= Int32.MaxValue - range.OrdinalStart
+                && range.PhysicalOffset >= 0L
+                && range.PhysicalLength > 0L
+                && range.PhysicalLength
+                   <= Int64.MaxValue - range.PhysicalOffset
+                && range.OrdinalStart <= query.OrdinalStart
+                && rangeEnd range >= queryEnd
+                && range.PhysicalLength % int64 range.OrdinalCount = 0L)
+            |> Array.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+            |> Array.tryHead
+            |> Option.map (fun range ->
+                let bytesPerOrdinal = range.PhysicalLength / int64 range.OrdinalCount
+                let ordinalOffset = query.OrdinalStart - range.OrdinalStart
+
+                { range with
+                    OrdinalStart = query.OrdinalStart
+                    OrdinalCount = query.OrdinalCount
+                    PhysicalOffset =
+                        range.PhysicalOffset
+                        + (int64 ordinalOffset * bytesPerOrdinal)
+                    PhysicalLength = int64 query.OrdinalCount * bytesPerOrdinal
+                })
+
     let findRanges (metadata: ContentBlockMetadata) query =
         if isNull (box metadata)
            || isNull metadata.Ranges
@@ -394,7 +437,10 @@ module ContentBlockMetadata =
             else
                 match trySynthesizeContiguousRange metadata query with
                 | Some range -> [| range |]
-                | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
+                | None ->
+                    match trySynthesizeUniformCoveringRange metadata query with
+                    | Some range -> [| range |]
+                    | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
 
     let findRangeEvidence (metadata: ContentBlockMetadata) query =
         if isNull (box metadata)

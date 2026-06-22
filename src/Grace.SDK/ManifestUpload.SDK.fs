@@ -106,6 +106,8 @@ module ManifestUpload =
         parameters.KeyChunkAddresses <-
             plan.KeyChunks
             |> Array.map (fun keyChunk -> keyChunk.Address)
+            |> Array.distinct
+            |> Array.truncate MaxDiscoveryKeyChunkAddresses
 
         parameters
 
@@ -285,7 +287,9 @@ module ManifestUpload =
                             let manifest = { manifest with StoragePoolId = startResult.ReturnValue.Session.StoragePoolId }
                             let claimedBlockAddresses = HashSet<ContentBlockAddress>()
 
-                            match! client.DiscoverContentBlocks(buildDiscoveryParameters request plan) with
+                            let discoveryParameters = buildDiscoveryParameters request plan
+
+                            match! client.DiscoverContentBlocks discoveryParameters with
                             | Ok discoveryResult when
                                 not (isNull discoveryResult.ReturnValue.CandidateContentBlocks)
                                 && discoveryResult.ReturnValue.CandidateContentBlocks.Length > 0
@@ -301,8 +305,7 @@ module ManifestUpload =
                                             (getCurrentInstant()
                                                 .Plus(Duration.FromSeconds(int64 discoveryResult.ReturnValue.Policy.ResponseTtlSeconds)))
                                             discoveryResult.ReturnValue.Policy.MinimumAcceptedReuseRunLength
-                                            (plan.KeyChunks
-                                             |> Array.map (fun keyChunk -> keyChunk.Address))
+                                            discoveryParameters.KeyChunkAddresses
                                             reuseHints
 
                                     match! client.IssueDedupeDiscovery issueParameters with

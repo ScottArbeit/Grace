@@ -821,6 +821,100 @@ type ManifestUploadSdkTests() =
         }
 
     [<Test>]
+    member _.ManifestUploadIssuesDiscoveryProofWithBoundedKeyChunks() =
+        task {
+            let payload =
+                ManifestUploadSdkTests.PseudoRandomBytes(
+                    (MaxDiscoveryKeyChunkAddresses + 4)
+                    * RabinChunking.MaximumChunkSize
+                )
+
+            payload[0] <- 8uy
+
+            let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-bounded-proof-{Guid.NewGuid():N}.bin")
+            let correlationId = "corr-sdk-manifest-upload-bounded-proof"
+            let mutable discoveredKeyChunkCount = 0
+            let mutable issuedKeyChunkCount = 0
+            let mutable claimedReuse = false
+
+            try
+                File.WriteAllBytes(tempPath, payload)
+
+                let fileVersion =
+                    FileVersion.Create "bounded-proof-large.bin" (ManifestUploadSdkTests.ComputeSha256Hash payload) String.Empty true (int64 payload.Length)
+
+                let request = ManifestUploadSdkTests.CreateRequest tempPath fileVersion correlationId
+                let plan = LocalPlanner.analyzeFile request.PlannerOptions tempPath
+                let candidateBlock = plan.Blocks[0]
+                let storagePoolId = StoragePoolId $"{request.RepositoryId}"
+
+                Assert.That(plan.KeyChunks.Length, Is.GreaterThan(MaxDiscoveryKeyChunkAddresses))
+
+                let client: ManifestUpload.ManifestUploadClient =
+                    {
+                        StartSession = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        DiscoverContentBlocks =
+                            fun parameters ->
+                                discoveredKeyChunkCount <- parameters.KeyChunkAddresses.Length
+
+                                let candidate =
+                                    {
+                                        StoragePoolId = storagePoolId
+                                        ManifestAddress = ManifestAddress "manifest-bounded-proof-candidate"
+                                        ContentBlockAddress = candidateBlock.Address
+                                        OrdinalStart = 0
+                                        OrdinalCount = 8
+                                        MetadataVersion = 11L
+                                        MatchingKeyChunkCount = 1
+                                        ProtectedChunkAddresses =
+                                            [|
+                                                ManifestUploadSdkTests.ProtectedChunkAddress storagePoolId candidateBlock.KeyChunkAddress
+                                            |]
+                                    }
+
+                                let discovery =
+                                    {
+                                        RequestedKeyChunkCount = plan.KeyChunks.Length
+                                        AcceptedKeyChunkCount = parameters.KeyChunkAddresses.Length
+                                        Policy = ManifestUploadSdkTests.DiscoveryPolicy 8
+                                        CandidateContentBlocks = [| candidate |]
+                                        IsPartial = true
+                                        Message = "bounded candidate"
+                                    }
+
+                                Task.FromResult(Ok(GraceReturnValue.Create discovery correlationId))
+                        IssueDedupeDiscovery =
+                            fun parameters ->
+                                issuedKeyChunkCount <- parameters.KeyChunkAddresses.Length
+                                Assert.That(parameters.KeyChunkAddresses, Does.Contain(candidateBlock.KeyChunkAddress))
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        ClaimReuseRanges =
+                            fun parameters ->
+                                claimedReuse <- true
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        RegisterBlockUpload = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        UploadContentBlock =
+                            fun parameters _payload ->
+                                let placement = ManifestUploadSdkTests.Placement parameters.ContentBlockAddress (Some "etag-bounded-proof")
+                                Task.FromResult(Ok(GraceReturnValue.Create placement correlationId))
+                        ConfirmBlockUploaded = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        FinalizeManifest = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                    }
+
+                let! result = ManifestUpload.uploadFileWithClient client request
+
+                match result with
+                | Error error -> Assert.Fail(error.Error)
+                | Ok returnValue ->
+                    Assert.That(returnValue.ReturnValue.UsedManifestUpload, Is.True)
+                    Assert.That(discoveredKeyChunkCount, Is.EqualTo(MaxDiscoveryKeyChunkAddresses))
+                    Assert.That(issuedKeyChunkCount, Is.EqualTo(discoveredKeyChunkCount))
+                    Assert.That(claimedReuse, Is.True)
+            finally
+                if File.Exists(tempPath) then File.Delete(tempPath)
+        }
+
+    [<Test>]
     member _.ManifestUploadFallsBackToUploadingBlocksWhenReuseClaimIsStale() =
         task {
             let payload = ManifestUploadSdkTests.PseudoRandomBytes 220000

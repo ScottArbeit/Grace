@@ -133,14 +133,19 @@ type ContentBlockMetadataTypesTests() =
         let evidence = findRangeEvidence currentMetadata query
 
         Assert.That(ranges, Has.Length.EqualTo(1))
-        Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(0))
+        Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(1))
         Assert.That(ranges[0].OrdinalStart, Is.EqualTo(query.OrdinalStart))
         Assert.That(ranges[0].OrdinalCount, Is.EqualTo(query.OrdinalCount))
-        Assert.That(ranges[0].PhysicalOffset, Is.EqualTo(8192L))
+        Assert.That(ranges[0].PhysicalOffset, Is.EqualTo(512L))
         Assert.That(ranges[0].PhysicalLength, Is.EqualTo(512L))
 
         Assert.That(evidence, Has.Length.EqualTo(1))
         Assert.That(evidence[0], Is.EqualTo(activeCoveringRange))
+
+        let claimed = tryFindRange currentMetadata query
+        Assert.That(claimed.IsSome, Is.True)
+        Assert.That(claimed.Value.ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(claimed.Value.PhysicalOffset, Is.EqualTo(512L))
 
     [<Test>]
     member _.FindRangeEvidenceDoesNotInventVariableChunkBoundaries() =

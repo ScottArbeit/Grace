@@ -375,6 +375,31 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(tailStart))
 
     [<Test>]
+    member _.ContiguousPerChunkActiveRangesPublishOnlyMaximalChainWindows() =
+        let block = encodedBlock "per-chunk-maximal-chain" (MinimumAcceptedReuseRunLength + 4)
+        let manifest = manifestFor block
+
+        let ranges =
+            block.Chunks
+            |> Array.mapi (fun index chunk ->
+                { OrdinalStart = index; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = chunk.PhysicalOffset; PhysicalLength = int64 chunk.Length })
+
+        let metadata =
+            { metadataFor 1 55L block with Ranges = ranges; TotalPhysicalBytes = block.Payload.LongLength; ActivePhysicalBytes = block.Payload.LongLength }
+
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+
+        Assert.That(records, Has.Length.EqualTo(1))
+        Assert.That(records[0].OrdinalStart, Is.EqualTo(0))
+        Assert.That(records[0].OrdinalCount, Is.EqualTo(block.Chunks.Length))
+
+        let suffixChunk = (decodedChunkAddresses block)[MinimumAcceptedReuseRunLength]
+        let result = discover records [| suffixChunk |]
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(0))
+
+    [<Test>]
     member _.CoalescedActiveRangesBacktracksAroundDuplicatePhysicalCopies() =
         let block = encodedBlock "alternate-chain" 12
         let manifest = manifestFor block
