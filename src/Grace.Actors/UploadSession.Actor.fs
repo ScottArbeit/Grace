@@ -449,6 +449,44 @@ module UploadSession =
         else
             let finalOrdinal = ordinalStart + ordinalCount
 
+            let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
+
+            let tryProjectCoveringRange () =
+                ranges
+                |> Array.filter (fun range ->
+                    range.ActiveManifestCount > 0
+                    && range.OrdinalStart >= 0
+                    && range.OrdinalStart <= ordinalStart
+                    && range.OrdinalCount > 0
+                    && range.OrdinalCount
+                       <= Int32.MaxValue - range.OrdinalStart
+                    && rangeEnd range >= finalOrdinal
+                    && range.PhysicalOffset >= 0L
+                    && range.PhysicalLength > 0L
+                    && range.PhysicalLength % int64 range.OrdinalCount = 0L)
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+                |> Array.tryPick (fun range ->
+                    let bytesPerOrdinal = range.PhysicalLength / int64 range.OrdinalCount
+                    let projectedPhysicalLength = int64 ordinalCount * bytesPerOrdinal
+
+                    if projectedPhysicalLength <> physicalLength then
+                        None
+                    else
+                        let projectedPhysicalOffset =
+                            range.PhysicalOffset
+                            + (int64 (ordinalStart - range.OrdinalStart)
+                               * bytesPerOrdinal)
+
+                        match physicalOffset with
+                        | Some expectedPhysicalOffset when projectedPhysicalOffset <> expectedPhysicalOffset -> None
+                        | _ ->
+                            Some [| { range with
+                                        OrdinalStart = ordinalStart
+                                        OrdinalCount = ordinalCount
+                                        PhysicalOffset = projectedPhysicalOffset
+                                        PhysicalLength = projectedPhysicalLength
+                                    } |])
+
             let candidates =
                 ranges
                 |> Array.filter (fun range ->
@@ -483,6 +521,7 @@ module UploadSession =
                             (range :: selected))
 
             selectChain ordinalStart 0L physicalOffset []
+            |> Option.orElseWith tryProjectCoveringRange
 
     type private ClaimedMetadataRangeEvidence = { ExpectedRanges: ContentBlockMetadataRange array; PhysicalRanges: ContentBlockMetadataRange array }
 

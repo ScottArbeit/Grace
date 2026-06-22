@@ -967,6 +967,97 @@ type UploadSessionActorTests() =
         | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     [<Test>]
+    member _.FinalizeManifestAcceptsCoveringEvidenceForClaimedReuseSubwindow() =
+        let fileBytes = Array.init 512 (fun index -> byte (index % 251))
+        let block = encodedBlockFromChunks [ ContentBlockFormat.createChunk 256L fileBytes ]
+        let manifest = manifestFor fileBytes [| block |]
+
+        let coveringRange =
+            { reusableMetadataRange with OrdinalStart = 0; OrdinalCount = 512; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = 512L }
+
+        let firstHalfClaim =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = 0
+                OrdinalCount = 256
+                PhysicalOffset = 0L
+                PhysicalLength = 256L
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let subwindowClaim =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = 256
+                OrdinalCount = 256
+                PhysicalOffset = 256L
+                PhysicalLength = 256L
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = [| firstHalfClaim; subwindowClaim |]
+            }
+
+        let authoritativeMetadata = { reuseMetadataFor block.Address 7L [| coveringRange |] with TotalPhysicalBytes = 512L; ActivePhysicalBytes = 512L }
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| authoritativeMetadata |]
+
+        Assert.That(commands, Has.Length.EqualTo(1))
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(merge.Ranges, Has.Length.EqualTo(2))
+
+            let subwindowContribution =
+                merge.Ranges
+                |> Array.find (fun range ->
+                    range.OrdinalStart = subwindowClaim.OrdinalStart
+                    && range.OrdinalCount = subwindowClaim.OrdinalCount)
+
+            Assert.That(subwindowContribution.PhysicalOffset, Is.EqualTo(subwindowClaim.PhysicalOffset))
+            Assert.That(subwindowContribution.PhysicalLength, Is.EqualTo(subwindowClaim.PhysicalLength))
+            Assert.That(subwindowContribution.ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| coveringRange; coveringRange |]))
+
+            let mergeDecision =
+                ContentBlockMetadataActor.decideCommand
+                    []
+                    { ContentBlockMetadataDto.Empty with Metadata = Some authoritativeMetadata }
+                    (ContentBlockMetadataCommand.MergePhysicalRanges merge)
+                    (metadata "corr-claimed-subwindow-merge")
+                |> decisionOrFail "Expected claimed reuse subwindow finalize contribution to merge with covering evidence"
+
+            let subwindowRange =
+                mergeDecision.Metadata.Ranges
+                |> Array.find (fun range ->
+                    range.OrdinalStart = subwindowClaim.OrdinalStart
+                    && range.OrdinalCount = subwindowClaim.OrdinalCount)
+
+            Assert.That(subwindowRange.PhysicalOffset, Is.EqualTo(subwindowClaim.PhysicalOffset))
+            Assert.That(subwindowRange.PhysicalLength, Is.EqualTo(subwindowClaim.PhysicalLength))
+            Assert.That(subwindowRange.ActiveManifestCount, Is.EqualTo(coveringRange.ActiveManifestCount + 1))
+        | _ -> Assert.Fail("Expected claimed reuse subwindow finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
+
+    [<Test>]
     member _.FinalizeManifestAcceptsClaimedReuseRangeCoverForMultiChunkBlock() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first claimed chunk")
         let secondBytes = Text.Encoding.UTF8.GetBytes("second claimed chunk")

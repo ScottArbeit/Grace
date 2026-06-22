@@ -217,6 +217,84 @@ module ContentBlockMetadata =
             existing.ActiveManifestCount = 0
             && range.ActiveManifestCount > 0
 
+        let tryMergeFinalizeContributionIntoCoveringRange (range: ContentBlockMetadataRange) =
+            if not isFinalizeContribution
+               || range.ActiveManifestCount <= 0 then
+                false
+            else
+                let rangeEnd (metadataRange: ContentBlockMetadataRange) =
+                    metadataRange.OrdinalStart
+                    + metadataRange.OrdinalCount
+
+                let tryProject (existing: ContentBlockMetadataRange) =
+                    if existing.ActiveManifestCount <= 0
+                       || existing.OrdinalStart < 0
+                       || existing.OrdinalStart > range.OrdinalStart
+                       || existing.OrdinalCount <= 0
+                       || existing.OrdinalCount > Int32.MaxValue - existing.OrdinalStart
+                       || rangeEnd existing < rangeEnd range
+                       || existing.PhysicalOffset < 0L
+                       || existing.PhysicalLength <= 0L
+                       || existing.PhysicalLength % int64 existing.OrdinalCount
+                          <> 0L then
+                        None
+                    else
+                        let bytesPerOrdinal =
+                            existing.PhysicalLength
+                            / int64 existing.OrdinalCount
+
+                        let ordinalOffset = range.OrdinalStart - existing.OrdinalStart
+
+                        let projectedPhysicalOffset =
+                            existing.PhysicalOffset
+                            + (int64 ordinalOffset * bytesPerOrdinal)
+
+                        let projectedPhysicalLength = int64 range.OrdinalCount * bytesPerOrdinal
+
+                        if projectedPhysicalOffset = range.PhysicalOffset
+                           && projectedPhysicalLength = range.PhysicalLength then
+                            Some(existing, bytesPerOrdinal)
+                        else
+                            None
+
+                let coveringRange = merged.Values |> Seq.tryPick tryProject
+
+                match coveringRange with
+                | None -> false
+                | Some (existing, bytesPerOrdinal) ->
+                    let existingKey = rangeKey existing
+                    merged.Remove existingKey |> ignore
+
+                    let addSplitRange (splitRange: ContentBlockMetadataRange) = if splitRange.OrdinalCount > 0 then merged[rangeKey splitRange] <- splitRange
+
+                    let beforeOrdinalCount = range.OrdinalStart - existing.OrdinalStart
+
+                    addSplitRange { existing with OrdinalCount = beforeOrdinalCount; PhysicalLength = int64 beforeOrdinalCount * bytesPerOrdinal }
+
+                    addSplitRange (
+                        mergeActiveCount
+                            { existing with
+                                OrdinalStart = range.OrdinalStart
+                                OrdinalCount = range.OrdinalCount
+                                PhysicalOffset = range.PhysicalOffset
+                                PhysicalLength = range.PhysicalLength
+                            }
+                            range
+                    )
+
+                    let afterOrdinalStart = range.OrdinalStart + range.OrdinalCount
+                    let afterOrdinalCount = rangeEnd existing - afterOrdinalStart
+
+                    addSplitRange
+                        { existing with
+                            OrdinalStart = afterOrdinalStart
+                            OrdinalCount = afterOrdinalCount
+                            PhysicalOffset = range.PhysicalOffset + range.PhysicalLength
+                            PhysicalLength = int64 afterOrdinalCount * bytesPerOrdinal
+                        }
+
+                    true
+
         incoming.Values
         |> Seq.iter (fun range ->
             let key = rangeKey range
@@ -228,7 +306,11 @@ module ContentBlockMetadata =
                     merged[key] <- mergeActiveCount existing range
                 else
                     merged[key] <- existing
-            | false, _ -> merged[key] <- range)
+            | false, _ ->
+                if tryMergeFinalizeContributionIntoCoveringRange range then
+                    ()
+                else
+                    merged[key] <- range)
 
         match error with
         | Some error -> Error error
