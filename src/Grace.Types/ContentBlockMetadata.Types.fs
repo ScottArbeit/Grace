@@ -284,14 +284,57 @@ module ContentBlockMetadata =
         else
             let queryEnd = query.OrdinalStart + query.OrdinalCount
 
+            let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
+
+            let physicalBoundaryForOrdinal (range: ContentBlockMetadataRange) ordinal =
+                if ordinal <= range.OrdinalStart then
+                    range.PhysicalOffset
+                elif ordinal >= rangeEnd range then
+                    range.PhysicalOffset + range.PhysicalLength
+                else
+                    range.PhysicalOffset
+                    + int64 (
+                        decimal range.PhysicalLength
+                        * decimal (ordinal - range.OrdinalStart)
+                        / decimal range.OrdinalCount
+                    )
+
+            let sliceRangeToQuery (range: ContentBlockMetadataRange) =
+                let clippedStart = Math.Max(range.OrdinalStart, query.OrdinalStart)
+                let clippedEnd = Math.Min(rangeEnd range, queryEnd)
+                let physicalOffset = physicalBoundaryForOrdinal range clippedStart
+                let physicalEnd = physicalBoundaryForOrdinal range clippedEnd
+
+                { range with
+                    OrdinalStart = clippedStart
+                    OrdinalCount = clippedEnd - clippedStart
+                    PhysicalOffset = physicalOffset
+                    PhysicalLength = physicalEnd - physicalOffset
+                }
+
             let candidates =
                 metadata.Ranges
-                |> Array.filter (fun range ->
-                    range.ActiveManifestCount > 0
-                    && range.OrdinalStart >= query.OrdinalStart
-                    && range.OrdinalStart < queryEnd
-                    && range.OrdinalCount > 0
-                    && range.PhysicalLength > 0L)
+                |> Array.choose (fun range ->
+                    if range.ActiveManifestCount > 0
+                       && range.OrdinalStart <= queryEnd
+                       && range.OrdinalStart >= 0
+                       && range.OrdinalCount > 0
+                       && range.OrdinalCount
+                          <= Int32.MaxValue - range.OrdinalStart
+                       && range.PhysicalLength > 0L
+                       && range.PhysicalLength
+                          <= Int64.MaxValue - range.PhysicalOffset
+                       && rangeEnd range > query.OrdinalStart
+                       && range.OrdinalStart < queryEnd then
+                        let slicedRange = sliceRangeToQuery range
+
+                        if slicedRange.OrdinalCount > 0
+                           && slicedRange.PhysicalLength > 0L then
+                            Some slicedRange
+                        else
+                            None
+                    else
+                        None)
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
             let rec tryBuildChain nextOrdinal nextPhysicalOffset selected =

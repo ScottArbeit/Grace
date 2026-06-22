@@ -2930,6 +2930,69 @@ type UploadSessionActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("absent"))
 
     [<Test>]
+    member _.ClaimReuseRangesAcceptsLaterSubwindowCoveredByLongActiveAuthoritativeRange() =
+        let activeCoveringRange = { reusableMetadataRange with OrdinalCount = 8; ActiveManifestCount = 1; PhysicalLength = 8192L }
+
+        let inactiveExactSubwindow =
+            { reusableMetadataRange with OrdinalStart = 4; OrdinalCount = 4; ActiveManifestCount = 0; PhysicalOffset = 32768L; PhysicalLength = 4096L }
+
+        let subwindowHint = { reuseHint with OrdinalStart = 4; OrdinalCount = 4 }
+
+        let authoritativeMetadata =
+            { reuseMetadata
+                  7L
+                  [|
+                      inactiveExactSubwindow
+                      activeCoveringRange
+                  |] with
+                TotalPhysicalBytes = 8192L
+                ActivePhysicalBytes = 8192L
+            }
+
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| subwindowHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand discoveryEvents discoveredDto (claim "op-claim" subwindowHint authoritativeMetadata) (metadata "corr-claim")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .OrdinalStart,
+                Is.EqualTo(4)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .OrdinalCount,
+                Is.EqualTo(4)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .PhysicalOffset,
+                Is.EqualTo(4096L)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .PhysicalLength,
+                Is.EqualTo(4096L)
+            )
+        | Error error -> Assert.Fail($"Expected covered subwindow claim to succeed, got {error.Error}.")
+
+    [<Test>]
     member _.ClaimReuseRangesRejectsRunsBelowMinimumReuseLength() =
         let shortHint = { reuseHint with OrdinalCount = minimumReuseRunLength - 1 }
         let shortRange = { reusableMetadataRange with OrdinalCount = minimumReuseRunLength - 1 }

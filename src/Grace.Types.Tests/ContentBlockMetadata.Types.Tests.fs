@@ -118,3 +118,26 @@ type ContentBlockMetadataTypesTests() =
                 |]
             )
         )
+
+    [<Test>]
+    member _.FindRangesSlicesActiveCoveringRangeForLaterQueryWindow() =
+        let inactiveExact = { range 256 256 8192L 512L with ActiveManifestCount = 0 }
+        let activeCoveringRange = range 0 512 0L 1024L
+
+        let currentMetadata =
+            metadata [| inactiveExact
+                        activeCoveringRange |]
+
+        let query = { OrdinalStart = 256; OrdinalCount = 256 }
+        let ranges = findRanges currentMetadata query
+        let evidence = findRangeEvidence currentMetadata query
+
+        Assert.That(ranges, Has.Length.EqualTo(1))
+        Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(ranges[0].OrdinalStart, Is.EqualTo(query.OrdinalStart))
+        Assert.That(ranges[0].OrdinalCount, Is.EqualTo(query.OrdinalCount))
+        Assert.That(ranges[0].PhysicalOffset, Is.EqualTo(512L))
+        Assert.That(ranges[0].PhysicalLength, Is.EqualTo(512L))
+
+        Assert.That(evidence, Has.Length.EqualTo(1))
+        Assert.That(evidence[0], Is.EqualTo(ranges[0]))
