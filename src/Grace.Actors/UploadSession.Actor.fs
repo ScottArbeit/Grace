@@ -444,19 +444,52 @@ module UploadSession =
         if ranges.Length = 0 then
             None
         else
-            let physicalLength =
+            let exactMatch =
                 ranges
-                |> Array.sumBy (fun range -> range.PhysicalLength)
+                |> Array.tryFind (fun range ->
+                    range.OrdinalStart = claimedRange.OrdinalStart
+                    && range.OrdinalCount = claimedRange.OrdinalCount
+                    && range.PhysicalOffset = claimedRange.PhysicalOffset
+                    && range.PhysicalLength = claimedRange.PhysicalLength)
 
-            if ranges[0].PhysicalOffset = claimedRange.PhysicalOffset
-               && physicalLength = claimedRange.PhysicalLength then
-                Some ranges
-            elif physicalLength = claimedRange.PhysicalLength
-                 && ranges
-                    |> Array.forall (fun range -> range.ActiveManifestCount > 0) then
-                Some ranges
-            else
-                None
+            match exactMatch with
+            | Some range -> Some [| range |]
+            | None ->
+                let activeRanges =
+                    ranges
+                    |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+                let physicalLength =
+                    activeRanges
+                    |> Array.sumBy (fun range -> range.PhysicalLength)
+
+                let activeRangesFormContiguousCover =
+                    if activeRanges.Length = 0 then
+                        false
+                    else
+                        let mutable expectedOrdinalStart = activeRanges[0].OrdinalStart
+                        let mutable expectedPhysicalOffset = activeRanges[0].PhysicalOffset
+                        let mutable isContiguous = true
+                        let mutable rangeIndex = 0
+
+                        while isContiguous && rangeIndex < activeRanges.Length do
+                            let range = activeRanges[rangeIndex]
+
+                            isContiguous <-
+                                range.OrdinalStart = expectedOrdinalStart
+                                && range.PhysicalOffset = expectedPhysicalOffset
+
+                            expectedOrdinalStart <- range.OrdinalStart + range.OrdinalCount
+                            expectedPhysicalOffset <- range.PhysicalOffset + range.PhysicalLength
+                            rangeIndex <- rangeIndex + 1
+
+                        isContiguous
+
+                if physicalLength = claimedRange.PhysicalLength
+                   && activeRangesFormContiguousCover then
+                    Some activeRanges
+                else
+                    None
 
     let private validateClaimedRangeMetadata
         correlationId

@@ -1224,7 +1224,17 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
 
-            let childOnlyPrefix = BranchServerTestHelpers.shortestUniquePrefix child.Sha256Hash [ root.Sha256Hash ]
+            let childOnlyPrefix =
+                let shortestPrefix =
+                    BranchServerTestHelpers.shortestUniquePrefix
+                        child.Sha256Hash
+                        [
+                            root.Sha256Hash
+                            parentBranch.BasedOn.Sha256Hash
+                        ]
+
+                (string child.Sha256Hash)
+                    .Substring(0, Math.Max(16, shortestPrefix.Length))
 
             let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty (Sha256Hash childOnlyPrefix)
             let! responseBody = response.Content.ReadAsStringAsync()

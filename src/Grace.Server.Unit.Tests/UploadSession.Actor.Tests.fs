@@ -1392,6 +1392,77 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected fresh duplicate claim to supersede stale claim, got {error.Error}.")
 
     [<Test>]
+    member _.FinalizeManifestSelectsMatchingExactPhysicalRangeWhenHistoricalCopyAlsoExists() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("matching active exact physical range wins")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let inactiveHistoricalRange =
+            { OrdinalStart = 0; OrdinalCount = minimumReuseRunLength; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
+
+        let activeCurrentRange = { inactiveHistoricalRange with ActiveManifestCount = 2; PhysicalOffset = 8192L }
+
+        let claimedRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = activeCurrentRange.OrdinalStart
+                OrdinalCount = activeCurrentRange.OrdinalCount
+                PhysicalOffset = activeCurrentRange.PhysicalOffset
+                PhysicalLength = activeCurrentRange.PhysicalLength
+                MetadataVersion = 9L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = [| claimedRange |]
+            }
+
+        let currentMetadata =
+            reuseMetadataFor
+                block.Address
+                9L
+                [|
+                    inactiveHistoricalRange
+                    activeCurrentRange
+                |]
+
+        let finalizeCommand = finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| currentMetadata |]
+        let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize-matching-exact-range")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+
+            let commands =
+                UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                    sessionStoragePoolId
+                    "op-finalize"
+                    session
+                    manifest
+                    [| currentMetadata |]
+
+            Assert.That(commands, Has.Length.EqualTo(1))
+
+            match commands[0] with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                Assert.That(merge.Ranges, Has.Length.EqualTo(1))
+                Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(activeCurrentRange.PhysicalOffset))
+                Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(activeCurrentRange.PhysicalLength))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| activeCurrentRange |]))
+                Assert.That(merge.IsFinalizeContribution, Is.True)
+            | _ -> Assert.Fail("Expected the matching active exact claimed range to provide the metadata merge command.")
+        | Error error -> Assert.Fail($"Expected matching active exact range to finalize, got {error.Error}.")
+
+    [<Test>]
     member _.FinalizeManifestRejectsNewerPartialClaimWhenOnlyStaleFullClaimCoversBlock() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("full claimed block coverage")
         let block = encodedBlock fileBytes

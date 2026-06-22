@@ -314,6 +314,69 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(MaxWindowChunks))
 
     [<Test>]
+    member _.CoalescedActiveRangesPublishOverlappingTailWindowWhenRemainderIsShort() =
+        let block = encodedBlock "short-tail-window" (MaxWindowChunks + 4)
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 53L block
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+
+        let tailStart = 4
+
+        Assert.That(
+            records
+            |> Array.exists (fun record -> record.OrdinalStart = 0),
+            Is.True
+        )
+
+        Assert.That(
+            records
+            |> Array.exists (fun record ->
+                record.OrdinalStart = tailStart
+                && record.OrdinalCount = MaxWindowChunks),
+            Is.True,
+            "A short tail after a full dedupe window still needs an overlapping record so tail chunks remain discoverable."
+        )
+
+        let tailChunk = (decodedChunkAddresses block)[MaxWindowChunks + 3]
+        let result = discover records [| tailChunk |]
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(tailStart))
+
+    [<Test>]
+    member _.CoalescedActiveRangesBacktracksAroundDuplicatePhysicalCopies() =
+        let block = encodedBlock "alternate-chain" 12
+        let manifest = manifestFor block
+
+        let metadata =
+            { metadataFor 1 54L block with
+                Ranges =
+                    [|
+                        { OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = 400L }
+                        { OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 1024L; PhysicalLength = 400L }
+                        { OrdinalStart = 4; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 400L; PhysicalLength = 400L }
+                    |]
+                TotalPhysicalBytes = 1200L
+                ActivePhysicalBytes = 1200L
+            }
+
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+        let requestedChunk = (decodedChunkAddresses block)[4]
+        let result = discover records [| requestedChunk |]
+
+        Assert.That(
+            records
+            |> Array.exists (fun record ->
+                record.OrdinalStart = 0
+                && record.OrdinalCount = MinimumAcceptedReuseRunLength),
+            Is.True,
+            "The duplicate physical copy at the same logical start must not interrupt the active split chain."
+        )
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalCount, Is.EqualTo(MinimumAcceptedReuseRunLength))
+
+    [<Test>]
     member _.DiscoveryLimitsCandidateWindowsForAKeyChunk() =
         let firstBlock = encodedBlock "limit-shared" 12
         let sharedChunkBytes = firstBlock.Chunks[0].Bytes

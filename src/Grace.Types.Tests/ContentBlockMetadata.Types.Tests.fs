@@ -86,3 +86,35 @@ type ContentBlockMetadataTypesTests() =
 
         Assert.That(synthesized, Has.Length.EqualTo(1))
         Assert.That(synthesized[0].PhysicalOffset, Is.EqualTo(completeFirst.PhysicalOffset))
+
+    [<Test>]
+    member _.FindRangesPrefersActiveContiguousEvidenceOverInactiveExactRange() =
+        let inactiveExact = { range 0 8 0L 800L with ActiveManifestCount = 0 }
+
+        let activeFirst = range 0 4 1024L 400L
+        let activeSecond = range 4 4 1424L 400L
+
+        let currentMetadata =
+            metadata [| inactiveExact
+                        activeFirst
+                        activeSecond |]
+
+        let ranges = findRanges currentMetadata { OrdinalStart = 0; OrdinalCount = 8 }
+        let evidence = findRangeEvidence currentMetadata { OrdinalStart = 0; OrdinalCount = 8 }
+
+        Assert.That(ranges, Has.Length.EqualTo(1))
+        Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(ranges[0].PhysicalOffset, Is.EqualTo(activeFirst.PhysicalOffset))
+
+        Assert.That(evidence, Has.Length.EqualTo(2))
+
+        Assert.That(
+            evidence
+            |> Array.map (fun range -> range.PhysicalOffset),
+            Is.EqualTo<int64>(
+                [|
+                    activeFirst.PhysicalOffset
+                    activeSecond.PhysicalOffset
+                |]
+            )
+        )

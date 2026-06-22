@@ -306,6 +306,21 @@ module DedupeIndex =
     let private splitRangeIntoDedupeWindows (range: ContentBlockMetadataRange) =
         let output = ResizeArray<ContentBlockMetadataRange>()
 
+        let physicalOffsetForOrdinal ordinalStart =
+            let ordinalDelta = ordinalStart - range.OrdinalStart
+
+            if ordinalDelta <= 0 then
+                range.PhysicalOffset
+            elif ordinalDelta >= range.OrdinalCount then
+                range.PhysicalOffset + range.PhysicalLength
+            else
+                range.PhysicalOffset
+                + int64 (
+                    decimal range.PhysicalLength
+                    * decimal ordinalDelta
+                    / decimal range.OrdinalCount
+                )
+
         if not (isNull (box range))
            && range.ActiveManifestCount > 0
            && range.OrdinalStart >= 0
@@ -349,7 +364,49 @@ module DedupeIndex =
                 currentPhysicalOffset <- currentPhysicalOffset + windowPhysicalLength
                 remainingPhysicalLength <- remainingPhysicalLength - windowPhysicalLength
 
+            if remainingOrdinalCount > 0 && output.Count > 0 then
+                let tailOrdinalStart = Math.Max(range.OrdinalStart, rangeEnd range - MaxWindowChunks)
+
+                let tailPhysicalOffset = physicalOffsetForOrdinal tailOrdinalStart
+
+                let tailPhysicalLength =
+                    Math.Max(
+                        1L,
+                        range.PhysicalOffset + range.PhysicalLength
+                        - tailPhysicalOffset
+                    )
+
+                if output
+                   |> Seq.exists (fun existing ->
+                       existing.OrdinalStart = tailOrdinalStart
+                       && existing.OrdinalCount = MaxWindowChunks)
+                   |> not then
+                    output.Add
+                        { range with
+                            OrdinalStart = tailOrdinalStart
+                            OrdinalCount = MaxWindowChunks
+                            PhysicalOffset = tailPhysicalOffset
+                            PhysicalLength = tailPhysicalLength
+                        }
+
         output.ToArray()
+
+    let private mergeActiveChain (ranges: ContentBlockMetadataRange list) =
+        let ordered = ranges |> List.rev
+        let first = ordered.Head
+
+        { first with
+            OrdinalCount =
+                ordered
+                |> List.sumBy (fun range -> range.OrdinalCount)
+            ActiveManifestCount =
+                ordered
+                |> List.map (fun range -> range.ActiveManifestCount)
+                |> List.min
+            PhysicalLength =
+                ordered
+                |> List.sumBy (fun range -> range.PhysicalLength)
+        }
 
     let private contiguousActiveRanges (ranges: ContentBlockMetadataRange array) =
         let output = ResizeArray<ContentBlockMetadataRange>()
@@ -366,43 +423,41 @@ module DedupeIndex =
                     && range.PhysicalLength > 0L)
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
-            let mutable current: ContentBlockMetadataRange option = None
+            let rangePhysicalEnd (range: ContentBlockMetadataRange) =
+                if range.PhysicalLength > Int64.MaxValue - range.PhysicalOffset then
+                    Int64.MaxValue
+                else
+                    range.PhysicalOffset + range.PhysicalLength
+
+            let rec collectChains (chain: ContentBlockMetadataRange list) =
+                let current = chain.Head
+                let activeChain = mergeActiveChain chain
+                let currentEnd = rangeEnd current
+                let currentPhysicalEnd = rangePhysicalEnd current
+
+                let nextRanges =
+                    sortedRanges
+                    |> Array.filter (fun candidate ->
+                        candidate.OrdinalStart = currentEnd
+                        && candidate.PhysicalOffset = currentPhysicalEnd
+                        && candidate.OrdinalCount
+                           <= Int32.MaxValue - activeChain.OrdinalCount
+                        && candidate.PhysicalLength
+                           <= Int64.MaxValue - activeChain.PhysicalLength)
+
+                if nextRanges.Length = 0 then
+                    output.Add(mergeActiveChain chain)
+                else
+                    for nextRange in nextRanges do
+                        collectChains (nextRange :: chain)
 
             for range in sortedRanges do
-                match current with
-                | None -> current <- Some range
-                | Some active ->
-                    let activeEnd = rangeEnd active
-
-                    let activePhysicalEnd =
-                        if active.PhysicalLength > Int64.MaxValue - active.PhysicalOffset then
-                            Int64.MaxValue
-                        else
-                            active.PhysicalOffset + active.PhysicalLength
-
-                    if range.OrdinalStart = activeEnd
-                       && range.PhysicalOffset = activePhysicalEnd
-                       && range.OrdinalCount
-                          <= Int32.MaxValue - active.OrdinalCount
-                       && range.PhysicalLength
-                          <= Int64.MaxValue - active.PhysicalLength then
-                        current <-
-                            Some
-                                { active with
-                                    OrdinalCount = active.OrdinalCount + range.OrdinalCount
-                                    ActiveManifestCount = Math.Min(active.ActiveManifestCount, range.ActiveManifestCount)
-                                    PhysicalLength = active.PhysicalLength + range.PhysicalLength
-                                }
-                    else
-                        output.Add active
-                        current <- Some range
-
-            match current with
-            | Some active -> output.Add active
-            | None -> ()
+                collectChains [ range ]
 
         output
+        |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
         |> Seq.collect splitRangeIntoDedupeWindows
+        |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
         |> Seq.toArray
 
     let recordsAfterFinalize (source: FinalizedManifestIndexSource) =

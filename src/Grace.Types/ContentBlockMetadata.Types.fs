@@ -375,12 +375,16 @@ module ContentBlockMetadata =
                     range.OrdinalStart = query.OrdinalStart
                     && range.OrdinalCount = query.OrdinalCount)
 
-            if exactRanges.Length > 0 then
+            let activeExactRanges =
                 exactRanges
+                |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+            if activeExactRanges.Length > 0 then
+                activeExactRanges
             else
                 match trySynthesizeContiguousRange metadata query with
                 | Some range -> [| range |]
-                | None -> Array.empty
+                | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
 
     let findRangeEvidence (metadata: ContentBlockMetadata) query =
         if isNull (box metadata)
@@ -395,12 +399,16 @@ module ContentBlockMetadata =
                     range.OrdinalStart = query.OrdinalStart
                     && range.OrdinalCount = query.OrdinalCount)
 
-            if exactRanges.Length > 0 then
+            let activeExactRanges =
                 exactRanges
+                |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+            if activeExactRanges.Length > 0 then
+                activeExactRanges
             else
                 match trySelectContiguousRangeEvidence metadata query with
                 | Some ranges -> ranges
-                | None -> Array.empty
+                | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
 
     let tryFindRange metadata query =
         findRanges metadata query
