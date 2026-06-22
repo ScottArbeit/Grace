@@ -84,3 +84,15 @@ type PromotionSetDirectoryHashTests() =
         Assert.That(actualBlake3, Is.EqualTo(expectedBlake3))
         Assert.That(actualSha256, Is.Not.EqualTo(zeroSizeRegression))
         Assert.That(actualBlake3, Is.Not.EqualTo(shaOnlyBlake3Regression))
+
+    [<Test>]
+    member _.PromotionFileEquivalenceIncludesBlake3WhenBothFilesHaveIt() =
+        let sameSha256 = Sha256Hash "same-sha256"
+        let first = FileVersion.CreateWithHashes (RelativePath "src/conflict.txt") sameSha256 (Blake3Hash "first-blake3") String.Empty false 12L
+
+        let second = FileVersion.CreateWithHashes (RelativePath "src/conflict.txt") sameSha256 (Blake3Hash "second-blake3") String.Empty false 12L
+
+        let legacy = FileVersion.Create (RelativePath "src/conflict.txt") sameSha256 String.Empty false 12L
+
+        Assert.That(PromotionSet.fileVersionEquivalent (Some first) (Some second), Is.False)
+        Assert.That(PromotionSet.fileVersionEquivalent (Some first) (Some legacy), Is.True)

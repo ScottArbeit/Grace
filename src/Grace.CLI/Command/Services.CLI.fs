@@ -1114,6 +1114,10 @@ module Services =
             && fileVersion.Sha256Hash = uploadMetadata.Sha256Hash
             && fileVersion.Blake3Hash = uploadMetadata.Blake3Hash)
 
+    let internal uploadMetadataIdentity (uploadMetadata: UploadMetadata) = uploadMetadata.RelativePath, uploadMetadata.Sha256Hash, uploadMetadata.Blake3Hash
+
+    let internal localFileVersionIdentity (fileVersion: LocalFileVersion) = fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash
+
     let private uploadWholeFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
@@ -1805,6 +1809,8 @@ module Services =
         let rootDirectoryBlake3Hash =
             if graceStatus.Index.TryGetValue(graceStatus.RootDirectoryId, &rootDirectoryVersion) then
                 rootDirectoryVersion.Blake3Hash
+            elif not (String.IsNullOrWhiteSpace(string graceStatus.RootDirectoryBlake3Hash)) then
+                graceStatus.RootDirectoryBlake3Hash
             else
                 Blake3Hash String.Empty
 

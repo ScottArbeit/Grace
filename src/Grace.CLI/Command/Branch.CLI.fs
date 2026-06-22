@@ -522,6 +522,15 @@ module Branch =
         elif not <| String.IsNullOrEmpty(blake3Hash) then String.Empty, blake3Hash
         else String.Empty, String.Empty
 
+    let internal fileContentHashesMatch (left: LocalFileVersion) (right: LocalFileVersion) =
+        let leftBlake3Hash = string left.Blake3Hash
+        let rightBlake3Hash = string right.Blake3Hash
+
+        left.Sha256Hash = right.Sha256Hash
+        && (String.IsNullOrWhiteSpace leftBlake3Hash
+            || String.IsNullOrWhiteSpace rightBlake3Hash
+            || left.Blake3Hash = right.Blake3Hash)
+
     let private getSha256HashPrefix (parseResult: ParseResult) = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
     let private getBlake3HashPrefix (parseResult: ParseResult) = HashOptions.getBlake3HashPrefix parseResult
@@ -3769,15 +3778,14 @@ module Branch =
                                             // We have a file that's changed in both diffs.
                                             let diff2Difference = diff2DifferenceQuery.First()
 
-                                            // Check the Sha256Hash values; if they're identical, ignore the file.
+                                            // Check the paired file hashes; if they're identical, ignore the file.
                                             //let fileVersion1 = parentLatestPromotionLookup[$"{diff1Difference.RelativePath}"]
                                             let fileVersion1 =
                                                 parentLatestPromotionLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff1Difference.RelativePath}")
                                             //let fileVersion2 = latestReferenceLookup[$"{diff2Difference.RelativePath}"]
                                             let fileVersion2 = latestReferenceLookup.FirstOrDefault(fun kvp -> kvp.Key = $"{diff2Difference.RelativePath}")
-                                            //if (not <| isNull(fileVersion1) && not <| isNull(fileVersion2)) && (fileVersion1.Value.Sha256Hash <> fileVersion2.Value.Sha256Hash) then
-                                            if (fileVersion1.Value.Sha256Hash
-                                                <> fileVersion2.Value.Sha256Hash) then
+
+                                            if not (fileContentHashesMatch fileVersion1.Value fileVersion2.Value) then
                                                 // Compare them at a line level; if there are no overlapping lines, we can just modify the working-directory version.
                                                 // ...
                                                 // For now, we're just going to show a message.

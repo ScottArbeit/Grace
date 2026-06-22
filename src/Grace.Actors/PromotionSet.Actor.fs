@@ -60,6 +60,19 @@ module PromotionSet =
             metadata.Size
             lastWriteTimeUtc
 
+    let internal fileVersionEquivalent (left: FileVersion option) (right: FileVersion option) =
+        match left, right with
+        | Option.None, Option.None -> true
+        | Option.Some leftFile, Option.Some rightFile ->
+            let leftBlake3Hash = string leftFile.Blake3Hash
+            let rightBlake3Hash = string rightFile.Blake3Hash
+
+            leftFile.Sha256Hash = rightFile.Sha256Hash
+            && (String.IsNullOrWhiteSpace leftBlake3Hash
+                || String.IsNullOrWhiteSpace rightBlake3Hash
+                || leftFile.Blake3Hash = rightFile.Blake3Hash)
+        | _ -> false
+
     type private StepConflictFile =
         {
             FilePath: RelativePath
@@ -554,11 +567,7 @@ module PromotionSet =
             else
                 Option.None
 
-        member private this.FileVersionEquivalent(left: FileVersion option, right: FileVersion option) =
-            match left, right with
-            | Option.None, Option.None -> true
-            | Option.Some leftFile, Option.Some rightFile -> leftFile.Sha256Hash = rightFile.Sha256Hash
-            | _ -> false
+        member private this.FileVersionEquivalent(left: FileVersion option, right: FileVersion option) = fileVersionEquivalent left right
 
         member private this.LoadDirectorySnapshot(directoryVersionId: DirectoryVersionId) =
             task {

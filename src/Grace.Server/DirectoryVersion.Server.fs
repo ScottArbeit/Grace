@@ -288,6 +288,7 @@ module DirectoryVersion =
                             Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
                             Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
                             String.isNotEmpty parameters.Sha256Hash DirectoryVersionError.Sha256HashIsRequired
+                            String.isValidSha256HashPrefix parameters.Sha256Hash DirectoryVersionError.InvalidSha256Hash
                             Repository.repositoryIdExists
                                 graceIds.OrganizationId
                                 $"{parameters.RepositoryId}"

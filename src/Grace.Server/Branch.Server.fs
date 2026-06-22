@@ -35,6 +35,37 @@ open System.Text.Json
 open System.Threading.Tasks
 
 module Branch =
+
+    let private branchHashLookupErrorItemKey = "BranchHashLookupError"
+
+    let private branchHashLookupDescription (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
+        let sha256HashText = string sha256Hash
+        let blake3HashText = string blake3Hash
+
+        if
+            not (String.IsNullOrWhiteSpace sha256HashText)
+            && not (String.IsNullOrWhiteSpace blake3HashText)
+        then
+            $"SHA-256 prefix '{sha256HashText}' and BLAKE3 prefix '{blake3HashText}'"
+        elif not (String.IsNullOrWhiteSpace blake3HashText) then
+            $"BLAKE3 prefix '{blake3HashText}'"
+        else
+            $"SHA-256 prefix '{sha256HashText}'"
+
+    let private setAmbiguousBranchHashLookupError (context: HttpContext) sha256Hash blake3Hash correlationId =
+        let graceError = GraceError.Create $"The supplied {branchHashLookupDescription sha256Hash blake3Hash} is ambiguous in repository scope." correlationId
+
+        graceError.Properties.Add("Path", context.Request.Path.Value)
+        context.Items[ branchHashLookupErrorItemKey ] <- graceError
+
+    let private tryGetBranchHashLookupError (context: HttpContext) =
+        let mutable item = null
+
+        if context.Items.TryGetValue(branchHashLookupErrorItemKey, &item) then
+            Some(item :?> GraceError)
+        else
+            None
+
     type Validations<'T when 'T :> BranchParameters> = 'T -> ValueTask<Result<unit, BranchError>> array
 
     let activitySource = new ActivitySource("Branch")
@@ -692,17 +723,20 @@ module Branch =
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
 
-                    // Wrap the query result in a GraceReturnValue.
-                    let graceReturnValue =
-                        (GraceReturnValue.Create queryResult correlationId)
-                            .enhance(parameterDictionary)
-                            .enhance(nameof OwnerId, graceIds.OwnerId)
-                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof BranchId, graceIds.BranchId)
-                            .enhance ("Path", context.Request.Path.Value)
+                    match tryGetBranchHashLookupError context with
+                    | Some graceError -> return! context |> result400BadRequest graceError
+                    | None ->
+                        // Wrap the query result in a GraceReturnValue.
+                        let graceReturnValue =
+                            (GraceReturnValue.Create queryResult correlationId)
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
 
-                    return! context |> result200Ok graceReturnValue
+                        return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
 
@@ -2295,18 +2329,22 @@ module Branch =
                                 return recursiveSize
                             else
                                 match!
-                                    tryResolveDirectoryVersionForHashQuery
+                                    Services.getDirectoryVersionResolutionByHashQuery
                                         graceIds.RepositoryId
                                         listContentsParameters.Sha256Hash
                                         listContentsParameters.Blake3Hash
                                         correlationId
                                     with
-                                | Some directoryVersion ->
+                                | Services.UniqueMatch directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                     return recursiveSize
-                                | None -> return Constants.InitialDirectorySize
+                                | Services.NoMatches -> return Constants.InitialDirectorySize
+                                | Services.AmbiguousMatches _ ->
+                                    setAmbiguousBranchHashLookupError context listContentsParameters.Sha256Hash listContentsParameters.Blake3Hash correlationId
+
+                                    return Constants.InitialDirectorySize
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -2401,19 +2439,23 @@ module Branch =
                                 return contents
                             else
                                 match!
-                                    tryResolveRootDirectoryVersionForHashQuery
+                                    Services.getRootDirectoryVersionResolutionByHashQuery
                                         graceIds.RepositoryId
                                         listContentsParameters.Sha256Hash
                                         listContentsParameters.Blake3Hash
                                         correlationId
                                     with
-                                | Some directoryVersion ->
+                                | Services.UniqueMatch directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                     return contents
-                                | None -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
+                                | Services.NoMatches -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
+                                | Services.AmbiguousMatches _ ->
+                                    setAmbiguousBranchHashLookupError context listContentsParameters.Sha256Hash listContentsParameters.Blake3Hash correlationId
+
+                                    return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -2472,7 +2514,12 @@ module Branch =
                 not (String.IsNullOrEmpty(parameters.Sha256Hash))
                 || not (String.IsNullOrEmpty(parameters.Blake3Hash))
             then
-                return! tryResolveRootDirectoryVersionForHashQuery repositoryId parameters.Sha256Hash parameters.Blake3Hash correlationId
+                match! Services.getRootDirectoryVersionResolutionByHashQuery repositoryId parameters.Sha256Hash parameters.Blake3Hash correlationId with
+                | Services.UniqueMatch directoryVersion -> return Some directoryVersion
+                | Services.NoMatches -> return None
+                | Services.AmbiguousMatches _ ->
+                    setAmbiguousBranchHashLookupError context parameters.Sha256Hash parameters.Blake3Hash correlationId
+                    return None
             elif
                 not
                 <| String.IsNullOrEmpty(parameters.ReferenceId)

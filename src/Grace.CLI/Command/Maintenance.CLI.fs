@@ -384,10 +384,10 @@ module Maintenance =
                                                                     * double (fileVersions.Count() - uploadMetadata.Count)
                                                                 )
 
-                                                                // Index all of the file versions by their SHA256 hash; we'll look up the files to upload with it.
-                                                                let filesIndexedByRelativePath =
-                                                                    Dictionary<RelativePath, LocalFileVersion>(
-                                                                        fileVersions.Select(fun kvp -> KeyValuePair(kvp.Value.RelativePath, kvp.Value))
+                                                                let filesIndexedByIdentity =
+                                                                    Dictionary<RelativePath * Sha256Hash * Blake3Hash, LocalFileVersion>(
+                                                                        fileVersions.Select (fun kvp ->
+                                                                            KeyValuePair(localFileVersionIdentity kvp.Value, kvp.Value))
                                                                     )
 
                                                                 // Upload the files in this chunk to object storage.
@@ -399,7 +399,7 @@ module Maintenance =
                                                                             ValueTask(
                                                                                 task {
                                                                                     let fileVersion =
-                                                                                        filesIndexedByRelativePath[upload.RelativePath]
+                                                                                        filesIndexedByIdentity[uploadMetadataIdentity upload]
                                                                                             .ToFileVersion
 
                                                                                     let! result =
@@ -597,9 +597,9 @@ module Maintenance =
                                             | Ok graceReturnValue ->
                                                 let uploadMetadata = graceReturnValue.ReturnValue
 
-                                                let filesIndexedBySha256Hash =
-                                                    Dictionary<Sha256Hash, LocalFileVersion>(
-                                                        fileVersions.Select(fun kvp -> KeyValuePair(kvp.Value.Sha256Hash, kvp.Value))
+                                                let filesIndexedByIdentity =
+                                                    Dictionary<RelativePath * Sha256Hash * Blake3Hash, LocalFileVersion>(
+                                                        fileVersions.Select(fun kvp -> KeyValuePair(localFileVersionIdentity kvp.Value, kvp.Value))
                                                     )
 
                                                 do!
@@ -610,7 +610,7 @@ module Maintenance =
                                                             ValueTask(
                                                                 task {
                                                                     let fileVersion =
-                                                                        filesIndexedBySha256Hash[upload.Sha256Hash]
+                                                                        filesIndexedByIdentity[uploadMetadataIdentity upload]
                                                                             .ToFileVersion
 
                                                                     let! result =

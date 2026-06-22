@@ -1214,6 +1214,49 @@ type BranchServer() =
         }
 
     [<Test>]
+    member _.BranchHashQueriesRejectAmbiguousBlake3PrefixInsteadOfReturningEmptySuccess() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousBranchHashQuery{Guid.NewGuid():N}"
+
+            let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"ambiguous-branch-query/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        firstChild
+                        firstRoot
+                        secondChild
+                        secondRoot
+                    ]
+
+            let assertAmbiguous (response: HttpResponseMessage) =
+                task {
+                    let! body = response.Content.ReadAsStringAsync()
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+                    Assert.That((deserialize<GraceError> body).Error, Does.Contain("ambiguous"))
+                }
+
+            let! getVersionResponse =
+                BranchServerTestHelpers.getVersionByShaAndBlake3HashResponseAsync repositoryId branch (Sha256Hash String.Empty) (Blake3Hash sharedPrefix)
+
+            do! assertAmbiguous getVersionResponse
+
+            let! listContentsResponse =
+                BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId branch (Sha256Hash String.Empty) (Blake3Hash sharedPrefix)
+
+            do! assertAmbiguous listContentsResponse
+
+            let! recursiveSizeResponse = BranchServerTestHelpers.getRecursiveSizeByBlake3HashResponseAsync repositoryId branch (Blake3Hash sharedPrefix)
+
+            do! assertAmbiguous recursiveSizeResponse
+        }
+
+    [<Test>]
     member _.SaveWithShaOnlyChildDirectoryPrefixDoesNotCreateRootReference() =
         task {
             let repositoryId = repositoryIds[0]

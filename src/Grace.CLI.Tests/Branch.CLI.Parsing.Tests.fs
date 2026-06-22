@@ -3,6 +3,7 @@ namespace Grace.CLI.Tests
 open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
+open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.CommandLine
@@ -295,6 +296,41 @@ module BranchCommandParsingTests =
 
         Branch.switchHashLocatorEvidence String.Empty blake3Hash
         |> should equal (String.Empty, blake3Hash)
+
+    [<Test>]
+    let ``branch switch conflict comparison includes BLAKE3 when both files have it`` () =
+        let sharedSha256 = Sha256Hash "same-sha256"
+
+        let first =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "src/conflict.txt")
+                sharedSha256
+                (Blake3Hash "first-blake3")
+                false
+                12L
+                (NodaTime.Instant.FromUtc(2026, 6, 22, 12, 0))
+                true
+                DateTime.UtcNow
+
+        let second =
+            LocalFileVersion.CreateWithHashes
+                (RelativePath "src/conflict.txt")
+                sharedSha256
+                (Blake3Hash "second-blake3")
+                false
+                12L
+                (NodaTime.Instant.FromUtc(2026, 6, 22, 12, 1))
+                true
+                DateTime.UtcNow
+
+        let legacy =
+            LocalFileVersion.Create (RelativePath "src/conflict.txt") sharedSha256 false 12L (NodaTime.Instant.FromUtc(2026, 6, 22, 12, 2)) true DateTime.UtcNow
+
+        Branch.fileContentHashesMatch first second
+        |> should equal false
+
+        Branch.fileContentHashesMatch first legacy
+        |> should equal true
 
     [<Test>]
     let ``reference assign parses BLAKE3 hash option`` () =

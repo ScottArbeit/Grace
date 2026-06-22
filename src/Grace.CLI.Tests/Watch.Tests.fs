@@ -369,6 +369,37 @@ module WatchTests =
             | None -> Assert.Fail("Expected usable watch status with root BLAKE3."))
 
     [<Test>]
+    let ``watch status preserves root Blake3 from GraceStatus metadata when index is empty`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+            let rootSha256Hash = Sha256Hash "watch-root-sha"
+            let rootBlake3Hash = Blake3Hash "watch-root-blake3"
+            let directoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
+
+            let graceStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = rootSha256Hash
+                    RootDirectoryBlake3Hash = rootBlake3Hash
+                }
+
+            (Services.updateGraceWatchInterprocessFile graceStatus (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            match Services.getGraceWatchStatus().Result with
+            | Some status ->
+                status.RootDirectoryId
+                |> should equal rootDirectoryId
+
+                status.RootDirectorySha256Hash
+                |> should equal rootSha256Hash
+
+                status.RootDirectoryBlake3Hash
+                |> should equal rootBlake3Hash
+            | None -> Assert.Fail("Expected usable watch status with fallback root BLAKE3."))
+
+    [<Test>]
     let ``watch check exits zero when live watcher status exists`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()

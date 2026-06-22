@@ -261,6 +261,20 @@ type DirectoryVersionServer() =
             Assert.That(getBySha.ReturnValue.Blake3Hash, Is.EqualTo(DirectoryVersion.Default.Blake3Hash))
         }
 
+    [<TestCase("not-a-sha")>]
+    [<TestCase("f")>]
+    member _.GetByShaRejectsMalformedPrefixesBeforeLookup(sha256Hash: string) =
+        task {
+            let repositoryId = repositoryIds[0]
+            let getByShaParameters = DirectoryVersionServerTestHelpers.getBySha256HashParameters repositoryId (Guid.NewGuid()) (Sha256Hash sha256Hash)
+
+            let! getByShaResponse = Client.PostAsync("/directory/getBySha256Hash", createJsonContent getByShaParameters)
+            let! getByShaBody = getByShaResponse.Content.ReadAsStringAsync()
+
+            Assert.That(getByShaResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), getByShaBody)
+            Assert.That((deserialize<GraceError> getByShaBody).Error, Is.EqualTo(DirectoryVersionError.getErrorMessage DirectoryVersionError.InvalidSha256Hash))
+        }
+
     [<Test>]
     member _.GetByShaRejectsAmbiguousPrefixInsteadOfReturningDefaultSentinel() =
         task {
