@@ -87,7 +87,7 @@ module DedupeIndex =
              <> StoragePoolRouting.defaultStoragePoolId then
             invalidOp $"StoragePoolId '{repositoryDto.StoragePoolId}' is not configured. StoragePool routing fails closed."
         else
-            storagePoolIdForRepositoryId repositoryDto.RepositoryId
+            repositoryDto.StoragePoolId
 
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
@@ -301,6 +301,58 @@ module DedupeIndex =
                         ProtectedChunkAddresses = protectedChunkAddresses
                     }
 
+    let private contiguousActiveRanges (ranges: ContentBlockMetadataRange array) =
+        let output = ResizeArray<ContentBlockMetadataRange>()
+
+        if not (isNull ranges) then
+            let sortedRanges =
+                ranges
+                |> Array.filter (fun range ->
+                    not (isNull (box range))
+                    && range.ActiveManifestCount > 0
+                    && range.OrdinalStart >= 0
+                    && range.OrdinalCount > 0
+                    && range.PhysicalOffset >= 0L
+                    && range.PhysicalLength > 0L)
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
+
+            let mutable current: ContentBlockMetadataRange option = None
+
+            for range in sortedRanges do
+                match current with
+                | None -> current <- Some range
+                | Some active ->
+                    let activeEnd = rangeEnd active
+
+                    let activePhysicalEnd =
+                        if active.PhysicalLength > Int64.MaxValue - active.PhysicalOffset then
+                            Int64.MaxValue
+                        else
+                            active.PhysicalOffset + active.PhysicalLength
+
+                    if range.OrdinalStart = activeEnd
+                       && range.PhysicalOffset = activePhysicalEnd
+                       && range.OrdinalCount
+                          <= Int32.MaxValue - active.OrdinalCount
+                       && range.PhysicalLength
+                          <= Int64.MaxValue - active.PhysicalLength then
+                        current <-
+                            Some
+                                { active with
+                                    OrdinalCount = active.OrdinalCount + range.OrdinalCount
+                                    ActiveManifestCount = Math.Min(active.ActiveManifestCount, range.ActiveManifestCount)
+                                    PhysicalLength = active.PhysicalLength + range.PhysicalLength
+                                }
+                    else
+                        output.Add active
+                        current <- Some range
+
+            match current with
+            | Some active -> output.Add active
+            | None -> ()
+
+        output.ToArray()
+
     let recordsAfterFinalize (source: FinalizedManifestIndexSource) =
         if not (isFinalizedForManifest source) then
             Array.empty
@@ -324,7 +376,7 @@ module DedupeIndex =
                                         decodedBlock.Chunks
                                         |> Array.map (fun chunk -> chunk.Address)
 
-                                    for range in blockMetadata.Ranges do
+                                    for range in contiguousActiveRanges blockMetadata.Ranges do
                                         match
                                             tryCreateRecordFromChunkAddresses
                                                 source.StoragePoolId
@@ -401,10 +453,12 @@ module DedupeIndex =
 
         removeRecordsForMetadataBlock records registration.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
 
-        if not (isNull metadata.Ranges) then
+        let ranges = contiguousActiveRanges metadata.Ranges
+
+        if ranges.Length > 0 then
             for block in registration.Blocks do
                 if block.Address = metadata.ContentBlockAddress then
-                    for range in metadata.Ranges do
+                    for range in ranges do
                         match
                             tryCreateRecordFromChunkAddresses
                                 registration.StoragePoolId

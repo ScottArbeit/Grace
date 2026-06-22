@@ -588,34 +588,40 @@ module Storage =
         && not (String.IsNullOrWhiteSpace placement.ObjectKey)
 
     let private hasAuthoritativeClaimedRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
-        not (isNull (box claimedRange))
-        && not (isNull (box metadata))
-        && metadata.StoragePoolId = claimedRange.StoragePoolId
-        && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
-        && metadata.BlockFormatVersion > 0s
-        && completeContentBlockStoragePlacement metadata.StoragePlacement
-        && not (isNull metadata.Ranges)
-        && metadata.Ranges
-           |> Array.exists (fun range ->
-               range.OrdinalStart = claimedRange.OrdinalStart
-               && range.OrdinalCount = claimedRange.OrdinalCount
-               && range.PhysicalOffset = claimedRange.PhysicalOffset
-               && range.PhysicalLength = claimedRange.PhysicalLength)
+        if isNull (box claimedRange) || isNull (box metadata) then
+            false
+        else
+            let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
+
+            metadata.StoragePoolId = claimedRange.StoragePoolId
+            && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
+            && metadata.BlockFormatVersion > 0s
+            && completeContentBlockStoragePlacement metadata.StoragePlacement
+            && not (isNull metadata.Ranges)
+            && Grace.Types.ContentBlockMetadata.findRanges metadata query
+               |> Array.exists (fun range ->
+                   range.OrdinalStart = claimedRange.OrdinalStart
+                   && range.OrdinalCount = claimedRange.OrdinalCount
+                   && range.PhysicalOffset = claimedRange.PhysicalOffset
+                   && range.PhysicalLength = claimedRange.PhysicalLength)
 
     let private hasAuthoritativeFinalizedLogicalRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
-        not (isNull (box claimedRange))
-        && not (isNull (box metadata))
-        && metadata.StoragePoolId = claimedRange.StoragePoolId
-        && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
-        && metadata.BlockFormatVersion > 0s
-        && completeContentBlockStoragePlacement metadata.StoragePlacement
-        && not (isNull metadata.Ranges)
-        && metadata.Ranges
-           |> Array.exists (fun range ->
-               range.OrdinalStart = claimedRange.OrdinalStart
-               && range.OrdinalCount = claimedRange.OrdinalCount
-               && range.PhysicalLength = claimedRange.PhysicalLength
-               && range.ActiveManifestCount > 0)
+        if isNull (box claimedRange) || isNull (box metadata) then
+            false
+        else
+            let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
+
+            metadata.StoragePoolId = claimedRange.StoragePoolId
+            && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
+            && metadata.BlockFormatVersion > 0s
+            && completeContentBlockStoragePlacement metadata.StoragePlacement
+            && not (isNull metadata.Ranges)
+            && Grace.Types.ContentBlockMetadata.findRanges metadata query
+               |> Array.exists (fun range ->
+                   range.OrdinalStart = claimedRange.OrdinalStart
+                   && range.OrdinalCount = claimedRange.OrdinalCount
+                   && range.PhysicalLength = claimedRange.PhysicalLength
+                   && range.ActiveManifestCount > 0)
 
     let internal authoritativeClaimedRangeMatchesForFinalizeReplay (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         hasAuthoritativeClaimedRange claimedRange metadata

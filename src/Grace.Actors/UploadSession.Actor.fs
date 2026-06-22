@@ -434,6 +434,30 @@ module UploadSession =
                 range.PhysicalLength = claimedRange.PhysicalLength
                 && range.ActiveManifestCount > 0))
 
+    let private claimedMetadataRangeEvidence (metadata: ContentBlockMetadata) (claimedRange: ClaimedReuseRange) =
+        let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
+
+        let ranges =
+            Grace.Types.ContentBlockMetadata.findRangeEvidence metadata query
+            |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
+
+        if ranges.Length = 0 then
+            None
+        else
+            let physicalLength =
+                ranges
+                |> Array.sumBy (fun range -> range.PhysicalLength)
+
+            if ranges[0].PhysicalOffset = claimedRange.PhysicalOffset
+               && physicalLength = claimedRange.PhysicalLength then
+                Some ranges
+            elif physicalLength = claimedRange.PhysicalLength
+                 && ranges
+                    |> Array.forall (fun range -> range.ActiveManifestCount > 0) then
+                Some ranges
+            else
+                None
+
     let private validateClaimedRangeMetadata
         correlationId
         storagePoolId
@@ -670,8 +694,10 @@ module UploadSession =
                               && rangeIndex < claimedRanges.Length do
                             let claimedRange = claimedRanges[rangeIndex]
 
-                            match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
-                            | Some physicalRange -> physicalRanges.Add physicalRange
+                            match claimedMetadataRangeEvidence authoritativeMetadata claimedRange with
+                            | Some matchingRanges ->
+                                for physicalRange in matchingRanges do
+                                    physicalRanges.Add physicalRange
                             | None ->
                                 rangeError <-
                                     Some(
@@ -836,8 +862,10 @@ module UploadSession =
                               && rangeIndex < claimedRanges.Length do
                             let claimedRange = claimedRanges[rangeIndex]
 
-                            match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
-                            | Some physicalRange -> physicalRanges.Add physicalRange
+                            match claimedMetadataRangeEvidence authoritativeMetadata claimedRange with
+                            | Some matchingRanges ->
+                                for physicalRange in matchingRanges do
+                                    physicalRanges.Add physicalRange
                             | None ->
                                 rangeError <-
                                     Some(

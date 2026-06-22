@@ -176,7 +176,7 @@ type DedupeIndexServerTests() =
         Assert.That(records[0].ProtectedChunkAddresses[0], Is.EqualTo(expectedProtectedAddress))
 
     [<Test>]
-    member _.DefaultPoolBridgeDoesNotExposeCrossRepositoryMetadataBeforePhysicalPlacementIsShardAware() =
+    member _.DefaultStoragePoolExposesCrossRepositoryMetadataAfterPhysicalPlacementIsShardAware() =
         let repoA = defaultRepository (Guid.Parse("507ccba8-8026-426c-ab65-c36d44625f1f"))
         let repoB = defaultRepository (Guid.Parse("9ab312e7-d73f-48ca-8f44-07e6e4954a89"))
         let repoAStoragePoolId = DedupeIndex.storagePoolIdForRepository repoA
@@ -200,13 +200,31 @@ type DedupeIndexServerTests() =
         let repoBResult = DedupeIndex.discover repoBStoragePoolId [| requestedChunk |] timestamp repoARecords
 
         Assert.That(repoA.StoragePoolId, Is.EqualTo(repoB.StoragePoolId))
-        Assert.That(repoAStoragePoolId, Is.Not.EqualTo(repoBStoragePoolId))
+        Assert.That(repoAStoragePoolId, Is.EqualTo(repoBStoragePoolId))
         Assert.That(repoAResult.CandidateContentBlocks, Has.Length.EqualTo(1))
 
         Assert.That(
             repoBResult.CandidateContentBlocks,
-            Is.Empty,
-            "Repo B must not discover repo A metadata while physical ContentBlock placement remains repository-container scoped."
+            Has.Length.EqualTo(1),
+            "Repo B should discover repo A metadata when both repositories use the same StoragePool and physical CAS placement is shard-aware."
+        )
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks[0]
+                .StoragePoolId,
+            Is.EqualTo(StoragePoolRouting.defaultStoragePoolId)
+        )
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks[0]
+                .ManifestAddress,
+            Is.EqualTo(manifest.ManifestAddress)
+        )
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks[0]
+                .ContentBlockAddress,
+            Is.EqualTo(block.Address)
         )
 
     [<Test>]

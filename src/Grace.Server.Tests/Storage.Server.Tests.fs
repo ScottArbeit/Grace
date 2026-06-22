@@ -994,6 +994,18 @@ type StorageManifestUploadSessionRoutes() =
     let postDiscoveryAsync (client: HttpClient) repositoryId keyChunkAddresses =
         client.PostAsync("/storage/discoverContentBlocks", createJsonContentFromString (createDiscoveryJson repositoryId keyChunkAddresses))
 
+    let decodedChunkAddresses (block: ContentBlockFormat.EncodedContentBlock) =
+        block.Chunks
+        |> Array.map (fun chunk -> chunk.Address)
+
+    let discoverContentBlocks repositoryId (block: ContentBlockFormat.EncodedContentBlock) =
+        task {
+            let! response = postDiscoveryAsync Client repositoryId (decodedChunkAddresses block)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            return deserialize<GraceReturnValue<Parameters.Storage.DiscoverContentBlocksResult>> body
+        }
+
     let queryParameter (name: string) (uri: Uri) =
         uri
             .Query
@@ -1156,6 +1168,37 @@ type StorageManifestUploadSessionRoutes() =
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
+        }
+
+    let issueDedupeDiscovery repositoryId correlationId sessionId authorizedScope operationId hints =
+        task {
+            let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters issue repositoryId correlationId
+            issue.UploadSessionId <- sessionId
+            issue.AuthorizedScope <- authorizedScope
+            issue.OperationId <- operationId
+
+            issue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.Hints <- hints
+
+            return! postUploadSessionDecision "/storage/issueDedupeDiscovery" issue
+        }
+
+    let claimReuseRanges repositoryId correlationId sessionId authorizedScope operationId discoveryOperationId hints =
+        task {
+            let claim = Parameters.Storage.ClaimReuseRangesParameters()
+            setStorageParameters claim repositoryId correlationId
+            claim.UploadSessionId <- sessionId
+            claim.AuthorizedScope <- authorizedScope
+            claim.OperationId <- operationId
+            claim.DiscoveryOperationId <- discoveryOperationId
+            claim.Hints <- hints
+
+            return! postUploadSessionDecision "/storage/claimReuseRanges" claim
         }
 
     let postUploadSessionBadRequest (route: string) parameters =
@@ -1468,7 +1511,7 @@ type StorageManifestUploadSessionRoutes() =
             let recordedPoolId = startResult.ReturnValue.Session.StoragePoolId
             let manifest = manifestForStoragePool recordedPoolId payload block
 
-            Assert.That(recordedPoolId, Is.Not.EqualTo(StoragePoolId Constants.DefaultStoragePoolId))
+            Assert.That(recordedPoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
 
             let! _ =
                 confirmUploadedBlock
@@ -1490,7 +1533,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters wrongPoolDownload repositoryId correlationId
             wrongPoolDownload.AuthorizedScope <- authorizedScope
             wrongPoolDownload.ContentBlockAddress <- block.Address
-            wrongPoolDownload.StoragePoolId <- StoragePoolId Constants.DefaultStoragePoolId
+            wrongPoolDownload.StoragePoolId <- StoragePoolRouting.repositoryDedupeStoragePoolId (Guid.Parse repositoryId)
             wrongPoolDownload.ManifestAddress <- manifest.ManifestAddress
 
             let! wrongPoolDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent wrongPoolDownload)
@@ -1533,6 +1576,197 @@ type StorageManifestUploadSessionRoutes() =
                 with
             | Ok reconstructedBytes -> Assert.That(Convert.ToHexString(reconstructedBytes), Is.EqualTo(Convert.ToHexString(payload)))
             | Error error -> Assert.Fail($"Expected recorded-pool ContentBlock to reconstruct the manifest bytes, got {error}.")
+        }
+
+    [<Test>]
+    member _.RepositoriesInSameStoragePoolReuseDurableContentBlockPlacementAcrossManifests() =
+        task {
+            let firstRepositoryId = repositoryIds[0]
+            let secondRepositoryId = repositoryIds[1]
+            let firstCorrelationId = generateCorrelationId ()
+            let secondCorrelationId = generateCorrelationId ()
+            let firstSessionId = Guid.NewGuid()
+            let secondSessionId = Guid.NewGuid()
+            let firstScope = exactUploadScope firstSessionId
+            let secondScope = exactUploadScope secondSessionId
+            let chunks = chunkedPayload $"cross-repo-storagepool-{Guid.NewGuid():N}" 12
+            let payload = Array.concat chunks
+            let block = encodeChunkedBlock chunks
+            let firstManifestForStart = manifestFor payload block
+
+            let! firstStart =
+                startManifestUploadSession
+                    firstRepositoryId
+                    firstCorrelationId
+                    firstSessionId
+                    firstScope
+                    "start-cross-repo-source"
+                    firstManifestForStart
+                    "sdk-cross-repository-source"
+
+            let sharedStoragePoolId = firstStart.ReturnValue.Session.StoragePoolId
+            let firstManifest = manifestForStoragePool sharedStoragePoolId payload block
+
+            Assert.That(sharedStoragePoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+
+            let! firstConfirm =
+                confirmUploadedBlock
+                    firstRepositoryId
+                    firstCorrelationId
+                    firstSessionId
+                    firstScope
+                    block
+                    0L
+                    (int64 payload.Length)
+                    "register-cross-repo-source"
+                    "confirm-cross-repo-source"
+
+            let firstPlacement =
+                firstConfirm.ReturnValue.Session.ConfirmedBlockUploads[0]
+                    .StoragePlacement
+
+            Assert.That(firstPlacement.ObjectKey, Is.EqualTo(StorageKeys.contentBlockObjectKey block.Address))
+            Assert.That(firstPlacement.ObjectKey, Does.Not.Contain("cas/content-blocks"))
+            Assert.That(firstPlacement.ObjectKey, Does.Not.Contain("staging/repositories"))
+            Assert.That(firstPlacement.ObjectKey, Does.Not.Contain(firstRepositoryId))
+            Assert.That(firstPlacement.ObjectKey, Does.Not.Contain(secondRepositoryId))
+            Assert.That(firstPlacement.StorageContainerName, Is.EqualTo(StorageContainerName Constants.DefaultCasStorageContainerName))
+
+            let! firstFinalize =
+                finalizeManifestUpload firstRepositoryId firstCorrelationId firstSessionId firstScope "finalize-cross-repo-source" firstManifest
+
+            Assert.That(firstFinalize.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some firstManifest.ManifestAddress))
+            Assert.That(firstFinalize.ReturnValue.Session.StoragePoolId, Is.EqualTo(sharedStoragePoolId))
+
+            let! discovery = discoverContentBlocks secondRepositoryId block
+            let candidates = discovery.ReturnValue.CandidateContentBlocks
+
+            Assert.That(candidates, Has.Length.GreaterThanOrEqualTo(1))
+
+            let candidate =
+                candidates
+                |> Array.find (fun candidate ->
+                    candidate.StoragePoolId = sharedStoragePoolId
+                    && candidate.ManifestAddress = firstManifest.ManifestAddress
+                    && candidate.ContentBlockAddress = block.Address)
+
+            Assert.That(candidate.OrdinalStart, Is.EqualTo(0))
+            Assert.That(candidate.OrdinalCount, Is.EqualTo(block.Chunks.Length))
+            Assert.That(candidate.MetadataVersion, Is.GreaterThan(0L))
+            Assert.That(candidate.MatchingKeyChunkCount, Is.GreaterThan(0))
+            Assert.That(candidate.ProtectedChunkAddresses, Is.Not.Empty)
+
+            for rawChunkAddress in decodedChunkAddresses block do
+                Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(rawChunkAddress))
+
+            let secondManifestForStart = manifestFor payload block
+
+            let! secondStart =
+                startManifestUploadSession
+                    secondRepositoryId
+                    secondCorrelationId
+                    secondSessionId
+                    secondScope
+                    "start-cross-repo-target"
+                    secondManifestForStart
+                    "sdk-cross-repository-target"
+
+            Assert.That(secondStart.ReturnValue.Session.StoragePoolId, Is.EqualTo(sharedStoragePoolId))
+
+            let secondManifest = manifestForStoragePool sharedStoragePoolId payload block
+            let reuseHint = DedupeIndex.toReuseRangeHint candidate
+            let discoveryOperationId = "issue-cross-repo-target"
+
+            let! issuedDiscovery = issueDedupeDiscovery secondRepositoryId secondCorrelationId secondSessionId secondScope discoveryOperationId [| reuseHint |]
+
+            Assert.That(issuedDiscovery.ReturnValue.Session.DedupeDiscovery, Is.Not.EqualTo(None))
+            Assert.That(issuedDiscovery.ReturnValue.Session.DedupeDiscovery.Value.Hints, Has.Length.EqualTo(1))
+
+            Assert.That(
+                issuedDiscovery.ReturnValue.Session.DedupeDiscovery.Value.Hints[0]
+                    .StoragePoolId,
+                Is.EqualTo(sharedStoragePoolId)
+            )
+
+            let! claimed =
+                claimReuseRanges
+                    secondRepositoryId
+                    secondCorrelationId
+                    secondSessionId
+                    secondScope
+                    "claim-cross-repo-target"
+                    discoveryOperationId
+                    [| reuseHint |]
+
+            Assert.That(claimed.ReturnValue.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
+            Assert.That(claimed.ReturnValue.Session.ConfirmedBlockUploads, Is.Empty)
+
+            let claimedRange = claimed.ReturnValue.Session.ClaimedReuseRanges[0]
+
+            Assert.That(claimedRange.StoragePoolId, Is.EqualTo(sharedStoragePoolId))
+            Assert.That(claimedRange.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(claimedRange.OrdinalStart, Is.EqualTo(candidate.OrdinalStart))
+            Assert.That(claimedRange.OrdinalCount, Is.EqualTo(candidate.OrdinalCount))
+            Assert.That(claimedRange.PhysicalOffset, Is.EqualTo(0L))
+            Assert.That(claimedRange.PhysicalLength, Is.EqualTo(payload.LongLength))
+            Assert.That(claimedRange.MetadataVersion, Is.EqualTo(candidate.MetadataVersion))
+
+            let! secondFinalize =
+                finalizeManifestUpload secondRepositoryId secondCorrelationId secondSessionId secondScope "finalize-cross-repo-target" secondManifest
+
+            Assert.That(secondFinalize.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some secondManifest.ManifestAddress))
+            Assert.That(secondFinalize.ReturnValue.Session.ConfirmedBlockUploads, Is.Empty)
+            Assert.That(secondFinalize.ReturnValue.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
+
+            let downloadBlock repositoryId correlationId authorizedScope manifest =
+                task {
+                    let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
+                    setStorageParameters parameters repositoryId correlationId
+                    parameters.AuthorizedScope <- authorizedScope
+                    parameters.ContentBlockAddress <- block.Address
+                    parameters.StoragePoolId <- manifest.StoragePoolId
+                    parameters.ManifestAddress <- manifest.ManifestAddress
+
+                    let! response = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent parameters)
+                    let! body = response.Content.ReadAsStringAsync()
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+                    assertRawStringContent response
+
+                    let uri = Uri body
+                    let! downloaded = downloadContentBlockWithSas uri
+                    return uri, downloaded
+                }
+
+            let! firstDownloadUri, firstDownloadedBlock = downloadBlock firstRepositoryId firstCorrelationId firstScope firstManifest
+            let! secondDownloadUri, secondDownloadedBlock = downloadBlock secondRepositoryId secondCorrelationId secondScope secondManifest
+            let firstDownloadPlacement = StoragePlacementTestHelpers.contentBlockPlacementFromUri firstDownloadUri None
+            let secondDownloadPlacement = StoragePlacementTestHelpers.contentBlockPlacementFromUri secondDownloadUri None
+
+            Assert.That(firstDownloadPlacement.ObjectKey, Is.EqualTo(firstPlacement.ObjectKey))
+            Assert.That(secondDownloadPlacement.ObjectKey, Is.EqualTo(firstPlacement.ObjectKey))
+            Assert.That(secondDownloadPlacement.StorageAccountName, Is.EqualTo(firstPlacement.StorageAccountName))
+            Assert.That(secondDownloadPlacement.StorageContainerName, Is.EqualTo(firstPlacement.StorageContainerName))
+            Assert.That(Convert.ToHexString(firstDownloadedBlock), Is.EqualTo(Convert.ToHexString(block.Payload)))
+            Assert.That(Convert.ToHexString(secondDownloadedBlock), Is.EqualTo(Convert.ToHexString(block.Payload)))
+
+            let oldRepositoryScopedPool = StoragePoolRouting.repositoryDedupeStoragePoolId (Guid.Parse secondRepositoryId)
+
+            Assert.That(oldRepositoryScopedPool, Is.Not.EqualTo(sharedStoragePoolId))
+            Assert.That(candidate.StoragePoolId, Is.Not.EqualTo(oldRepositoryScopedPool))
+
+            let wrongPoolDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
+            setStorageParameters wrongPoolDownload secondRepositoryId secondCorrelationId
+            wrongPoolDownload.AuthorizedScope <- secondScope
+            wrongPoolDownload.ContentBlockAddress <- block.Address
+            wrongPoolDownload.StoragePoolId <- oldRepositoryScopedPool
+            wrongPoolDownload.ManifestAddress <- secondManifest.ManifestAddress
+
+            let! wrongPoolResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent wrongPoolDownload)
+            let! wrongPoolBody = wrongPoolResponse.Content.ReadAsStringAsync()
+
+            Assert.That(wrongPoolResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), wrongPoolBody)
+            Assert.That(wrongPoolBody, Does.Contain("storage pool"))
+            Assert.That(wrongPoolBody, Does.Not.Contain(firstPlacement.ObjectKey))
         }
 
     [<Test>]
@@ -1596,7 +1830,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let recordedPoolId = startResult.ReturnValue.Session.StoragePoolId
 
-            Assert.That(recordedPoolId, Is.Not.EqualTo(StoragePoolId Constants.DefaultStoragePoolId))
+            Assert.That(recordedPoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
 
             let manifest =
                 manifestForBlocks
@@ -1666,7 +1900,7 @@ type StorageManifestUploadSessionRoutes() =
             setStorageParameters wrongPoolDownload repositoryId correlationId
             wrongPoolDownload.AuthorizedScope <- authorizedScope
             wrongPoolDownload.ContentBlockAddress <- firstBlock.Address
-            wrongPoolDownload.StoragePoolId <- StoragePoolId Constants.DefaultStoragePoolId
+            wrongPoolDownload.StoragePoolId <- StoragePoolRouting.repositoryDedupeStoragePoolId (Guid.Parse repositoryId)
             wrongPoolDownload.ManifestAddress <- manifest.ManifestAddress
 
             let! wrongPoolDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent wrongPoolDownload)
@@ -2070,8 +2304,9 @@ type StorageManifestUploadSessionRoutes() =
             let secondRepositoryId = repositoryIds[1]
             let firstCorrelationId = generateCorrelationId ()
             let secondCorrelationId = generateCorrelationId ()
-            let firstSessionId = Guid.NewGuid()
-            let secondSessionId = Guid.NewGuid()
+            let sharedSessionId = Guid.NewGuid()
+            let firstSessionId = sharedSessionId
+            let secondSessionId = sharedSessionId
             let payload = pseudoRandomBytes 220000
             payload[0] <- 4uy
             Guid.NewGuid().ToByteArray().CopyTo(payload, 1)

@@ -370,7 +370,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(mismatchedBlockSelection, Is.EqualTo(None))
 
     [<Test>]
-    member _.DefaultRepositoryDedupePoolResolutionUsesRepositoryScopedPool() =
+    member _.DefaultRepositoryDedupePoolResolutionUsesRepositoryStoragePool() =
         let repositoryId = Guid.Parse("9fce80dd-b0e5-462c-953d-1cc9e357d515")
 
         let repository = { RepositoryDto.Default with RepositoryId = repositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
@@ -378,8 +378,8 @@ type StorageContentBlockSdkContract() =
         match Storage.resolveRepositoryDedupeStoragePoolId repository "corr-dedupe-pool" with
         | Error error -> Assert.Fail($"Expected default repository dedupe pool to resolve, got {error.Error}.")
         | Ok storagePoolId ->
-            Assert.That(storagePoolId, Is.EqualTo(DedupeIndex.storagePoolIdForRepositoryId repositoryId))
-            Assert.That(storagePoolId, Is.Not.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+            Assert.That(storagePoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+            Assert.That(storagePoolId, Is.Not.EqualTo(DedupeIndex.storagePoolIdForRepositoryId repositoryId))
 
     [<Test>]
     member _.StorageSessionRepositoryValidationRejectsMissingOrMismatchedRepositoryBeforeRouting() =

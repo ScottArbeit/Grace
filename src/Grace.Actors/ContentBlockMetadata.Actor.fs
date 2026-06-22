@@ -317,10 +317,12 @@ module ContentBlockMetadata =
                             $"Stale ContentBlockMetadata compaction rejected. Expected MetadataVersion {compact.ExpectedMetadataVersion}, current MetadataVersion {existing.MetadataVersion}."
                     )
 
-    let private expectedRangeExists (existingRanges: ContentBlockMetadataRange array) expectedRange =
+    let private expectedRangeExists (existing: ContentBlockMetadata) (expectedRange: ContentBlockMetadataRange) =
+        let query = { OrdinalStart = expectedRange.OrdinalStart; OrdinalCount = expectedRange.OrdinalCount }
+
         let expectedKey = rangeKey expectedRange
 
-        existingRanges
+        Grace.Types.ContentBlockMetadata.findRanges existing query
         |> Array.exists (fun existingRange -> rangeKey existingRange = expectedKey)
 
     let private validateMergePreconditions correlationId (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
@@ -343,7 +345,7 @@ module ContentBlockMetadata =
             | Some existing, expectedRanges ->
                 let missingExpectedRange =
                     expectedRanges
-                    |> Array.tryFind (fun expectedRange -> not (expectedRangeExists existing.Ranges expectedRange))
+                    |> Array.tryFind (fun expectedRange -> not (expectedRangeExists existing expectedRange))
 
                 match missingExpectedRange with
                 | Some _ ->
