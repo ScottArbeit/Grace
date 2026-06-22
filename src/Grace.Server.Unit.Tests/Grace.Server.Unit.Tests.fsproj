@@ -31,6 +31,7 @@
     <Compile Include="ValidateIds.Decisions.Tests.fs" />
     <Compile Include="Storage.Server.Tests.fs" />
     <Compile Include="AnnotationMaterialization.Server.Tests.fs" />
+    <Compile Include="NormalFileMaterialization.Server.Tests.fs" />
     <Compile Include="StoragePoolRouting.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />
     <Compile Include="Eventing.Server.Tests.fs" />
