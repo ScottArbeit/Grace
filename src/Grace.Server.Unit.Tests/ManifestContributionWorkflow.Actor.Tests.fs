@@ -32,48 +32,20 @@ type ManifestContributionWorkflowActorTests() =
         }
 
     let startWithRanges direction ranges =
-        ManifestContributionWorkflowCommand.Start
-            {
-                OperationId = "workflow-start"
-                RepositoryId = repositoryId
-                StoragePoolId = storagePoolId
-                ManifestAddress = manifestAddress
-                Direction = direction
-                Ranges = ranges
-            }
+        ManifestContributionWorkflowCommand.Start("workflow-start", repositoryId, storagePoolId, manifestAddress, direction, ranges)
 
     let startWithOperation operationId direction ranges =
-        ManifestContributionWorkflowCommand.Start
-            {
-                OperationId = operationId
-                RepositoryId = repositoryId
-                StoragePoolId = storagePoolId
-                ManifestAddress = manifestAddress
-                Direction = direction
-                Ranges = ranges
-            }
+        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges)
 
     let start direction = startWithRanges direction [| range0; range1 |]
 
-    let progress operationId range =
-        { OperationId = operationId; RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress; Range = range }
-
-    let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(progress operationId range)
+    let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, repositoryId, storagePoolId, manifestAddress, range)
 
     let succeededFor repositoryId manifestAddress operationId range =
-        ManifestContributionWorkflowCommand.RecordRangeSucceeded
-            { OperationId = operationId; RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress; Range = range }
+        ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, repositoryId, storagePoolId, manifestAddress, range)
 
     let failed operationId range message =
-        ManifestContributionWorkflowCommand.RecordRangeFailed
-            {
-                OperationId = operationId
-                RepositoryId = repositoryId
-                StoragePoolId = storagePoolId
-                ManifestAddress = manifestAddress
-                Range = range
-                Message = message
-            }
+        ManifestContributionWorkflowCommand.RecordRangeFailed(operationId, repositoryId, storagePoolId, manifestAddress, range, message)
 
     let applyAll events current =
         events
@@ -266,15 +238,14 @@ type ManifestContributionWorkflowActorTests() =
         let archiveRange = { range0 with StoragePoolId = otherStoragePoolId }
 
         let archiveStart =
-            ManifestContributionWorkflowCommand.Start
-                {
-                    OperationId = "workflow-archive"
-                    RepositoryId = repositoryId
-                    StoragePoolId = otherStoragePoolId
-                    ManifestAddress = manifestAddress
-                    Direction = ManifestContributionDirection.Increment
-                    Ranges = [| archiveRange |]
-                }
+            ManifestContributionWorkflowCommand.Start(
+                "workflow-archive",
+                repositoryId,
+                otherStoragePoolId,
+                manifestAddress,
+                ManifestContributionDirection.Increment,
+                [| archiveRange |]
+            )
 
         let result =
             ManifestContributionWorkflowActor.decideCommandForKey

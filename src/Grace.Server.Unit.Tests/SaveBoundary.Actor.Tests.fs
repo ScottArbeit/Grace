@@ -1072,21 +1072,18 @@ type SaveBoundaryActorTests() =
         let range = decrementPlan.WorkflowRanges[0]
         Assert.That(ManifestContributionWorkflowActor.blocksUnsafeDeletion started range, Is.True)
 
-        let progress =
-            {
-                OperationId = ManifestContributionWorkflowOperationId "range-expiry-done"
-                RepositoryId = repositoryId
-                StoragePoolId = storagePoolId
-                ManifestAddress = manifest.ManifestAddress
-                Range = range
-            }
-
         let completed =
             match
                 ManifestContributionWorkflowActor.decideCommand
                     []
                     started
-                    (ManifestContributionWorkflowCommand.RecordRangeSucceeded progress)
+                    (ManifestContributionWorkflowCommand.RecordRangeSucceeded(
+                        ManifestContributionWorkflowOperationId "range-expiry-done",
+                        repositoryId,
+                        storagePoolId,
+                        manifest.ManifestAddress,
+                        range
+                    ))
                     (metadata "corr-expiry-gc-range")
                 with
             | Ok decision -> decision.Workflow

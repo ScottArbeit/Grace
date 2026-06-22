@@ -1242,6 +1242,61 @@ type StorageManifestUploadSessionRoutes() =
             return! postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
         }
 
+    let manifestBackedFileVersion relativePath (payload: byte array) manifest =
+        let fileVersion =
+            FileVersion.CreateWithHashes
+                relativePath
+                (BranchServerTestHelpers.sha256Hex payload)
+                (BranchServerTestHelpers.blake3Hex payload)
+                String.Empty
+                true
+                (int64 payload.Length)
+
+        fileVersion.ContentReference <- FileContentReference.FileManifest manifest
+        fileVersion
+
+    let saveDirectoryVersionsResponse repositoryId (directoryVersions: Grace.Types.Common.DirectoryVersion seq) =
+        task {
+            let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            for directoryVersion in directoryVersions do
+                parameters.DirectoryVersions.Add(directoryVersion)
+
+            return! Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent parameters)
+        }
+
+    let saveDirectoryVersionsBadRequest repositoryId directoryVersions =
+        task {
+            let! response = saveDirectoryVersionsResponse repositoryId directoryVersions
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            return body
+        }
+
+    let getManifestFileDownloadUri repositoryId correlationId (fileVersion: FileVersion) =
+        task {
+            let parameters = Parameters.Storage.GetDownloadUriParameters()
+            setStorageParameters parameters repositoryId correlationId
+            parameters.FileVersion <- fileVersion
+
+            let! response = Client.PostAsync("/storage/getDownloadUri", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            assertRawStringContent response
+            return Uri body
+        }
+
+    let downloadFileWithSas (downloadUri: Uri) =
+        task {
+            let blobClient = BlobClient(downloadUri)
+            let! response = blobClient.DownloadContentAsync()
+            return response.Value.Content.ToArray()
+        }
+
     [<Test>]
     member _.LargeManifestUploadCanUploadBlobConfirmFinalizeAndDownloadContentBlock() =
         task {
@@ -1478,6 +1533,161 @@ type StorageManifestUploadSessionRoutes() =
                 with
             | Ok reconstructedBytes -> Assert.That(Convert.ToHexString(reconstructedBytes), Is.EqualTo(Convert.ToHexString(payload)))
             | Error error -> Assert.Fail($"Expected recorded-pool ContentBlock to reconstruct the manifest bytes, got {error}.")
+        }
+
+    [<Test>]
+    member _.LargeBinarySaveLifecycleRequiresFinalizedManifestAndDownloadsAfterRouteChange() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let correlationId = generateCorrelationId ()
+            let sessionId = Guid.NewGuid()
+            let relativeDirectory = RelativePath $"storage-tests/large-binary-lifecycle/{sessionId:N}"
+            let relativePath = RelativePath $"{relativeDirectory}/Flora.mp4"
+            let authorizedScope = $"/{relativePath}"
+
+            let payload =
+                pseudoRandomBytes (
+                    int ManifestEligibilityPolicy.Default.ThresholdBytes
+                    + 4096
+                )
+
+            payload[0] <- 0x46uy
+            payload[1] <- 0x4cuy
+            payload[2] <- 0x4fuy
+            payload[3] <- 0x52uy
+            payload[4] <- 0x41uy
+
+            let splitAt = payload.Length / 2
+            let firstPayload = payload[0 .. splitAt - 1]
+            let secondPayload = payload[splitAt..]
+            let firstBlock = encodeBlock firstPayload
+            let secondBlock = encodeBlock secondPayload
+
+            let manifestForStart =
+                manifestForBlocks
+                    (StoragePoolId Constants.DefaultStoragePoolId)
+                    payload
+                    [|
+                        firstBlock, 0L, int64 firstPayload.Length
+                        secondBlock, int64 firstPayload.Length, int64 secondPayload.Length
+                    |]
+
+            let wholeFileVersion =
+                FileVersion.CreateWithHashes
+                    relativePath
+                    (BranchServerTestHelpers.sha256Hex payload)
+                    (BranchServerTestHelpers.blake3Hex payload)
+                    String.Empty
+                    true
+                    (int64 payload.Length)
+
+            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload wholeFileVersion
+
+            let! startResult =
+                startManifestUploadSession
+                    repositoryId
+                    correlationId
+                    sessionId
+                    authorizedScope
+                    "start-large-binary-lifecycle"
+                    manifestForStart
+                    "sdk-large-binary-watch-save-lifecycle"
+
+            let recordedPoolId = startResult.ReturnValue.Session.StoragePoolId
+
+            Assert.That(recordedPoolId, Is.Not.EqualTo(StoragePoolId Constants.DefaultStoragePoolId))
+
+            let manifest =
+                manifestForBlocks
+                    recordedPoolId
+                    payload
+                    [|
+                        firstBlock, 0L, int64 firstPayload.Length
+                        secondBlock, int64 firstPayload.Length, int64 secondPayload.Length
+                    |]
+
+            let manifestFileVersion = manifestBackedFileVersion relativePath payload manifest
+            let prematureChild = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId relativeDirectory manifestFileVersion
+            let prematureRoot = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ prematureChild ]
+
+            let! prematureSaveBody = saveDirectoryVersionsBadRequest repositoryId [ prematureChild; prematureRoot ]
+            Assert.That(prematureSaveBody, Does.Contain("manifest"))
+            Assert.That(prematureSaveBody, Does.Contain("no finalized scoped ContentBlock metadata range exists"))
+
+            let! _ =
+                confirmUploadedBlock
+                    repositoryId
+                    correlationId
+                    sessionId
+                    authorizedScope
+                    firstBlock
+                    0L
+                    (int64 firstPayload.Length)
+                    "register-large-binary-0"
+                    "confirm-large-binary-0"
+
+            let! _ =
+                confirmUploadedBlock
+                    repositoryId
+                    correlationId
+                    sessionId
+                    authorizedScope
+                    secondBlock
+                    (int64 firstPayload.Length)
+                    (int64 secondPayload.Length)
+                    "register-large-binary-1"
+                    "confirm-large-binary-1"
+
+            let! finalizeResult = finalizeManifestUpload repositoryId correlationId sessionId authorizedScope "finalize-large-binary-lifecycle" manifest
+            Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+            Assert.That(finalizeResult.ReturnValue.Session.StoragePoolId, Is.EqualTo(recordedPoolId))
+            Assert.That(finalizeResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+
+            let child = BranchServerTestHelpers.createDirectoryVersionWithFile repositoryId relativeDirectory manifestFileVersion
+            let root = BranchServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ child ]
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            Assert.That(parentBranch.LatestSave.DirectoryId, Is.Not.EqualTo(root.DirectoryVersionId))
+
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"LargeBinaryLifecycle{Guid.NewGuid():N}"
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch root.DirectoryVersionId root.Sha256Hash
+            let! saveBody = saveResponse.Content.ReadAsStringAsync()
+            Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
+
+            let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            Assert.That(savedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(savedBranch.LatestSave.Sha256Hash, Is.EqualTo(root.Sha256Hash))
+            Assert.That(savedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
+
+            let wrongPoolDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
+            setStorageParameters wrongPoolDownload repositoryId correlationId
+            wrongPoolDownload.AuthorizedScope <- authorizedScope
+            wrongPoolDownload.ContentBlockAddress <- firstBlock.Address
+            wrongPoolDownload.StoragePoolId <- StoragePoolId Constants.DefaultStoragePoolId
+            wrongPoolDownload.ManifestAddress <- manifest.ManifestAddress
+
+            let! wrongPoolDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent wrongPoolDownload)
+            let! wrongPoolDownloadBody = wrongPoolDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(wrongPoolDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), wrongPoolDownloadBody)
+            Assert.That(wrongPoolDownloadBody, Does.Contain("storage pool"))
+
+            let! downloadUri = getManifestFileDownloadUri repositoryId correlationId manifestFileVersion
+            let! downloadedPayload = downloadFileWithSas downloadUri
+
+            Assert.That(downloadedPayload.Length, Is.EqualTo(payload.Length))
+            Assert.That(Convert.ToHexString(downloadedPayload), Is.EqualTo(Convert.ToHexString(payload)))
+
+            let! repeatedSaveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId savedBranch root.DirectoryVersionId root.Sha256Hash
+            let! repeatedSaveBody = repeatedSaveResponse.Content.ReadAsStringAsync()
+            Assert.That(repeatedSaveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), repeatedSaveBody)
+
+            let! repeatedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{savedBranch.BranchId}"
+            Assert.That(repeatedBranch.LatestSave.DirectoryId, Is.EqualTo(root.DirectoryVersionId))
+            Assert.That(manifestFileVersion.ContentReference.ReferenceType, Is.EqualTo(FileContentReferenceType.FileManifest))
+            Assert.That(manifestFileVersion.ContentReference.Manifest, Is.EqualTo(Some manifest))
         }
 
     [<Test>]
