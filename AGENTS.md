@@ -37,6 +37,9 @@ assign each sub-issue's parent issue relationship to the epic in GitHub Relation
 issue that shows dependencies and parallelization opportunities. As sub-issues complete, update the epic checklist so
 completed sub-issues are checked. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md`
 when creating the native parent/child relationships.
+When planning a feature or epic, and when creating issue or pull request bodies, include why the change matters for
+Grace and its users. Use that purpose to help implementation agents make better local decisions when the plan leaves a
+gap or an acceptance criterion is ambiguous.
 When creating the epic and child issues from PowerShell, avoid one giant inline script that embeds every issue body.
 Write each issue body to its own temporary Markdown file with `Set-Content` or an equivalent small file-write command,
 call `gh issue create --body-file <path>` for each issue, then patch the epic body with the real child issue numbers
@@ -64,6 +67,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   and a DAG in the parent issue that shows dependencies and parallelization opportunities. As each sub-issue completes,
   check its box in the epic. Use the concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when
   creating the native parent/child relationships.
+- When planning features or epics, include why the work benefits Grace and its users before decomposing implementation
+  steps. Carry that purpose into parent issues, child issues, and PR bodies so implementation agents understand the
+  goal behind the requested change, not only the files and tests to touch.
 - For epic plus child issue creation, prefer separate temporary Markdown body files and `gh issue create --body-file`
   over a giant inline PowerShell script containing all issue bodies. After the child issue numbers exist, patch the epic
   body with those real numbers, then use GraphQL `addSubIssue` for the native parent relationships.

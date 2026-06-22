@@ -21,6 +21,9 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
 - Run the fastest meaningful validation first, then broader validation when risk or shared surfaces justify it.
 - Commit after each completed slice so review scope stays clear.
 - Keep docs, README guidance, and nearby `AGENTS.md` files aligned with behavior and workflow changes.
+- Include the purpose behind each feature or implementation change. Plans, issue bodies, and pull request bodies should
+  explain why the work benefits Grace and its users so implementation agents can make better decisions when details are
+  incomplete.
 - Use the existing issue details to prevent likely Codex Code Review Bot findings before the pull request exists. This
   means sharper invariants, forbidden implementation shapes, adversarial cases, and test evidence rather than more
   issue-template ceremony.
@@ -35,6 +38,12 @@ an epic parent issue plus one linked sub-issue for each implementation step. The
 dependency map, and integration status. Each sub-issue owns one implementation slice, branch/worktree, validation path,
 review loop, and pull request. When creating the epic and sub-issues, assign each sub-issue's parent issue relationship
 to the epic in GitHub Relationships.
+
+When planning a feature or epic, state why the change matters before decomposing the work. Connect the work to the
+benefit for Grace and its users: improved trust, safer operations, clearer contracts, faster workflows, lower operator
+risk, better product fit, or another task-specific outcome. Carry that purpose into the parent epic, child issues, and
+pull request bodies. This context lets implementation agents choose better local tradeoffs when the plan leaves a gap
+or an acceptance criterion is ambiguous.
 
 Create the parent epic issue and child issues with `gh issue create --body-file`, using issue bodies written as separate
 Markdown files in a temporary directory. Prefer one small `Set-Content` or equivalent file-write command per issue body
@@ -268,6 +277,9 @@ The issue should include this information:
 ```markdown
 Objective:
 - One concrete behavior, docs, workflow, or infrastructure slice.
+
+Why this matters:
+- How this benefits Grace and its users, and what better decision-making context it gives the implementer.
 
 Context and evidence:
 - Logs, files, symptoms, prior PRs, design notes, or commands already run.
@@ -831,6 +843,7 @@ When opening or updating a pull request, include the evidence available at that 
 comments as the review loop continues:
 
 - the linked GitHub issue
+- why the change benefits Grace and its users
 - summary of changed behavior
 - touched paths and any write-set expansion
 - focused validation run
