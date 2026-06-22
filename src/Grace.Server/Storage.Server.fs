@@ -1447,11 +1447,40 @@ module Storage =
                     let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    let! blobName = getReadableWholeFileContentObjectKey repositoryDto parameters.FileVersion correlationId
-                    let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
-                    context.SetStatusCode StatusCodes.Status200OK
-                    //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
-                    return! context.WriteStringAsync $"{downloadUri}"
+                    match validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok () ->
+                        let contentReference =
+                            if isNull (box parameters.FileVersion.ContentReference) then
+                                FileContentReference.WholeFileContent
+                            else
+                                parameters.FileVersion.ContentReference
+
+                        let blobName = StorageKeys.wholeFileContentObjectKey parameters.FileVersion
+
+                        let! materializationResult =
+                            match contentReference.ReferenceType with
+                            | FileContentReferenceType.WholeFileContent -> Task.FromResult(Ok())
+                            | FileContentReferenceType.FileManifest ->
+                                NormalFileMaterialization.materializeForDownload
+                                    repositoryDto
+                                    $"{parameters.FileVersion.RelativePath}"
+                                    parameters.FileVersion
+                                    blobName
+                                    correlationId
+                                    context.RequestAborted
+                            | unsupported ->
+                                Task.FromResult(
+                                    Error(GraceError.Create $"Unsupported file content reference type for download URI: {unsupported}." correlationId)
+                                )
+
+                        match materializationResult with
+                        | Error error -> return! context |> result400BadRequest error
+                        | Ok () ->
+                            let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
+                            context.SetStatusCode StatusCodes.Status200OK
+                            //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
+                            return! context.WriteStringAsync $"{downloadUri}"
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
