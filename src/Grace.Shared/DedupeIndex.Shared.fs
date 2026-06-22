@@ -558,8 +558,6 @@ module DedupeIndex =
         =
         let output = ResizeArray<DedupeIndexRecord>()
 
-        removeRecordsForMetadataBlock records registration.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
-
         let ranges = contiguousActiveRanges metadata.Ranges
 
         if ranges.Length > 0 then

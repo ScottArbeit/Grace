@@ -120,7 +120,7 @@ type ContentBlockMetadataTypesTests() =
         )
 
     [<Test>]
-    member _.FindRangesSlicesActiveCoveringRangeForLaterQueryWindow() =
+    member _.FindRangeEvidenceUsesStoredCoveringRangeForLaterQueryWindow() =
         let inactiveExact = { range 256 256 8192L 512L with ActiveManifestCount = 0 }
         let activeCoveringRange = range 0 512 0L 1024L
 
@@ -133,11 +133,22 @@ type ContentBlockMetadataTypesTests() =
         let evidence = findRangeEvidence currentMetadata query
 
         Assert.That(ranges, Has.Length.EqualTo(1))
-        Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(1))
+        Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(0))
         Assert.That(ranges[0].OrdinalStart, Is.EqualTo(query.OrdinalStart))
         Assert.That(ranges[0].OrdinalCount, Is.EqualTo(query.OrdinalCount))
-        Assert.That(ranges[0].PhysicalOffset, Is.EqualTo(512L))
+        Assert.That(ranges[0].PhysicalOffset, Is.EqualTo(8192L))
         Assert.That(ranges[0].PhysicalLength, Is.EqualTo(512L))
 
         Assert.That(evidence, Has.Length.EqualTo(1))
-        Assert.That(evidence[0], Is.EqualTo(ranges[0]))
+        Assert.That(evidence[0], Is.EqualTo(activeCoveringRange))
+
+    [<Test>]
+    member _.FindRangeEvidenceDoesNotInventVariableChunkBoundaries() =
+        let activeCoveringRange = range 0 2 0L (1024L + 65536L)
+        let currentMetadata = metadata [| activeCoveringRange |]
+        let evidence = findRangeEvidence currentMetadata { OrdinalStart = 1; OrdinalCount = 1 }
+        let ranges = findRanges currentMetadata { OrdinalStart = 1; OrdinalCount = 1 }
+
+        Assert.That(ranges, Is.Empty)
+        Assert.That(evidence, Has.Length.EqualTo(1))
+        Assert.That(evidence[0], Is.EqualTo(activeCoveringRange))

@@ -2930,11 +2930,11 @@ type UploadSessionActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("absent"))
 
     [<Test>]
-    member _.ClaimReuseRangesAcceptsLaterSubwindowCoveredByLongActiveAuthoritativeRange() =
+    member _.ClaimReuseRangesAcceptsLaterSubwindowWithExactActiveAuthoritativeRange() =
         let activeCoveringRange = { reusableMetadataRange with OrdinalCount = 8; ActiveManifestCount = 1; PhysicalLength = 8192L }
 
-        let inactiveExactSubwindow =
-            { reusableMetadataRange with OrdinalStart = 4; OrdinalCount = 4; ActiveManifestCount = 0; PhysicalOffset = 32768L; PhysicalLength = 4096L }
+        let activeExactSubwindow =
+            { reusableMetadataRange with OrdinalStart = 4; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 4096L; PhysicalLength = 4096L }
 
         let subwindowHint = { reuseHint with OrdinalStart = 4; OrdinalCount = 4 }
 
@@ -2942,7 +2942,7 @@ type UploadSessionActorTests() =
             { reuseMetadata
                   7L
                   [|
-                      inactiveExactSubwindow
+                      activeExactSubwindow
                       activeCoveringRange
                   |] with
                 TotalPhysicalBytes = 8192L

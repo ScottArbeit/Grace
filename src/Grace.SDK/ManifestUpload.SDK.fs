@@ -109,7 +109,7 @@ module ManifestUpload =
 
         parameters
 
-    let private buildIssueDiscoveryParameters request uploadSessionId operationIndex expiresAt minimumReuseRunLength hints =
+    let private buildIssueDiscoveryParameters request uploadSessionId operationIndex expiresAt minimumReuseRunLength keyChunkAddresses hints =
         let parameters = IssueDedupeDiscoveryParameters()
         setStorageParameters request parameters |> ignore
         parameters.UploadSessionId <- uploadSessionId
@@ -117,6 +117,7 @@ module ManifestUpload =
         parameters.OperationId <- $"manifest-upload-{uploadSessionId:N}-discovery-{operationIndex}"
         parameters.ExpiresAt <- expiresAt
         parameters.MinimumReuseRunLength <- minimumReuseRunLength
+        parameters.KeyChunkAddresses <- keyChunkAddresses
         parameters.Hints <- hints
         parameters
 
@@ -300,6 +301,8 @@ module ManifestUpload =
                                             (getCurrentInstant()
                                                 .Plus(Duration.FromSeconds(int64 discoveryResult.ReturnValue.Policy.ResponseTtlSeconds)))
                                             discoveryResult.ReturnValue.Policy.MinimumAcceptedReuseRunLength
+                                            (plan.KeyChunks
+                                             |> Array.map (fun keyChunk -> keyChunk.Address))
                                             reuseHints
 
                                     match! client.IssueDedupeDiscovery issueParameters with

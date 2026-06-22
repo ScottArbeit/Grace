@@ -452,8 +452,7 @@ module UploadSession =
             let candidates =
                 ranges
                 |> Array.filter (fun range ->
-                    range.ActiveManifestCount > 0
-                    && range.OrdinalStart >= ordinalStart
+                    range.OrdinalStart >= ordinalStart
                     && range.OrdinalStart < finalOrdinal
                     && range.OrdinalCount > 0
                     && range.PhysicalLength > 0L
@@ -485,37 +484,42 @@ module UploadSession =
 
             selectChain ordinalStart 0L physicalOffset []
 
+    type private ClaimedMetadataRangeEvidence = { ExpectedRanges: ContentBlockMetadataRange array; PhysicalRanges: ContentBlockMetadataRange array }
+
     let private claimedMetadataRangeEvidence (metadata: ContentBlockMetadata) (claimedRange: ClaimedReuseRange) =
         let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
 
-        let ranges =
+        let expectedRanges =
             Grace.Types.ContentBlockMetadata.findRangeEvidence metadata query
             |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
-        if ranges.Length = 0 then
+        if expectedRanges.Length = 0 then
             None
         else
-            let exactMatch =
-                ranges
-                |> Array.tryFind (fun range ->
-                    range.OrdinalStart = claimedRange.OrdinalStart
-                    && range.OrdinalCount = claimedRange.OrdinalCount
-                    && range.PhysicalOffset = claimedRange.PhysicalOffset
-                    && range.PhysicalLength = claimedRange.PhysicalLength)
-
-            match exactMatch with
-            | Some range -> Some [| range |]
+            match
+                trySelectActiveContiguousRangeChain
+                    claimedRange.OrdinalStart
+                    claimedRange.OrdinalCount
+                    (Some claimedRange.PhysicalOffset)
+                    claimedRange.PhysicalLength
+                    expectedRanges
+                with
+            | Some activeRanges -> Some { ExpectedRanges = expectedRanges; PhysicalRanges = activeRanges }
             | None ->
+                let activeExpectedRanges =
+                    expectedRanges
+                    |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
                 match
                     trySelectActiveContiguousRangeChain
                         claimedRange.OrdinalStart
                         claimedRange.OrdinalCount
-                        (Some claimedRange.PhysicalOffset)
+                        None
                         claimedRange.PhysicalLength
-                        ranges
+                        activeExpectedRanges
                     with
-                | Some activeRanges -> Some activeRanges
-                | None -> trySelectActiveContiguousRangeChain claimedRange.OrdinalStart claimedRange.OrdinalCount None claimedRange.PhysicalLength ranges
+                | Some activeRanges -> Some { ExpectedRanges = expectedRanges; PhysicalRanges = activeRanges }
+                | None -> None
 
     let private validateClaimedRangeMetadata
         correlationId
@@ -746,6 +750,7 @@ module UploadSession =
                     validateAuthoritativeStoragePlacement correlationId authoritativeMetadata.StoragePlacement
                     |> Result.bind (fun () ->
                         let physicalRanges = ResizeArray<ContentBlockMetadataRange>()
+                        let expectedRanges = ResizeArray<ContentBlockMetadataRange>()
                         let mutable rangeError = None
                         let mutable rangeIndex = 0
 
@@ -754,9 +759,12 @@ module UploadSession =
                             let claimedRange = claimedRanges[rangeIndex]
 
                             match claimedMetadataRangeEvidence authoritativeMetadata claimedRange with
-                            | Some matchingRanges ->
-                                for physicalRange in matchingRanges do
+                            | Some evidence ->
+                                for physicalRange in evidence.PhysicalRanges do
                                     physicalRanges.Add physicalRange
+
+                                for expectedRange in evidence.ExpectedRanges do
+                                    expectedRanges.Add expectedRange
                             | None ->
                                 rangeError <-
                                     Some(
@@ -783,7 +791,7 @@ module UploadSession =
                                             Ranges = finalizedManifestContributionRanges (physicalRanges.ToArray())
                                             ExpectedMetadataVersion = None
                                             RequireMissingMetadata = false
-                                            ExpectedRanges = physicalRanges.ToArray()
+                                            ExpectedRanges = expectedRanges.ToArray()
                                             IsFinalizeContribution = true
                                         }
                                 )
@@ -922,6 +930,7 @@ module UploadSession =
                             )
                     | Some authoritativeMetadata ->
                         let physicalRanges = ResizeArray<ContentBlockMetadataRange>()
+                        let expectedRanges = ResizeArray<ContentBlockMetadataRange>()
                         let mutable rangeError = None
                         let mutable rangeIndex = 0
 
@@ -930,9 +939,12 @@ module UploadSession =
                             let claimedRange = claimedRanges[rangeIndex]
 
                             match claimedMetadataRangeEvidence authoritativeMetadata claimedRange with
-                            | Some matchingRanges ->
-                                for physicalRange in matchingRanges do
+                            | Some evidence ->
+                                for physicalRange in evidence.PhysicalRanges do
                                     physicalRanges.Add physicalRange
+
+                                for expectedRange in evidence.ExpectedRanges do
+                                    expectedRanges.Add expectedRange
                             | None ->
                                 rangeError <-
                                     Some(
@@ -958,7 +970,7 @@ module UploadSession =
                                         Ranges = finalizedManifestContributionRanges (physicalRanges.ToArray())
                                         ExpectedMetadataVersion = None
                                         RequireMissingMetadata = false
-                                        ExpectedRanges = physicalRanges.ToArray()
+                                        ExpectedRanges = expectedRanges.ToArray()
                                         IsFinalizeContribution = true
                                     }
                             )

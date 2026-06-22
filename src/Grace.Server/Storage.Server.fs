@@ -427,29 +427,28 @@ module Storage =
             Error(GraceError.Create "Dedupe discovery has expired; reuse ranges cannot be claimed." correlationId)
         | Some discovery -> Ok discovery
 
-    let private hintMatchesDedupeIndexRecord (hint: ContentBlockReuseRangeHint) (record: DedupeIndex.DedupeIndexRecord) =
-        record.StoragePoolId = hint.StoragePoolId
-        && record.ContentBlockAddress = hint.ContentBlockAddress
-        && record.OrdinalStart = hint.OrdinalStart
-        && record.OrdinalCount = hint.OrdinalCount
-        && record.MetadataVersion = hint.MetadataVersion
-
-    let private reuseRangeHintFromDedupeIndexRecord (record: DedupeIndex.DedupeIndexRecord) : ContentBlockReuseRangeHint =
-        {
-            StoragePoolId = record.StoragePoolId
-            ContentBlockAddress = record.ContentBlockAddress
-            OrdinalStart = record.OrdinalStart
-            OrdinalCount = record.OrdinalCount
-            MetadataVersion = record.MetadataVersion
-        }
+    let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
+        not (isNull (box issued))
+        && issued.StoragePoolId = hint.StoragePoolId
+        && issued.ContentBlockAddress = hint.ContentBlockAddress
+        && issued.OrdinalStart = hint.OrdinalStart
+        && issued.OrdinalCount = hint.OrdinalCount
+        && issued.MetadataVersion = hint.MetadataVersion
 
     let private validateIssuedDedupeDiscoveryHints
         correlationId
         storagePoolId
+        (keyChunkAddresses: ChunkAddress array)
         (hints: ContentBlockReuseRangeHint array)
         (records: DedupeIndex.DedupeIndexRecord array)
         =
         let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
+        let discovery = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) records
+
+        let discoveredHints =
+            discovery.CandidateContentBlocks
+            |> Array.map DedupeIndex.toReuseRangeHint
+
         let mutable error = None
         let mutable index = 0
 
@@ -460,12 +459,15 @@ module Storage =
                 error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must not contain null entries." correlationId)
             elif hint.StoragePoolId <> storagePoolId then
                 error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates for this repository." correlationId)
+            elif keyChunkAddresses.Length = 0 then
+                error <-
+                    Some(GraceError.Create "IssueDedupeDiscovery Hints require discovery key chunks that reproduce the server discovery result." correlationId)
             else
                 match
-                    records
-                    |> Array.tryFind (hintMatchesDedupeIndexRecord hint)
+                    discoveredHints
+                    |> Array.tryFind (hintMatchesIssuedHint hint)
                     with
-                | Some record -> boundHints.Add(reuseRangeHintFromDedupeIndexRecord record)
+                | Some discoveredHint -> boundHints.Add(discoveredHint)
                 | None -> error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates." correlationId)
 
             index <- index + 1
@@ -473,14 +475,6 @@ module Storage =
         match error with
         | Some error -> Error error
         | None -> Ok(boundHints.ToArray())
-
-    let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
-        not (isNull (box issued))
-        && issued.StoragePoolId = hint.StoragePoolId
-        && issued.ContentBlockAddress = hint.ContentBlockAddress
-        && issued.OrdinalStart = hint.OrdinalStart
-        && issued.OrdinalCount = hint.OrdinalCount
-        && issued.MetadataVersion = hint.MetadataVersion
 
     let private validateClaimReuseHints correlationId storagePoolId (discovery: DedupeDiscoverySnapshot) (hints: ContentBlockReuseRangeHint array) =
         let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
@@ -1692,12 +1686,26 @@ module Storage =
 
                     let hints = if isNull parameters.Hints then Array.empty else parameters.Hints
 
+                    let keyChunkAddresses =
+                        if isNull parameters.KeyChunkAddresses then
+                            Array.empty
+                        else
+                            parameters.KeyChunkAddresses
+
                     if hints.Length > StorageParameterContracts.MaxReuseRangeClaims then
                         return!
                             context
                             |> result400BadRequest (
                                 GraceError.Create
                                     $"IssueDedupeDiscovery Hints must contain no more than {StorageParameterContracts.MaxReuseRangeClaims} items."
+                                    correlationId
+                            )
+                    elif keyChunkAddresses.Length > StorageParameterContracts.MaxDiscoveryKeyChunkAddresses then
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create
+                                    $"IssueDedupeDiscovery KeyChunkAddresses must contain no more than {StorageParameterContracts.MaxDiscoveryKeyChunkAddresses} items."
                                     correlationId
                             )
                     else
@@ -1711,7 +1719,7 @@ module Storage =
                             let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
                             let! records = dedupeIndexActor.Snapshot correlationId
 
-                            match validateIssuedDedupeDiscoveryHints correlationId storagePoolId hints records with
+                            match validateIssuedDedupeDiscoveryHints correlationId storagePoolId keyChunkAddresses hints records with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok boundHints ->
                                 let command =

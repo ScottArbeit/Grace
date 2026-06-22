@@ -283,6 +283,37 @@ type DedupeIndexServerTests() =
         )
 
     [<Test>]
+    member _.SharedPoolMetadataRefreshRewritesAllMatchingManifestRegistrations() =
+        let block = encodedBlock "shared-refresh-all-manifests" 12
+        let firstManifest = { manifestFor block with ManifestAddress = ManifestAddress "manifest-shared-refresh-first" }
+
+        let secondManifest = { manifestFor block with ManifestAddress = ManifestAddress "manifest-shared-refresh-second" }
+
+        let metadata = { metadataFor 2 61L block with StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+
+        let registrationFor manifest : DedupeIndex.FinalizedManifestRegistration =
+            let session = { finalizedSession manifest with StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+
+            { StoragePoolId = StoragePoolRouting.defaultStoragePoolId; Session = session; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        let stateAfterFirst, _ = DedupeIndex.registerFinalizedManifestInState DedupeIndex.DedupeIndexState.Empty (registrationFor firstManifest)
+        let stateAfterSecond, _ = DedupeIndex.registerFinalizedManifestInState stateAfterFirst (registrationFor secondManifest)
+        let stateAfterMetadata, newRecords = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterSecond metadata
+
+        let refreshedManifestAddresses =
+            stateAfterMetadata.Records
+            |> Array.filter (fun record ->
+                record.StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                && record.ContentBlockAddress = block.Address
+                && record.MetadataVersion = metadata.MetadataVersion)
+            |> Array.map (fun record -> record.ManifestAddress)
+            |> Set.ofArray
+
+        Assert.That(newRecords, Has.Length.GreaterThanOrEqualTo(2))
+        Assert.That(refreshedManifestAddresses.Contains firstManifest.ManifestAddress, Is.True)
+        Assert.That(refreshedManifestAddresses.Contains secondManifest.ManifestAddress, Is.True)
+
+    [<Test>]
     member _.CoalescedActiveRangesPublishBoundedWindowsBeyondFirstMaxWindow() =
         let block =
             encodedBlock

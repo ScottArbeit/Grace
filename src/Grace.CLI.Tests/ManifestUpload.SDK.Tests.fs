@@ -511,6 +511,7 @@ type ManifestUploadSdkTests() =
                                 Task.FromResult(Ok(GraceReturnValue.Create discovery correlationId))
                         IssueDedupeDiscovery =
                             fun parameters ->
+                                Assert.That(parameters.KeyChunkAddresses, Does.Contain(claimedBlock.KeyChunkAddress))
                                 Assert.That(parameters.Hints, Has.Length.EqualTo(1))
                                 Assert.That(parameters.Hints[0].ContentBlockAddress, Is.EqualTo(claimedBlock.Address))
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
@@ -621,7 +622,10 @@ type ManifestUploadSdkTests() =
                                     }
 
                                 Task.FromResult(Ok(GraceReturnValue.Create discovery correlationId))
-                        IssueDedupeDiscovery = fun parameters -> ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
+                        IssueDedupeDiscovery =
+                            fun parameters ->
+                                Assert.That(parameters.KeyChunkAddresses, Does.Contain(partiallyClaimedBlock.KeyChunkAddress))
+                                ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         ClaimReuseRanges =
                             fun parameters ->
                                 attemptedClaim <- true
@@ -783,6 +787,7 @@ type ManifestUploadSdkTests() =
                                 Task.FromResult(Ok(GraceReturnValue.Create discovery correlationId))
                         IssueDedupeDiscovery =
                             fun parameters ->
+                                Assert.That(parameters.KeyChunkAddresses, Does.Contain(candidateBlock.KeyChunkAddress))
                                 issuedDiscovery <- true
                                 ManifestUploadSdkTests.Decision correlationId parameters.UploadSessionId parameters.OperationId
                         ClaimReuseRanges =

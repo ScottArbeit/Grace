@@ -286,37 +286,10 @@ module ContentBlockMetadata =
 
             let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
 
-            let physicalBoundaryForOrdinal (range: ContentBlockMetadataRange) ordinal =
-                if ordinal <= range.OrdinalStart then
-                    range.PhysicalOffset
-                elif ordinal >= rangeEnd range then
-                    range.PhysicalOffset + range.PhysicalLength
-                else
-                    range.PhysicalOffset
-                    + int64 (
-                        decimal range.PhysicalLength
-                        * decimal (ordinal - range.OrdinalStart)
-                        / decimal range.OrdinalCount
-                    )
-
-            let sliceRangeToQuery (range: ContentBlockMetadataRange) =
-                let clippedStart = Math.Max(range.OrdinalStart, query.OrdinalStart)
-                let clippedEnd = Math.Min(rangeEnd range, queryEnd)
-                let physicalOffset = physicalBoundaryForOrdinal range clippedStart
-                let physicalEnd = physicalBoundaryForOrdinal range clippedEnd
-
-                { range with
-                    OrdinalStart = clippedStart
-                    OrdinalCount = clippedEnd - clippedStart
-                    PhysicalOffset = physicalOffset
-                    PhysicalLength = physicalEnd - physicalOffset
-                }
-
             let candidates =
                 metadata.Ranges
                 |> Array.choose (fun range ->
                     if range.ActiveManifestCount > 0
-                       && range.OrdinalStart <= queryEnd
                        && range.OrdinalStart >= 0
                        && range.OrdinalCount > 0
                        && range.OrdinalCount
@@ -324,15 +297,9 @@ module ContentBlockMetadata =
                        && range.PhysicalLength > 0L
                        && range.PhysicalLength
                           <= Int64.MaxValue - range.PhysicalOffset
-                       && rangeEnd range > query.OrdinalStart
-                       && range.OrdinalStart < queryEnd then
-                        let slicedRange = sliceRangeToQuery range
-
-                        if slicedRange.OrdinalCount > 0
-                           && slicedRange.PhysicalLength > 0L then
-                            Some slicedRange
-                        else
-                            None
+                       && range.OrdinalStart >= query.OrdinalStart
+                       && rangeEnd range <= queryEnd then
+                        Some range
                     else
                         None)
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
@@ -433,9 +400,19 @@ module ContentBlockMetadata =
         if isNull (box metadata)
            || isNull metadata.Ranges
            || isNull (box query)
-           || query.OrdinalCount <= 0 then
+           || query.OrdinalStart < 0
+           || query.OrdinalCount <= 0
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
             Array.empty
         else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) =
+                if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
+                    Int32.MaxValue
+                else
+                    range.OrdinalStart + range.OrdinalCount
+
             let exactRanges =
                 metadata.Ranges
                 |> Array.filter (fun range ->
@@ -451,7 +428,24 @@ module ContentBlockMetadata =
             else
                 match trySelectContiguousRangeEvidence metadata query with
                 | Some ranges -> ranges
-                | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
+                | None ->
+                    let activeCoveringRanges =
+                        metadata.Ranges
+                        |> Array.filter (fun range ->
+                            range.ActiveManifestCount > 0
+                            && range.OrdinalStart >= 0
+                            && range.OrdinalCount > 0
+                            && range.OrdinalCount
+                               <= Int32.MaxValue - range.OrdinalStart
+                            && range.PhysicalLength > 0L
+                            && range.PhysicalLength
+                               <= Int64.MaxValue - range.PhysicalOffset
+                            && range.OrdinalStart <= query.OrdinalStart
+                            && rangeEnd range >= queryEnd)
+
+                    if activeCoveringRanges.Length > 0 then activeCoveringRanges
+                    elif exactRanges.Length > 0 then exactRanges
+                    else Array.empty
 
     let tryFindRange metadata query =
         findRanges metadata query

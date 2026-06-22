@@ -1184,7 +1184,7 @@ type StorageManifestUploadSessionRoutes() =
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
 
-    let issueDedupeDiscovery repositoryId correlationId sessionId authorizedScope operationId hints =
+    let issueDedupeDiscovery repositoryId correlationId sessionId authorizedScope operationId keyChunkAddresses hints =
         task {
             let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
             setStorageParameters issue repositoryId correlationId
@@ -1197,6 +1197,7 @@ type StorageManifestUploadSessionRoutes() =
                     .Plus(NodaTime.Duration.FromMinutes 5L)
 
             issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.KeyChunkAddresses <- keyChunkAddresses
             issue.Hints <- hints
 
             return! postUploadSessionDecision "/storage/issueDedupeDiscovery" issue
@@ -1691,7 +1692,31 @@ type StorageManifestUploadSessionRoutes() =
             let reuseHint = DedupeIndex.toReuseRangeHint candidate
             let discoveryOperationId = "issue-cross-repo-target"
 
-            let! issuedDiscovery = issueDedupeDiscovery secondRepositoryId secondCorrelationId secondSessionId secondScope discoveryOperationId [| reuseHint |]
+            let forgedIssue = Parameters.Storage.IssueDedupeDiscoveryParameters()
+            setStorageParameters forgedIssue secondRepositoryId secondCorrelationId
+            forgedIssue.UploadSessionId <- secondSessionId
+            forgedIssue.AuthorizedScope <- secondScope
+            forgedIssue.OperationId <- "issue-cross-repo-forged"
+
+            forgedIssue.ExpiresAt <-
+                getCurrentInstant()
+                    .Plus(NodaTime.Duration.FromMinutes 5L)
+
+            forgedIssue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            forgedIssue.Hints <- [| reuseHint |]
+
+            let! forgedBody = postUploadSessionBadRequest "/storage/issueDedupeDiscovery" forgedIssue
+            Assert.That(forgedBody, Does.Contain("discovery key chunks"))
+
+            let! issuedDiscovery =
+                issueDedupeDiscovery
+                    secondRepositoryId
+                    secondCorrelationId
+                    secondSessionId
+                    secondScope
+                    discoveryOperationId
+                    (decodedChunkAddresses block)
+                    [| reuseHint |]
 
             Assert.That(issuedDiscovery.ReturnValue.Session.DedupeDiscovery, Is.Not.EqualTo(None))
             Assert.That(issuedDiscovery.ReturnValue.Session.DedupeDiscovery.Value.Hints, Has.Length.EqualTo(1))
@@ -2988,6 +3013,7 @@ type StorageManifestUploadSessionRoutes() =
                     .Plus(NodaTime.Duration.FromMinutes 5L)
 
             issue.MinimumReuseRunLength <- Parameters.Storage.MinimumAcceptedReuseRunLength
+            issue.KeyChunkAddresses <- [| (decodedChunkAddresses block)[0] |]
             issue.Hints <- [| reuseHint 0 |]
 
             let! body = postUploadSessionBadRequest "/storage/issueDedupeDiscovery" issue
