@@ -305,7 +305,7 @@ type ReferenceActorHashValidationTests() =
         }
 
     [<Test>]
-    member _.CreatePersistsReferenceBeforeManifestContributionBoundary() =
+    member _.SaveCreateAppliesManifestContributionBoundaryBeforeCreatedEventPersists() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
         let eventPlanningStart = actorSource.IndexOf("let! (referenceEventTypeResult", StringComparison.Ordinal)
@@ -322,10 +322,25 @@ type ReferenceActorHashValidationTests() =
 
         let createBranch = actorSource.Substring(createBranchStart, addLinkBranchStart - createBranchStart)
 
+        let validateIndex = createBranch.IndexOf("validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash", StringComparison.Ordinal)
+
+        Assert.That(validateIndex, Is.GreaterThanOrEqualTo(0), "Create must validate root directory hashes before planning Created.")
+
+        let boundaryIndex =
+            createBranch.IndexOf("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType", validateIndex, StringComparison.Ordinal)
+
         Assert.That(
-            createBranch,
-            Does.Not.Contain("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType"),
-            "Create must not apply manifest contribution side effects before the Created event is durable."
+            boundaryIndex,
+            Is.GreaterThan(validateIndex),
+            "Save create must apply manifest contribution side effects after hash validation and before planning Created."
+        )
+
+        let createdIndex = createBranch.IndexOf("Created(", boundaryIndex, StringComparison.Ordinal)
+
+        Assert.That(
+            createdIndex,
+            Is.GreaterThan(boundaryIndex),
+            "A failed Save manifest contribution boundary must return Error before Created is planned for persistence."
         )
 
         let applyResultStart = actorSource.IndexOf("match referenceEventTypeResult with", addLinkBranchStart, StringComparison.Ordinal)
@@ -339,19 +354,22 @@ type ReferenceActorHashValidationTests() =
         let applyResultSlice = actorSource.Substring(applyResultStart, handleEnd - applyResultStart)
         let applyEventIndex = applyResultSlice.IndexOf("let! returnValue = this.ApplyEvent referenceEvent", StringComparison.Ordinal)
 
-        Assert.That(applyEventIndex, Is.GreaterThanOrEqualTo(0), "ReferenceActor must persist the reference event through ApplyEvent.")
-
-        let boundaryIndex =
-            applyResultSlice.IndexOf(
-                "applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType",
-                applyEventIndex,
-                StringComparison.Ordinal
-            )
+        Assert.That(
+            applyResultSlice,
+            Does.Contain("return! this.ApplyEvent referenceEvent"),
+            "ReferenceActor must persist the planned reference event through ApplyEvent after pre-persistence validation."
+        )
 
         Assert.That(
-            boundaryIndex,
-            Is.GreaterThan(applyEventIndex),
-            "Manifest contribution side effects for created Save references must run only after ApplyEvent succeeds."
+            applyEventIndex,
+            Is.LessThan(0),
+            "ReferenceActor must not keep the legacy ApplyEvent binding that allowed post-persistence boundary failures."
+        )
+
+        Assert.That(
+            applyResultSlice,
+            Does.Not.Contain("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType"),
+            "Save manifest contribution boundary failures must not occur after ApplyEvent persists Created."
         )
 
     [<Test>]
