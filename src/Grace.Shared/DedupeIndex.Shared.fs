@@ -62,6 +62,7 @@ module DedupeIndex =
 
     let private globalGate = obj ()
     let mutable private globalState = DedupeIndexState.Empty
+    let private MinimumIssuedReuseRunLength = 1
 
     let discoveryPolicy () : ContentBlockDiscoveryPolicy =
         {
@@ -70,7 +71,7 @@ module DedupeIndex =
             MaxWindowChunks = MaxWindowChunks
             MaxResponseProtectedChunks = MaxResponseProtectedChunks
             ResponseTtlSeconds = ResponseTtlSeconds
-            MinimumAcceptedReuseRunLength = MinimumAcceptedReuseRunLength
+            MinimumAcceptedReuseRunLength = MinimumIssuedReuseRunLength
             PositiveCandidatesEnabled = true
             EmptyResponseMeansAbsent = false
             IsAuthoritative = false

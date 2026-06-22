@@ -206,6 +206,82 @@ type DedupeIndexServerTests() =
         Assert.That(candidate.ProtectedChunkAddresses, Has.Length.EqualTo(1))
         Assert.That(candidate.ProtectedChunkAddresses[0], Is.EqualTo(protectedChunkAddress StoragePoolRouting.defaultStoragePoolId requestedChunk))
         Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(requestedChunk))
+        Assert.That(repoBResult.Policy.MinimumAcceptedReuseRunLength, Is.EqualTo(1))
+
+        Assert.That(
+            repoBResult.Policy.MinimumAcceptedReuseRunLength,
+            Is.LessThan(MinimumAcceptedReuseRunLength),
+            "Whole-block one-chunk candidates must be issued with a claimable minimum even though larger-block fragments still use the guarded threshold."
+        )
+
+        let hint = DedupeIndex.toReuseRangeHint candidate
+
+        let discovery =
+            UploadSessionCommand.IssueDedupeDiscovery
+                {
+                    OperationId = "op-one-chunk-discovery"
+                    ExpiresAt = timestamp.Plus(Duration.FromMinutes(5L))
+                    MinimumReuseRunLength = repoBResult.Policy.MinimumAcceptedReuseRunLength
+                    Hints = [| hint |]
+                }
+
+        let started =
+            { UploadSessionDto.Default with
+                UploadSessionId = Guid.NewGuid()
+                RepositoryId = repoB.RepositoryId
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.Started
+            }
+
+        let eventMetadata =
+            {
+                Timestamp = timestamp
+                CorrelationId = "corr-one-chunk-claimable"
+                Principal = "tester"
+                ClientType = Microsoft.FSharp.Core.Option.None
+                Properties = Dictionary<string, string>()
+            }
+
+        let issuedSession, discoveryEvents =
+            match Grace.Actors.UploadSession.decideCommand [] started discovery eventMetadata with
+            | Ok decision -> decision.Session, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected one-chunk discovery issue to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let claim =
+            UploadSessionCommand.ClaimReuseRanges
+                {
+                    OperationId = "op-one-chunk-claim"
+                    DiscoveryOperationId = "op-one-chunk-discovery"
+                    Ranges =
+                        [|
+                            { Hint = hint; Metadata = metadata }
+                        |]
+                }
+
+        match Grace.Actors.UploadSession.decideCommand discoveryEvents issuedSession claim eventMetadata with
+        | Ok decision ->
+            Assert.That(decision.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .ContentBlockAddress,
+                Is.EqualTo(block.Address)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .OrdinalCount,
+                Is.EqualTo(1)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .MetadataVersion,
+                Is.EqualTo(metadata.MetadataVersion)
+            )
+        | Error error -> Assert.Fail($"Expected whole one-chunk reuse range claim to succeed, got {error.Error}.")
 
     [<Test>]
     member _.OneChunkFragmentsInsideLargerBlocksStayBelowTheAcceptedReuseRunLength() =
