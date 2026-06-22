@@ -771,6 +771,17 @@ module Interfaces =
         /// Returns the events handled by this manifest contribution workflow.
         abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ManifestContributionWorkflowEvent>>
 
+        /// Starts a manifest contribution workflow from actor-to-actor save-boundary orchestration.
+        abstract member Start:
+            operationId: ManifestContributionWorkflowOperationId ->
+            repositoryId: RepositoryId ->
+            storagePoolId: StoragePoolId ->
+            manifestAddress: ManifestAddress ->
+            direction: ManifestContributionDirection ->
+            ranges: ManifestContributionWorkflowRange array ->
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<ManifestContributionWorkflowDecision>>
+
         /// Validates incoming commands and converts them to persisted workflow progress and fan-out intents.
         abstract member Handle:
             command: ManifestContributionWorkflowCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ManifestContributionWorkflowDecision>>
