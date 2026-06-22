@@ -29,7 +29,7 @@ class ContentBlockDiscoveryCandidate(BaseModel):
     """
     A bounded, response-protected candidate window for possible ContentBlock reuse.
     """ # noqa: E501
-    storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier.", alias="StoragePoolId")
+    storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.", alias="StoragePoolId")
     manifest_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived FileManifest address.", alias="ManifestAddress")
     content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
     ordinal_start: Optional[StrictInt] = Field(default=None, alias="OrdinalStart")

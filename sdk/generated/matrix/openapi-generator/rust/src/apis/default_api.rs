@@ -296,7 +296,7 @@ pub async fn finalize_manifest_upload(configuration: &configuration::Configurati
     }
 }
 
-/// Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+/// Gets an object-storage download URI for one ContentBlock in an authorized manifest-backed reconstruction path. Callers provide the server-accepted StoragePoolId, ManifestAddress, ContentBlockAddress, and AuthorizedScope; the request does not repost the full FileManifest for each block.
 pub async fn get_content_block_download_uri(configuration: &configuration::Configuration, get_content_block_download_uri_parameters: models::GetContentBlockDownloadUriParameters) -> Result<String, Error<GetContentBlockDownloadUriError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_get_content_block_download_uri_parameters = get_content_block_download_uri_parameters;
