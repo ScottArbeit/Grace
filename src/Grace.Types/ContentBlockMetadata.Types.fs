@@ -294,43 +294,53 @@ module ContentBlockMetadata =
                     && range.PhysicalLength > 0L)
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
-            let selected = ResizeArray<ContentBlockMetadataRange>()
-            let mutable nextOrdinal = query.OrdinalStart
-            let mutable nextPhysicalOffset = 0L
-            let mutable initialized = false
-            let mutable index = 0
-
-            while nextOrdinal < queryEnd
-                  && index < candidates.Length do
-                let candidate = candidates[index]
-
-                if candidate.OrdinalStart = nextOrdinal then
-                    if not initialized then
-                        initialized <- true
-                        nextPhysicalOffset <- candidate.PhysicalOffset
-
-                    if candidate.PhysicalOffset = nextPhysicalOffset then
-                        selected.Add candidate
-
-                        nextOrdinal <-
+            let rec tryBuildChain nextOrdinal nextPhysicalOffset selected =
+                if nextOrdinal = queryEnd then
+                    Some(List.rev selected |> List.toArray)
+                else
+                    candidates
+                    |> Array.filter (fun candidate ->
+                        candidate.OrdinalStart = nextOrdinal
+                        && candidate.PhysicalOffset = nextPhysicalOffset)
+                    |> Array.tryPick (fun candidate ->
+                        let candidateEnd =
                             if candidate.OrdinalCount > Int32.MaxValue - candidate.OrdinalStart then
                                 Int32.MaxValue
                             else
                                 candidate.OrdinalStart + candidate.OrdinalCount
 
-                        nextPhysicalOffset <-
+                        let candidatePhysicalEnd =
                             if candidate.PhysicalLength > Int64.MaxValue - candidate.PhysicalOffset then
                                 Int64.MaxValue
                             else
                                 candidate.PhysicalOffset
                                 + candidate.PhysicalLength
 
-                index <- index + 1
+                        if candidateEnd > queryEnd then
+                            None
+                        else
+                            tryBuildChain candidateEnd candidatePhysicalEnd (candidate :: selected))
 
-            if nextOrdinal = queryEnd && selected.Count > 0 then
-                Some(selected.ToArray())
-            else
-                None
+            candidates
+            |> Array.filter (fun candidate -> candidate.OrdinalStart = query.OrdinalStart)
+            |> Array.tryPick (fun candidate ->
+                let candidateEnd =
+                    if candidate.OrdinalCount > Int32.MaxValue - candidate.OrdinalStart then
+                        Int32.MaxValue
+                    else
+                        candidate.OrdinalStart + candidate.OrdinalCount
+
+                let candidatePhysicalEnd =
+                    if candidate.PhysicalLength > Int64.MaxValue - candidate.PhysicalOffset then
+                        Int64.MaxValue
+                    else
+                        candidate.PhysicalOffset
+                        + candidate.PhysicalLength
+
+                if candidateEnd > queryEnd then
+                    None
+                else
+                    tryBuildChain candidateEnd candidatePhysicalEnd [ candidate ])
 
     let private trySynthesizeContiguousRange (metadata: ContentBlockMetadata) query =
         match trySelectContiguousRangeEvidence metadata query with

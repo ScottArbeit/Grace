@@ -716,7 +716,7 @@ module UploadSession =
                                     ContentBlockMetadataCommand.MergePhysicalRanges
                                         {
                                             OperationId =
-                                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
+                                                $"{finalizeOperationId}:repository:{session.RepositoryId:N}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
                                             StoragePoolId = storagePoolId
                                             ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                             BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
@@ -742,7 +742,7 @@ module UploadSession =
                     ContentBlockMetadataCommand.MergePhysicalRanges
                         {
                             OperationId =
-                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{confirmedBlock.ContentBlockAddress}"
+                                $"{finalizeOperationId}:repository:{session.RepositoryId:N}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{confirmedBlock.ContentBlockAddress}"
                             StoragePoolId = storagePoolId
                             ContentBlockAddress = confirmedBlock.ContentBlockAddress
                             BlockFormatVersion = 1s
@@ -883,7 +883,7 @@ module UploadSession =
                                 ContentBlockMetadataCommand.MergePhysicalRanges
                                     {
                                         OperationId =
-                                            $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
+                                            $"{finalizeOperationId}:repository:{session.RepositoryId:N}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
                                         StoragePoolId = storagePoolId
                                         ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                         BlockFormatVersion = authoritativeMetadata.BlockFormatVersion

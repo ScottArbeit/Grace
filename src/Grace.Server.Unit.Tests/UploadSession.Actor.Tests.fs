@@ -833,7 +833,11 @@ type UploadSessionActorTests() =
         let assertMerge command (expectedAddress: ContentBlockAddress) (expectedObjectKey: string) =
             match command with
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-                Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:upload-session:{sessionId:N}:content-block-metadata:{expectedAddress}"))
+                Assert.That(
+                    merge.OperationId,
+                    Is.EqualTo($"op-finalize:repository:{session.RepositoryId:N}:upload-session:{sessionId:N}:content-block-metadata:{expectedAddress}")
+                )
+
                 Assert.That(merge.StoragePoolId, Is.EqualTo(expectedStoragePoolId))
                 Assert.That(merge.ContentBlockAddress, Is.EqualTo(expectedAddress))
                 Assert.That(merge.StoragePlacement.ObjectKey, Is.EqualTo(expectedObjectKey))
@@ -894,7 +898,11 @@ type UploadSessionActorTests() =
 
         match commands[0] with
         | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-            Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:upload-session:{sessionId:N}:content-block-metadata:{block.Address}"))
+            Assert.That(
+                merge.OperationId,
+                Is.EqualTo($"op-finalize:repository:{session.RepositoryId:N}:upload-session:{sessionId:N}:content-block-metadata:{block.Address}")
+            )
+
             Assert.That(merge.StoragePoolId, Is.EqualTo(sessionStoragePoolId))
             Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
             Assert.That(merge.StoragePlacement, Is.EqualTo(authoritativeMetadata.StoragePlacement))
@@ -1366,7 +1374,11 @@ type UploadSessionActorTests() =
 
             match commands[0] with
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-                Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:upload-session:{sessionId:N}:content-block-metadata:{block.Address}"))
+                Assert.That(
+                    merge.OperationId,
+                    Is.EqualTo($"op-finalize:repository:{session.RepositoryId:N}:upload-session:{sessionId:N}:content-block-metadata:{block.Address}")
+                )
+
                 Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
                 Assert.That(merge.BlockFormatVersion, Is.EqualTo(freshMetadata.BlockFormatVersion))
                 Assert.That(merge.StoragePlacement, Is.EqualTo(freshMetadata.StoragePlacement))
@@ -1545,6 +1557,68 @@ type UploadSessionActorTests() =
                 .ActiveManifestCount,
             Is.EqualTo(2)
         )
+
+    [<Test>]
+    member _.FinalizeMetadataMergeOperationIdsIncludeRepositoryScopeForSharedPoolSessions() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("same upload session id across repositories")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+        let confirmedRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
+        let alternateRepositoryId = Guid.Parse("a50fe532-42fa-4a50-9894-53fdad0374f2")
+
+        let sessionFor repositoryId =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                StoragePoolId = sessionStoragePoolId
+                ConfirmedBlockUploads =
+                    [|
+                        {
+                            ContentBlockAddress = block.Address
+                            PayloadLength = block.Payload.LongLength
+                            StoragePlacement = placementFor block.Address (Some "etag-confirmed")
+                            Ranges = [| confirmedRange |]
+                            ConfirmedAt = timestamp
+                        }
+                    |]
+            }
+
+        let firstCommands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads sessionStoragePoolId "op-finalize" (sessionFor repositoryId) manifest
+
+        let secondCommands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads
+                sessionStoragePoolId
+                "op-finalize"
+                (sessionFor alternateRepositoryId)
+                manifest
+
+        let operationId command =
+            match command with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge.OperationId
+            | _ ->
+                Assert.Fail("Expected uploaded block finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
+                String.Empty
+
+        let firstOperationId = operationId firstCommands[0]
+        let secondOperationId = operationId secondCommands[0]
+
+        Assert.That(firstOperationId, Is.Not.EqualTo(secondOperationId))
+        Assert.That(firstOperationId, Does.Contain(repositoryId.ToString("N")))
+        Assert.That(secondOperationId, Does.Contain(alternateRepositoryId.ToString("N")))
+        Assert.That(firstOperationId, Does.Contain(sessionId.ToString("N")))
+        Assert.That(secondOperationId, Does.Contain(sessionId.ToString("N")))
+
+    [<Test>]
+    member _.ReminderDispatchUsesPersistedUploadSessionPrimaryKeyWithoutRehashing() =
+        let reminderPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reminder.Actor.fs"))
+        let reminderSource = File.ReadAllText(reminderPath)
+        let actorProxyPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "ActorProxy.Extensions.Actor.fs"))
+        let actorProxySource = File.ReadAllText(actorProxyPath)
+
+        Assert.That(actorProxySource, Does.Contain("let CreateActorProxyForPrimaryKey"))
+        Assert.That(reminderSource, Does.Contain("UploadSession.CreateActorProxyForPrimaryKey actorId reminderDto.RepositoryId correlationId"))
+        Assert.That(reminderSource, Does.Not.Contain("UploadSession.CreateActorProxy actorId reminderDto.RepositoryId correlationId"))
 
     [<Test>]
     member _.FinalizeMetadataRetryAfterPartialPostFinalizedFailureDoesNotDoubleIncrementEarlierBlock() =

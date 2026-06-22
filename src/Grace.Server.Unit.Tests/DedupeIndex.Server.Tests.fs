@@ -228,6 +228,92 @@ type DedupeIndexServerTests() =
         )
 
     [<Test>]
+    member _.FinalizedManifestRegistrationsAreScopedByRepositoryBeforeSharedPoolCollapse() =
+        let uploadSessionId = Guid.Parse("7121d3c7-61dc-4a47-a433-62d5a42288a7")
+        let scope = "/shared/path.bin"
+        let block = encodedBlock "shared-finalized-manifest-scope" 12
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 51L block
+        let repoA = Guid.Parse("ff4b53c2-bac9-4d8b-b31b-5f7f2d82d6d8")
+        let repoB = Guid.Parse("568ee3cc-5c49-4446-80c7-910875ea1a03")
+
+        let sessionFor repositoryId =
+            { finalizedSession manifest with
+                UploadSessionId = uploadSessionId
+                RepositoryId = repositoryId
+                AuthorizedScope = scope
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+            }
+
+        let registrationFor repositoryId : DedupeIndex.FinalizedManifestRegistration =
+            {
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                Session = sessionFor repositoryId
+                Manifest = manifest
+                BlockPayloads = [| payloadFor block |]
+            }
+
+        let stateAfterRepoA, _ = DedupeIndex.registerFinalizedManifestInState DedupeIndex.DedupeIndexState.Empty (registrationFor repoA)
+
+        let stateAfterRepoB, _ = DedupeIndex.registerFinalizedManifestInState stateAfterRepoA (registrationFor repoB)
+        let stateAfterMetadata, _ = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterRepoB metadata
+
+        Assert.That(stateAfterMetadata.FinalizedManifests, Has.Length.EqualTo(2))
+
+        Assert.That(
+            DedupeIndex.finalizedScopedManifestContainsBlock
+                StoragePoolRouting.defaultStoragePoolId
+                repoA
+                scope
+                manifest.ManifestAddress
+                block.Address
+                stateAfterMetadata,
+            Is.True
+        )
+
+        Assert.That(
+            DedupeIndex.finalizedScopedManifestContainsBlock
+                StoragePoolRouting.defaultStoragePoolId
+                repoB
+                scope
+                manifest.ManifestAddress
+                block.Address
+                stateAfterMetadata,
+            Is.True
+        )
+
+    [<Test>]
+    member _.CoalescedActiveRangesPublishBoundedWindowsBeyondFirstMaxWindow() =
+        let block =
+            encodedBlock
+                "bounded-windows"
+                (MaxWindowChunks
+                 + MinimumAcceptedReuseRunLength
+                 + 4)
+
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 52L block
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+
+        let laterWindow =
+            records
+            |> Array.tryFind (fun record -> record.OrdinalStart = MaxWindowChunks)
+
+        Assert.That(
+            records
+            |> Array.exists (fun record -> record.OrdinalStart = 0),
+            Is.True
+        )
+
+        Assert.That(laterWindow.IsSome, Is.True, "Long coalesced ranges must expose later bounded windows.")
+
+        let laterChunk = (decodedChunkAddresses block)[MaxWindowChunks]
+        let result = discover records [| laterChunk |]
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(MaxWindowChunks))
+
+    [<Test>]
     member _.DiscoveryLimitsCandidateWindowsForAKeyChunk() =
         let firstBlock = encodedBlock "limit-shared" 12
         let sharedChunkBytes = firstBlock.Chunks[0].Bytes

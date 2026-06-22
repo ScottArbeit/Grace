@@ -1,12 +1,43 @@
 namespace Grace.Types.Tests
 
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.Common
 open Microsoft.FSharp.Reflection
+open NodaTime
 open NUnit.Framework
 open Orleans
 
 [<TestFixture>]
 type ContentBlockMetadataTypesTests() =
+
+    let timestamp = Instant.FromUtc(2026, 5, 24, 15, 0)
+
+    let range ordinalStart ordinalCount physicalOffset physicalLength =
+        { OrdinalStart = ordinalStart; OrdinalCount = ordinalCount; ActiveManifestCount = 1; PhysicalOffset = physicalOffset; PhysicalLength = physicalLength }
+
+    let metadata ranges =
+        {
+            Class = nameof ContentBlockMetadata
+            StoragePoolId = StoragePoolId "pool-main"
+            ContentBlockAddress = ContentBlockAddress "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+            BlockFormatVersion = 1s
+            StoragePlacement =
+                {
+                    StorageAccountName = "cas-account"
+                    StorageContainerName = StorageContainerName "cas-container"
+                    ObjectKey = "cas/content/aa/aa/aa/aa/aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                    ETag = Some "etag-1"
+                }
+            Ranges = ranges
+            TotalPhysicalBytes =
+                ranges
+                |> Array.sumBy (fun range -> range.PhysicalLength)
+            ActivePhysicalBytes =
+                ranges
+                |> Array.sumBy (fun range -> range.PhysicalLength)
+            MetadataVersion = 1L
+            UpdatedAt = timestamp
+        }
 
     [<Test>]
     member _.ContentBlockMetadataCommandCasesHaveStableSerializerIds() =
@@ -33,3 +64,25 @@ type ContentBlockMetadataTypesTests() =
                 |]
             )
         )
+
+    [<Test>]
+    member _.FindRangeEvidenceBacktracksAcrossAlternateContiguousChains() =
+        let lowerOffsetPartial = range 0 4 0L 400L
+        let completeFirst = range 0 4 1024L 400L
+        let completeSecond = range 4 4 1424L 400L
+
+        let currentMetadata =
+            metadata [| lowerOffsetPartial
+                        completeFirst
+                        completeSecond |]
+
+        let evidence = findRangeEvidence currentMetadata { OrdinalStart = 0; OrdinalCount = 8 }
+
+        Assert.That(evidence, Has.Length.EqualTo(2))
+        Assert.That(evidence[0].PhysicalOffset, Is.EqualTo(completeFirst.PhysicalOffset))
+        Assert.That(evidence[1].PhysicalOffset, Is.EqualTo(completeSecond.PhysicalOffset))
+
+        let synthesized = findRanges currentMetadata { OrdinalStart = 0; OrdinalCount = 8 }
+
+        Assert.That(synthesized, Has.Length.EqualTo(1))
+        Assert.That(synthesized[0].PhysicalOffset, Is.EqualTo(completeFirst.PhysicalOffset))

@@ -97,11 +97,13 @@ module DedupeIndex =
     let private recordKey (record: DedupeIndexRecord) =
         $"{record.StoragePoolId}|{record.ManifestAddress}|{record.ContentBlockAddress}|{record.OrdinalStart}|{record.OrdinalCount}|{record.MetadataVersion}"
 
+    let private finalizedSessionScopeKey (session: UploadSessionDto) = $"{session.RepositoryId:N}|{session.UploadSessionId:N}"
+
     let private finalizedManifestKey (registration: FinalizedManifestRegistration) =
-        $"{registration.StoragePoolId}|{registration.Session.UploadSessionId}|{registration.Manifest.ManifestAddress}"
+        $"{registration.StoragePoolId}|{finalizedSessionScopeKey registration.Session}|{registration.Manifest.ManifestAddress}"
 
     let private runtimeFinalizedManifestKey (registration: RuntimeFinalizedManifestRegistration) =
-        $"{registration.StoragePoolId}|{registration.Session.UploadSessionId}|{registration.ManifestAddress}"
+        $"{registration.StoragePoolId}|{finalizedSessionScopeKey registration.Session}|{registration.ManifestAddress}"
 
     let private metadataKey (metadata: ContentBlockMetadata) = $"{metadata.StoragePoolId}|{metadata.ContentBlockAddress}"
 
@@ -301,6 +303,54 @@ module DedupeIndex =
                         ProtectedChunkAddresses = protectedChunkAddresses
                     }
 
+    let private splitRangeIntoDedupeWindows (range: ContentBlockMetadataRange) =
+        let output = ResizeArray<ContentBlockMetadataRange>()
+
+        if not (isNull (box range))
+           && range.ActiveManifestCount > 0
+           && range.OrdinalStart >= 0
+           && range.OrdinalCount
+              >= MinimumAcceptedReuseRunLength
+           && range.PhysicalOffset >= 0L
+           && range.PhysicalLength > 0L then
+            let mutable remainingOrdinalCount = range.OrdinalCount
+            let mutable currentOrdinalStart = range.OrdinalStart
+            let mutable currentPhysicalOffset = range.PhysicalOffset
+            let mutable remainingPhysicalLength = range.PhysicalLength
+
+            while remainingOrdinalCount
+                  >= MinimumAcceptedReuseRunLength
+                  && remainingPhysicalLength > 0L do
+                let windowOrdinalCount = Math.Min(remainingOrdinalCount, MaxWindowChunks)
+
+                let windowPhysicalLength =
+                    if windowOrdinalCount = remainingOrdinalCount then
+                        remainingPhysicalLength
+                    else
+                        let proportionalLength =
+                            decimal range.PhysicalLength
+                            * decimal windowOrdinalCount
+                            / decimal range.OrdinalCount
+                            |> Math.Ceiling
+                            |> int64
+
+                        Math.Min(remainingPhysicalLength, Math.Max(1L, proportionalLength))
+
+                output.Add
+                    { range with
+                        OrdinalStart = currentOrdinalStart
+                        OrdinalCount = windowOrdinalCount
+                        PhysicalOffset = currentPhysicalOffset
+                        PhysicalLength = windowPhysicalLength
+                    }
+
+                remainingOrdinalCount <- remainingOrdinalCount - windowOrdinalCount
+                currentOrdinalStart <- currentOrdinalStart + windowOrdinalCount
+                currentPhysicalOffset <- currentPhysicalOffset + windowPhysicalLength
+                remainingPhysicalLength <- remainingPhysicalLength - windowPhysicalLength
+
+        output.ToArray()
+
     let private contiguousActiveRanges (ranges: ContentBlockMetadataRange array) =
         let output = ResizeArray<ContentBlockMetadataRange>()
 
@@ -351,7 +401,9 @@ module DedupeIndex =
             | Some active -> output.Add active
             | None -> ()
 
-        output.ToArray()
+        output
+        |> Seq.collect splitRangeIntoDedupeWindows
+        |> Seq.toArray
 
     let recordsAfterFinalize (source: FinalizedManifestIndexSource) =
         if not (isFinalizedForManifest source) then

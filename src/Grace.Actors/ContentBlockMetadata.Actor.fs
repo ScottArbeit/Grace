@@ -318,11 +318,15 @@ module ContentBlockMetadata =
                     )
 
     let private expectedRangeExists (existing: ContentBlockMetadata) (expectedRange: ContentBlockMetadataRange) =
-        let query = { OrdinalStart = expectedRange.OrdinalStart; OrdinalCount = expectedRange.OrdinalCount }
-
         let expectedKey = rangeKey expectedRange
 
-        Grace.Types.ContentBlockMetadata.findRanges existing query
+        let ranges =
+            if isNull (box existing) || isNull existing.Ranges then
+                Array.empty
+            else
+                existing.Ranges
+
+        ranges
         |> Array.exists (fun existingRange -> rangeKey existingRange = expectedKey)
 
     let private validateMergePreconditions correlationId (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =

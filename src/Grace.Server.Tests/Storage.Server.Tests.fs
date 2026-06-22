@@ -822,6 +822,20 @@ type StorageContentBlockDiscoveryRoutes() =
         }
 
     [<Test>]
+    member _.DiscoverContentBlocksRejectsMissingRepositoryBeforeSharedPoolLookup() =
+        task {
+            let missingRepositoryId = $"{Guid.NewGuid()}"
+            let requestedChunkAddresses = [| $"chunk-{Guid.NewGuid():N}" |]
+
+            let! response = postDiscoveryAsync Client missingRepositoryId requestedChunkAddresses
+            let! body = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+            Assert.That(body, Does.Contain("provided RepositoryId does not exist"))
+            Assert.That(body, Does.Not.Contain("CandidateContentBlocks"))
+        }
+
+    [<Test>]
     member _.DiscoveryRejectsRequestsAboveMaxKeyChunkLimit() =
         task {
             let repositoryId = repositoryIds[0]

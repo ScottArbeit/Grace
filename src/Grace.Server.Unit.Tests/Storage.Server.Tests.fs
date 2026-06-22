@@ -948,6 +948,28 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Contain("DedupeIndex.discover storagePoolId"))
 
     [<Test>]
+    member _.DiscoverContentBlocksValidatesRepositoryBeforeResolvingSharedDedupePool() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let handlerStart = storageServerSource.IndexOf("let DiscoverContentBlocks: HttpHandler =", StringComparison.Ordinal)
+        let handlerEnd = storageServerSource.IndexOf("let StartManifestUploadSession: HttpHandler =", handlerStart, StringComparison.Ordinal)
+
+        Assert.That(handlerStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(handlerEnd, Is.GreaterThan(handlerStart))
+
+        let handlerSource = storageServerSource.Substring(handlerStart, handlerEnd - handlerStart)
+
+        let repositoryValidation =
+            handlerSource.IndexOf("validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId", StringComparison.Ordinal)
+
+        let poolResolution = handlerSource.IndexOf("resolveRepositoryDedupeStoragePoolId repositoryDto correlationId", StringComparison.Ordinal)
+        let dedupeLookup = handlerSource.IndexOf("dedupeIndexActor.Snapshot correlationId", StringComparison.Ordinal)
+
+        Assert.That(repositoryValidation, Is.GreaterThanOrEqualTo(0))
+        Assert.That(poolResolution, Is.GreaterThan(repositoryValidation))
+        Assert.That(dedupeLookup, Is.GreaterThan(poolResolution))
+
+    [<Test>]
     member _.UploadSessionStagingCleanupUsesRecordedSessionPoolRoute() =
         let servicesPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Services.Actor.fs"))
         let servicesSource = File.ReadAllText(servicesPath)

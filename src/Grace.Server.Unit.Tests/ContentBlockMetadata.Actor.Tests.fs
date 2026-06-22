@@ -867,6 +867,27 @@ type ContentBlockMetadataActorTests() =
         | Error error -> Assert.That(error.Error, Does.Contain("expected range evidence is absent or changed"))
 
     [<Test>]
+    member _.FinalizeMergeRequiresExactExpectedRangeEvidenceInsteadOfSynthesizedWindow() =
+        let firstEvidence = { activeRange with OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = 512L }
+        let secondEvidence = { activeRange with OrdinalStart = 4; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 512L; PhysicalLength = 512L }
+        let synthesizedExpected = { activeRange with OrdinalStart = 0; OrdinalCount = 8; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = 1024L }
+        let currentMetadata = recordWithTotals [| firstEvidence; secondEvidence |] 1024L 1024L timestamp 8L
+        let currentDto = { ContentBlockMetadataDto.Empty with Metadata = Some currentMetadata }
+
+        let evidenceOnlyCommand =
+            mergeWithPreconditions "op-finalize-synthesized-evidence" None false [| synthesizedExpected |] [| synthesizedExpected |]
+            |> function
+                | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                    ContentBlockMetadataCommand.MergePhysicalRanges { merge with IsFinalizeContribution = true }
+                | command -> command
+
+        let result = ContentBlockMetadataActor.decideCommand [] currentDto evidenceOnlyCommand (metadata "corr-finalize-synthesized-evidence")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected synthesized contiguous expected-range evidence to fail closed.")
+        | Error error -> Assert.That(error.Error, Does.Contain("expected range evidence is absent or changed"))
+
+    [<Test>]
     member _.MergePhysicalRangesPreservesExistingActiveCountForSingleNonFinalizeRange() =
         let existingActive = { activeRange with ActiveManifestCount = 1 }
         let currentMetadata = recordWithTotals [| existingActive |] existingActive.PhysicalLength existingActive.PhysicalLength timestamp 7L

@@ -1597,16 +1597,19 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                        match validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok storagePoolId ->
-                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
-                            let! snapshot = dedupeIndexActor.Snapshot correlationId
-                            let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
+                        | Ok () ->
+                            match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok storagePoolId ->
+                                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                                let! snapshot = dedupeIndexActor.Snapshot correlationId
+                                let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
 
-                            return!
-                                context
-                                |> result200Ok (GraceReturnValue.Create result correlationId)
+                                return!
+                                    context
+                                    |> result200Ok (GraceReturnValue.Create result correlationId)
                 with
                 | ex ->
                     logToConsole $"Exception in DiscoverContentBlocks: {(ExceptionResponse.Create ex)}"
