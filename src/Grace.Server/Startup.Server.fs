@@ -231,6 +231,14 @@ module Application =
                     return Ok(Operation.PathRead, Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, normalizedPath))
             }
 
+        let invalidContentBlockAddressError correlationId =
+            GraceError.Create "ContentBlockAddress must be a 64-character hexadecimal BLAKE3 value." correlationId
+
+        let validateContentBlockAddressForResource correlationId contentBlockAddress =
+            match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
+            | Some normalizedAddress -> Ok normalizedAddress
+            | None -> Error(invalidContentBlockAddressError correlationId)
+
         let contentBlockUploadPathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -239,9 +247,19 @@ module Application =
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
                 |> ignore
 
+                let correlationId = Services.getCorrelationId context
                 let graceIds = Services.getGraceIds context
 
-                return StorageAuthorizationResources.contentBlockUploadResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
+                match validateContentBlockAddressForResource correlationId parameters.ContentBlockAddress with
+                | Error error -> return Error error
+                | Ok contentBlockAddress ->
+                    parameters.ContentBlockAddress <- contentBlockAddress
+
+                    return
+                        Ok(
+                            Operation.PathWrite,
+                            StorageAuthorizationResources.contentBlockUploadResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
+                        )
             }
 
         let contentBlockDownloadPathResourceFromContext (context: HttpContext) =
@@ -252,9 +270,24 @@ module Application =
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
                 |> ignore
 
+                let correlationId = Services.getCorrelationId context
                 let graceIds = Services.getGraceIds context
 
-                return StorageAuthorizationResources.contentBlockDownloadResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
+                match validateContentBlockAddressForResource correlationId parameters.ContentBlockAddress with
+                | Error error -> return Error error
+                | Ok contentBlockAddress ->
+                    parameters.ContentBlockAddress <- contentBlockAddress
+
+                    match
+                        StorageAuthorizationResources.tryContentBlockDownloadResource
+                            correlationId
+                            graceIds.OwnerId
+                            graceIds.OrganizationId
+                            graceIds.RepositoryId
+                            parameters
+                        with
+                    | Error error -> return Error error
+                    | Ok resource -> return Ok(Operation.PathRead, resource)
             }
 
         let uploadSessionPathResourceFromContext (context: HttpContext) =
@@ -451,11 +484,10 @@ module Application =
 
         let requireAnnotatePathRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved annotatePathResourceFromContext
 
-        let requirePathWriteForContentBlockUploadUri: HttpHandler =
-            AuthorizationMiddleware.requiresPermission Operation.PathWrite contentBlockUploadPathResourceFromContext
+        let requirePathWriteForContentBlockUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved contentBlockUploadPathResourceFromContext
 
         let requirePathReadForContentBlockDownloadUri: HttpHandler =
-            AuthorizationMiddleware.requiresPermission Operation.PathRead contentBlockDownloadPathResourceFromContext
+            AuthorizationMiddleware.requiresPermissionResolved contentBlockDownloadPathResourceFromContext
 
         let requirePathWriteForUploadSession: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathWrite uploadSessionPathResourceFromContext
 

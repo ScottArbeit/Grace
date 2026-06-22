@@ -78,6 +78,12 @@ export interface RepositoryDto {
      */
     objectStorageProvider?: ObjectStorageProvider;
     /**
+     * StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+     * @type {string}
+     * @memberof RepositoryDto
+     */
+    storagePoolId?: string;
+    /**
      * 
      * @type {string}
      * @memberof RepositoryDto
@@ -158,6 +164,7 @@ export function RepositoryDtoFromJSONTyped(json: any, ignoreDiscriminator: boole
         'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'objectStorageProvider': json['ObjectStorageProvider'] == null ? undefined : ObjectStorageProviderFromJSON(json['ObjectStorageProvider']),
+        'storagePoolId': json['StoragePoolId'] == null ? undefined : json['StoragePoolId'],
         'storageAccountName': json['StorageAccountName'] == null ? undefined : json['StorageAccountName'],
         'storageContainerName': json['StorageContainerName'] == null ? undefined : json['StorageContainerName'],
         'repositoryVisibility': json['RepositoryVisibility'] == null ? undefined : RepositoryVisibilityFromJSON(json['RepositoryVisibility']),
@@ -187,6 +194,7 @@ export function RepositoryDtoToJSONTyped(value?: RepositoryDto | null, ignoreDis
         'OrganizationId': value['organizationId'],
         'RepositoryName': value['repositoryName'],
         'ObjectStorageProvider': ObjectStorageProviderToJSON(value['objectStorageProvider']),
+        'StoragePoolId': value['storagePoolId'],
         'StorageAccountName': value['storageAccountName'],
         'StorageContainerName': value['storageContainerName'],
         'RepositoryVisibility': RepositoryVisibilityToJSON(value['repositoryVisibility']),

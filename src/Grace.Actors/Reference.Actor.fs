@@ -38,25 +38,29 @@ module Reference =
             WorkflowRanges: ManifestContributionWorkflowRange array
         }
 
-    let private manifestContributionOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) =
-        RepositoryContentCounterOperationId $"save:{referenceId:N}:{manifestAddress}"
+    let private manifestContributionOperationId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        RepositoryContentCounterOperationId $"reference:{referenceId:N}:{storagePoolId}:{manifestAddress}"
 
-    let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+    let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
-    let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (manifestAddress: ManifestAddress) = $"{repositoryId:N}|{manifestAddress}"
+    let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
     let private counterCommandDirection command =
         match command with
         | RepositoryContentCounterCommand.AddReference _ -> ManifestContributionDirection.Increment
         | RepositoryContentCounterCommand.RemoveReference _ -> ManifestContributionDirection.Decrement
 
-    let private workflowOperationId (referenceId: ReferenceId) (manifestAddress: ManifestAddress) direction =
+    let private workflowOperationId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) direction =
         match direction with
-        | ManifestContributionDirection.Increment -> ManifestContributionWorkflowOperationId $"save:{referenceId:N}:{manifestAddress}:fanout"
-        | ManifestContributionDirection.Decrement -> ManifestContributionWorkflowOperationId $"save-expiry:{referenceId:N}:{manifestAddress}:fanout"
+        | ManifestContributionDirection.Increment ->
+            ManifestContributionWorkflowOperationId $"reference:{referenceId:N}:{storagePoolId}:{manifestAddress}:fanout"
+        | ManifestContributionDirection.Decrement ->
+            ManifestContributionWorkflowOperationId $"reference-expiry:{referenceId:N}:{storagePoolId}:{manifestAddress}:fanout"
 
-    let private workflowRangesForManifest repositoryId (manifest: FileManifest) =
-        let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
+    let private workflowRangesForManifest (manifest: FileManifest) =
+        let storagePoolId = manifest.StoragePoolId
         let seenContentBlocks = HashSet<ContentBlockAddress>()
         let ranges = ResizeArray<ManifestContributionWorkflowRange>()
         let mutable index = 0
@@ -74,44 +78,159 @@ module Reference =
     let private workflowStartCommandForPlan plan =
         let direction = counterCommandDirection plan.CounterCommand
 
-        ManifestContributionWorkflowCommand.Start
+        ManifestContributionWorkflowCommand.Start(
+            workflowOperationId plan.ReferenceId plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress direction,
+            plan.RepositoryId,
+            plan.Manifest.StoragePoolId,
+            plan.Manifest.ManifestAddress,
+            direction,
+            plan.WorkflowRanges
+        )
+
+    let private planManifestReferences
+        repositoryId
+        referenceId
+        (manifestReferences: DirectoryVersion.ManifestReferenceForSaveBoundary seq)
+        : ManifestSaveContributionPlan list
+        =
+        manifestReferences
+        |> Seq.distinctBy (fun manifestReference -> manifestReference.Manifest.StoragePoolId, manifestReference.Manifest.ManifestAddress)
+        |> Seq.map (fun manifestReference -> manifestReference.Manifest)
+        |> Seq.toList
+        |> List.map (fun manifest ->
+            let operationId = manifestContributionOperationId referenceId manifest.StoragePoolId manifest.ManifestAddress
+
             {
-                OperationId = workflowOperationId plan.ReferenceId plan.Manifest.ManifestAddress direction
-                RepositoryId = plan.RepositoryId
-                ManifestAddress = plan.Manifest.ManifestAddress
-                Direction = direction
-                Ranges = plan.WorkflowRanges
-            }
+                RepositoryId = repositoryId
+                ReferenceId = referenceId
+                Manifest = manifest
+                CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.StoragePoolId, manifest.ManifestAddress)
+                WorkflowRanges = workflowRangesForManifest manifest
+            })
+
+    let planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId (directoryVersions: DirectoryVersion seq) correlationId =
+        let directoryVersionArray = directoryVersions |> Seq.toArray
+        let manifestReferences = ResizeArray<DirectoryVersion.ManifestReferenceForSaveBoundary>()
+        let mutable index = 0
+        let mutable error: GraceError option = None
+
+        while index < directoryVersionArray.Length
+              && error.IsNone do
+            match DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersionArray[index] correlationId with
+            | Error graceError -> error <- Some graceError
+            | Ok directoryManifestReferences -> manifestReferences.AddRange directoryManifestReferences
+
+            index <- index + 1
+
+        match error with
+        | Some graceError -> Error graceError
+        | None -> Ok(planManifestReferences repositoryId referenceId manifestReferences)
+
+    let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersions: DirectoryVersion seq) correlationId =
+        let directoryVersionArray = directoryVersions |> Seq.toArray
+
+        let directoryVersionIds =
+            HashSet<DirectoryVersionId>(
+                directoryVersionArray
+                |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
+            )
+
+        if not (directoryVersionIds.Contains rootDirectoryVersionId) then
+            Error(
+                (GraceError.Create "Recursive directory traversal did not include the root DirectoryVersion." correlationId)
+                    .enhance (nameof DirectoryVersionId, rootDirectoryVersionId)
+            )
+        else
+            let missingChild =
+                directoryVersionArray
+                |> Seq.collect (fun directoryVersion ->
+                    directoryVersion.Directories
+                    |> Seq.map (fun childDirectoryVersionId -> directoryVersion, childDirectoryVersionId))
+                |> Seq.tryFind (fun (_, childDirectoryVersionId) -> not (directoryVersionIds.Contains childDirectoryVersionId))
+
+            match missingChild with
+            | Some (parentDirectoryVersion, childDirectoryVersionId) ->
+                Error(
+                    (GraceError.Create "Recursive directory traversal did not include a declared child DirectoryVersion." correlationId)
+                        .enhance(nameof DirectoryVersionId, rootDirectoryVersionId)
+                        .enhance("ParentDirectoryVersionId", parentDirectoryVersion.DirectoryVersionId)
+                        .enhance ("ChildDirectoryVersionId", childDirectoryVersionId)
+                )
+            | None -> Ok directoryVersionArray
+
+    let planManifestSaveBoundaryForRecursiveDirectoryVersions repositoryId referenceId rootDirectoryVersionId directoryVersions correlationId =
+        match validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId directoryVersions correlationId with
+        | Error graceError -> Error graceError
+        | Ok completeDirectoryVersions -> planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId completeDirectoryVersions correlationId
 
     let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
-        match DirectoryVersion.getManifestReferencesForSaveBoundary directoryVersion correlationId with
-        | Error graceError -> Error graceError
-        | Ok manifests ->
-            manifests
-            |> List.map (fun manifest ->
-                let operationId = manifestContributionOperationId referenceId manifest.ManifestAddress
+        planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
 
-                {
-                    RepositoryId = repositoryId
-                    ReferenceId = referenceId
-                    Manifest = manifest
-                    CounterCommand = RepositoryContentCounterCommand.AddReference(operationId, repositoryId, manifest.ManifestAddress)
-                    WorkflowRanges = workflowRangesForManifest repositoryId manifest
+    let planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId directoryVersions correlationId =
+        match planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId directoryVersions correlationId with
+        | Error graceError -> Error graceError
+        | Ok plans ->
+            plans
+            |> List.map (fun plan ->
+                let operationId =
+                    RepositoryContentCounterOperationId $"reference-expiry:{referenceId:N}:{plan.Manifest.StoragePoolId}:{plan.Manifest.ManifestAddress}"
+
+                { plan with
+                    CounterCommand =
+                        RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, plan.Manifest.StoragePoolId, plan.Manifest.ManifestAddress)
                 })
             |> Ok
 
     let planManifestSaveExpiryBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
-        planManifestSaveBoundary repositoryId referenceId directoryVersion correlationId
-        |> Result.map (fun plans ->
-            plans
-            |> List.map (fun plan ->
-                let operationId = RepositoryContentCounterOperationId $"save-expiry:{referenceId:N}:{plan.Manifest.ManifestAddress}"
+        planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
 
-                { plan with CounterCommand = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, plan.Manifest.ManifestAddress) }))
-
-    let shouldApplySaveExpiryBoundary (referenceDto: ReferenceDto) =
+    let shouldApplyManifestExpiryBoundary (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
         && referenceDto.ReferenceType = ReferenceType.Save
+
+    let planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
+        repositoryId
+        referenceId
+        rootDirectoryVersionId
+        (referenceDto: ReferenceDto)
+        (getRecursiveDirectoryVersions: unit -> Task<Grace.Types.DirectoryVersion.DirectoryVersionDto array>)
+        correlationId
+        =
+        task {
+            if shouldApplyManifestExpiryBoundary referenceDto then
+                let! directoryVersionDtos = getRecursiveDirectoryVersions ()
+
+                match
+                    planManifestSaveBoundaryForRecursiveDirectoryVersions
+                        repositoryId
+                        referenceId
+                        rootDirectoryVersionId
+                        (directoryVersionDtos
+                         |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
+                        correlationId
+                    with
+                | Error graceError -> return Error graceError
+                | Ok plans ->
+                    return
+                        plans
+                        |> List.map (fun plan ->
+                            let operationId =
+                                RepositoryContentCounterOperationId
+                                    $"reference-expiry:{referenceId:N}:{plan.Manifest.StoragePoolId}:{plan.Manifest.ManifestAddress}"
+
+                            { plan with
+                                CounterCommand =
+                                    RepositoryContentCounterCommand.RemoveReference(
+                                        operationId,
+                                        repositoryId,
+                                        plan.Manifest.StoragePoolId,
+                                        plan.Manifest.ManifestAddress
+                                    )
+                            })
+                        |> Ok
+            else
+                return Ok []
+        }
 
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
         let rootRelativePath = directoryVersion.RelativePath
@@ -208,16 +327,35 @@ module Reference =
             | _ -> return referenceEvent, false
         }
 
+    let internal createCommandMatchesReference (referenceDto: ReferenceDto) command =
+        match command with
+        | Create (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, blake3Hash, referenceType, referenceText, links) ->
+            referenceDto.UpdatedAt.IsSome
+            && referenceDto.ReferenceId = referenceId
+            && referenceDto.OwnerId = ownerId
+            && referenceDto.OrganizationId = organizationId
+            && referenceDto.RepositoryId = repositoryId
+            && referenceDto.BranchId = branchId
+            && referenceDto.DirectoryId = directoryId
+            && referenceDto.Sha256Hash = sha256Hash
+            && referenceDto.Blake3Hash = blake3Hash
+            && referenceDto.ReferenceType = referenceType
+            && referenceDto.ReferenceText = referenceText
+            && (referenceDto.Links |> Seq.toArray) = (links |> Seq.toArray)
+        | _ -> false
+
     let tryCreateManifestContributionStart plan intent =
         match intent with
-        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, manifestAddress) when
+        | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
             repositoryId = plan.RepositoryId
+            && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Increment
             ->
             Some(workflowStartCommandForPlan plan)
-        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, manifestAddress) when
+        | RepositoryContentCounterIntent.DecrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
             repositoryId = plan.RepositoryId
+            && storagePoolId = plan.Manifest.StoragePoolId
             && manifestAddress = plan.Manifest.ManifestAddress
             && counterCommandDirection plan.CounterCommand = ManifestContributionDirection.Decrement
             ->
@@ -226,8 +364,8 @@ module Reference =
 
     let private counterCommandOperationId command =
         match command with
-        | RepositoryContentCounterCommand.AddReference (operationId, _, _)
-        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _) -> Some operationId
+        | RepositoryContentCounterCommand.AddReference (operationId, _, _, _)
+        | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> Some operationId
 
     let private commandCrossedZero operationId command events =
         let mutable referenceCount = 0L
@@ -235,7 +373,7 @@ module Reference =
 
         for counterEvent in events do
             match counterEvent.Event with
-            | RepositoryContentCounterEventType.ReferenceAdded (eventOperationId, _, _) ->
+            | RepositoryContentCounterEventType.ReferenceAdded (eventOperationId, _, _, _) ->
                 if eventOperationId = operationId
                    && referenceCount = 0L
                    && counterCommandDirection command = ManifestContributionDirection.Increment then
@@ -266,28 +404,30 @@ module Reference =
             | Some _ -> None
         | None -> None
 
-    let private createRepositoryContentCounterActor repositoryId manifestAddress correlationId =
+    let private createRepositoryContentCounterActor repositoryId storagePoolId manifestAddress correlationId =
         let grain =
             orleansClient.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
-                repositoryContentCounterPrimaryKey repositoryId manifestAddress,
+                repositoryContentCounterPrimaryKey repositoryId storagePoolId manifestAddress,
                 correlationId
             )
 
         let orleansContext = Dictionary<string, obj>()
         orleansContext.Add(nameof RepositoryId, repositoryId)
+        orleansContext.Add(nameof StoragePoolId, storagePoolId)
         orleansContext.Add(Constants.ActorNameProperty, ActorName.RepositoryContentCounter)
         memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
         grain
 
-    let private createManifestContributionWorkflowActor repositoryId manifestAddress correlationId =
+    let private createManifestContributionWorkflowActor repositoryId storagePoolId manifestAddress correlationId =
         let grain =
             orleansClient.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
-                manifestContributionWorkflowPrimaryKey repositoryId manifestAddress,
+                manifestContributionWorkflowPrimaryKey repositoryId storagePoolId manifestAddress,
                 correlationId
             )
 
         let orleansContext = Dictionary<string, obj>()
         orleansContext.Add(nameof RepositoryId, repositoryId)
+        orleansContext.Add(nameof StoragePoolId, storagePoolId)
         orleansContext.Add(Constants.ActorNameProperty, ActorName.ManifestContributionWorkflow)
         memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
         grain
@@ -301,7 +441,8 @@ module Reference =
             while planIndex < planArray.Length && error.IsNone do
                 let plan = planArray[planIndex]
 
-                let counterActor = createRepositoryContentCounterActor plan.RepositoryId plan.Manifest.ManifestAddress metadata.CorrelationId
+                let counterActor =
+                    createRepositoryContentCounterActor plan.RepositoryId plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress metadata.CorrelationId
 
                 match! counterActor.Handle plan.CounterCommand metadata with
                 | Error graceError -> error <- Some graceError
@@ -311,11 +452,19 @@ module Reference =
                     match tryCreateManifestContributionStartForCounterDecision plan counterReturnValue.ReturnValue counterEvents with
                     | None -> ()
                     | Some startCommand ->
-                        let workflowActor = createManifestContributionWorkflowActor plan.RepositoryId plan.Manifest.ManifestAddress metadata.CorrelationId
+                        let workflowActor =
+                            createManifestContributionWorkflowActor
+                                plan.RepositoryId
+                                plan.Manifest.StoragePoolId
+                                plan.Manifest.ManifestAddress
+                                metadata.CorrelationId
 
-                        match! workflowActor.Handle startCommand metadata with
-                        | Ok _ -> ()
-                        | Error graceError -> error <- Some graceError
+                        match startCommand with
+                        | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
+                            match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata with
+                            | Ok _ -> ()
+                            | Error graceError -> error <- Some graceError
+                        | _ -> error <- Some(GraceError.Create "Manifest contribution save boundary expected a workflow start command." metadata.CorrelationId)
 
                 planIndex <- planIndex + 1
 
@@ -407,22 +556,22 @@ module Reference =
                             else
                                 referenceDto.ReferenceId
 
-                        let directoryVersionActorProxy =
-                            DirectoryVersion.CreateActorProxy
-                                physicalDeletionReminderState.DirectoryVersionId
-                                physicalDeletionReminderState.RepositoryId
-                                this.correlationId
-
-                        let! directoryVersionDto = directoryVersionActorProxy.Get this.correlationId
-
                         let! boundaryResult =
                             task {
-                                if shouldApplySaveExpiryBoundary referenceDto then
-                                    match
-                                        planManifestSaveExpiryBoundary
+                                if shouldApplyManifestExpiryBoundary referenceDto then
+                                    let directoryVersionActorProxy =
+                                        DirectoryVersion.CreateActorProxy
+                                            physicalDeletionReminderState.DirectoryVersionId
+                                            physicalDeletionReminderState.RepositoryId
+                                            this.correlationId
+
+                                    match!
+                                        planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
                                             physicalDeletionReminderState.RepositoryId
                                             referenceId
-                                            directoryVersionDto.DirectoryVersion
+                                            physicalDeletionReminderState.DirectoryVersionId
+                                            referenceDto
+                                            (fun () -> directoryVersionActorProxy.GetRecursiveDirectoryVersions true this.correlationId)
                                             this.correlationId
                                         with
                                     | Error graceError -> return Error graceError
@@ -616,7 +765,10 @@ module Reference =
                 let isValid (command: ReferenceCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
-                            return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
+                            if createCommandMatchesReference referenceDto command then
+                                return Ok command
+                            else
+                                return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | Create (referenceId,
@@ -631,6 +783,7 @@ module Reference =
                                       referenceText,
                                       links) ->
                                 match referenceDto.UpdatedAt with
+                                | Some _ when createCommandMatchesReference referenceDto command -> return Ok command
                                 | Some _ -> return Error(GraceError.Create (getErrorMessage ReferenceError.ReferenceAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
                             | _ ->
@@ -640,31 +793,75 @@ module Reference =
                     }
 
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
-                    let applySaveManifestBoundary referenceId repositoryId directoryId referenceType =
+                    let appliesManifestBoundary referenceType = referenceType = ReferenceType.Save
+
+                    let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType =
                         task {
-                            if referenceType <> ReferenceType.Save then
+                            if not (appliesManifestBoundary referenceType) then
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
-                                let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
+                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions true metadata.CorrelationId
 
-                                match planManifestSaveBoundary repositoryId referenceId directoryVersionDto.DirectoryVersion metadata.CorrelationId with
+                                match
+                                    planManifestSaveBoundaryForRecursiveDirectoryVersions
+                                        repositoryId
+                                        referenceId
+                                        directoryId
+                                        (directoryVersionDtos
+                                         |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
+                                        metadata.CorrelationId
+                                    with
                                 | Error graceError -> return Error graceError
                                 | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
 
-                    let applySaveExpiryManifestBoundary referenceId repositoryId directoryId referenceType =
+                    let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType =
                         task {
-                            if referenceType <> ReferenceType.Save then
+                            if not (appliesManifestBoundary referenceType) then
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
-                                let! directoryVersionDto = directoryVersionActorProxy.Get metadata.CorrelationId
+                                let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions true metadata.CorrelationId
 
-                                match planManifestSaveExpiryBoundary repositoryId referenceId directoryVersionDto.DirectoryVersion metadata.CorrelationId with
+                                match!
+                                    planManifestSaveExpiryBoundaryForReferenceDirectoryVersions
+                                        repositoryId
+                                        referenceId
+                                        directoryId
+                                        referenceDto
+                                        (fun () -> Task.FromResult directoryVersionDtos)
+                                        metadata.CorrelationId
+                                    with
                                 | Error graceError -> return Error graceError
                                 | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
+
+                    let existingReferenceReturnValue () =
+                        (GraceReturnValue.Create referenceDto metadata.CorrelationId)
+                            .enhance(nameof RepositoryId, referenceDto.RepositoryId)
+                            .enhance(nameof BranchId, referenceDto.BranchId)
+                            .enhance(nameof ReferenceId, referenceDto.ReferenceId)
+                            .enhance(nameof DirectoryVersionId, referenceDto.DirectoryId)
+                            .enhance(nameof ReferenceType, getDiscriminatedUnionCaseName referenceDto.ReferenceType)
+                            .enhance (
+                                nameof ReferenceEventType,
+                                getDiscriminatedUnionFullName (
+                                    Created(
+                                        referenceDto.ReferenceId,
+                                        referenceDto.OwnerId,
+                                        referenceDto.OrganizationId,
+                                        referenceDto.RepositoryId,
+                                        referenceDto.BranchId,
+                                        referenceDto.DirectoryId,
+                                        referenceDto.Sha256Hash,
+                                        referenceDto.Blake3Hash,
+                                        referenceDto.ReferenceType,
+                                        referenceDto.ReferenceText,
+                                        referenceDto.Links
+                                    )
+                                )
+                            )
 
                     let validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash =
                         task {
@@ -682,111 +879,118 @@ module Reference =
                         }
 
                     task {
-                        let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
-                            task {
-                                match command with
-                                | Create (referenceId,
-                                          ownerId,
-                                          organizationId,
-                                          repositoryId,
-                                          branchId,
-                                          directoryId,
-                                          sha256Hash,
-                                          blake3Hash,
-                                          referenceType,
-                                          referenceText,
-                                          links) ->
-                                    match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
-                                    | Ok () ->
-                                        match! applySaveManifestBoundary referenceId repositoryId directoryId referenceType with
+                        match command with
+                        | Create (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) when
+                            createCommandMatchesReference referenceDto command
+                            ->
+                            match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
+                            | Ok () -> return Ok(existingReferenceReturnValue ())
+                            | Error graceError -> return Error graceError
+                        | _ ->
+                            let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
+                                task {
+                                    match command with
+                                    | Create (referenceId,
+                                              ownerId,
+                                              organizationId,
+                                              repositoryId,
+                                              branchId,
+                                              directoryId,
+                                              sha256Hash,
+                                              blake3Hash,
+                                              referenceType,
+                                              referenceText,
+                                              links) ->
+                                        match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
                                         | Ok () ->
-                                            return
-                                                Ok(
-                                                    Created(
-                                                        referenceId,
-                                                        ownerId,
-                                                        organizationId,
-                                                        repositoryId,
-                                                        branchId,
-                                                        directoryId,
-                                                        sha256Hash,
-                                                        blake3Hash,
-                                                        referenceType,
-                                                        referenceText,
-                                                        links
+                                            match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
+                                            | Ok () ->
+                                                return
+                                                    Ok(
+                                                        Created(
+                                                            referenceId,
+                                                            ownerId,
+                                                            organizationId,
+                                                            repositoryId,
+                                                            branchId,
+                                                            directoryId,
+                                                            sha256Hash,
+                                                            blake3Hash,
+                                                            referenceType,
+                                                            referenceText,
+                                                            links
+                                                        )
                                                     )
-                                                )
+                                            | Error graceError -> return Error graceError
                                         | Error graceError -> return Error graceError
-                                    | Error graceError -> return Error graceError
-                                | AddLink link -> return Ok(LinkAdded link)
-                                | RemoveLink link -> return Ok(LinkRemoved link)
-                                | DeleteLogical (force, deleteReason) ->
-                                    let tryGetLogicalDeleteDaysFromMetadata () =
-                                        match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
-                                        | true, value ->
-                                            let mutable parsed = 0.0f
+                                    | AddLink link -> return Ok(LinkAdded link)
+                                    | RemoveLink link -> return Ok(LinkRemoved link)
+                                    | DeleteLogical (force, deleteReason) ->
+                                        let tryGetLogicalDeleteDaysFromMetadata () =
+                                            match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
+                                            | true, value ->
+                                                let mutable parsed = 0.0f
 
-                                            if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
-                                                Some parsed
-                                            else
-                                                None
-                                        | _ -> None
+                                                if Single.TryParse(value, NumberStyles.Float, CultureInfo.InvariantCulture, &parsed) then
+                                                    Some parsed
+                                                else
+                                                    None
+                                            | _ -> None
 
-                                    let! logicalDeleteDays =
-                                        match tryGetLogicalDeleteDaysFromMetadata () with
-                                        | Some days -> Task.FromResult days
-                                        | None ->
-                                            task {
-                                                let repositoryActorProxy =
-                                                    Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId this.correlationId
+                                        let! logicalDeleteDays =
+                                            match tryGetLogicalDeleteDaysFromMetadata () with
+                                            | Some days -> Task.FromResult days
+                                            | None ->
+                                                task {
+                                                    let repositoryActorProxy =
+                                                        Repository.CreateActorProxy referenceDto.OrganizationId referenceDto.RepositoryId this.correlationId
 
-                                                let! repositoryDto = repositoryActorProxy.Get this.correlationId
-                                                return repositoryDto.LogicalDeleteDays
+                                                    let! repositoryDto = repositoryActorProxy.Get this.correlationId
+                                                    return repositoryDto.LogicalDeleteDays
+                                                }
+
+                                        let reminderState: PhysicalDeletionReminderState =
+                                            {
+                                                RepositoryId = referenceDto.RepositoryId
+                                                BranchId = referenceDto.BranchId
+                                                DirectoryVersionId = referenceDto.DirectoryId
+                                                Sha256Hash = referenceDto.Sha256Hash
+                                                Blake3Hash = referenceDto.Blake3Hash
+                                                DeleteReason = deleteReason
+                                                CorrelationId = metadata.CorrelationId
                                             }
 
-                                    let reminderState: PhysicalDeletionReminderState =
-                                        {
-                                            RepositoryId = referenceDto.RepositoryId
-                                            BranchId = referenceDto.BranchId
-                                            DirectoryVersionId = referenceDto.DirectoryId
-                                            Sha256Hash = referenceDto.Sha256Hash
-                                            Blake3Hash = referenceDto.Blake3Hash
-                                            DeleteReason = deleteReason
-                                            CorrelationId = metadata.CorrelationId
-                                        }
+                                        do!
+                                            (this :> IGraceReminderWithGuidKey)
+                                                .ScheduleReminderAsync
+                                                ReminderTypes.PhysicalDeletion
+                                                (Duration.FromDays(float logicalDeleteDays))
+                                                (ReminderState.ReferencePhysicalDeletion reminderState)
+                                                metadata.CorrelationId
 
-                                    do!
-                                        (this :> IGraceReminderWithGuidKey)
-                                            .ScheduleReminderAsync
-                                            ReminderTypes.PhysicalDeletion
-                                            (Duration.FromDays(float logicalDeleteDays))
-                                            (ReminderState.ReferencePhysicalDeletion reminderState)
-                                            metadata.CorrelationId
+                                        return Ok(LogicalDeleted(force, deleteReason))
+                                    | DeletePhysical ->
+                                        match!
+                                            applyReferenceManifestExpiryBoundary
+                                                referenceDto.ReferenceId
+                                                referenceDto.RepositoryId
+                                                referenceDto.DirectoryId
+                                                referenceDto.ReferenceType
+                                            with
+                                        | Ok () ->
+                                            // Delete the actor state and mark the actor as deactivated.
+                                            do! state.ClearStateAsync()
+                                            this.DeactivateOnIdle()
+                                            return Ok PhysicalDeleted
+                                        | Error graceError -> return Error graceError
+                                    | Undelete -> return Ok Undeleted
+                                }
 
-                                    return Ok(LogicalDeleted(force, deleteReason))
-                                | DeletePhysical ->
-                                    match!
-                                        applySaveExpiryManifestBoundary
-                                            referenceDto.ReferenceId
-                                            referenceDto.RepositoryId
-                                            referenceDto.DirectoryId
-                                            referenceDto.ReferenceType
-                                        with
-                                    | Ok () ->
-                                        // Delete the actor state and mark the actor as deactivated.
-                                        do! state.ClearStateAsync()
-                                        this.DeactivateOnIdle()
-                                        return Ok PhysicalDeleted
-                                    | Error graceError -> return Error graceError
-                                | Undelete -> return Ok Undeleted
-                            }
-
-                        match referenceEventTypeResult with
-                        | Ok referenceEventType ->
-                            let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
-                            let! returnValue = this.ApplyEvent referenceEvent
-                            return returnValue
-                        | Error graceError -> return Error graceError
+                            match referenceEventTypeResult with
+                            | Ok referenceEventType ->
+                                let referenceEvent: ReferenceEvent = { Event = referenceEventType; Metadata = metadata }
+                                return! this.ApplyEvent referenceEvent
+                            | Error graceError -> return Error graceError
                     }
 
                 task {

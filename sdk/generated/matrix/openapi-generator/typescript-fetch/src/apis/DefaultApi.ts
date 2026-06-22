@@ -413,7 +413,7 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+     * Gets an object-storage download URI for one ContentBlock in an authorized manifest-backed reconstruction path. Callers provide the server-accepted StoragePoolId, ManifestAddress, ContentBlockAddress, and AuthorizedScope; the request does not repost the full FileManifest for each block.
      * Gets a download URI for a ContentBlock payload.
      */
     async getContentBlockDownloadUriRaw(requestParameters: GetContentBlockDownloadUriRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<string>> {
@@ -428,7 +428,7 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+     * Gets an object-storage download URI for one ContentBlock in an authorized manifest-backed reconstruction path. Callers provide the server-accepted StoragePoolId, ManifestAddress, ContentBlockAddress, and AuthorizedScope; the request does not repost the full FileManifest for each block.
      * Gets a download URI for a ContentBlock payload.
      */
     async getContentBlockDownloadUri(requestParameters: GetContentBlockDownloadUriRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<string> {

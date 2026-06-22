@@ -8,6 +8,7 @@ Name | Type | Description | Notes
 **owner_id** | **uuid::Uuid** |  | 
 **organization_id** | **uuid::Uuid** |  | 
 **repository_id** | **uuid::Uuid** |  | 
+**storage_pool_id** | **String** | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly. | 
 **authorized_scope** | **String** |  | 
 **file_content_hash** | **String** | Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes. | 
 **expected_size** | **i64** |  | 

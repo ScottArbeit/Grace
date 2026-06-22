@@ -107,6 +107,12 @@ export interface IssueDedupeDiscoveryParameters {
     minimumReuseRunLength?: number;
     /**
      * 
+     * @type {Array<string>}
+     * @memberof IssueDedupeDiscoveryParameters
+     */
+    keyChunkAddresses?: Array<string>;
+    /**
+     * 
      * @type {Array<ContentBlockReuseRangeHint>}
      * @memberof IssueDedupeDiscoveryParameters
      */
@@ -143,6 +149,7 @@ export function IssueDedupeDiscoveryParametersFromJSONTyped(json: any, ignoreDis
         'operationId': json['OperationId'] == null ? undefined : json['OperationId'],
         'expiresAt': json['ExpiresAt'] == null ? undefined : (new Date(json['ExpiresAt'])),
         'minimumReuseRunLength': json['MinimumReuseRunLength'] == null ? undefined : json['MinimumReuseRunLength'],
+        'keyChunkAddresses': json['KeyChunkAddresses'] == null ? undefined : json['KeyChunkAddresses'],
         'hints': json['Hints'] == null ? undefined : ((json['Hints'] as Array<any>).map(ContentBlockReuseRangeHintFromJSON)),
     };
 }
@@ -171,6 +178,7 @@ export function IssueDedupeDiscoveryParametersToJSONTyped(value?: IssueDedupeDis
         'OperationId': value['operationId'],
         'ExpiresAt': value['expiresAt'] == null ? value['expiresAt'] : value['expiresAt'].toISOString(),
         'MinimumReuseRunLength': value['minimumReuseRunLength'],
+        'KeyChunkAddresses': value['keyChunkAddresses'],
         'Hints': value['hints'] == null ? undefined : ((value['hints'] as Array<any>).map(ContentBlockReuseRangeHintToJSON)),
     };
 }

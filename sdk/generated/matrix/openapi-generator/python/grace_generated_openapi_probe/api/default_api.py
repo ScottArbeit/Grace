@@ -1191,7 +1191,7 @@ class DefaultApi:
     ) -> str:
         """Gets a download URI for a ContentBlock payload.
 
-        Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+        Gets an object-storage download URI for one ContentBlock in an authorized manifest-backed reconstruction path. Callers provide the server-accepted StoragePoolId, ManifestAddress, ContentBlockAddress, and AuthorizedScope; the request does not repost the full FileManifest for each block.
 
         :param get_content_block_download_uri_parameters: (required)
         :type get_content_block_download_uri_parameters: GetContentBlockDownloadUriParameters
@@ -1260,7 +1260,7 @@ class DefaultApi:
     ) -> ApiResponse[str]:
         """Gets a download URI for a ContentBlock payload.
 
-        Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+        Gets an object-storage download URI for one ContentBlock in an authorized manifest-backed reconstruction path. Callers provide the server-accepted StoragePoolId, ManifestAddress, ContentBlockAddress, and AuthorizedScope; the request does not repost the full FileManifest for each block.
 
         :param get_content_block_download_uri_parameters: (required)
         :type get_content_block_download_uri_parameters: GetContentBlockDownloadUriParameters
@@ -1329,7 +1329,7 @@ class DefaultApi:
     ) -> RESTResponseType:
         """Gets a download URI for a ContentBlock payload.
 
-        Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+        Gets an object-storage download URI for one ContentBlock in an authorized manifest-backed reconstruction path. Callers provide the server-accepted StoragePoolId, ManifestAddress, ContentBlockAddress, and AuthorizedScope; the request does not repost the full FileManifest for each block.
 
         :param get_content_block_download_uri_parameters: (required)
         :type get_content_block_download_uri_parameters: GetContentBlockDownloadUriParameters

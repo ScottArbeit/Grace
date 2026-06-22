@@ -168,7 +168,7 @@ module Reminder =
                             let referenceActorProxy = Reference.CreateActorProxy actorId reminderDto.RepositoryId correlationId
                             return! referenceActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.UploadSession ->
-                            let uploadSessionActorProxy = UploadSession.CreateActorProxy actorId reminderDto.RepositoryId correlationId
+                            let uploadSessionActorProxy = UploadSession.CreateActorProxyForPrimaryKey actorId reminderDto.RepositoryId correlationId
                             return! uploadSessionActorProxy.ReceiveReminderAsync reminderDto
                         | ActorName.Diff ->
                             // Example reminderDto.ActorId: "diffactor/15b50c9573064ecb9850a0a5dc7419cf1e7b6f83471542f8ba0b9b0262356f08"

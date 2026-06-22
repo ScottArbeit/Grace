@@ -29,9 +29,16 @@ module ManifestContributionWorkflow =
     [<CLIMutable; GenerateSerializer; CustomComparison; CustomEquality>]
     type ManifestContributionWorkflowRange =
         {
+            [<Id(0u)>]
             StoragePoolId: StoragePoolId
+
+            [<Id(1u)>]
             ContentBlockAddress: ContentBlockAddress
+
+            [<Id(2u)>]
             OrdinalStart: int
+
+            [<Id(3u)>]
             OrdinalCount: int
         }
 
@@ -58,37 +65,88 @@ module ManifestContributionWorkflow =
     [<GenerateSerializer>]
     type StartManifestContributionWorkflow =
         {
+            [<Id(0u)>]
             OperationId: ManifestContributionWorkflowOperationId
+
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+
+            [<Id(2u)>]
+            StoragePoolId: StoragePoolId
+
+            [<Id(3u)>]
             ManifestAddress: ManifestAddress
+
+            [<Id(4u)>]
             Direction: ManifestContributionDirection
+
+            [<Id(5u)>]
             Ranges: ManifestContributionWorkflowRange array
         }
 
     [<GenerateSerializer>]
     type ManifestContributionWorkflowRangeProgress =
         {
+            [<Id(0u)>]
             OperationId: ManifestContributionWorkflowOperationId
+
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+
+            [<Id(2u)>]
+            StoragePoolId: StoragePoolId
+
+            [<Id(3u)>]
             ManifestAddress: ManifestAddress
+
+            [<Id(4u)>]
             Range: ManifestContributionWorkflowRange
         }
 
     [<GenerateSerializer>]
     type ManifestContributionWorkflowRangeFailure =
         {
+            [<Id(0u)>]
             OperationId: ManifestContributionWorkflowOperationId
+
+            [<Id(1u)>]
             RepositoryId: RepositoryId
+
+            [<Id(2u)>]
+            StoragePoolId: StoragePoolId
+
+            [<Id(3u)>]
             ManifestAddress: ManifestAddress
+
+            [<Id(4u)>]
             Range: ManifestContributionWorkflowRange
+
+            [<Id(5u)>]
             Message: string
         }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionWorkflowCommand =
-        | Start of StartManifestContributionWorkflow
-        | RecordRangeSucceeded of ManifestContributionWorkflowRangeProgress
-        | RecordRangeFailed of ManifestContributionWorkflowRangeFailure
+        | Start of
+            operationId: ManifestContributionWorkflowOperationId *
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress *
+            direction: ManifestContributionDirection *
+            ranges: ManifestContributionWorkflowRange array
+        | RecordRangeSucceeded of
+            operationId: ManifestContributionWorkflowOperationId *
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress *
+            range: ManifestContributionWorkflowRange
+        | RecordRangeFailed of
+            operationId: ManifestContributionWorkflowOperationId *
+            repositoryId: RepositoryId *
+            storagePoolId: StoragePoolId *
+            manifestAddress: ManifestAddress *
+            range: ManifestContributionWorkflowRange *
+            message: string
 
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowCommand>()
 
@@ -114,6 +172,7 @@ module ManifestContributionWorkflow =
         {
             Class: string
             RepositoryId: RepositoryId
+            StoragePoolId: StoragePoolId
             ManifestAddress: ManifestAddress
             Direction: ManifestContributionDirection
             Ranges: ManifestContributionWorkflowRange array
@@ -127,6 +186,7 @@ module ManifestContributionWorkflow =
             {
                 Class = nameof ManifestContributionWorkflowDto
                 RepositoryId = RepositoryId.Empty
+                StoragePoolId = String.Empty
                 ManifestAddress = String.Empty
                 Direction = ManifestContributionDirection.Increment
                 Ranges = Array.empty
@@ -161,6 +221,7 @@ module ManifestContributionWorkflow =
 
                 { current with
                     RepositoryId = start.RepositoryId
+                    StoragePoolId = start.StoragePoolId
                     ManifestAddress = start.ManifestAddress
                     Direction = start.Direction
                     Ranges = Array.copy start.Ranges

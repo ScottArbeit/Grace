@@ -22,7 +22,7 @@ import {
 } from './ContentBlock';
 
 /**
- * Server-accepted reconstruction contract for one manifest-backed file.
+ * Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
  * @export
  * @interface FileManifest
  */
@@ -51,6 +51,12 @@ export interface FileManifest {
      * @memberof FileManifest
      */
     fileContentHash: string;
+    /**
+     * StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+     * @type {string}
+     * @memberof FileManifest
+     */
+    storagePoolId: string;
     /**
      * 
      * @type {number}
@@ -83,6 +89,7 @@ export function instanceOfFileManifest(value: object): value is FileManifest {
     if (!('manifestAddress' in value) || value['manifestAddress'] === undefined) return false;
     if (!('chunkingSuiteId' in value) || value['chunkingSuiteId'] === undefined) return false;
     if (!('fileContentHash' in value) || value['fileContentHash'] === undefined) return false;
+    if (!('storagePoolId' in value) || value['storagePoolId'] === undefined) return false;
     if (!('size' in value) || value['size'] === undefined) return false;
     if (!('blocks' in value) || value['blocks'] === undefined) return false;
     return true;
@@ -102,6 +109,7 @@ export function FileManifestFromJSONTyped(json: any, ignoreDiscriminator: boolea
         'manifestAddress': json['ManifestAddress'],
         'chunkingSuiteId': json['ChunkingSuiteId'],
         'fileContentHash': json['FileContentHash'],
+        'storagePoolId': json['StoragePoolId'],
         'size': json['Size'],
         'blocks': ((json['Blocks'] as Array<any>).map(ContentBlockFromJSON)),
     };
@@ -122,6 +130,7 @@ export function FileManifestToJSONTyped(value?: FileManifest | null, ignoreDiscr
         'ManifestAddress': value['manifestAddress'],
         'ChunkingSuiteId': value['chunkingSuiteId'],
         'FileContentHash': value['fileContentHash'],
+        'StoragePoolId': value['storagePoolId'],
         'Size': value['size'],
         'Blocks': ((value['blocks'] as Array<any>).map(ContentBlockToJSON)),
     };

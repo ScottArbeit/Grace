@@ -44,8 +44,6 @@ open Azure.Storage
 
 module DirectoryVersion =
 
-    let private DefaultStoragePoolId = "default"
-
     /// Result of validating a single whole-file content reference.
     type FileValidationResult =
         | Valid of fileVersion: FileVersion * computedSha256Hash: Sha256Hash * computedBlake3Hash: Blake3Hash * elapsedMs: float
@@ -58,6 +56,38 @@ module DirectoryVersion =
             elapsedMs: float
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
+
+    let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersionDtos: DirectoryVersionDto seq) correlationId =
+        let directoryVersionDtoArray = directoryVersionDtos |> Seq.toArray
+
+        let directoryVersionIds =
+            HashSet<DirectoryVersionId>(
+                directoryVersionDtoArray
+                |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+            )
+
+        if not (directoryVersionIds.Contains rootDirectoryVersionId) then
+            Error(
+                (GraceError.Create "Recursive directory traversal did not include the root DirectoryVersion." correlationId)
+                    .enhance (nameof DirectoryVersionId, rootDirectoryVersionId)
+            )
+        else
+            let missingChild =
+                directoryVersionDtoArray
+                |> Seq.collect (fun directoryVersionDto ->
+                    directoryVersionDto.DirectoryVersion.Directories
+                    |> Seq.map (fun childDirectoryVersionId -> directoryVersionDto.DirectoryVersion, childDirectoryVersionId))
+                |> Seq.tryFind (fun (_, childDirectoryVersionId) -> not (directoryVersionIds.Contains childDirectoryVersionId))
+
+            match missingChild with
+            | Some (parentDirectoryVersion, childDirectoryVersionId) ->
+                Error(
+                    (GraceError.Create "Recursive directory traversal did not include a declared child DirectoryVersion." correlationId)
+                        .enhance(nameof DirectoryVersionId, rootDirectoryVersionId)
+                        .enhance("ParentDirectoryVersionId", parentDirectoryVersion.DirectoryVersionId)
+                        .enhance ("ChildDirectoryVersionId", childDirectoryVersionId)
+                )
+            | None -> Ok directoryVersionDtoArray
 
     /// Validates a single file's version hashes by downloading from storage and computing.
     /// Note: Non-binary files are stored as GZip-compressed streams, so we need to decompress them first.
@@ -407,6 +437,8 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must be finalized before Save.")
             elif not (ContentAddress.isValidAddress manifest.ManifestAddress) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid ManifestAddress before Save.")
+            elif String.IsNullOrWhiteSpace manifest.StoragePoolId then
+                Error(manifestValidationError correlationId fileVersion "must include a StoragePoolId before Save.")
             elif String.IsNullOrWhiteSpace manifest.ChunkingSuiteId then
                 Error(manifestValidationError correlationId fileVersion "must include a ChunkingSuiteId before Save.")
             elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
@@ -437,8 +469,10 @@ module DirectoryVersion =
         with
         | ex -> Error(GraceError.CreateWithException ex $"FileManifest reference for '{fileVersion.RelativePath}' is invalid before Save." correlationId)
 
+    type ManifestReferenceForSaveBoundary = { Manifest: FileManifest; AuthorizedScope: RelativePath }
+
     let getManifestReferencesForSaveBoundary (directoryVersion: DirectoryVersion) correlationId =
-        let manifests = Dictionary<ManifestAddress, FileManifest>()
+        let manifests = Dictionary<StoragePoolId * ManifestAddress * RelativePath, ManifestReferenceForSaveBoundary>()
         let mutable index = 0
         let mutable error: GraceError option = None
 
@@ -453,8 +487,10 @@ module DirectoryVersion =
                 | Some manifest ->
                     match validateManifestBackedFileForSaveBoundary correlationId fileVersion manifest with
                     | Ok () ->
-                        if not (manifests.ContainsKey manifest.ManifestAddress) then
-                            manifests.Add(manifest.ManifestAddress, manifest)
+                        let manifestKey = manifest.StoragePoolId, manifest.ManifestAddress, fileVersion.RelativePath
+
+                        if not (manifests.ContainsKey manifestKey) then
+                            manifests.Add(manifestKey, { Manifest = manifest; AuthorizedScope = fileVersion.RelativePath })
                     | Error graceError -> error <- Some graceError
 
             index <- index + 1
@@ -463,35 +499,49 @@ module DirectoryVersion =
         | Some graceError -> Error graceError
         | None -> Ok(manifests.Values |> Seq.toList)
 
-    let contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress =
-        let storagePoolId = DedupeIndex.storagePoolIdForRepositoryId repositoryId
-        $"{storagePoolId}|{contentBlockAddress}"
+    let contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
 
     let validateManifestReferencesForSaveBoundaryWithResolver
-        (getRangePresence: ContentBlockAddress -> ContentBlockRangeQuery -> Task<ContentBlockRangePresence>)
+        (getScopedRangePresence: StoragePoolId
+                                     -> RepositoryId
+                                     -> RelativePath
+                                     -> ManifestAddress
+                                     -> ContentBlockAddress
+                                     -> ContentBlockRangeQuery
+                                     -> Task<ContentBlockRangePresence>)
+        repositoryId
         correlationId
-        (manifests: FileManifest seq)
+        (manifestReferences: ManifestReferenceForSaveBoundary seq)
         =
         task {
-            let manifestArray = manifests |> Seq.toArray
+            let manifestReferenceArray = manifestReferences |> Seq.toArray
             let mutable manifestIndex = 0
             let mutable error: GraceError option = None
 
-            while manifestIndex < manifestArray.Length
+            while manifestIndex < manifestReferenceArray.Length
                   && error.IsNone do
-                let manifest = manifestArray[manifestIndex]
+                let manifestReference = manifestReferenceArray[manifestIndex]
+                let manifest = manifestReference.Manifest
                 let mutable blockIndex = 0
 
                 while blockIndex < manifest.Blocks.Count && error.IsNone do
                     let block = manifest.Blocks[blockIndex]
                     let query: ContentBlockRangeQuery = { OrdinalStart = 0; OrdinalCount = 1 }
-                    let! presence = getRangePresence block.Address query
+
+                    let! presence =
+                        getScopedRangePresence
+                            manifest.StoragePoolId
+                            repositoryId
+                            manifestReference.AuthorizedScope
+                            manifest.ManifestAddress
+                            block.Address
+                            query
 
                     if presence = ContentBlockRangePresence.Absent then
                         error <-
                             Some(
                                 GraceError.Create
-                                    $"FileManifest '{manifest.ManifestAddress}' references ContentBlock '{block.Address}' at manifest block index {blockIndex}, but no finalized ContentBlock metadata range exists at content-block ordinal 0."
+                                    $"FileManifest '{manifest.ManifestAddress}' references ContentBlock '{block.Address}' at manifest block index {blockIndex}, but no finalized scoped ContentBlock metadata range exists for repository '{repositoryId}' and authorized scope '{manifestReference.AuthorizedScope}' at content-block ordinal 0."
                                     correlationId
                             )
 
@@ -505,14 +555,27 @@ module DirectoryVersion =
                 | None -> Ok()
         }
 
-    let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifests =
-        let getRangePresence contentBlockAddress query =
-            let actorKey = contentBlockMetadataActorKeyForSaveBoundary repositoryId contentBlockAddress
-            let metadataActor = orleansClient.CreateActorProxyWithCorrelationId<IContentBlockMetadataActor>(actorKey, correlationId)
+    let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifestReferences =
+        let getScopedRangePresence storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress query =
+            task {
+                let dedupeIndexActor = orleansClient.CreateActorProxyWithCorrelationId<IDedupeIndexActor>("dedupe-index:v1", correlationId)
 
-            metadataActor.GetRangePresence query correlationId
+                match!
+                    dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                        (
+                            storagePoolId,
+                            repositoryId,
+                            authorizedScope,
+                            manifestAddress,
+                            contentBlockAddress,
+                            correlationId
+                        )
+                    with
+                | Some metadata -> return Grace.Types.ContentBlockMetadata.rangePresence metadata query
+                | None -> return ContentBlockRangePresence.Absent
+            }
 
-        validateManifestReferencesForSaveBoundaryWithResolver getRangePresence correlationId manifests
+        validateManifestReferencesForSaveBoundaryWithResolver getScopedRangePresence repositoryId correlationId manifestReferences
 
     type DirectoryVersionActor
         (
@@ -933,79 +996,90 @@ module DirectoryVersion =
                                     .OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath)
                                     .ToArray()
 
-                            // Save the recursive results to Azure Blob Storage.
-                            let repositoryActorProxy =
-                                Repository.CreateActorProxy
-                                    directoryVersionDto.DirectoryVersion.OrganizationId
-                                    directoryVersionDto.DirectoryVersion.RepositoryId
-                                    correlationId
+                            match validateRecursiveDirectoryVersionsComplete directoryVersion.DirectoryVersionId subdirectoryVersionsList correlationId with
+                            | Error graceError ->
+                                log.LogWarning(
+                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Skipping recursive directory version cache write because traversal was incomplete. Error: {error}",
+                                    getCurrentInstantExtended (),
+                                    getMachineName,
+                                    correlationId,
+                                    this.GetPrimaryKey(),
+                                    graceError
+                                )
+                            | Ok completeSubdirectoryVersionsList ->
+                                // Save the recursive results to Azure Blob Storage only after completeness is known.
+                                let repositoryActorProxy =
+                                    Repository.CreateActorProxy
+                                        directoryVersionDto.DirectoryVersion.OrganizationId
+                                        directoryVersionDto.DirectoryVersion.RepositoryId
+                                        correlationId
 
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                            let tags = Dictionary<string, string>()
-                            tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
-                            tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
-                            tags.Add(nameof RepositoryId, $"{repositoryDto.RepositoryId}")
-                            tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                            tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
-                            tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                            tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
+                                let tags = Dictionary<string, string>()
+                                tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
+                                tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
+                                tags.Add(nameof RepositoryId, $"{repositoryDto.RepositoryId}")
+                                tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
+                                tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
+                                tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                                tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
 
-                            // Write the JSON using MessagePack serialization for efficiency.
-                            let blockBlobOpenWriteOptions =
-                                BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
+                                // Write the JSON using MessagePack serialization for efficiency.
+                                let blockBlobOpenWriteOptions =
+                                    BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
 
-                            let conditionsSummary =
-                                let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty ("Conditions")
+                                let conditionsSummary =
+                                    let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty ("Conditions")
 
-                                if isNull conditionsProperty then
-                                    "not supported"
-                                else
-                                    let conditionsValue = conditionsProperty.GetValue(blockBlobOpenWriteOptions)
-
-                                    if isNull conditionsValue then
-                                        "null"
+                                    if isNull conditionsProperty then
+                                        "not supported"
                                     else
-                                        let conditionProperties = conditionsValue.GetType().GetProperties()
+                                        let conditionsValue = conditionsProperty.GetValue(blockBlobOpenWriteOptions)
 
-                                        conditionProperties
-                                        |> Seq.map (fun propertyInfo ->
-                                            let value = propertyInfo.GetValue(conditionsValue)
-                                            $"{propertyInfo.Name}={value}")
-                                        |> String.concat "; "
+                                        if isNull conditionsValue then
+                                            "null"
+                                        else
+                                            let conditionProperties = conditionsValue.GetType().GetProperties()
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Blob write conditions: {conditionsSummary}.",
-                                this.GetPrimaryKey(),
-                                conditionsSummary
-                            )
+                                            conditionProperties
+                                            |> Seq.map (fun propertyInfo ->
+                                                let value = propertyInfo.GetValue(conditionsValue)
+                                                $"{propertyInfo.Name}={value}")
+                                            |> String.concat "; "
 
-                            use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
-                            do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
-                            do! blobStream.DisposeAsync()
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Blob write conditions: {conditionsSummary}.",
+                                    this.GetPrimaryKey(),
+                                    conditionsSummary
+                                )
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
-                                this.GetPrimaryKey(),
-                                directoryVersionDto.DirectoryVersion.RelativePath
-                            )
+                                use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
+                                do! MessagePackSerializer.SerializeAsync(blobStream, completeSubdirectoryVersionsList, messagePackSerializerOptions)
+                                do! blobStream.DisposeAsync()
 
-                            // Create a reminder to delete the cached state after the configured number of cache days.
-                            let deletionReminderState: PhysicalDeletionReminderState =
-                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
+                                    this.GetPrimaryKey(),
+                                    directoryVersionDto.DirectoryVersion.RelativePath
+                                )
 
-                            do!
-                                (this :> IGraceReminderWithGuidKey)
-                                    .ScheduleReminderAsync
-                                    ReminderTypes.DeleteCachedState
-                                    (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                    (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
-                                    correlationId
+                                // Create a reminder to delete the cached state after the configured number of cache days.
+                                let deletionReminderState: PhysicalDeletionReminderState =
+                                    { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Delete cached state reminder was set.",
-                                this.GetPrimaryKey()
-                            )
+                                do!
+                                    (this :> IGraceReminderWithGuidKey)
+                                        .ScheduleReminderAsync
+                                        ReminderTypes.DeleteCachedState
+                                        (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
+                                        (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
+                                        correlationId
+
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Delete cached state reminder was set.",
+                                    this.GetPrimaryKey()
+                                )
 
                             return subdirectoryVersionsList
                     with

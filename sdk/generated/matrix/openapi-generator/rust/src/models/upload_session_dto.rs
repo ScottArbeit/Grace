@@ -24,6 +24,9 @@ pub struct UploadSessionDto {
     pub organization_id: uuid::Uuid,
     #[serde(rename = "RepositoryId")]
     pub repository_id: uuid::Uuid,
+    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+    #[serde(rename = "StoragePoolId")]
+    pub storage_pool_id: String,
     #[serde(rename = "AuthorizedScope")]
     pub authorized_scope: String,
     /// Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.
@@ -65,13 +68,14 @@ pub struct UploadSessionDto {
 
 impl UploadSessionDto {
     /// Server state snapshot for a manifest upload session.
-    pub fn new(class: Class, upload_session_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, authorized_scope: String, file_content_hash: String, expected_size: i64, chunking_suite_id: String, sampling_policy_snapshot: String, lifecycle_state: models::UploadSessionLifecycleState, started_at: chrono::DateTime<chrono::FixedOffset>, completed_at: chrono::DateTime<chrono::FixedOffset>, finalized_manifest_address: String, block_upload_intents: Vec<models::BlockUploadIntent>, confirmed_block_uploads: Vec<models::ConfirmedBlockUpload>, dedupe_discovery: models::DedupeDiscoverySnapshot, claimed_reuse_ranges: Vec<models::ClaimedReuseRange>, cleanup_reminder_scheduled_at: chrono::DateTime<chrono::FixedOffset>, cleanup_reminder_operation_id: String, last_operation_id: String) -> UploadSessionDto {
+    pub fn new(class: Class, upload_session_id: uuid::Uuid, owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, storage_pool_id: String, authorized_scope: String, file_content_hash: String, expected_size: i64, chunking_suite_id: String, sampling_policy_snapshot: String, lifecycle_state: models::UploadSessionLifecycleState, started_at: chrono::DateTime<chrono::FixedOffset>, completed_at: chrono::DateTime<chrono::FixedOffset>, finalized_manifest_address: String, block_upload_intents: Vec<models::BlockUploadIntent>, confirmed_block_uploads: Vec<models::ConfirmedBlockUpload>, dedupe_discovery: models::DedupeDiscoverySnapshot, claimed_reuse_ranges: Vec<models::ClaimedReuseRange>, cleanup_reminder_scheduled_at: chrono::DateTime<chrono::FixedOffset>, cleanup_reminder_operation_id: String, last_operation_id: String) -> UploadSessionDto {
         UploadSessionDto {
             class,
             upload_session_id,
             owner_id,
             organization_id,
             repository_id,
+            storage_pool_id,
             authorized_scope,
             file_content_hash,
             expected_size,

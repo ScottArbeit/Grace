@@ -25,8 +25,9 @@
         <Compile Include="Resources\Utilities.Resources.fs" />
         <Compile Include="Combinators.fs" />
         <Compile Include="Utilities.Shared.fs" />
-        <Compile Include="StorageKeys.Shared.fs" />
         <Compile Include="ContentAddress.Shared.fs" />
+        <Compile Include="StorageKeys.Shared.fs" />
+        <Compile Include="StoragePoolRouting.Shared.fs" />
         <Compile Include="ContentBlockFormat.Shared.fs" />
         <Compile Include="ManifestValidation.Shared.fs" />
         <Compile Include="RabinChunking.Shared.fs" />

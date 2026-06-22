@@ -46,6 +46,7 @@ class TestUploadSessionDecisionReturnValue(unittest.TestCase):
                         owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f', 
                         organization_id = 'e35d64a9-b990-44f5-bf02-32ad7d15630c', 
                         repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095', 
+                        storage_pool_id = '', 
                         authorized_scope = '', 
                         file_content_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
                         expected_size = 56, 
@@ -68,6 +69,8 @@ class TestUploadSessionDecisionReturnValue(unittest.TestCase):
                                 content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
                                 payload_length = 56, 
                                 storage_placement = grace_generated_openapi_probe.models.content_block_storage_placement.ContentBlockStoragePlacement(
+                                    storage_account_name = '', 
+                                    storage_container_name = '', 
                                     object_key = '', 
                                     e_tag = '', ), 
                                 ranges = [
@@ -123,6 +126,7 @@ class TestUploadSessionDecisionReturnValue(unittest.TestCase):
                         owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f', 
                         organization_id = 'e35d64a9-b990-44f5-bf02-32ad7d15630c', 
                         repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095', 
+                        storage_pool_id = '', 
                         authorized_scope = '', 
                         file_content_hash = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
                         expected_size = 56, 
@@ -145,6 +149,8 @@ class TestUploadSessionDecisionReturnValue(unittest.TestCase):
                                 content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b', 
                                 payload_length = 56, 
                                 storage_placement = grace_generated_openapi_probe.models.content_block_storage_placement.ContentBlockStoragePlacement(
+                                    storage_account_name = '', 
+                                    storage_container_name = '', 
                                     object_key = '', 
                                     e_tag = '', ), 
                                 ranges = [

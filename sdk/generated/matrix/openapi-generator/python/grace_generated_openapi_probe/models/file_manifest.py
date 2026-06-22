@@ -28,15 +28,16 @@ from pydantic_core import to_jsonable_python
 
 class FileManifest(BaseModel):
     """
-    Server-accepted reconstruction contract for one manifest-backed file.
+    Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
     manifest_address: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3-derived FileManifest address.", alias="ManifestAddress")
     chunking_suite_id: StrictStr = Field(description="Versioned chunking suite identifier.", alias="ChunkingSuiteId")
     file_content_hash: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.", alias="FileContentHash")
+    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.", alias="StoragePoolId")
     size: StrictInt = Field(alias="Size")
     blocks: List[ContentBlock] = Field(alias="Blocks")
-    __properties: ClassVar[List[str]] = ["Class", "ManifestAddress", "ChunkingSuiteId", "FileContentHash", "Size", "Blocks"]
+    __properties: ClassVar[List[str]] = ["Class", "ManifestAddress", "ChunkingSuiteId", "FileContentHash", "StoragePoolId", "Size", "Blocks"]
 
     @field_validator('var_class')
     def var_class_validate_enum(cls, value):
@@ -127,6 +128,7 @@ class FileManifest(BaseModel):
             "ManifestAddress": obj.get("ManifestAddress"),
             "ChunkingSuiteId": obj.get("ChunkingSuiteId"),
             "FileContentHash": obj.get("FileContentHash"),
+            "StoragePoolId": obj.get("StoragePoolId"),
             "Size": obj.get("Size"),
             "Blocks": [ContentBlock.from_dict(_item) for _item in obj["Blocks"]] if obj.get("Blocks") is not None else None
         })

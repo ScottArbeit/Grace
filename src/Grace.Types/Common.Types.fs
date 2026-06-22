@@ -331,6 +331,8 @@ module Common =
             ChunkingSuiteId: ChunkingSuiteId
             [<Key(5)>]
             FileContentHash: FileContentHash
+            [<Key(6)>]
+            StoragePoolId: StoragePoolId
         }
 
         static member Create
@@ -339,6 +341,7 @@ module Common =
                 chunkingSuiteId: ChunkingSuiteId,
                 fileContentHash: FileContentHash,
                 size: int64,
+                storagePoolId: StoragePoolId,
                 blocks: ContentBlock list
             ) =
             {
@@ -348,7 +351,18 @@ module Common =
                 Blocks = List<ContentBlock>(blocks)
                 ChunkingSuiteId = chunkingSuiteId
                 FileContentHash = fileContentHash
+                StoragePoolId = storagePoolId
             }
+
+        static member Create
+            (
+                manifestAddress: ManifestAddress,
+                chunkingSuiteId: ChunkingSuiteId,
+                fileContentHash: FileContentHash,
+                size: int64,
+                blocks: ContentBlock list
+            ) =
+            FileManifest.Create(manifestAddress, chunkingSuiteId, fileContentHash, size, StoragePoolId "default", blocks)
 
         static member Create(manifestAddress: ManifestAddress, size: int64, blocks: ContentBlock list) =
             FileManifest.Create(manifestAddress, ChunkingSuiteId String.Empty, FileContentHash String.Empty, size, blocks)
@@ -363,6 +377,7 @@ module Common =
                 && this.Size = otherManifest.Size
                 && this.ChunkingSuiteId = otherManifest.ChunkingSuiteId
                 && this.FileContentHash = otherManifest.FileContentHash
+                && this.StoragePoolId = otherManifest.StoragePoolId
                 && this.Blocks.Count = otherManifest.Blocks.Count
                 && Seq.forall2 (=) this.Blocks otherManifest.Blocks
             | _ -> false
@@ -374,6 +389,7 @@ module Common =
             hashCode.Add(this.Size)
             hashCode.Add(this.ChunkingSuiteId)
             hashCode.Add(this.FileContentHash)
+            hashCode.Add(this.StoragePoolId)
 
             for block in this.Blocks do
                 hashCode.Add(block)

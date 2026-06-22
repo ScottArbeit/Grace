@@ -8,7 +8,7 @@ module StorageKeys =
     let private CasPrefix = "cas"
 
     [<Literal>]
-    let private ContentBlocksPrefix = "content-blocks"
+    let private ContentPrefix = "content"
 
     [<Literal>]
     let private FileManifestsPrefix = "file-manifests"
@@ -34,7 +34,9 @@ module StorageKeys =
         <> legacyWholeFileContentObjectKey fileVersion
 
     /// Builds the StoragePool-scoped object key for a content-addressed ContentBlock payload.
-    let contentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = $"{CasPrefix}/{ContentBlocksPrefix}/{contentBlockAddress}"
+    let contentBlockObjectKey (contentBlockAddress: ContentBlockAddress) =
+        let digest = ContentAddress.requireBlake3Address (nameof contentBlockAddress) contentBlockAddress
+        $"{CasPrefix}/{ContentPrefix}/{digest[0..1]}/{digest[2..3]}/{digest[4..5]}/{digest[6..7]}/{digest}"
 
     /// Builds the StoragePool-scoped object key for a content-addressed FileManifest record.
     let fileManifestObjectKey (manifestAddress: ManifestAddress) = $"{CasPrefix}/{FileManifestsPrefix}/{manifestAddress}"

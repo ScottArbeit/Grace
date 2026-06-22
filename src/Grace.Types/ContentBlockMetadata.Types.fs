@@ -15,12 +15,17 @@ module ContentBlockMetadata =
     type ContentBlockStoragePlacement =
         {
             [<Id(0u)>]
-            ObjectKey: string
+            StorageAccountName: StorageAccountName
             [<Id(1u)>]
+            StorageContainerName: StorageContainerName
+            [<Id(2u)>]
+            ObjectKey: string
+            [<Id(3u)>]
             ETag: string option
         }
 
-        static member Empty = { ObjectKey = String.Empty; ETag = None }
+        static member Empty =
+            { StorageAccountName = String.Empty; StorageContainerName = StorageContainerName String.Empty; ObjectKey = String.Empty; ETag = None }
 
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadataRange =
@@ -182,6 +187,14 @@ module ContentBlockMetadata =
             StoragePlacement: ContentBlockStoragePlacement
             [<Id(5u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(6u)>]
+            ExpectedMetadataVersion: MetadataVersion option
+            [<Id(7u)>]
+            RequireMissingMetadata: bool
+            [<Id(8u)>]
+            ExpectedRanges: ContentBlockMetadataRange array
+            [<Id(9u)>]
+            IsFinalizeContribution: bool
         }
 
     [<GenerateSerializer>]
@@ -260,14 +273,225 @@ module ContentBlockMetadata =
             Message: string
         }
 
-    let findRanges (metadata: ContentBlockMetadata) query =
-        if query.OrdinalCount <= 0 then
-            Array.empty
+    let private trySelectContiguousRangeEvidence (metadata: ContentBlockMetadata) query =
+        if isNull (box metadata)
+           || isNull metadata.Ranges
+           || isNull (box query)
+           || query.OrdinalStart < 0
+           || query.OrdinalCount <= 0
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
+            None
         else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
+
+            let candidates =
+                metadata.Ranges
+                |> Array.choose (fun range ->
+                    if range.ActiveManifestCount > 0
+                       && range.OrdinalStart >= 0
+                       && range.OrdinalCount > 0
+                       && range.OrdinalCount
+                          <= Int32.MaxValue - range.OrdinalStart
+                       && range.PhysicalLength > 0L
+                       && range.PhysicalLength
+                          <= Int64.MaxValue - range.PhysicalOffset
+                       && range.OrdinalStart >= query.OrdinalStart
+                       && rangeEnd range <= queryEnd then
+                        Some range
+                    else
+                        None)
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
+
+            let rec tryBuildChain nextOrdinal nextPhysicalOffset selected =
+                if nextOrdinal = queryEnd then
+                    Some(List.rev selected |> List.toArray)
+                else
+                    candidates
+                    |> Array.filter (fun candidate ->
+                        candidate.OrdinalStart = nextOrdinal
+                        && candidate.PhysicalOffset = nextPhysicalOffset)
+                    |> Array.tryPick (fun candidate ->
+                        let candidateEnd =
+                            if candidate.OrdinalCount > Int32.MaxValue - candidate.OrdinalStart then
+                                Int32.MaxValue
+                            else
+                                candidate.OrdinalStart + candidate.OrdinalCount
+
+                        let candidatePhysicalEnd =
+                            if candidate.PhysicalLength > Int64.MaxValue - candidate.PhysicalOffset then
+                                Int64.MaxValue
+                            else
+                                candidate.PhysicalOffset
+                                + candidate.PhysicalLength
+
+                        if candidateEnd > queryEnd then
+                            None
+                        else
+                            tryBuildChain candidateEnd candidatePhysicalEnd (candidate :: selected))
+
+            candidates
+            |> Array.filter (fun candidate -> candidate.OrdinalStart = query.OrdinalStart)
+            |> Array.tryPick (fun candidate ->
+                let candidateEnd =
+                    if candidate.OrdinalCount > Int32.MaxValue - candidate.OrdinalStart then
+                        Int32.MaxValue
+                    else
+                        candidate.OrdinalStart + candidate.OrdinalCount
+
+                let candidatePhysicalEnd =
+                    if candidate.PhysicalLength > Int64.MaxValue - candidate.PhysicalOffset then
+                        Int64.MaxValue
+                    else
+                        candidate.PhysicalOffset
+                        + candidate.PhysicalLength
+
+                if candidateEnd > queryEnd then
+                    None
+                else
+                    tryBuildChain candidateEnd candidatePhysicalEnd [ candidate ])
+
+    let private trySynthesizeContiguousRange (metadata: ContentBlockMetadata) query =
+        match trySelectContiguousRangeEvidence metadata query with
+        | None -> None
+        | Some selected ->
+            let first = selected[0]
+
+            Some
+                {
+                    OrdinalStart = query.OrdinalStart
+                    OrdinalCount = query.OrdinalCount
+                    ActiveManifestCount =
+                        selected
+                        |> Seq.map (fun range -> range.ActiveManifestCount)
+                        |> Seq.min
+                    PhysicalOffset = first.PhysicalOffset
+                    PhysicalLength =
+                        selected
+                        |> Seq.sumBy (fun range -> range.PhysicalLength)
+                }
+
+    let private trySynthesizeUniformCoveringRange (metadata: ContentBlockMetadata) query =
+        if query.OrdinalStart < 0
+           || query.OrdinalCount <= 1
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
+            None
+        else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) =
+                if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
+                    Int32.MaxValue
+                else
+                    range.OrdinalStart + range.OrdinalCount
+
             metadata.Ranges
             |> Array.filter (fun range ->
-                range.OrdinalStart = query.OrdinalStart
-                && range.OrdinalCount = query.OrdinalCount)
+                range.ActiveManifestCount > 0
+                && range.OrdinalStart >= 0
+                && range.OrdinalCount > 0
+                && range.OrdinalCount
+                   <= Int32.MaxValue - range.OrdinalStart
+                && range.PhysicalOffset >= 0L
+                && range.PhysicalLength > 0L
+                && range.PhysicalLength
+                   <= Int64.MaxValue - range.PhysicalOffset
+                && range.OrdinalStart <= query.OrdinalStart
+                && rangeEnd range >= queryEnd
+                && range.PhysicalLength % int64 range.OrdinalCount = 0L)
+            |> Array.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+            |> Array.tryHead
+            |> Option.map (fun range ->
+                let bytesPerOrdinal = range.PhysicalLength / int64 range.OrdinalCount
+                let ordinalOffset = query.OrdinalStart - range.OrdinalStart
+
+                { range with
+                    OrdinalStart = query.OrdinalStart
+                    OrdinalCount = query.OrdinalCount
+                    PhysicalOffset =
+                        range.PhysicalOffset
+                        + (int64 ordinalOffset * bytesPerOrdinal)
+                    PhysicalLength = int64 query.OrdinalCount * bytesPerOrdinal
+                })
+
+    let findRanges (metadata: ContentBlockMetadata) query =
+        if isNull (box metadata)
+           || isNull metadata.Ranges
+           || isNull (box query)
+           || query.OrdinalCount <= 0 then
+            Array.empty
+        else
+            let exactRanges =
+                metadata.Ranges
+                |> Array.filter (fun range ->
+                    range.OrdinalStart = query.OrdinalStart
+                    && range.OrdinalCount = query.OrdinalCount)
+
+            let activeExactRanges =
+                exactRanges
+                |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+            if activeExactRanges.Length > 0 then
+                activeExactRanges
+            else
+                match trySynthesizeContiguousRange metadata query with
+                | Some range -> [| range |]
+                | None ->
+                    match trySynthesizeUniformCoveringRange metadata query with
+                    | Some range -> [| range |]
+                    | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
+
+    let findRangeEvidence (metadata: ContentBlockMetadata) query =
+        if isNull (box metadata)
+           || isNull metadata.Ranges
+           || isNull (box query)
+           || query.OrdinalStart < 0
+           || query.OrdinalCount <= 0
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
+            Array.empty
+        else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) =
+                if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
+                    Int32.MaxValue
+                else
+                    range.OrdinalStart + range.OrdinalCount
+
+            let exactRanges =
+                metadata.Ranges
+                |> Array.filter (fun range ->
+                    range.OrdinalStart = query.OrdinalStart
+                    && range.OrdinalCount = query.OrdinalCount)
+
+            let activeExactRanges =
+                exactRanges
+                |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+            if activeExactRanges.Length > 0 then
+                activeExactRanges
+            else
+                match trySelectContiguousRangeEvidence metadata query with
+                | Some ranges -> ranges
+                | None ->
+                    let activeCoveringRanges =
+                        metadata.Ranges
+                        |> Array.filter (fun range ->
+                            range.ActiveManifestCount > 0
+                            && range.OrdinalStart >= 0
+                            && range.OrdinalCount > 0
+                            && range.OrdinalCount
+                               <= Int32.MaxValue - range.OrdinalStart
+                            && range.PhysicalLength > 0L
+                            && range.PhysicalLength
+                               <= Int64.MaxValue - range.PhysicalOffset
+                            && range.OrdinalStart <= query.OrdinalStart
+                            && rangeEnd range >= queryEnd)
+
+                    if activeCoveringRanges.Length > 0 then activeCoveringRanges
+                    elif exactRanges.Length > 0 then exactRanges
+                    else Array.empty
 
     let tryFindRange metadata query =
         findRanges metadata query

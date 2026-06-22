@@ -628,13 +628,14 @@ module BranchServerTestHelpers =
                 Assert.Fail("Could not generate same-prefix BLAKE3 root DirectoryVersions for branch route tests.")
                 Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
 
-    let shortestUniquePrefix (selected: Sha256Hash) (other: Sha256Hash) =
+    let shortestUniquePrefix (selected: Sha256Hash) (others: Sha256Hash seq) =
         let selectedHash = string selected
-        let otherHash = string other
+        let otherHashes = others |> Seq.map string |> Seq.toArray
         let mutable prefixLength = 2
 
         while prefixLength < selectedHash.Length
-              && otherHash.StartsWith(selectedHash.Substring(0, prefixLength), StringComparison.OrdinalIgnoreCase) do
+              && (otherHashes
+                  |> Array.exists (fun otherHash -> otherHash.StartsWith(selectedHash.Substring(0, prefixLength), StringComparison.OrdinalIgnoreCase))) do
             prefixLength <- prefixLength + 1
 
         selectedHash.Substring(0, prefixLength)
@@ -1223,7 +1224,18 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
 
-            let childOnlyPrefix = BranchServerTestHelpers.shortestUniquePrefix child.Sha256Hash root.Sha256Hash
+            let childOnlyPrefix =
+                let shortestPrefix =
+                    BranchServerTestHelpers.shortestUniquePrefix
+                        child.Sha256Hash
+                        [
+                            root.Sha256Hash
+                            parentBranch.BasedOn.Sha256Hash
+                        ]
+
+                (string child.Sha256Hash)
+                    .Substring(0, Math.Max(16, shortestPrefix.Length))
+
             let! response = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch DirectoryVersionId.Empty (Sha256Hash childOnlyPrefix)
             let! responseBody = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)

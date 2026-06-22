@@ -92,7 +92,7 @@
             examples:
               signedContentBlockUploadUri:
                 summary: Raw ContentBlock upload URI
-                value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
+                value: https://storage.example.net/grace/staging/repositories/ab6f35ef-6e01-440b-8f9b-c343a5272095/upload-sessions/6a67b2a9f6fb45c6a7f89ce5f39f2e14/content-blocks/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example#graceStorageAccount=gracestaging001
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':
@@ -101,7 +101,10 @@
 /storage/getContentBlockDownloadUri:
   post:
     summary: Gets a download URI for a ContentBlock payload.
-    description: Gets an object-storage download URI for an authorized manifest-backed reconstruction path.
+    description: >-
+      Gets an object-storage download URI for one ContentBlock in an authorized manifest-backed reconstruction path.
+      Callers provide the server-accepted StoragePoolId, ManifestAddress, ContentBlockAddress, and AuthorizedScope; the
+      request does not repost the full FileManifest for each block.
     operationId: GetContentBlockDownloadUri
     requestBody:
       required: true
@@ -119,7 +122,7 @@
             examples:
               signedContentBlockDownloadUri:
                 summary: Raw ContentBlock download URI
-                value: https://storage.example.net/grace/content-blocks/ab/cd?sv=2023-11-03&sig=example
+                value: https://privatelink.storage.example.net/grace/cas/content/ab/cd/ef/01/abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789?sv=2023-11-03&sig=example#graceStorageAccount=casdownload001
       '400':
         $ref: './Responses.OpenAPI.yaml#/400'
       '500':

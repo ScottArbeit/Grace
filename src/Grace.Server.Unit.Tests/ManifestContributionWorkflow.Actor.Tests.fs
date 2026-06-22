@@ -14,11 +14,13 @@ type ManifestContributionWorkflowActorTests() =
 
     let timestamp = Instant.FromUtc(2026, 5, 24, 14, 0)
     let repositoryId = Guid.Parse("a6c6b60a-d4d2-40f6-8362-258dbe75a5bf")
+    let storagePoolId = StoragePoolId "pool-main"
+    let otherStoragePoolId = StoragePoolId "pool-archive"
     let manifestAddress = "manifest:blake3:alpha"
 
-    let range0 = { StoragePoolId = StoragePoolId "pool-main"; ContentBlockAddress = ContentBlockAddress "block-a"; OrdinalStart = 0; OrdinalCount = 8 }
+    let range0 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-a"; OrdinalStart = 0; OrdinalCount = 8 }
 
-    let range1 = { StoragePoolId = StoragePoolId "pool-main"; ContentBlockAddress = ContentBlockAddress "block-b"; OrdinalStart = 8; OrdinalCount = 4 }
+    let range1 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-b"; OrdinalStart = 8; OrdinalCount = 4 }
 
     let metadata correlationId =
         {
@@ -30,26 +32,20 @@ type ManifestContributionWorkflowActorTests() =
         }
 
     let startWithRanges direction ranges =
-        ManifestContributionWorkflowCommand.Start
-            { OperationId = "workflow-start"; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Direction = direction; Ranges = ranges }
+        ManifestContributionWorkflowCommand.Start("workflow-start", repositoryId, storagePoolId, manifestAddress, direction, ranges)
 
     let startWithOperation operationId direction ranges =
-        ManifestContributionWorkflowCommand.Start
-            { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Direction = direction; Ranges = ranges }
+        ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges)
 
     let start direction = startWithRanges direction [| range0; range1 |]
 
-    let progress operationId range = { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Range = range }
-
-    let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(progress operationId range)
+    let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, repositoryId, storagePoolId, manifestAddress, range)
 
     let succeededFor repositoryId manifestAddress operationId range =
-        ManifestContributionWorkflowCommand.RecordRangeSucceeded
-            { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Range = range }
+        ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, repositoryId, storagePoolId, manifestAddress, range)
 
     let failed operationId range message =
-        ManifestContributionWorkflowCommand.RecordRangeFailed
-            { OperationId = operationId; RepositoryId = repositoryId; ManifestAddress = manifestAddress; Range = range; Message = message }
+        ManifestContributionWorkflowCommand.RecordRangeFailed(operationId, repositoryId, storagePoolId, manifestAddress, range, message)
 
     let applyAll events current =
         events
@@ -63,10 +59,10 @@ type ManifestContributionWorkflowActorTests() =
             Unchecked.defaultof<ManifestContributionWorkflowDecision>
 
     [<Test>]
-    member _.WorkflowPrimaryKeyCombinesRepositoryIdAndManifestAddress() =
-        let key = ManifestContributionWorkflowActor.primaryKey repositoryId manifestAddress
+    member _.WorkflowPrimaryKeyCombinesRepositoryIdStoragePoolIdAndManifestAddress() =
+        let key = ManifestContributionWorkflowActor.primaryKey repositoryId storagePoolId manifestAddress
 
-        Assert.That(key, Is.EqualTo("a6c6b60ad4d240f68362258dbe75a5bf|manifest:blake3:alpha"))
+        Assert.That(key, Is.EqualTo("a6c6b60ad4d240f68362258dbe75a5bf|pool-main|manifest:blake3:alpha"))
 
     [<Test>]
     member _.StartRejectsDuplicateRanges() =
@@ -77,6 +73,22 @@ type ManifestContributionWorkflowActorTests() =
         match result with
         | Ok _ -> Assert.Fail("Expected duplicate ranges to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow ranges must be unique."))
+
+    [<Test>]
+    member _.StartRejectsRangesFromDifferentStoragePool() =
+        let foreignRange = { range1 with StoragePoolId = otherStoragePoolId }
+        let crossPoolStart = startWithRanges ManifestContributionDirection.Increment [| range0; foreignRange |]
+
+        let result =
+            ManifestContributionWorkflowActor.decideCommand [] ManifestContributionWorkflowDto.Default crossPoolStart (metadata "corr-cross-pool-range")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected workflow start with a foreign storage-pool range to reject.")
+        | Error error ->
+            Assert.That(
+                error.Error,
+                Is.EqualTo("ManifestContributionWorkflow range StoragePoolId must match workflow StoragePoolId. Expected pool-main, actual pool-archive.")
+            )
 
     [<Test>]
     member _.ReusedStartOperationIdWithDifferentPayloadRejectsInsteadOfReplaying() =
@@ -177,7 +189,7 @@ type ManifestContributionWorkflowActorTests() =
             |> expectOk
 
         let afterStart = applyAll started.Events ManifestContributionWorkflowDto.Default
-        let wrongKey = ManifestContributionWorkflowActor.primaryKey (Guid.Parse("24560efe-bb67-4be8-b0d1-1a11990e66b1")) manifestAddress
+        let wrongKey = ManifestContributionWorkflowActor.primaryKey (Guid.Parse("24560efe-bb67-4be8-b0d1-1a11990e66b1")) storagePoolId manifestAddress
 
         let result =
             ManifestContributionWorkflowActor.decideCommandForKey
@@ -206,7 +218,7 @@ type ManifestContributionWorkflowActorTests() =
 
         let result =
             ManifestContributionWorkflowActor.decideCommandForKey
-                (Some(ManifestContributionWorkflowActor.primaryKey repositoryId manifestAddress))
+                (Some(ManifestContributionWorkflowActor.primaryKey repositoryId storagePoolId manifestAddress))
                 started.Events
                 afterStart
                 (succeededFor wrongRepositoryId manifestAddress "range-wrong-target" range0)
@@ -214,6 +226,37 @@ type ManifestContributionWorkflowActorTests() =
 
         match result with
         | Ok _ -> Assert.Fail("Expected range progress for a mismatched command target to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow command target does not match the grain key."))
+
+    [<Test>]
+    member _.WorkflowPrimaryKeyDistinguishesSameManifestAddressAcrossStoragePools() =
+        let mainKey = ManifestContributionWorkflowActor.primaryKey repositoryId storagePoolId manifestAddress
+        let archiveKey = ManifestContributionWorkflowActor.primaryKey repositoryId otherStoragePoolId manifestAddress
+
+        Assert.That(archiveKey, Is.Not.EqualTo(mainKey))
+
+        let archiveRange = { range0 with StoragePoolId = otherStoragePoolId }
+
+        let archiveStart =
+            ManifestContributionWorkflowCommand.Start(
+                "workflow-archive",
+                repositoryId,
+                otherStoragePoolId,
+                manifestAddress,
+                ManifestContributionDirection.Increment,
+                [| archiveRange |]
+            )
+
+        let result =
+            ManifestContributionWorkflowActor.decideCommandForKey
+                (Some mainKey)
+                []
+                ManifestContributionWorkflowDto.Default
+                archiveStart
+                (metadata "corr-cross-pool")
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected cross-pool workflow command on same manifest address to reject against the wrong grain key.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow command target does not match the grain key."))
 
     [<Test>]
