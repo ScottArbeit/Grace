@@ -264,6 +264,12 @@ module DedupeIndex =
         else
             range.OrdinalStart + range.OrdinalCount
 
+    let private minimumAcceptedOrdinalCountForBlock chunkAddressCount =
+        if chunkAddressCount <= 0 then
+            MinimumAcceptedReuseRunLength
+        else
+            Math.Min(MinimumAcceptedReuseRunLength, chunkAddressCount)
+
     let private tryCreateRecordFromChunkAddresses
         storagePoolId
         manifestAddress
@@ -272,12 +278,19 @@ module DedupeIndex =
         (chunkAddresses: ChunkAddress array)
         range
         =
+        let minimumAcceptedOrdinalCount =
+            if isNull chunkAddresses then
+                MinimumAcceptedReuseRunLength
+            else
+                minimumAcceptedOrdinalCountForBlock chunkAddresses.Length
+
         if metadata.StoragePoolId <> storagePoolId
            || metadata.ContentBlockAddress
               <> contentBlockAddress
            || range.ActiveManifestCount <= 0
            || range.OrdinalStart < 0
-           || range.OrdinalCount < MinimumAcceptedReuseRunLength
+           || range.OrdinalCount < minimumAcceptedOrdinalCount
+           || isNull chunkAddresses
            || rangeEnd range > chunkAddresses.Length then
             None
         else
@@ -289,7 +302,7 @@ module DedupeIndex =
                 |> Array.truncate ordinalCount
                 |> Array.map (protectChunkAddress storagePoolId)
 
-            if protectedChunkAddresses.Length < MinimumAcceptedReuseRunLength then
+            if protectedChunkAddresses.Length < minimumAcceptedOrdinalCount then
                 None
             else
                 Some
@@ -303,7 +316,7 @@ module DedupeIndex =
                         ProtectedChunkAddresses = protectedChunkAddresses
                     }
 
-    let private splitRangeIntoDedupeWindows (range: ContentBlockMetadataRange) =
+    let private splitRangeIntoDedupeWindows minimumAcceptedOrdinalCount (range: ContentBlockMetadataRange) =
         let output = ResizeArray<ContentBlockMetadataRange>()
 
         let physicalOffsetForOrdinal ordinalStart =
@@ -324,8 +337,7 @@ module DedupeIndex =
         if not (isNull (box range))
            && range.ActiveManifestCount > 0
            && range.OrdinalStart >= 0
-           && range.OrdinalCount
-              >= MinimumAcceptedReuseRunLength
+           && range.OrdinalCount >= minimumAcceptedOrdinalCount
            && range.PhysicalOffset >= 0L
            && range.PhysicalLength > 0L then
             let mutable remainingOrdinalCount = range.OrdinalCount
@@ -334,7 +346,7 @@ module DedupeIndex =
             let mutable remainingPhysicalLength = range.PhysicalLength
 
             while remainingOrdinalCount
-                  >= MinimumAcceptedReuseRunLength
+                  >= minimumAcceptedOrdinalCount
                   && remainingPhysicalLength > 0L do
                 let windowOrdinalCount = Math.Min(remainingOrdinalCount, MaxWindowChunks)
 
@@ -408,8 +420,9 @@ module DedupeIndex =
                 |> List.sumBy (fun range -> range.PhysicalLength)
         }
 
-    let private contiguousActiveRanges (ranges: ContentBlockMetadataRange array) =
+    let private contiguousActiveRanges chunkAddressCount (ranges: ContentBlockMetadataRange array) =
         let output = ResizeArray<ContentBlockMetadataRange>()
+        let minimumAcceptedOrdinalCount = minimumAcceptedOrdinalCountForBlock chunkAddressCount
 
         if not (isNull ranges) then
             let sortedRanges =
@@ -481,7 +494,7 @@ module DedupeIndex =
 
         output
         |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
-        |> Seq.collect splitRangeIntoDedupeWindows
+        |> Seq.collect (splitRangeIntoDedupeWindows minimumAcceptedOrdinalCount)
         |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
         |> Seq.toArray
 
@@ -508,7 +521,7 @@ module DedupeIndex =
                                         decodedBlock.Chunks
                                         |> Array.map (fun chunk -> chunk.Address)
 
-                                    for range in contiguousActiveRanges blockMetadata.Ranges do
+                                    for range in contiguousActiveRanges chunkAddresses.Length blockMetadata.Ranges do
                                         match
                                             tryCreateRecordFromChunkAddresses
                                                 source.StoragePoolId
@@ -583,11 +596,11 @@ module DedupeIndex =
         =
         let output = ResizeArray<DedupeIndexRecord>()
 
-        let ranges = contiguousActiveRanges metadata.Ranges
+        for block in registration.Blocks do
+            if block.Address = metadata.ContentBlockAddress then
+                let ranges = contiguousActiveRanges block.ChunkAddresses.Length metadata.Ranges
 
-        if ranges.Length > 0 then
-            for block in registration.Blocks do
-                if block.Address = metadata.ContentBlockAddress then
+                if ranges.Length > 0 then
                     for range in ranges do
                         match
                             tryCreateRecordFromChunkAddresses

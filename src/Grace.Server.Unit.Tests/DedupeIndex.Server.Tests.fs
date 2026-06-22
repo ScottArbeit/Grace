@@ -165,6 +165,66 @@ type DedupeIndexServerTests() =
             Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(rawChunkAddress))
 
     [<Test>]
+    member _.FinalizedSdkGranularityOneChunkBlocksPublishCrossRepositoryCandidates() =
+        let repoA = defaultRepository (Guid.Parse("9a6b2b42-22de-4763-9d2c-f7187128bafe"))
+        let repoB = defaultRepository (Guid.Parse("40901fa3-3e69-4028-bf1d-2763d53a633e"))
+        let block = encodedBlock "sdk-one-chunk" 1
+        let manifest = manifestFor block
+
+        let metadata =
+            { metadataFor 1 12L block with
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                Ranges =
+                    [|
+                        { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = block.Payload.LongLength }
+                    |]
+            }
+
+        let records =
+            DedupeIndex.recordsAfterFinalize
+                {
+                    StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                    Session = { finalizedSession manifest with RepositoryId = repoA.RepositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+                    Manifest = manifest
+                    BlockPayloads = [| payloadFor block |]
+                    Metadata = [| metadata |]
+                }
+
+        let requestedChunk = (decodedChunkAddresses block)[0]
+        let repoBResult = DedupeIndex.discover (DedupeIndex.storagePoolIdForRepository repoB) [| requestedChunk |] timestamp records
+
+        let candidate =
+            repoBResult.CandidateContentBlocks
+            |> Array.exactlyOne
+
+        Assert.That(candidate.StoragePoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+        Assert.That(candidate.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        Assert.That(candidate.ContentBlockAddress, Is.EqualTo(block.Address))
+        Assert.That(candidate.OrdinalStart, Is.EqualTo(0))
+        Assert.That(candidate.OrdinalCount, Is.EqualTo(1))
+        Assert.That(candidate.MetadataVersion, Is.EqualTo(metadata.MetadataVersion))
+        Assert.That(candidate.ProtectedChunkAddresses, Has.Length.EqualTo(1))
+        Assert.That(candidate.ProtectedChunkAddresses[0], Is.EqualTo(protectedChunkAddress StoragePoolRouting.defaultStoragePoolId requestedChunk))
+        Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(requestedChunk))
+
+    [<Test>]
+    member _.OneChunkFragmentsInsideLargerBlocksStayBelowTheAcceptedReuseRunLength() =
+        let block = encodedBlock "larger-block-short-fragment" 12
+        let manifest = manifestFor block
+
+        let fragmentMetadata =
+            { metadataFor 1 13L block with
+                Ranges =
+                    [|
+                        { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = int64 block.Chunks[0].Length }
+                    |]
+            }
+
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block fragmentMetadata)
+
+        Assert.That(records, Is.Empty, "A one-chunk fragment inside a larger ContentBlock must not bypass the minimum reuse-run guard.")
+
+    [<Test>]
     member _.ProtectedChunkAddressesUseStablePreimageSeparator() =
         let block = encodedBlock "stable-protection" 12
         let manifest = manifestFor block
