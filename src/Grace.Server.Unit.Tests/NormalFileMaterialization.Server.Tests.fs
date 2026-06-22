@@ -8,6 +8,8 @@ open Grace.Types.ContentBlockMetadata
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
+open System.IO.Compression
 open System.Security.Cryptography
 open System.Text
 open System.Threading
@@ -18,6 +20,18 @@ type NormalFileMaterializationServerTests() =
     let correlationId = "corr-normal-file-materialization"
 
     let bytes (text: string) = Encoding.UTF8.GetBytes text
+
+    let gunzipBytes (payload: byte array) =
+        use source = new MemoryStream(payload)
+        use gzipStream = new GZipStream(source, CompressionMode.Decompress, leaveOpen = false)
+        use output = new MemoryStream()
+        gzipStream.CopyTo(output)
+        output.ToArray()
+
+    let looksLikeGzip (payload: byte array) =
+        payload.Length >= 2
+        && payload[0] = 0x1fuy
+        && payload[1] = 0x8buy
 
     let sha256Hex (payload: byte array) =
         SHA256.HashData(payload)
@@ -223,7 +237,7 @@ type NormalFileMaterializationServerTests() =
         Assert.That(readPlacements, Is.Empty)
 
     [<Test>]
-    member _.ManifestBackedNormalDownloadPublishesBytesFromStoredPlacement() =
+    member _.ManifestBackedBinaryNormalDownloadPublishesRawBytesFromStoredPlacement() =
         let payload = bytes "manifest normal download bytes"
         let target, manifest, blocks = manifestFile "/nested/historical/file.bin" (StoragePoolId "pool-download") payload
         let objectKey = "normal/materialized/historical-file.bin"
@@ -250,6 +264,41 @@ type NormalFileMaterializationServerTests() =
         Assert.That(writes, Has.Count.EqualTo(1))
         Assert.That(fst writes[0], Is.EqualTo(objectKey))
         Assert.That(((snd writes[0]) = payload), Is.True)
+        Assert.That(looksLikeGzip (snd writes[0]), Is.False)
+        Assert.That(readPlacements, Has.Count.EqualTo(1))
+        Assert.That(snd readPlacements[0], Is.EqualTo(recordedPlacement))
+        Assert.That(metadataRequests, Has.Count.EqualTo(1))
+        Assert.That((metadataRequests[0] = [| blocks[0].Address |]), Is.True)
+
+    [<Test>]
+    member _.ManifestBackedNonBinaryNormalDownloadPublishesGzipPayloadForWholeFileCompatibility() =
+        let payload = bytes "manifest text download bytes\nline two\n"
+        let target, manifest, blocks = manifestFile "/nested/historical/file.txt" (StoragePoolId "pool-download-text") payload
+        target.IsBinary <- false
+        let objectKey = "normal/materialized/historical-file.txt"
+        let recordedPlacement = placementFor manifest.StoragePoolId blocks[0].Address "recorded/compacted/text-block"
+        let objects = Dictionary<string, byte array>()
+        objects[recordedPlacement.ObjectKey] <- blocks[0].Payload
+        let metadata = Dictionary<StoragePoolId * ManifestAddress * ContentBlockAddress, ContentBlockMetadata>()
+        addMetadata metadata manifest manifest.StoragePoolId manifest.Blocks[0] recordedPlacement
+        let metadataRequests = ResizeArray<ContentBlockAddress array>()
+        let readPlacements = ResizeArray<ContentBlockAddress * ContentBlockStoragePlacement>()
+        let writes = ResizeArray<string * byte array>()
+
+        materializeForDownload
+            failingWholeFileReader
+            (writerTo objects writes)
+            (metadataResolverFrom metadata metadataRequests)
+            (contentBlockReaderFrom objects readPlacements)
+            target
+            objectKey
+        |> expectUnitOk
+
+        Assert.That(writes, Has.Count.EqualTo(1))
+        Assert.That(fst writes[0], Is.EqualTo(objectKey))
+        Assert.That(((snd writes[0]) = payload), Is.False)
+        Assert.That(looksLikeGzip (snd writes[0]), Is.True)
+        Assert.That((gunzipBytes (snd writes[0]) = payload), Is.True)
         Assert.That(readPlacements, Has.Count.EqualTo(1))
         Assert.That(snd readPlacements[0], Is.EqualTo(recordedPlacement))
         Assert.That(metadataRequests, Has.Count.EqualTo(1))

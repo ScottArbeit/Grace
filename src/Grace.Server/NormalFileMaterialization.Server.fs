@@ -13,6 +13,7 @@ open Grace.Types.Repository
 open System
 open System.Collections.Generic
 open System.IO
+open System.IO.Compression
 open System.Linq
 open System.Security.Cryptography
 open System.Threading
@@ -43,6 +44,15 @@ module internal NormalFileMaterialization =
         |> fun value -> value.ToLowerInvariant()
 
     let private blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
+
+    let private gzipBytes (bytes: byte array) =
+        use compressed = new MemoryStream()
+
+        do
+            use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
+            gzipStream.Write(bytes, 0, bytes.Length)
+
+        compressed.ToArray()
 
     let private completeContentBlockStoragePlacement (placement: ContentBlockStoragePlacement) =
         not (isNull (box placement))
@@ -403,7 +413,9 @@ module internal NormalFileMaterialization =
             | Ok bytes ->
                 match fileVersion.ContentReference.ReferenceType with
                 | FileContentReferenceType.WholeFileContent -> return Ok()
-                | FileContentReferenceType.FileManifest -> return! writeWholeFileObjectPayload objectKey bytes correlationId cancellationToken
+                | FileContentReferenceType.FileManifest ->
+                    let storagePayload = if fileVersion.IsBinary then bytes else gzipBytes bytes
+                    return! writeWholeFileObjectPayload objectKey storagePayload correlationId cancellationToken
                 | unsupported ->
                     return
                         Error(
