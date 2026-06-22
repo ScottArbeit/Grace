@@ -76,10 +76,16 @@ module Storage =
     let private invalidManifestAddressError correlationId =
         GraceError.Create "ManifestAddress must be a 64-character lowercase hexadecimal BLAKE3 value." correlationId
 
-    let private validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
+    let internal validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
         match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
-        | Some _ -> Ok()
+        | Some normalizedAddress -> Ok(ContentBlockAddress normalizedAddress)
         | None -> Error(invalidContentBlockAddressError correlationId)
+
+    let internal validateSupportedManifestChunkingSuite correlationId (chunkingSuiteId: ChunkingSuiteId) =
+        if String.Equals(chunkingSuiteId, RabinChunking.SuiteName, StringComparison.Ordinal) then
+            Ok()
+        else
+            Error(GraceError.Create $"StartManifestUploadSession ChunkingSuiteId must be {RabinChunking.SuiteName}." correlationId)
 
     let private validateManifestAddress correlationId (manifestAddress: ManifestAddress) =
         if ContentAddress.isValidAddress manifestAddress then
@@ -421,29 +427,28 @@ module Storage =
             Error(GraceError.Create "Dedupe discovery has expired; reuse ranges cannot be claimed." correlationId)
         | Some discovery -> Ok discovery
 
-    let private hintMatchesDedupeIndexRecord (hint: ContentBlockReuseRangeHint) (record: DedupeIndex.DedupeIndexRecord) =
-        record.StoragePoolId = hint.StoragePoolId
-        && record.ContentBlockAddress = hint.ContentBlockAddress
-        && record.OrdinalStart = hint.OrdinalStart
-        && record.OrdinalCount = hint.OrdinalCount
-        && record.MetadataVersion = hint.MetadataVersion
-
-    let private reuseRangeHintFromDedupeIndexRecord (record: DedupeIndex.DedupeIndexRecord) : ContentBlockReuseRangeHint =
-        {
-            StoragePoolId = record.StoragePoolId
-            ContentBlockAddress = record.ContentBlockAddress
-            OrdinalStart = record.OrdinalStart
-            OrdinalCount = record.OrdinalCount
-            MetadataVersion = record.MetadataVersion
-        }
+    let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
+        not (isNull (box issued))
+        && issued.StoragePoolId = hint.StoragePoolId
+        && issued.ContentBlockAddress = hint.ContentBlockAddress
+        && issued.OrdinalStart = hint.OrdinalStart
+        && issued.OrdinalCount = hint.OrdinalCount
+        && issued.MetadataVersion = hint.MetadataVersion
 
     let private validateIssuedDedupeDiscoveryHints
         correlationId
         storagePoolId
+        (keyChunkAddresses: ChunkAddress array)
         (hints: ContentBlockReuseRangeHint array)
         (records: DedupeIndex.DedupeIndexRecord array)
         =
         let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
+        let discovery = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) records
+
+        let discoveredHints =
+            discovery.CandidateContentBlocks
+            |> Array.map DedupeIndex.toReuseRangeHint
+
         let mutable error = None
         let mutable index = 0
 
@@ -454,12 +459,15 @@ module Storage =
                 error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must not contain null entries." correlationId)
             elif hint.StoragePoolId <> storagePoolId then
                 error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates for this repository." correlationId)
+            elif keyChunkAddresses.Length = 0 then
+                error <-
+                    Some(GraceError.Create "IssueDedupeDiscovery Hints require discovery key chunks that reproduce the server discovery result." correlationId)
             else
                 match
-                    records
-                    |> Array.tryFind (hintMatchesDedupeIndexRecord hint)
+                    discoveredHints
+                    |> Array.tryFind (hintMatchesIssuedHint hint)
                     with
-                | Some record -> boundHints.Add(reuseRangeHintFromDedupeIndexRecord record)
+                | Some discoveredHint -> boundHints.Add(discoveredHint)
                 | None -> error <- Some(GraceError.Create "IssueDedupeDiscovery Hints must come from server discovery candidates." correlationId)
 
             index <- index + 1
@@ -467,14 +475,6 @@ module Storage =
         match error with
         | Some error -> Error error
         | None -> Ok(boundHints.ToArray())
-
-    let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
-        not (isNull (box issued))
-        && issued.StoragePoolId = hint.StoragePoolId
-        && issued.ContentBlockAddress = hint.ContentBlockAddress
-        && issued.OrdinalStart = hint.OrdinalStart
-        && issued.OrdinalCount = hint.OrdinalCount
-        && issued.MetadataVersion = hint.MetadataVersion
 
     let private validateClaimReuseHints correlationId storagePoolId (discovery: DedupeDiscoverySnapshot) (hints: ContentBlockReuseRangeHint array) =
         let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
@@ -588,34 +588,40 @@ module Storage =
         && not (String.IsNullOrWhiteSpace placement.ObjectKey)
 
     let private hasAuthoritativeClaimedRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
-        not (isNull (box claimedRange))
-        && not (isNull (box metadata))
-        && metadata.StoragePoolId = claimedRange.StoragePoolId
-        && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
-        && metadata.BlockFormatVersion > 0s
-        && completeContentBlockStoragePlacement metadata.StoragePlacement
-        && not (isNull metadata.Ranges)
-        && metadata.Ranges
-           |> Array.exists (fun range ->
-               range.OrdinalStart = claimedRange.OrdinalStart
-               && range.OrdinalCount = claimedRange.OrdinalCount
-               && range.PhysicalOffset = claimedRange.PhysicalOffset
-               && range.PhysicalLength = claimedRange.PhysicalLength)
+        if isNull (box claimedRange) || isNull (box metadata) then
+            false
+        else
+            let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
+
+            metadata.StoragePoolId = claimedRange.StoragePoolId
+            && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
+            && metadata.BlockFormatVersion > 0s
+            && completeContentBlockStoragePlacement metadata.StoragePlacement
+            && not (isNull metadata.Ranges)
+            && Grace.Types.ContentBlockMetadata.findRanges metadata query
+               |> Array.exists (fun range ->
+                   range.OrdinalStart = claimedRange.OrdinalStart
+                   && range.OrdinalCount = claimedRange.OrdinalCount
+                   && range.PhysicalOffset = claimedRange.PhysicalOffset
+                   && range.PhysicalLength = claimedRange.PhysicalLength)
 
     let private hasAuthoritativeFinalizedLogicalRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
-        not (isNull (box claimedRange))
-        && not (isNull (box metadata))
-        && metadata.StoragePoolId = claimedRange.StoragePoolId
-        && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
-        && metadata.BlockFormatVersion > 0s
-        && completeContentBlockStoragePlacement metadata.StoragePlacement
-        && not (isNull metadata.Ranges)
-        && metadata.Ranges
-           |> Array.exists (fun range ->
-               range.OrdinalStart = claimedRange.OrdinalStart
-               && range.OrdinalCount = claimedRange.OrdinalCount
-               && range.PhysicalLength = claimedRange.PhysicalLength
-               && range.ActiveManifestCount > 0)
+        if isNull (box claimedRange) || isNull (box metadata) then
+            false
+        else
+            let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
+
+            metadata.StoragePoolId = claimedRange.StoragePoolId
+            && metadata.ContentBlockAddress = claimedRange.ContentBlockAddress
+            && metadata.BlockFormatVersion > 0s
+            && completeContentBlockStoragePlacement metadata.StoragePlacement
+            && not (isNull metadata.Ranges)
+            && Grace.Types.ContentBlockMetadata.findRanges metadata query
+               |> Array.exists (fun range ->
+                   range.OrdinalStart = claimedRange.OrdinalStart
+                   && range.OrdinalCount = claimedRange.OrdinalCount
+                   && range.PhysicalLength = claimedRange.PhysicalLength
+                   && range.ActiveManifestCount > 0)
 
     let internal authoritativeClaimedRangeMatchesForFinalizeReplay (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         hasAuthoritativeClaimedRange claimedRange metadata
@@ -1498,7 +1504,8 @@ module Storage =
 
                     match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok () ->
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
                         let _, repositoryId = resolveStorageIds graceIds parameters
 
                         match! validateUploadSessionForContentBlockUpload parameters repositoryId correlationId with
@@ -1540,7 +1547,8 @@ module Storage =
 
                     match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok () ->
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
                         let _, repositoryId = resolveStorageIds graceIds parameters
 
                         match! validateManifestForContentBlockDownload repositoryId parameters correlationId with
@@ -1591,16 +1599,19 @@ module Storage =
                         let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                         let! repositoryDto = repositoryActor.Get correlationId
 
-                        match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                        match validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok storagePoolId ->
-                            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
-                            let! snapshot = dedupeIndexActor.Snapshot correlationId
-                            let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
+                        | Ok () ->
+                            match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok storagePoolId ->
+                                let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+                                let! snapshot = dedupeIndexActor.Snapshot correlationId
+                                let result = DedupeIndex.discover storagePoolId keyChunkAddresses (getCurrentInstant ()) snapshot
 
-                            return!
-                                context
-                                |> result200Ok (GraceReturnValue.Create result correlationId)
+                                return!
+                                    context
+                                    |> result200Ok (GraceReturnValue.Create result correlationId)
                 with
                 | ex ->
                     logToConsole $"Exception in DiscoverContentBlocks: {(ExceptionResponse.Create ex)}"
@@ -1632,26 +1643,29 @@ module Storage =
                             match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok storagePoolId ->
-                                match validateStartManifestUploadSessionAuthorizedScope correlationId parameters.AuthorizedScope with
+                                match validateSupportedManifestChunkingSuite correlationId parameters.ChunkingSuiteId with
                                 | Error error -> return! context |> result400BadRequest error
                                 | Ok () ->
-                                    let command =
-                                        UploadSessionCommand.Start
-                                            {
-                                                UploadSessionId = parameters.UploadSessionId
-                                                OwnerId = ownerId
-                                                OrganizationId = organizationId
-                                                RepositoryId = repositoryId
-                                                StoragePoolId = storagePoolId
-                                                AuthorizedScope = parameters.AuthorizedScope
-                                                FileContentHash = parameters.FileContentHash
-                                                ExpectedSize = parameters.ExpectedSize
-                                                ChunkingSuiteId = parameters.ChunkingSuiteId
-                                                SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
-                                                OperationId = parameters.OperationId
-                                            }
+                                    match validateStartManifestUploadSessionAuthorizedScope correlationId parameters.AuthorizedScope with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok () ->
+                                        let command =
+                                            UploadSessionCommand.Start
+                                                {
+                                                    UploadSessionId = parameters.UploadSessionId
+                                                    OwnerId = ownerId
+                                                    OrganizationId = organizationId
+                                                    RepositoryId = repositoryId
+                                                    StoragePoolId = storagePoolId
+                                                    AuthorizedScope = parameters.AuthorizedScope
+                                                    FileContentHash = parameters.FileContentHash
+                                                    ExpectedSize = parameters.ExpectedSize
+                                                    ChunkingSuiteId = parameters.ChunkingSuiteId
+                                                    SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
+                                                    OperationId = parameters.OperationId
+                                                }
 
-                                    return! handleUploadSessionCommand context parameters command correlationId
+                                        return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
@@ -1672,12 +1686,26 @@ module Storage =
 
                     let hints = if isNull parameters.Hints then Array.empty else parameters.Hints
 
+                    let keyChunkAddresses =
+                        if isNull parameters.KeyChunkAddresses then
+                            Array.empty
+                        else
+                            parameters.KeyChunkAddresses
+
                     if hints.Length > StorageParameterContracts.MaxReuseRangeClaims then
                         return!
                             context
                             |> result400BadRequest (
                                 GraceError.Create
                                     $"IssueDedupeDiscovery Hints must contain no more than {StorageParameterContracts.MaxReuseRangeClaims} items."
+                                    correlationId
+                            )
+                    elif keyChunkAddresses.Length > StorageParameterContracts.MaxDiscoveryKeyChunkAddresses then
+                        return!
+                            context
+                            |> result400BadRequest (
+                                GraceError.Create
+                                    $"IssueDedupeDiscovery KeyChunkAddresses must contain no more than {StorageParameterContracts.MaxDiscoveryKeyChunkAddresses} items."
                                     correlationId
                             )
                     else
@@ -1691,7 +1719,7 @@ module Storage =
                             let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
                             let! records = dedupeIndexActor.Snapshot correlationId
 
-                            match validateIssuedDedupeDiscoveryHints correlationId storagePoolId hints records with
+                            match validateIssuedDedupeDiscoveryHints correlationId storagePoolId keyChunkAddresses hints records with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok boundHints ->
                                 let command =
@@ -1827,17 +1855,22 @@ module Storage =
                 try
                     let! parameters = context.BindJsonAsync<RegisterContentBlockUploadParameters>()
 
-                    let command =
-                        UploadSessionCommand.RegisterBlockUploadIntent
-                            {
-                                OperationId = parameters.OperationId
-                                ContentBlockAddress = parameters.ContentBlockAddress
-                                LogicalOffset = parameters.LogicalOffset
-                                LogicalLength = parameters.LogicalLength
-                                ExpectedPayloadLength = parameters.ExpectedPayloadLength
-                            }
+                    match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
 
-                    return! handleUploadSessionCommand context parameters command correlationId
+                        let command =
+                            UploadSessionCommand.RegisterBlockUploadIntent
+                                {
+                                    OperationId = parameters.OperationId
+                                    ContentBlockAddress = parameters.ContentBlockAddress
+                                    LogicalOffset = parameters.LogicalOffset
+                                    LogicalLength = parameters.LogicalLength
+                                    ExpectedPayloadLength = parameters.ExpectedPayloadLength
+                                }
+
+                        return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
@@ -1858,7 +1891,8 @@ module Storage =
 
                     match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok () ->
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
                         let! requestContext = createUploadSessionRequestContext context parameters correlationId
                         let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
 

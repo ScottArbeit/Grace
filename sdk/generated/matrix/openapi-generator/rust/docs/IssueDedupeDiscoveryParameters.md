@@ -17,6 +17,7 @@ Name | Type | Description | Notes
 **operation_id** | Option<**String**> | Caller-supplied idempotency key for one upload-session operation. | [optional]
 **expires_at** | Option<**chrono::DateTime<chrono::FixedOffset>**> |  | [optional]
 **minimum_reuse_run_length** | Option<**i32**> |  | [optional]
+**key_chunk_addresses** | Option<**Vec<String>**> |  | [optional]
 **hints** | Option<[**Vec<models::ContentBlockReuseRangeHint>**](ContentBlockReuseRangeHint.md)> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)

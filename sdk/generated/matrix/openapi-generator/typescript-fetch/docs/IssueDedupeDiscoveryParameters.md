@@ -19,6 +19,7 @@ Name | Type
 `operationId` | string
 `expiresAt` | Date
 `minimumReuseRunLength` | number
+`keyChunkAddresses` | Array&lt;string&gt;
 `hints` | [Array&lt;ContentBlockReuseRangeHint&gt;](ContentBlockReuseRangeHint.md)
 
 ## Example
@@ -41,6 +42,7 @@ const example = {
   "operationId": null,
   "expiresAt": null,
   "minimumReuseRunLength": null,
+  "keyChunkAddresses": null,
   "hints": null,
 } satisfies IssueDedupeDiscoveryParameters
 

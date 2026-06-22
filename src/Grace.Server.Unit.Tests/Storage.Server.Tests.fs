@@ -370,7 +370,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(mismatchedBlockSelection, Is.EqualTo(None))
 
     [<Test>]
-    member _.DefaultRepositoryDedupePoolResolutionUsesRepositoryScopedPool() =
+    member _.DefaultRepositoryDedupePoolResolutionUsesRepositoryStoragePool() =
         let repositoryId = Guid.Parse("9fce80dd-b0e5-462c-953d-1cc9e357d515")
 
         let repository = { RepositoryDto.Default with RepositoryId = repositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
@@ -378,8 +378,8 @@ type StorageContentBlockSdkContract() =
         match Storage.resolveRepositoryDedupeStoragePoolId repository "corr-dedupe-pool" with
         | Error error -> Assert.Fail($"Expected default repository dedupe pool to resolve, got {error.Error}.")
         | Ok storagePoolId ->
-            Assert.That(storagePoolId, Is.EqualTo(DedupeIndex.storagePoolIdForRepositoryId repositoryId))
-            Assert.That(storagePoolId, Is.Not.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+            Assert.That(storagePoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+            Assert.That(storagePoolId, Is.Not.EqualTo(DedupeIndex.storagePoolIdForRepositoryId repositoryId))
 
     [<Test>]
     member _.StorageSessionRepositoryValidationRejectsMissingOrMismatchedRepositoryBeforeRouting() =
@@ -444,6 +444,28 @@ type StorageContentBlockSdkContract() =
     member _.StartManifestUploadSessionAcceptsExactFileAuthorizedScope(scope: string) =
         match Storage.validateStartManifestUploadSessionAuthorizedScope "corr-exact-start-scope" scope with
         | Error error -> Assert.Fail($"Expected exact file AuthorizedScope to be accepted, got {error.Error}.")
+        | Ok () -> Assert.Pass()
+
+    [<Test>]
+    member _.ContentBlockAddressValidationNormalizesUppercaseBlake3BeforeRouteUse() =
+        let uppercaseAddress = ContentBlockAddress "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
+
+        match Storage.validateContentBlockAddress "corr-normalize-content-block" uppercaseAddress with
+        | Error error -> Assert.Fail($"Expected uppercase BLAKE3 ContentBlockAddress to normalize, got {error.Error}.")
+        | Ok normalizedAddress ->
+            Assert.That(normalizedAddress, Is.EqualTo(ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"))
+
+    [<Test>]
+    member _.StartManifestUploadSessionRejectsUnsupportedChunkingSuiteBeforeFinalizeCanPersistIt() =
+        match Storage.validateSupportedManifestChunkingSuite "corr-start-suite" (ChunkingSuiteId "other-suite") with
+        | Ok () -> Assert.Fail("Expected unsupported manifest chunking suite to be rejected before upload session start.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("ChunkingSuiteId"))
+            Assert.That(error.Error, Does.Contain(RabinChunking.SuiteName))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-start-suite"))
+
+        match Storage.validateSupportedManifestChunkingSuite "corr-start-rabin-suite" (ChunkingSuiteId RabinChunking.SuiteName) with
+        | Error error -> Assert.Fail($"Expected Rabin suite to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
 
     [<Test>]
@@ -946,6 +968,28 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Contain("parameters.StoragePoolId"))
         Assert.That(storageServerSource, Does.Contain("validateManifestForContentBlockDownload repositoryId parameters"))
         Assert.That(storageServerSource, Does.Contain("DedupeIndex.discover storagePoolId"))
+
+    [<Test>]
+    member _.DiscoverContentBlocksValidatesRepositoryBeforeResolvingSharedDedupePool() =
+        let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
+        let storageServerSource = File.ReadAllText(storageServerPath)
+        let handlerStart = storageServerSource.IndexOf("let DiscoverContentBlocks: HttpHandler =", StringComparison.Ordinal)
+        let handlerEnd = storageServerSource.IndexOf("let StartManifestUploadSession: HttpHandler =", handlerStart, StringComparison.Ordinal)
+
+        Assert.That(handlerStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(handlerEnd, Is.GreaterThan(handlerStart))
+
+        let handlerSource = storageServerSource.Substring(handlerStart, handlerEnd - handlerStart)
+
+        let repositoryValidation =
+            handlerSource.IndexOf("validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId", StringComparison.Ordinal)
+
+        let poolResolution = handlerSource.IndexOf("resolveRepositoryDedupeStoragePoolId repositoryDto correlationId", StringComparison.Ordinal)
+        let dedupeLookup = handlerSource.IndexOf("dedupeIndexActor.Snapshot correlationId", StringComparison.Ordinal)
+
+        Assert.That(repositoryValidation, Is.GreaterThanOrEqualTo(0))
+        Assert.That(poolResolution, Is.GreaterThan(repositoryValidation))
+        Assert.That(dedupeLookup, Is.GreaterThan(poolResolution))
 
     [<Test>]
     member _.UploadSessionStagingCleanupUsesRecordedSessionPoolRoute() =

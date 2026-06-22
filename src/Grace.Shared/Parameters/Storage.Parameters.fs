@@ -99,6 +99,7 @@ module Storage =
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
         member val public ExpiresAt: Instant = Instant.MinValue with get, set
         member val public MinimumReuseRunLength: int = 0 with get, set
+        member val public KeyChunkAddresses = Array.empty<ChunkAddress> with get, set
         member val public Hints = Array.empty<ContentBlockReuseRangeHint> with get, set
 
     type ClaimReuseRangesParameters() =

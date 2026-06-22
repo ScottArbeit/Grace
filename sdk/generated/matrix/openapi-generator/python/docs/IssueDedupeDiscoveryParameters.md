@@ -18,6 +18,7 @@ Name | Type | Description | Notes
 **operation_id** | **str** | Caller-supplied idempotency key for one upload-session operation. | [optional] 
 **expires_at** | **datetime** |  | [optional] 
 **minimum_reuse_run_length** | **int** |  | [optional] 
+**key_chunk_addresses** | **List[str]** |  | [optional] 
 **hints** | [**List[ContentBlockReuseRangeHint]**](ContentBlockReuseRangeHint.md) |  | [optional] 
 
 ## Example

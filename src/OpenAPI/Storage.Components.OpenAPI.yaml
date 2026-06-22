@@ -188,7 +188,12 @@ IssueDedupeDiscoveryParameters:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
     MinimumReuseRunLength:
       type: integer
-      minimum: 8
+      minimum: 1
+    KeyChunkAddresses:
+      type: array
+      maxItems: 256
+      items:
+        $ref: '#/ChunkAddress'
     Hints:
       type: array
       maxItems: 1024

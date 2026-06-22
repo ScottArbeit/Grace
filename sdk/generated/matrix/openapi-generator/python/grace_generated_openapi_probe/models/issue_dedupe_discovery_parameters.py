@@ -19,7 +19,7 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
 from uuid import UUID
@@ -44,9 +44,10 @@ class IssueDedupeDiscoveryParameters(BaseModel):
     authorized_scope: Optional[StrictStr] = Field(default=None, alias="AuthorizedScope")
     operation_id: Optional[StrictStr] = Field(default=None, description="Caller-supplied idempotency key for one upload-session operation.", alias="OperationId")
     expires_at: Optional[datetime] = Field(default=None, alias="ExpiresAt")
-    minimum_reuse_run_length: Optional[Annotated[int, Field(strict=True, ge=8)]] = Field(default=None, alias="MinimumReuseRunLength")
+    minimum_reuse_run_length: Optional[Annotated[int, Field(strict=True, ge=1)]] = Field(default=None, alias="MinimumReuseRunLength")
+    key_chunk_addresses: Optional[Annotated[List[Annotated[str, Field(strict=True)]], Field(max_length=256)]] = Field(default=None, alias="KeyChunkAddresses")
     hints: Optional[Annotated[List[ContentBlockReuseRangeHint], Field(max_length=1024)]] = Field(default=None, alias="Hints")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "UploadSessionId", "AuthorizedScope", "OperationId", "ExpiresAt", "MinimumReuseRunLength", "Hints"]
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "UploadSessionId", "AuthorizedScope", "OperationId", "ExpiresAt", "MinimumReuseRunLength", "KeyChunkAddresses", "Hints"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -119,6 +120,7 @@ class IssueDedupeDiscoveryParameters(BaseModel):
             "OperationId": obj.get("OperationId"),
             "ExpiresAt": obj.get("ExpiresAt"),
             "MinimumReuseRunLength": obj.get("MinimumReuseRunLength"),
+            "KeyChunkAddresses": obj.get("KeyChunkAddresses"),
             "Hints": [ContentBlockReuseRangeHint.from_dict(_item) for _item in obj["Hints"]] if obj.get("Hints") is not None else None
         })
         return _obj

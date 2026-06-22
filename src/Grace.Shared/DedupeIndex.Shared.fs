@@ -62,6 +62,7 @@ module DedupeIndex =
 
     let private globalGate = obj ()
     let mutable private globalState = DedupeIndexState.Empty
+    let private MinimumIssuedReuseRunLength = 1
 
     let discoveryPolicy () : ContentBlockDiscoveryPolicy =
         {
@@ -70,7 +71,7 @@ module DedupeIndex =
             MaxWindowChunks = MaxWindowChunks
             MaxResponseProtectedChunks = MaxResponseProtectedChunks
             ResponseTtlSeconds = ResponseTtlSeconds
-            MinimumAcceptedReuseRunLength = MinimumAcceptedReuseRunLength
+            MinimumAcceptedReuseRunLength = MinimumIssuedReuseRunLength
             PositiveCandidatesEnabled = true
             EmptyResponseMeansAbsent = false
             IsAuthoritative = false
@@ -87,7 +88,7 @@ module DedupeIndex =
              <> StoragePoolRouting.defaultStoragePoolId then
             invalidOp $"StoragePoolId '{repositoryDto.StoragePoolId}' is not configured. StoragePool routing fails closed."
         else
-            storagePoolIdForRepositoryId repositoryDto.RepositoryId
+            repositoryDto.StoragePoolId
 
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
@@ -97,11 +98,13 @@ module DedupeIndex =
     let private recordKey (record: DedupeIndexRecord) =
         $"{record.StoragePoolId}|{record.ManifestAddress}|{record.ContentBlockAddress}|{record.OrdinalStart}|{record.OrdinalCount}|{record.MetadataVersion}"
 
+    let private finalizedSessionScopeKey (session: UploadSessionDto) = $"{session.RepositoryId:N}|{session.UploadSessionId:N}"
+
     let private finalizedManifestKey (registration: FinalizedManifestRegistration) =
-        $"{registration.StoragePoolId}|{registration.Session.UploadSessionId}|{registration.Manifest.ManifestAddress}"
+        $"{registration.StoragePoolId}|{finalizedSessionScopeKey registration.Session}|{registration.Manifest.ManifestAddress}"
 
     let private runtimeFinalizedManifestKey (registration: RuntimeFinalizedManifestRegistration) =
-        $"{registration.StoragePoolId}|{registration.Session.UploadSessionId}|{registration.ManifestAddress}"
+        $"{registration.StoragePoolId}|{finalizedSessionScopeKey registration.Session}|{registration.ManifestAddress}"
 
     let private metadataKey (metadata: ContentBlockMetadata) = $"{metadata.StoragePoolId}|{metadata.ContentBlockAddress}"
 
@@ -262,6 +265,12 @@ module DedupeIndex =
         else
             range.OrdinalStart + range.OrdinalCount
 
+    let private minimumAcceptedOrdinalCountForBlock chunkAddressCount =
+        if chunkAddressCount <= 0 then
+            MinimumAcceptedReuseRunLength
+        else
+            Math.Min(MinimumAcceptedReuseRunLength, chunkAddressCount)
+
     let private tryCreateRecordFromChunkAddresses
         storagePoolId
         manifestAddress
@@ -270,12 +279,19 @@ module DedupeIndex =
         (chunkAddresses: ChunkAddress array)
         range
         =
+        let minimumAcceptedOrdinalCount =
+            if isNull chunkAddresses then
+                MinimumAcceptedReuseRunLength
+            else
+                minimumAcceptedOrdinalCountForBlock chunkAddresses.Length
+
         if metadata.StoragePoolId <> storagePoolId
            || metadata.ContentBlockAddress
               <> contentBlockAddress
            || range.ActiveManifestCount <= 0
            || range.OrdinalStart < 0
-           || range.OrdinalCount < MinimumAcceptedReuseRunLength
+           || range.OrdinalCount < minimumAcceptedOrdinalCount
+           || isNull chunkAddresses
            || rangeEnd range > chunkAddresses.Length then
             None
         else
@@ -287,7 +303,7 @@ module DedupeIndex =
                 |> Array.truncate ordinalCount
                 |> Array.map (protectChunkAddress storagePoolId)
 
-            if protectedChunkAddresses.Length < MinimumAcceptedReuseRunLength then
+            if protectedChunkAddresses.Length < minimumAcceptedOrdinalCount then
                 None
             else
                 Some
@@ -300,6 +316,188 @@ module DedupeIndex =
                         MetadataVersion = metadata.MetadataVersion
                         ProtectedChunkAddresses = protectedChunkAddresses
                     }
+
+    let private splitRangeIntoDedupeWindows minimumAcceptedOrdinalCount (range: ContentBlockMetadataRange) =
+        let output = ResizeArray<ContentBlockMetadataRange>()
+
+        let physicalOffsetForOrdinal ordinalStart =
+            let ordinalDelta = ordinalStart - range.OrdinalStart
+
+            if ordinalDelta <= 0 then
+                range.PhysicalOffset
+            elif ordinalDelta >= range.OrdinalCount then
+                range.PhysicalOffset + range.PhysicalLength
+            else
+                range.PhysicalOffset
+                + int64 (
+                    decimal range.PhysicalLength
+                    * decimal ordinalDelta
+                    / decimal range.OrdinalCount
+                )
+
+        if not (isNull (box range))
+           && range.ActiveManifestCount > 0
+           && range.OrdinalStart >= 0
+           && range.OrdinalCount >= minimumAcceptedOrdinalCount
+           && range.PhysicalOffset >= 0L
+           && range.PhysicalLength > 0L then
+            let mutable remainingOrdinalCount = range.OrdinalCount
+            let mutable currentOrdinalStart = range.OrdinalStart
+            let mutable currentPhysicalOffset = range.PhysicalOffset
+            let mutable remainingPhysicalLength = range.PhysicalLength
+
+            while remainingOrdinalCount
+                  >= minimumAcceptedOrdinalCount
+                  && remainingPhysicalLength > 0L do
+                let windowOrdinalCount = Math.Min(remainingOrdinalCount, MaxWindowChunks)
+
+                let windowPhysicalLength =
+                    if windowOrdinalCount = remainingOrdinalCount then
+                        remainingPhysicalLength
+                    else
+                        let proportionalLength =
+                            decimal range.PhysicalLength
+                            * decimal windowOrdinalCount
+                            / decimal range.OrdinalCount
+                            |> Math.Ceiling
+                            |> int64
+
+                        Math.Min(remainingPhysicalLength, Math.Max(1L, proportionalLength))
+
+                output.Add
+                    { range with
+                        OrdinalStart = currentOrdinalStart
+                        OrdinalCount = windowOrdinalCount
+                        PhysicalOffset = currentPhysicalOffset
+                        PhysicalLength = windowPhysicalLength
+                    }
+
+                remainingOrdinalCount <- remainingOrdinalCount - windowOrdinalCount
+                currentOrdinalStart <- currentOrdinalStart + windowOrdinalCount
+                currentPhysicalOffset <- currentPhysicalOffset + windowPhysicalLength
+                remainingPhysicalLength <- remainingPhysicalLength - windowPhysicalLength
+
+            if remainingOrdinalCount > 0 && output.Count > 0 then
+                let tailOrdinalStart = Math.Max(range.OrdinalStart, rangeEnd range - MaxWindowChunks)
+
+                let tailPhysicalOffset = physicalOffsetForOrdinal tailOrdinalStart
+
+                let tailPhysicalLength =
+                    Math.Max(
+                        1L,
+                        range.PhysicalOffset + range.PhysicalLength
+                        - tailPhysicalOffset
+                    )
+
+                if output
+                   |> Seq.exists (fun existing ->
+                       existing.OrdinalStart = tailOrdinalStart
+                       && existing.OrdinalCount = MaxWindowChunks)
+                   |> not then
+                    output.Add
+                        { range with
+                            OrdinalStart = tailOrdinalStart
+                            OrdinalCount = MaxWindowChunks
+                            PhysicalOffset = tailPhysicalOffset
+                            PhysicalLength = tailPhysicalLength
+                        }
+
+        output.ToArray()
+
+    let private mergeActiveChain (ranges: ContentBlockMetadataRange list) =
+        let ordered = ranges |> List.rev
+        let first = ordered.Head
+
+        { first with
+            OrdinalCount =
+                ordered
+                |> List.sumBy (fun range -> range.OrdinalCount)
+            ActiveManifestCount =
+                ordered
+                |> List.map (fun range -> range.ActiveManifestCount)
+                |> List.min
+            PhysicalLength =
+                ordered
+                |> List.sumBy (fun range -> range.PhysicalLength)
+        }
+
+    let private contiguousActiveRanges chunkAddressCount (ranges: ContentBlockMetadataRange array) =
+        let output = ResizeArray<ContentBlockMetadataRange>()
+        let minimumAcceptedOrdinalCount = minimumAcceptedOrdinalCountForBlock chunkAddressCount
+
+        if not (isNull ranges) then
+            let sortedRanges =
+                ranges
+                |> Array.filter (fun range ->
+                    not (isNull (box range))
+                    && range.ActiveManifestCount > 0
+                    && range.OrdinalStart >= 0
+                    && range.OrdinalCount > 0
+                    && range.PhysicalOffset >= 0L
+                    && range.PhysicalLength > 0L)
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
+
+            let rangePhysicalEnd (range: ContentBlockMetadataRange) =
+                if range.PhysicalLength > Int64.MaxValue - range.PhysicalOffset then
+                    Int64.MaxValue
+                else
+                    range.PhysicalOffset + range.PhysicalLength
+
+            let rangesByStart = Dictionary<int * int64, ResizeArray<ContentBlockMetadataRange>>()
+            let rangesWithPredecessors = HashSet<int * int64>()
+
+            for range in sortedRanges do
+                let startKey = range.OrdinalStart, range.PhysicalOffset
+
+                match rangesByStart.TryGetValue startKey with
+                | true, ranges -> ranges.Add range
+                | false, _ ->
+                    let ranges = ResizeArray<ContentBlockMetadataRange>()
+                    ranges.Add range
+                    rangesByStart[startKey] <- ranges
+
+                rangesWithPredecessors.Add(rangeEnd range, rangePhysicalEnd range)
+                |> ignore
+
+            let rec collectChains (chain: ContentBlockMetadataRange list) =
+                let current = chain.Head
+                let activeChain = mergeActiveChain chain
+                let currentEnd = rangeEnd current
+                let currentPhysicalEnd = rangePhysicalEnd current
+
+                let nextRanges =
+                    let nextKey = currentEnd, currentPhysicalEnd
+
+                    match rangesByStart.TryGetValue nextKey with
+                    | true, ranges ->
+                        ranges
+                        |> Seq.filter (fun candidate ->
+                            candidate.OrdinalCount
+                            <= Int32.MaxValue - activeChain.OrdinalCount
+                            && candidate.PhysicalLength
+                               <= Int64.MaxValue - activeChain.PhysicalLength)
+                        |> Seq.toArray
+                    | false, _ -> Array.empty
+
+                if nextRanges.Length = 0 then
+                    output.Add(mergeActiveChain chain)
+                else
+                    for nextRange in nextRanges do
+                        collectChains (nextRange :: chain)
+
+            let hasPredecessor (range: ContentBlockMetadataRange) =
+                let startKey = range.OrdinalStart, range.PhysicalOffset
+
+                rangesWithPredecessors.Contains startKey
+
+            for range in sortedRanges do
+                if not (hasPredecessor range) then collectChains [ range ]
+
+        output
+        |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+        |> Seq.collect (splitRangeIntoDedupeWindows minimumAcceptedOrdinalCount)
+        |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+        |> Seq.toArray
 
     let recordsAfterFinalize (source: FinalizedManifestIndexSource) =
         if not (isFinalizedForManifest source) then
@@ -324,7 +522,7 @@ module DedupeIndex =
                                         decodedBlock.Chunks
                                         |> Array.map (fun chunk -> chunk.Address)
 
-                                    for range in blockMetadata.Ranges do
+                                    for range in contiguousActiveRanges chunkAddresses.Length blockMetadata.Ranges do
                                         match
                                             tryCreateRecordFromChunkAddresses
                                                 source.StoragePoolId
@@ -399,12 +597,12 @@ module DedupeIndex =
         =
         let output = ResizeArray<DedupeIndexRecord>()
 
-        removeRecordsForMetadataBlock records registration.StoragePoolId metadata.ContentBlockAddress metadata.MetadataVersion
+        for block in registration.Blocks do
+            if block.Address = metadata.ContentBlockAddress then
+                let ranges = contiguousActiveRanges block.ChunkAddresses.Length metadata.Ranges
 
-        if not (isNull metadata.Ranges) then
-            for block in registration.Blocks do
-                if block.Address = metadata.ContentBlockAddress then
-                    for range in metadata.Ranges do
+                if ranges.Length > 0 then
+                    for range in ranges do
                         match
                             tryCreateRecordFromChunkAddresses
                                 registration.StoragePoolId

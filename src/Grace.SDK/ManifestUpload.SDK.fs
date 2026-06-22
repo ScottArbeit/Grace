@@ -106,10 +106,12 @@ module ManifestUpload =
         parameters.KeyChunkAddresses <-
             plan.KeyChunks
             |> Array.map (fun keyChunk -> keyChunk.Address)
+            |> Array.distinct
+            |> Array.truncate MaxDiscoveryKeyChunkAddresses
 
         parameters
 
-    let private buildIssueDiscoveryParameters request uploadSessionId operationIndex expiresAt minimumReuseRunLength hints =
+    let private buildIssueDiscoveryParameters request uploadSessionId operationIndex expiresAt minimumReuseRunLength keyChunkAddresses hints =
         let parameters = IssueDedupeDiscoveryParameters()
         setStorageParameters request parameters |> ignore
         parameters.UploadSessionId <- uploadSessionId
@@ -117,6 +119,7 @@ module ManifestUpload =
         parameters.OperationId <- $"manifest-upload-{uploadSessionId:N}-discovery-{operationIndex}"
         parameters.ExpiresAt <- expiresAt
         parameters.MinimumReuseRunLength <- minimumReuseRunLength
+        parameters.KeyChunkAddresses <- keyChunkAddresses
         parameters.Hints <- hints
         parameters
 
@@ -284,7 +287,9 @@ module ManifestUpload =
                             let manifest = { manifest with StoragePoolId = startResult.ReturnValue.Session.StoragePoolId }
                             let claimedBlockAddresses = HashSet<ContentBlockAddress>()
 
-                            match! client.DiscoverContentBlocks(buildDiscoveryParameters request plan) with
+                            let discoveryParameters = buildDiscoveryParameters request plan
+
+                            match! client.DiscoverContentBlocks discoveryParameters with
                             | Ok discoveryResult when
                                 not (isNull discoveryResult.ReturnValue.CandidateContentBlocks)
                                 && discoveryResult.ReturnValue.CandidateContentBlocks.Length > 0
@@ -300,6 +305,7 @@ module ManifestUpload =
                                             (getCurrentInstant()
                                                 .Plus(Duration.FromSeconds(int64 discoveryResult.ReturnValue.Policy.ResponseTtlSeconds)))
                                             discoveryResult.ReturnValue.Policy.MinimumAcceptedReuseRunLength
+                                            discoveryParameters.KeyChunkAddresses
                                             reuseHints
 
                                     match! client.IssueDedupeDiscovery issueParameters with

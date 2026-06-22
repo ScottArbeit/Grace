@@ -4451,7 +4451,12 @@ components:
           $ref: '#/components/schemas/Instant'
         MinimumReuseRunLength:
           type: integer
-          minimum: 8
+          minimum: 1
+        KeyChunkAddresses:
+          type: array
+          maxItems: 256
+          items:
+            $ref: '#/components/schemas/ChunkAddress'
         Hints:
           type: array
           maxItems: 1024

@@ -48,7 +48,10 @@ class TestIssueDedupeDiscoveryParameters(unittest.TestCase):
                 authorized_scope = '',
                 operation_id = '',
                 expires_at = datetime.datetime.strptime('2013-10-20 19:20:30.00', '%Y-%m-%d %H:%M:%S.%f'),
-                minimum_reuse_run_length = 8,
+                minimum_reuse_run_length = 1,
+                key_chunk_addresses = [
+                    'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b'
+                    ],
                 hints = [
                     grace_generated_openapi_probe.models.content_block_reuse_range_hint.ContentBlockReuseRangeHint(
                         storage_pool_id = '', 

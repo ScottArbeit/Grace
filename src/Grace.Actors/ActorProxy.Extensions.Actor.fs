@@ -14,10 +14,17 @@ open Orleans
 open Orleans.Runtime
 open System
 open System.Collections.Generic
+open System.Security.Cryptography
+open System.Text
 
 module ActorProxy =
 
     let getGrainIdentity (grainId: GrainId) = $"{grainId.Type}/{grainId.Key}"
+
+    let private scopedUploadSessionActorId (repositoryId: RepositoryId) (uploadSessionId: UploadSessionId) =
+        let preimage = $"grace.upload-session.v1\n{repositoryId}\n{uploadSessionId:N}"
+        let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
+        Guid(hash |> Array.take 16)
 
     type Orleans.IGrainFactory with
         /// Creates an Orleans grain reference for the given interface and actor type, and adds the correlationId to the grain's context.
@@ -347,15 +354,21 @@ module ActorProxy =
     module UploadSession =
         open Grace.Types.UploadSession
 
-        /// Creates an ActorProxy for an UploadSession actor, and adds the correlationId to the server's MemoryCache so
-        ///   it's available in the OnActivateAsync() method.
-        let CreateActorProxy (uploadSessionId: UploadSessionId) (repositoryId: RepositoryId) (correlationId: string) =
-            let grain = orleansClient.CreateActorProxyWithCorrelationId<IUploadSessionActor>(uploadSessionId, correlationId)
+        let private createActorProxyForPrimaryKey (primaryKey: Guid) (repositoryId: RepositoryId) (correlationId: string) =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IUploadSessionActor>(primaryKey, correlationId)
             let orleansContext = Dictionary<string, obj>()
             orleansContext.Add(nameof RepositoryId, repositoryId)
             orleansContext.Add(Constants.ActorNameProperty, ActorName.UploadSession)
             memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
             grain
+
+        /// Creates an ActorProxy for an UploadSession actor, and adds the correlationId to the server's MemoryCache so
+        ///   it's available in the OnActivateAsync() method.
+        let CreateActorProxy (uploadSessionId: UploadSessionId) (repositoryId: RepositoryId) (correlationId: string) =
+            createActorProxyForPrimaryKey (scopedUploadSessionActorId repositoryId uploadSessionId) repositoryId correlationId
+
+        let CreateActorProxyForPrimaryKey (primaryKey: Guid) (repositoryId: RepositoryId) (correlationId: string) =
+            createActorProxyForPrimaryKey primaryKey repositoryId correlationId
 
     module Policy =
         open Grace.Types.Policy

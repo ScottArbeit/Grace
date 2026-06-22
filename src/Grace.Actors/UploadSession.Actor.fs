@@ -79,6 +79,13 @@ module UploadSession =
         events
         |> Seq.exists (fun uploadSessionEvent -> eventOperationId uploadSessionEvent = operationId)
 
+    let private hasAppliedBlockUploadConfirmedOperationId (events: seq<UploadSessionEvent>) operationId =
+        events
+        |> Seq.exists (fun uploadSessionEvent ->
+            match uploadSessionEvent.Event with
+            | UploadSessionEventType.BlockUploadConfirmed (eventOperationId, _) -> eventOperationId = operationId
+            | _ -> false)
+
     let private applyEvents (events: UploadSessionEvent list) (session: UploadSessionDto) =
         events
         |> List.fold (fun current event -> UploadSessionDto.UpdateDto event current) session
@@ -434,6 +441,125 @@ module UploadSession =
                 range.PhysicalLength = claimedRange.PhysicalLength
                 && range.ActiveManifestCount > 0))
 
+    let private trySelectActiveContiguousRangeChain ordinalStart ordinalCount physicalOffset physicalLength (ranges: ContentBlockMetadataRange array) =
+        if ordinalCount <= 0
+           || physicalLength <= 0L
+           || isNull ranges then
+            None
+        else
+            let finalOrdinal = ordinalStart + ordinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
+
+            let tryProjectCoveringRange () =
+                ranges
+                |> Array.filter (fun range ->
+                    range.ActiveManifestCount > 0
+                    && range.OrdinalStart >= 0
+                    && range.OrdinalStart <= ordinalStart
+                    && range.OrdinalCount > 0
+                    && range.OrdinalCount
+                       <= Int32.MaxValue - range.OrdinalStart
+                    && rangeEnd range >= finalOrdinal
+                    && range.PhysicalOffset >= 0L
+                    && range.PhysicalLength > 0L
+                    && range.PhysicalLength % int64 range.OrdinalCount = 0L)
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+                |> Array.tryPick (fun range ->
+                    let bytesPerOrdinal = range.PhysicalLength / int64 range.OrdinalCount
+                    let projectedPhysicalLength = int64 ordinalCount * bytesPerOrdinal
+
+                    if projectedPhysicalLength <> physicalLength then
+                        None
+                    else
+                        let projectedPhysicalOffset =
+                            range.PhysicalOffset
+                            + (int64 (ordinalStart - range.OrdinalStart)
+                               * bytesPerOrdinal)
+
+                        match physicalOffset with
+                        | Some expectedPhysicalOffset when projectedPhysicalOffset <> expectedPhysicalOffset -> None
+                        | _ ->
+                            Some [| { range with
+                                        OrdinalStart = ordinalStart
+                                        OrdinalCount = ordinalCount
+                                        PhysicalOffset = projectedPhysicalOffset
+                                        PhysicalLength = projectedPhysicalLength
+                                    } |])
+
+            let candidates =
+                ranges
+                |> Array.filter (fun range ->
+                    range.OrdinalStart >= ordinalStart
+                    && range.OrdinalStart < finalOrdinal
+                    && range.OrdinalCount > 0
+                    && range.PhysicalLength > 0L
+                    && range.PhysicalLength <= physicalLength)
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
+
+            let rec selectChain nextOrdinal selectedLength expectedPhysicalOffset selected =
+                if nextOrdinal = finalOrdinal
+                   && selectedLength = physicalLength then
+                    selected |> List.rev |> List.toArray |> Some
+                elif nextOrdinal >= finalOrdinal
+                     || selectedLength >= physicalLength then
+                    None
+                else
+                    candidates
+                    |> Array.filter (fun range ->
+                        range.OrdinalStart = nextOrdinal
+                        && selectedLength + range.PhysicalLength
+                           <= physicalLength
+                        && match expectedPhysicalOffset with
+                           | Some physicalOffset -> range.PhysicalOffset = physicalOffset
+                           | None -> true)
+                    |> Array.tryPick (fun range ->
+                        selectChain
+                            (range.OrdinalStart + range.OrdinalCount)
+                            (selectedLength + range.PhysicalLength)
+                            (Some(range.PhysicalOffset + range.PhysicalLength))
+                            (range :: selected))
+
+            selectChain ordinalStart 0L physicalOffset []
+            |> Option.orElseWith tryProjectCoveringRange
+
+    type private ClaimedMetadataRangeEvidence = { ExpectedRanges: ContentBlockMetadataRange array; PhysicalRanges: ContentBlockMetadataRange array }
+
+    let private claimedMetadataRangeEvidence (metadata: ContentBlockMetadata) (claimedRange: ClaimedReuseRange) =
+        let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
+
+        let expectedRanges =
+            Grace.Types.ContentBlockMetadata.findRangeEvidence metadata query
+            |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
+
+        if expectedRanges.Length = 0 then
+            None
+        else
+            match
+                trySelectActiveContiguousRangeChain
+                    claimedRange.OrdinalStart
+                    claimedRange.OrdinalCount
+                    (Some claimedRange.PhysicalOffset)
+                    claimedRange.PhysicalLength
+                    expectedRanges
+                with
+            | Some activeRanges -> Some { ExpectedRanges = expectedRanges; PhysicalRanges = activeRanges }
+            | None ->
+                let activeExpectedRanges =
+                    expectedRanges
+                    |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+                match
+                    trySelectActiveContiguousRangeChain
+                        claimedRange.OrdinalStart
+                        claimedRange.OrdinalCount
+                        None
+                        claimedRange.PhysicalLength
+                        activeExpectedRanges
+                    with
+                | Some activeRanges -> Some { ExpectedRanges = expectedRanges; PhysicalRanges = activeRanges }
+                | None -> None
+
     let private validateClaimedRangeMetadata
         correlationId
         storagePoolId
@@ -663,6 +789,7 @@ module UploadSession =
                     validateAuthoritativeStoragePlacement correlationId authoritativeMetadata.StoragePlacement
                     |> Result.bind (fun () ->
                         let physicalRanges = ResizeArray<ContentBlockMetadataRange>()
+                        let expectedRanges = ResizeArray<ContentBlockMetadataRange>()
                         let mutable rangeError = None
                         let mutable rangeIndex = 0
 
@@ -670,8 +797,13 @@ module UploadSession =
                               && rangeIndex < claimedRanges.Length do
                             let claimedRange = claimedRanges[rangeIndex]
 
-                            match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
-                            | Some physicalRange -> physicalRanges.Add physicalRange
+                            match claimedMetadataRangeEvidence authoritativeMetadata claimedRange with
+                            | Some evidence ->
+                                for physicalRange in evidence.PhysicalRanges do
+                                    physicalRanges.Add physicalRange
+
+                                for expectedRange in evidence.ExpectedRanges do
+                                    expectedRanges.Add expectedRange
                             | None ->
                                 rangeError <-
                                     Some(
@@ -690,7 +822,7 @@ module UploadSession =
                                     ContentBlockMetadataCommand.MergePhysicalRanges
                                         {
                                             OperationId =
-                                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
+                                                $"{finalizeOperationId}:repository:{session.RepositoryId:N}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
                                             StoragePoolId = storagePoolId
                                             ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                             BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
@@ -698,7 +830,7 @@ module UploadSession =
                                             Ranges = finalizedManifestContributionRanges (physicalRanges.ToArray())
                                             ExpectedMetadataVersion = None
                                             RequireMissingMetadata = false
-                                            ExpectedRanges = physicalRanges.ToArray()
+                                            ExpectedRanges = expectedRanges.ToArray()
                                             IsFinalizeContribution = true
                                         }
                                 )
@@ -716,7 +848,7 @@ module UploadSession =
                     ContentBlockMetadataCommand.MergePhysicalRanges
                         {
                             OperationId =
-                                $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{confirmedBlock.ContentBlockAddress}"
+                                $"{finalizeOperationId}:repository:{session.RepositoryId:N}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{confirmedBlock.ContentBlockAddress}"
                             StoragePoolId = storagePoolId
                             ContentBlockAddress = confirmedBlock.ContentBlockAddress
                             BlockFormatVersion = 1s
@@ -742,27 +874,35 @@ module UploadSession =
         if isNull uploadedRanges || uploadedRanges.Length = 0 then
             None
         else
-            let selectedRanges = ResizeArray<ContentBlockMetadataRange>()
-            let mutable index = 0
-            let mutable allRangesFound = true
+            let sortedUploadedRanges =
+                uploadedRanges
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
-            while allRangesFound && index < uploadedRanges.Length do
-                let uploadedRange = uploadedRanges[index]
-                let query = { OrdinalStart = uploadedRange.OrdinalStart; OrdinalCount = uploadedRange.OrdinalCount }
+            let rec selectRanges index expectedPhysicalOffset selected =
+                if index = sortedUploadedRanges.Length then
+                    selected |> List.rev |> List.toArray |> Some
+                else
+                    let uploadedRange = sortedUploadedRanges[index]
+                    let query = { OrdinalStart = uploadedRange.OrdinalStart; OrdinalCount = uploadedRange.OrdinalCount }
 
-                match Grace.Types.ContentBlockMetadata.findRanges authoritativeMetadata query
-                      |> Array.filter (fun range ->
-                          range.ActiveManifestCount > 0
-                          && range.PhysicalLength = uploadedRange.PhysicalLength)
-                      |> Array.sortBy (fun range -> range.PhysicalOffset, range.PhysicalLength)
-                      |> Array.tryHead
-                    with
-                | Some activeRange -> selectedRanges.Add activeRange
-                | None -> allRangesFound <- false
+                    Grace.Types.ContentBlockMetadata.findRanges authoritativeMetadata query
+                    |> Array.filter (fun range ->
+                        range.ActiveManifestCount > 0
+                        && range.PhysicalLength = uploadedRange.PhysicalLength
+                        && match expectedPhysicalOffset with
+                           | Some physicalOffset -> range.PhysicalOffset = physicalOffset
+                           | None -> true)
+                    |> Array.sortBy (fun range -> range.PhysicalOffset, range.PhysicalLength)
+                    |> Array.tryPick (fun activeRange ->
+                        selectRanges
+                            (index + 1)
+                            (Some(
+                                activeRange.PhysicalOffset
+                                + activeRange.PhysicalLength
+                            ))
+                            (activeRange :: selected))
 
-                index <- index + 1
-
-            if allRangesFound then Some(selectedRanges.ToArray()) else None
+            selectRanges 0 None []
 
     let internal rebaseUploadedMergeOnCurrentMetadata (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
         match currentMetadata with
@@ -829,6 +969,7 @@ module UploadSession =
                             )
                     | Some authoritativeMetadata ->
                         let physicalRanges = ResizeArray<ContentBlockMetadataRange>()
+                        let expectedRanges = ResizeArray<ContentBlockMetadataRange>()
                         let mutable rangeError = None
                         let mutable rangeIndex = 0
 
@@ -836,8 +977,13 @@ module UploadSession =
                               && rangeIndex < claimedRanges.Length do
                             let claimedRange = claimedRanges[rangeIndex]
 
-                            match matchingClaimedMetadataRange authoritativeMetadata claimedRange with
-                            | Some physicalRange -> physicalRanges.Add physicalRange
+                            match claimedMetadataRangeEvidence authoritativeMetadata claimedRange with
+                            | Some evidence ->
+                                for physicalRange in evidence.PhysicalRanges do
+                                    physicalRanges.Add physicalRange
+
+                                for expectedRange in evidence.ExpectedRanges do
+                                    expectedRanges.Add expectedRange
                             | None ->
                                 rangeError <-
                                     Some(
@@ -855,7 +1001,7 @@ module UploadSession =
                                 ContentBlockMetadataCommand.MergePhysicalRanges
                                     {
                                         OperationId =
-                                            $"{finalizeOperationId}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
+                                            $"{finalizeOperationId}:repository:{session.RepositoryId:N}:upload-session:{session.UploadSessionId:N}:content-block-metadata:{firstClaimedRange.ContentBlockAddress}"
                                         StoragePoolId = storagePoolId
                                         ContentBlockAddress = firstClaimedRange.ContentBlockAddress
                                         BlockFormatVersion = authoritativeMetadata.BlockFormatVersion
@@ -863,7 +1009,7 @@ module UploadSession =
                                         Ranges = finalizedManifestContributionRanges (physicalRanges.ToArray())
                                         ExpectedMetadataVersion = None
                                         RequireMissingMetadata = false
-                                        ExpectedRanges = physicalRanges.ToArray()
+                                        ExpectedRanges = expectedRanges.ToArray()
                                         IsFinalizeContribution = true
                                     }
                             )
@@ -1127,8 +1273,22 @@ module UploadSession =
 
         if String.IsNullOrWhiteSpace operationId then
             Error(graceError metadata.CorrelationId "UploadSession command requires a non-empty operation id.")
-        elif hasAppliedOperationId events operationId then
+        elif
+            match command with
+            | UploadSessionCommand.ConfirmBlockUploaded _ -> hasAppliedBlockUploadConfirmedOperationId events operationId
+            | _ -> hasAppliedOperationId events operationId
+        then
             okDecision session operationId [] true "Upload session command replayed."
+        elif
+            match command with
+            | UploadSessionCommand.ConfirmBlockUploaded _ -> hasAppliedOperationId events operationId
+            | _ -> false
+        then
+            Error(
+                graceError
+                    metadata.CorrelationId
+                    $"UploadSession OperationId {operationId} was already applied to a non-confirm event and cannot confirm a ContentBlock upload."
+            )
         else
             match command with
             | UploadSessionCommand.Start start ->

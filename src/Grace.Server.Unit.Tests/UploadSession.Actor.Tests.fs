@@ -716,6 +716,38 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected first confirmation to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.ConfirmBlockUploadedRejectsOperationIdReusedFromDifferentUploadSessionCommand() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let intentDecision =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intent "op-block-intent" block.Address block.Payload.LongLength))
+                (metadata "corr-block-intent")
+
+        let intentDto, intentEvents =
+            match intentDecision with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let replayCollision =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-intent" block.Address block.Payload))
+                (metadata "corr-confirm-reused-intent-id")
+
+        match replayCollision with
+        | Ok _ -> Assert.Fail("Expected confirm to reject an OperationId already used by a non-confirm event.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("already applied to a non-confirm event"))
+            Assert.That(intentDto.ConfirmedBlockUploads, Is.Empty)
+
+    [<Test>]
     member _.FinalizeManifestFromUploadedBlockValidatesReconstructionAndFinalizes() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
         let block = encodedBlock fileBytes
@@ -833,7 +865,11 @@ type UploadSessionActorTests() =
         let assertMerge command (expectedAddress: ContentBlockAddress) (expectedObjectKey: string) =
             match command with
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-                Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:upload-session:{sessionId:N}:content-block-metadata:{expectedAddress}"))
+                Assert.That(
+                    merge.OperationId,
+                    Is.EqualTo($"op-finalize:repository:{session.RepositoryId:N}:upload-session:{sessionId:N}:content-block-metadata:{expectedAddress}")
+                )
+
                 Assert.That(merge.StoragePoolId, Is.EqualTo(expectedStoragePoolId))
                 Assert.That(merge.ContentBlockAddress, Is.EqualTo(expectedAddress))
                 Assert.That(merge.StoragePlacement.ObjectKey, Is.EqualTo(expectedObjectKey))
@@ -894,7 +930,11 @@ type UploadSessionActorTests() =
 
         match commands[0] with
         | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-            Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:upload-session:{sessionId:N}:content-block-metadata:{block.Address}"))
+            Assert.That(
+                merge.OperationId,
+                Is.EqualTo($"op-finalize:repository:{session.RepositoryId:N}:upload-session:{sessionId:N}:content-block-metadata:{block.Address}")
+            )
+
             Assert.That(merge.StoragePoolId, Is.EqualTo(sessionStoragePoolId))
             Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
             Assert.That(merge.StoragePlacement, Is.EqualTo(authoritativeMetadata.StoragePlacement))
@@ -925,6 +965,97 @@ type UploadSessionActorTests() =
                 Is.EqualTo(3)
             )
         | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
+
+    [<Test>]
+    member _.FinalizeManifestAcceptsCoveringEvidenceForClaimedReuseSubwindow() =
+        let fileBytes = Array.init 512 (fun index -> byte (index % 251))
+        let block = encodedBlockFromChunks [ ContentBlockFormat.createChunk 256L fileBytes ]
+        let manifest = manifestFor fileBytes [| block |]
+
+        let coveringRange =
+            { reusableMetadataRange with OrdinalStart = 0; OrdinalCount = 512; ActiveManifestCount = 2; PhysicalOffset = 0L; PhysicalLength = 512L }
+
+        let firstHalfClaim =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = 0
+                OrdinalCount = 256
+                PhysicalOffset = 0L
+                PhysicalLength = 256L
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let subwindowClaim =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = 256
+                OrdinalCount = 256
+                PhysicalOffset = 256L
+                PhysicalLength = 256L
+                MetadataVersion = 7L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = [| firstHalfClaim; subwindowClaim |]
+            }
+
+        let authoritativeMetadata = { reuseMetadataFor block.Address 7L [| coveringRange |] with TotalPhysicalBytes = 512L; ActivePhysicalBytes = 512L }
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| authoritativeMetadata |]
+
+        Assert.That(commands, Has.Length.EqualTo(1))
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
+            Assert.That(merge.Ranges, Has.Length.EqualTo(2))
+
+            let subwindowContribution =
+                merge.Ranges
+                |> Array.find (fun range ->
+                    range.OrdinalStart = subwindowClaim.OrdinalStart
+                    && range.OrdinalCount = subwindowClaim.OrdinalCount)
+
+            Assert.That(subwindowContribution.PhysicalOffset, Is.EqualTo(subwindowClaim.PhysicalOffset))
+            Assert.That(subwindowContribution.PhysicalLength, Is.EqualTo(subwindowClaim.PhysicalLength))
+            Assert.That(subwindowContribution.ActiveManifestCount, Is.EqualTo(1))
+            Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| coveringRange; coveringRange |]))
+
+            let mergeDecision =
+                ContentBlockMetadataActor.decideCommand
+                    []
+                    { ContentBlockMetadataDto.Empty with Metadata = Some authoritativeMetadata }
+                    (ContentBlockMetadataCommand.MergePhysicalRanges merge)
+                    (metadata "corr-claimed-subwindow-merge")
+                |> decisionOrFail "Expected claimed reuse subwindow finalize contribution to merge with covering evidence"
+
+            let subwindowRange =
+                mergeDecision.Metadata.Ranges
+                |> Array.find (fun range ->
+                    range.OrdinalStart = subwindowClaim.OrdinalStart
+                    && range.OrdinalCount = subwindowClaim.OrdinalCount)
+
+            Assert.That(subwindowRange.PhysicalOffset, Is.EqualTo(subwindowClaim.PhysicalOffset))
+            Assert.That(subwindowRange.PhysicalLength, Is.EqualTo(subwindowClaim.PhysicalLength))
+            Assert.That(subwindowRange.ActiveManifestCount, Is.EqualTo(coveringRange.ActiveManifestCount + 1))
+        | _ -> Assert.Fail("Expected claimed reuse subwindow finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
     [<Test>]
     member _.FinalizeManifestAcceptsClaimedReuseRangeCoverForMultiChunkBlock() =
@@ -1366,7 +1497,11 @@ type UploadSessionActorTests() =
 
             match commands[0] with
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
-                Assert.That(merge.OperationId, Is.EqualTo($"op-finalize:upload-session:{sessionId:N}:content-block-metadata:{block.Address}"))
+                Assert.That(
+                    merge.OperationId,
+                    Is.EqualTo($"op-finalize:repository:{session.RepositoryId:N}:upload-session:{sessionId:N}:content-block-metadata:{block.Address}")
+                )
+
                 Assert.That(merge.ContentBlockAddress, Is.EqualTo(block.Address))
                 Assert.That(merge.BlockFormatVersion, Is.EqualTo(freshMetadata.BlockFormatVersion))
                 Assert.That(merge.StoragePlacement, Is.EqualTo(freshMetadata.StoragePlacement))
@@ -1378,6 +1513,169 @@ type UploadSessionActorTests() =
                 Assert.That(merge.IsFinalizeContribution, Is.True)
             | _ -> Assert.Fail("Expected the fresh claimed range to provide the metadata merge command.")
         | Error error -> Assert.Fail($"Expected fresh duplicate claim to supersede stale claim, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestSelectsMatchingExactPhysicalRangeWhenHistoricalCopyAlsoExists() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("matching active exact physical range wins")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+
+        let inactiveHistoricalRange =
+            { OrdinalStart = 0; OrdinalCount = minimumReuseRunLength; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
+
+        let activeCurrentRange = { inactiveHistoricalRange with ActiveManifestCount = 2; PhysicalOffset = 8192L }
+
+        let claimedRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = activeCurrentRange.OrdinalStart
+                OrdinalCount = activeCurrentRange.OrdinalCount
+                PhysicalOffset = activeCurrentRange.PhysicalOffset
+                PhysicalLength = activeCurrentRange.PhysicalLength
+                MetadataVersion = 9L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = [| claimedRange |]
+            }
+
+        let currentMetadata =
+            reuseMetadataFor
+                block.Address
+                9L
+                [|
+                    inactiveHistoricalRange
+                    activeCurrentRange
+                |]
+
+        let finalizeCommand = finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| currentMetadata |]
+        let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize-matching-exact-range")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+
+            let commands =
+                UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                    sessionStoragePoolId
+                    "op-finalize"
+                    session
+                    manifest
+                    [| currentMetadata |]
+
+            Assert.That(commands, Has.Length.EqualTo(1))
+
+            match commands[0] with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+                Assert.That(merge.Ranges, Has.Length.EqualTo(1))
+                Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(activeCurrentRange.PhysicalOffset))
+                Assert.That(merge.Ranges[0].PhysicalLength, Is.EqualTo(activeCurrentRange.PhysicalLength))
+                Assert.That(merge.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
+                Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| activeCurrentRange |]))
+                Assert.That(merge.IsFinalizeContribution, Is.True)
+            | _ -> Assert.Fail("Expected the matching active exact claimed range to provide the metadata merge command.")
+        | Error error -> Assert.Fail($"Expected matching active exact range to finalize, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestBacktracksDuplicateActiveRangeStartsToSelectContiguousPhysicalChain() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("first duplicate active range")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("second duplicate active range")
+        let fileBytes = Array.concat [ firstBytes; secondBytes ]
+
+        let block =
+            encodedBlockFromChunks [ ContentBlockFormat.createChunk 1024L firstBytes
+                                     ContentBlockFormat.createChunk (1024L + int64 firstBytes.Length) secondBytes ]
+
+        let manifest = manifestFor fileBytes [| block |]
+
+        let abandonedFirstCopy = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = int64 firstBytes.Length }
+
+        let selectedFirstCopy = { abandonedFirstCopy with PhysicalOffset = 1024L }
+
+        let selectedSecondCopy =
+            {
+                OrdinalStart = 1
+                OrdinalCount = 1
+                ActiveManifestCount = 1
+                PhysicalOffset = 1024L + int64 firstBytes.Length
+                PhysicalLength = int64 secondBytes.Length
+            }
+
+        let claimedRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = 0
+                OrdinalCount = 2
+                PhysicalOffset = selectedFirstCopy.PhysicalOffset
+                PhysicalLength = int64 fileBytes.Length
+                MetadataVersion = 10L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = [| claimedRange |]
+            }
+
+        let currentMetadata =
+            reuseMetadataFor
+                block.Address
+                10L
+                [|
+                    abandonedFirstCopy
+                    selectedFirstCopy
+                    selectedSecondCopy
+                |]
+
+        let finalizeCommand = finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| currentMetadata |]
+        let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize-duplicate-active-chain")
+
+        match result with
+        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+        | Error error -> Assert.Fail($"Expected duplicate active range chain to finalize, got {error.Error}.")
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| currentMetadata |]
+
+        Assert.That(commands, Has.Length.EqualTo(1))
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            Assert.That(merge.Ranges, Has.Length.EqualTo(2))
+            Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(selectedFirstCopy.PhysicalOffset))
+            Assert.That(merge.Ranges[1].PhysicalOffset, Is.EqualTo(selectedSecondCopy.PhysicalOffset))
+
+            Assert.That(
+                merge.ExpectedRanges,
+                Is.EquivalentTo(
+                    [|
+                        selectedFirstCopy
+                        selectedSecondCopy
+                    |]
+                )
+            )
+        | _ -> Assert.Fail("Expected duplicate active range chain finalization to create one MergePhysicalRanges command.")
 
     [<Test>]
     member _.FinalizeManifestRejectsNewerPartialClaimWhenOnlyStaleFullClaimCoversBlock() =
@@ -1545,6 +1843,68 @@ type UploadSessionActorTests() =
                 .ActiveManifestCount,
             Is.EqualTo(2)
         )
+
+    [<Test>]
+    member _.FinalizeMetadataMergeOperationIdsIncludeRepositoryScopeForSharedPoolSessions() =
+        let fileBytes = Text.Encoding.UTF8.GetBytes("same upload session id across repositories")
+        let block = encodedBlock fileBytes
+        let manifest = manifestFor fileBytes [| block |]
+        let confirmedRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
+        let alternateRepositoryId = Guid.Parse("a50fe532-42fa-4a50-9894-53fdad0374f2")
+
+        let sessionFor repositoryId =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                RepositoryId = repositoryId
+                StoragePoolId = sessionStoragePoolId
+                ConfirmedBlockUploads =
+                    [|
+                        {
+                            ContentBlockAddress = block.Address
+                            PayloadLength = block.Payload.LongLength
+                            StoragePlacement = placementFor block.Address (Some "etag-confirmed")
+                            Ranges = [| confirmedRange |]
+                            ConfirmedAt = timestamp
+                        }
+                    |]
+            }
+
+        let firstCommands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads sessionStoragePoolId "op-finalize" (sessionFor repositoryId) manifest
+
+        let secondCommands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedUploads
+                sessionStoragePoolId
+                "op-finalize"
+                (sessionFor alternateRepositoryId)
+                manifest
+
+        let operationId command =
+            match command with
+            | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge.OperationId
+            | _ ->
+                Assert.Fail("Expected uploaded block finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
+                String.Empty
+
+        let firstOperationId = operationId firstCommands[0]
+        let secondOperationId = operationId secondCommands[0]
+
+        Assert.That(firstOperationId, Is.Not.EqualTo(secondOperationId))
+        Assert.That(firstOperationId, Does.Contain(repositoryId.ToString("N")))
+        Assert.That(secondOperationId, Does.Contain(alternateRepositoryId.ToString("N")))
+        Assert.That(firstOperationId, Does.Contain(sessionId.ToString("N")))
+        Assert.That(secondOperationId, Does.Contain(sessionId.ToString("N")))
+
+    [<Test>]
+    member _.ReminderDispatchUsesPersistedUploadSessionPrimaryKeyWithoutRehashing() =
+        let reminderPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reminder.Actor.fs"))
+        let reminderSource = File.ReadAllText(reminderPath)
+        let actorProxyPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "ActorProxy.Extensions.Actor.fs"))
+        let actorProxySource = File.ReadAllText(actorProxyPath)
+
+        Assert.That(actorProxySource, Does.Contain("let CreateActorProxyForPrimaryKey"))
+        Assert.That(reminderSource, Does.Contain("UploadSession.CreateActorProxyForPrimaryKey actorId reminderDto.RepositoryId correlationId"))
+        Assert.That(reminderSource, Does.Not.Contain("UploadSession.CreateActorProxy actorId reminderDto.RepositoryId correlationId"))
 
     [<Test>]
     member _.FinalizeMetadataRetryAfterPartialPostFinalizedFailureDoesNotDoubleIncrementEarlierBlock() =
@@ -2659,6 +3019,69 @@ type UploadSessionActorTests() =
         match result with
         | Ok _ -> Assert.Fail("Expected absent authoritative physical range to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("absent"))
+
+    [<Test>]
+    member _.ClaimReuseRangesAcceptsLaterSubwindowWithExactActiveAuthoritativeRange() =
+        let activeCoveringRange = { reusableMetadataRange with OrdinalCount = 8; ActiveManifestCount = 1; PhysicalLength = 8192L }
+
+        let activeExactSubwindow =
+            { reusableMetadataRange with OrdinalStart = 4; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 4096L; PhysicalLength = 4096L }
+
+        let subwindowHint = { reuseHint with OrdinalStart = 4; OrdinalCount = 4 }
+
+        let authoritativeMetadata =
+            { reuseMetadata
+                  7L
+                  [|
+                      activeExactSubwindow
+                      activeCoveringRange
+                  |] with
+                TotalPhysicalBytes = 8192L
+                ActivePhysicalBytes = 8192L
+            }
+
+        let startedDto, startEvents = startedSession ()
+
+        let issued = UploadSessionActor.decideCommand startEvents startedDto (discovery "op-discovery" [| subwindowHint |]) (metadata "corr-discovery")
+
+        let discoveredDto, discoveryEvents =
+            match issued with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected discovery to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let result =
+            UploadSessionActor.decideCommand discoveryEvents discoveredDto (claim "op-claim" subwindowHint authoritativeMetadata) (metadata "corr-claim")
+
+        match result with
+        | Ok decision ->
+            Assert.That(decision.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .OrdinalStart,
+                Is.EqualTo(4)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .OrdinalCount,
+                Is.EqualTo(4)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .PhysicalOffset,
+                Is.EqualTo(4096L)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .PhysicalLength,
+                Is.EqualTo(4096L)
+            )
+        | Error error -> Assert.Fail($"Expected covered subwindow claim to succeed, got {error.Error}.")
 
     [<Test>]
     member _.ClaimReuseRangesRejectsRunsBelowMinimumReuseLength() =
