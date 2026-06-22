@@ -716,6 +716,38 @@ type UploadSessionActorTests() =
         | Error error -> Assert.Fail($"Expected first confirmation to succeed, got {error.Error}.")
 
     [<Test>]
+    member _.ConfirmBlockUploadedRejectsOperationIdReusedFromDifferentUploadSessionCommand() =
+        let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
+        let startedDto, startEvents = startedSession ()
+
+        let intentDecision =
+            UploadSessionActor.decideCommand
+                startEvents
+                startedDto
+                (UploadSessionCommand.RegisterBlockUploadIntent(intent "op-block-intent" block.Address block.Payload.LongLength))
+                (metadata "corr-block-intent")
+
+        let intentDto, intentEvents =
+            match intentDecision with
+            | Ok decision -> decision.Session, startEvents @ decision.Events
+            | Error error ->
+                Assert.Fail($"Expected intent to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let replayCollision =
+            UploadSessionActor.decideCommand
+                intentEvents
+                intentDto
+                (UploadSessionCommand.ConfirmBlockUploaded(confirm "op-block-intent" block.Address block.Payload))
+                (metadata "corr-confirm-reused-intent-id")
+
+        match replayCollision with
+        | Ok _ -> Assert.Fail("Expected confirm to reject an OperationId already used by a non-confirm event.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("already applied to a non-confirm event"))
+            Assert.That(intentDto.ConfirmedBlockUploads, Is.Empty)
+
+    [<Test>]
     member _.FinalizeManifestFromUploadedBlockValidatesReconstructionAndFinalizes() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
         let block = encodedBlock fileBytes
@@ -1461,6 +1493,98 @@ type UploadSessionActorTests() =
                 Assert.That(merge.IsFinalizeContribution, Is.True)
             | _ -> Assert.Fail("Expected the matching active exact claimed range to provide the metadata merge command.")
         | Error error -> Assert.Fail($"Expected matching active exact range to finalize, got {error.Error}.")
+
+    [<Test>]
+    member _.FinalizeManifestBacktracksDuplicateActiveRangeStartsToSelectContiguousPhysicalChain() =
+        let firstBytes = Text.Encoding.UTF8.GetBytes("first duplicate active range")
+        let secondBytes = Text.Encoding.UTF8.GetBytes("second duplicate active range")
+        let fileBytes = Array.concat [ firstBytes; secondBytes ]
+
+        let block =
+            encodedBlockFromChunks [ ContentBlockFormat.createChunk 1024L firstBytes
+                                     ContentBlockFormat.createChunk (1024L + int64 firstBytes.Length) secondBytes ]
+
+        let manifest = manifestFor fileBytes [| block |]
+
+        let abandonedFirstCopy = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = int64 firstBytes.Length }
+
+        let selectedFirstCopy = { abandonedFirstCopy with PhysicalOffset = 1024L }
+
+        let selectedSecondCopy =
+            {
+                OrdinalStart = 1
+                OrdinalCount = 1
+                ActiveManifestCount = 1
+                PhysicalOffset = 1024L + int64 firstBytes.Length
+                PhysicalLength = int64 secondBytes.Length
+            }
+
+        let claimedRange =
+            {
+                StoragePoolId = sessionStoragePoolId
+                ContentBlockAddress = block.Address
+                OrdinalStart = 0
+                OrdinalCount = 2
+                PhysicalOffset = selectedFirstCopy.PhysicalOffset
+                PhysicalLength = int64 fileBytes.Length
+                MetadataVersion = 10L
+                ClaimedAt = timestamp
+            }
+
+        let session =
+            { UploadSessionDto.Default with
+                UploadSessionId = sessionId
+                StoragePoolId = sessionStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.ClaimingRanges
+                FileContentHash = manifest.FileContentHash
+                ExpectedSize = manifest.Size
+                ChunkingSuiteId = manifest.ChunkingSuiteId
+                ClaimedReuseRanges = [| claimedRange |]
+            }
+
+        let currentMetadata =
+            reuseMetadataFor
+                block.Address
+                10L
+                [|
+                    abandonedFirstCopy
+                    selectedFirstCopy
+                    selectedSecondCopy
+                |]
+
+        let finalizeCommand = finalizeWithClaimedMetadata "op-finalize" manifest [| payloadFor block |] [| currentMetadata |]
+        let result = UploadSessionActor.decideCommand [] session finalizeCommand (metadata "corr-finalize-duplicate-active-chain")
+
+        match result with
+        | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
+        | Error error -> Assert.Fail($"Expected duplicate active range chain to finalize, got {error.Error}.")
+
+        let commands =
+            UploadSessionActor.createContentBlockMetadataMergeCommandsForFinalizedBlocks
+                sessionStoragePoolId
+                "op-finalize"
+                session
+                manifest
+                [| currentMetadata |]
+
+        Assert.That(commands, Has.Length.EqualTo(1))
+
+        match commands[0] with
+        | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
+            Assert.That(merge.Ranges, Has.Length.EqualTo(2))
+            Assert.That(merge.Ranges[0].PhysicalOffset, Is.EqualTo(selectedFirstCopy.PhysicalOffset))
+            Assert.That(merge.Ranges[1].PhysicalOffset, Is.EqualTo(selectedSecondCopy.PhysicalOffset))
+
+            Assert.That(
+                merge.ExpectedRanges,
+                Is.EquivalentTo(
+                    [|
+                        selectedFirstCopy
+                        selectedSecondCopy
+                    |]
+                )
+            )
+        | _ -> Assert.Fail("Expected duplicate active range chain finalization to create one MergePhysicalRanges command.")
 
     [<Test>]
     member _.FinalizeManifestRejectsNewerPartialClaimWhenOnlyStaleFullClaimCoversBlock() =

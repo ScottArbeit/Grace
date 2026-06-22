@@ -76,10 +76,16 @@ module Storage =
     let private invalidManifestAddressError correlationId =
         GraceError.Create "ManifestAddress must be a 64-character lowercase hexadecimal BLAKE3 value." correlationId
 
-    let private validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
+    let internal validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
         match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
-        | Some _ -> Ok()
+        | Some normalizedAddress -> Ok(ContentBlockAddress normalizedAddress)
         | None -> Error(invalidContentBlockAddressError correlationId)
+
+    let internal validateSupportedManifestChunkingSuite correlationId (chunkingSuiteId: ChunkingSuiteId) =
+        if String.Equals(chunkingSuiteId, RabinChunking.SuiteName, StringComparison.Ordinal) then
+            Ok()
+        else
+            Error(GraceError.Create $"StartManifestUploadSession ChunkingSuiteId must be {RabinChunking.SuiteName}." correlationId)
 
     let private validateManifestAddress correlationId (manifestAddress: ManifestAddress) =
         if ContentAddress.isValidAddress manifestAddress then
@@ -1504,7 +1510,8 @@ module Storage =
 
                     match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok () ->
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
                         let _, repositoryId = resolveStorageIds graceIds parameters
 
                         match! validateUploadSessionForContentBlockUpload parameters repositoryId correlationId with
@@ -1546,7 +1553,8 @@ module Storage =
 
                     match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok () ->
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
                         let _, repositoryId = resolveStorageIds graceIds parameters
 
                         match! validateManifestForContentBlockDownload repositoryId parameters correlationId with
@@ -1641,26 +1649,29 @@ module Storage =
                             match resolveRepositoryDedupeStoragePoolId repositoryDto correlationId with
                             | Error error -> return! context |> result400BadRequest error
                             | Ok storagePoolId ->
-                                match validateStartManifestUploadSessionAuthorizedScope correlationId parameters.AuthorizedScope with
+                                match validateSupportedManifestChunkingSuite correlationId parameters.ChunkingSuiteId with
                                 | Error error -> return! context |> result400BadRequest error
                                 | Ok () ->
-                                    let command =
-                                        UploadSessionCommand.Start
-                                            {
-                                                UploadSessionId = parameters.UploadSessionId
-                                                OwnerId = ownerId
-                                                OrganizationId = organizationId
-                                                RepositoryId = repositoryId
-                                                StoragePoolId = storagePoolId
-                                                AuthorizedScope = parameters.AuthorizedScope
-                                                FileContentHash = parameters.FileContentHash
-                                                ExpectedSize = parameters.ExpectedSize
-                                                ChunkingSuiteId = parameters.ChunkingSuiteId
-                                                SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
-                                                OperationId = parameters.OperationId
-                                            }
+                                    match validateStartManifestUploadSessionAuthorizedScope correlationId parameters.AuthorizedScope with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok () ->
+                                        let command =
+                                            UploadSessionCommand.Start
+                                                {
+                                                    UploadSessionId = parameters.UploadSessionId
+                                                    OwnerId = ownerId
+                                                    OrganizationId = organizationId
+                                                    RepositoryId = repositoryId
+                                                    StoragePoolId = storagePoolId
+                                                    AuthorizedScope = parameters.AuthorizedScope
+                                                    FileContentHash = parameters.FileContentHash
+                                                    ExpectedSize = parameters.ExpectedSize
+                                                    ChunkingSuiteId = parameters.ChunkingSuiteId
+                                                    SamplingPolicySnapshot = parameters.SamplingPolicySnapshot
+                                                    OperationId = parameters.OperationId
+                                                }
 
-                                    return! handleUploadSessionCommand context parameters command correlationId
+                                        return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
@@ -1836,17 +1847,22 @@ module Storage =
                 try
                     let! parameters = context.BindJsonAsync<RegisterContentBlockUploadParameters>()
 
-                    let command =
-                        UploadSessionCommand.RegisterBlockUploadIntent
-                            {
-                                OperationId = parameters.OperationId
-                                ContentBlockAddress = parameters.ContentBlockAddress
-                                LogicalOffset = parameters.LogicalOffset
-                                LogicalLength = parameters.LogicalLength
-                                ExpectedPayloadLength = parameters.ExpectedPayloadLength
-                            }
+                    match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
+                    | Error error -> return! context |> result400BadRequest error
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
 
-                    return! handleUploadSessionCommand context parameters command correlationId
+                        let command =
+                            UploadSessionCommand.RegisterBlockUploadIntent
+                                {
+                                    OperationId = parameters.OperationId
+                                    ContentBlockAddress = parameters.ContentBlockAddress
+                                    LogicalOffset = parameters.LogicalOffset
+                                    LogicalLength = parameters.LogicalLength
+                                    ExpectedPayloadLength = parameters.ExpectedPayloadLength
+                                }
+
+                        return! handleUploadSessionCommand context parameters command correlationId
                 with
                 | ex ->
                     let exceptionResponse = ExceptionResponse.Create ex
@@ -1867,7 +1883,8 @@ module Storage =
 
                     match validateContentBlockAddress correlationId parameters.ContentBlockAddress with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok () ->
+                    | Ok normalizedContentBlockAddress ->
+                        parameters.ContentBlockAddress <- normalizedContentBlockAddress
                         let! requestContext = createUploadSessionRequestContext context parameters correlationId
                         let! scopeValidation = validateUploadSessionScope requestContext parameters correlationId true
 

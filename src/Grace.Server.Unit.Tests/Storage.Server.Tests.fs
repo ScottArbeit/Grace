@@ -447,6 +447,28 @@ type StorageContentBlockSdkContract() =
         | Ok () -> Assert.Pass()
 
     [<Test>]
+    member _.ContentBlockAddressValidationNormalizesUppercaseBlake3BeforeRouteUse() =
+        let uppercaseAddress = ContentBlockAddress "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
+
+        match Storage.validateContentBlockAddress "corr-normalize-content-block" uppercaseAddress with
+        | Error error -> Assert.Fail($"Expected uppercase BLAKE3 ContentBlockAddress to normalize, got {error.Error}.")
+        | Ok normalizedAddress ->
+            Assert.That(normalizedAddress, Is.EqualTo(ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"))
+
+    [<Test>]
+    member _.StartManifestUploadSessionRejectsUnsupportedChunkingSuiteBeforeFinalizeCanPersistIt() =
+        match Storage.validateSupportedManifestChunkingSuite "corr-start-suite" (ChunkingSuiteId "other-suite") with
+        | Ok () -> Assert.Fail("Expected unsupported manifest chunking suite to be rejected before upload session start.")
+        | Error error ->
+            Assert.That(error.Error, Does.Contain("ChunkingSuiteId"))
+            Assert.That(error.Error, Does.Contain(RabinChunking.SuiteName))
+            Assert.That(error.CorrelationId, Is.EqualTo("corr-start-suite"))
+
+        match Storage.validateSupportedManifestChunkingSuite "corr-start-rabin-suite" (ChunkingSuiteId RabinChunking.SuiteName) with
+        | Error error -> Assert.Fail($"Expected Rabin suite to be accepted, got {error.Error}.")
+        | Ok () -> Assert.Pass()
+
+    [<Test>]
     member _.FinalizeReplayPreHydrationValidationAcceptsPayloadlessDurableManifest() =
         let payloadBytes = bytes "payload-less finalize replay"
         let block = contentBlockPayload 0L payloadBytes
