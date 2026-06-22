@@ -27,9 +27,32 @@ module ManifestContributionWorkflow =
 
     let operationId command =
         match command with
-        | ManifestContributionWorkflowCommand.Start start -> start.OperationId
-        | ManifestContributionWorkflowCommand.RecordRangeSucceeded progress -> progress.OperationId
-        | ManifestContributionWorkflowCommand.RecordRangeFailed failure -> failure.OperationId
+        | ManifestContributionWorkflowCommand.Start (operationId, _, _, _, _, _) -> operationId
+        | ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, _, _, _, _) -> operationId
+        | ManifestContributionWorkflowCommand.RecordRangeFailed (operationId, _, _, _, _, _) -> operationId
+
+    let private startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges =
+        {
+            OperationId = operationId
+            RepositoryId = repositoryId
+            StoragePoolId = storagePoolId
+            ManifestAddress = manifestAddress
+            Direction = direction
+            Ranges = ranges
+        }
+
+    let private progressCommandPayload operationId repositoryId storagePoolId manifestAddress range =
+        { OperationId = operationId; RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress; Range = range }
+
+    let private failureCommandPayload operationId repositoryId storagePoolId manifestAddress range message =
+        {
+            OperationId = operationId
+            RepositoryId = repositoryId
+            StoragePoolId = storagePoolId
+            ManifestAddress = manifestAddress
+            Range = range
+            Message = message
+        }
 
     let private eventOperationId workflowEvent =
         match workflowEvent.Event with
@@ -56,10 +79,15 @@ module ManifestContributionWorkflow =
 
     let private eventMatchesCommand workflowEvent command =
         match workflowEvent.Event, command with
-        | ManifestContributionWorkflowEventType.WorkflowStarted existing, ManifestContributionWorkflowCommand.Start candidate -> startMatches existing candidate
-        | ManifestContributionWorkflowEventType.RangeSucceeded existing, ManifestContributionWorkflowCommand.RecordRangeSucceeded candidate ->
-            existing = candidate
-        | ManifestContributionWorkflowEventType.RangeFailed existing, ManifestContributionWorkflowCommand.RecordRangeFailed candidate -> existing = candidate
+        | ManifestContributionWorkflowEventType.WorkflowStarted existing,
+          ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
+            startMatches existing (startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges)
+        | ManifestContributionWorkflowEventType.RangeSucceeded existing,
+          ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, repositoryId, storagePoolId, manifestAddress, range) ->
+            existing = progressCommandPayload operationId repositoryId storagePoolId manifestAddress range
+        | ManifestContributionWorkflowEventType.RangeFailed existing,
+          ManifestContributionWorkflowCommand.RecordRangeFailed (operationId, repositoryId, storagePoolId, manifestAddress, range, message) ->
+            existing = failureCommandPayload operationId repositoryId storagePoolId manifestAddress range message
         | _ -> false
 
     let private tryFindAppliedOperation (events: seq<ManifestContributionWorkflowEvent>) operationId =
@@ -211,13 +239,17 @@ module ManifestContributionWorkflow =
             | Some _ -> okDecision workflow operationId [] [] true "Manifest contribution workflow command replayed."
             | None ->
                 match command with
-                | ManifestContributionWorkflowCommand.Start start ->
+                | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
+                    let start = startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges
+
                     match validateStart expectedPrimaryKey workflow start metadata with
                     | Some error -> Error error
                     | None ->
                         let workflowEvent = { Event = ManifestContributionWorkflowEventType.WorkflowStarted start; Metadata = metadata }
                         okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow started."
-                | ManifestContributionWorkflowCommand.RecordRangeSucceeded progress ->
+                | ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, repositoryId, storagePoolId, manifestAddress, range) ->
+                    let progress = progressCommandPayload operationId repositoryId storagePoolId manifestAddress range
+
                     match validateProgressTarget expectedPrimaryKey workflow progress.RepositoryId progress.StoragePoolId progress.ManifestAddress metadata with
                     | Some error -> Error error
                     | None ->
@@ -236,7 +268,9 @@ module ManifestContributionWorkflow =
                                 ]
 
                             okDecision workflow operationId [ workflowEvent ] intents false "Manifest contribution workflow range completed."
-                | ManifestContributionWorkflowCommand.RecordRangeFailed failure ->
+                | ManifestContributionWorkflowCommand.RecordRangeFailed (operationId, repositoryId, storagePoolId, manifestAddress, range, message) ->
+                    let failure = failureCommandPayload operationId repositoryId storagePoolId manifestAddress range message
+
                     match validateProgressTarget expectedPrimaryKey workflow failure.RepositoryId failure.StoragePoolId failure.ManifestAddress metadata with
                     | Some error -> Error error
                     | None ->
@@ -311,6 +345,15 @@ module ManifestContributionWorkflow =
 
                 (state.State :> IReadOnlyList<ManifestContributionWorkflowEvent>)
                 |> returnTask
+
+            member this.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata =
+                task {
+                    return!
+                        (this :> IManifestContributionWorkflowActor)
+                            .Handle
+                            (ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges))
+                            metadata
+                }
 
             member this.Handle command metadata =
                 task {

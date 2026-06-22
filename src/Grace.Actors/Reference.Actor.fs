@@ -78,15 +78,14 @@ module Reference =
     let private workflowStartCommandForPlan plan =
         let direction = counterCommandDirection plan.CounterCommand
 
-        ManifestContributionWorkflowCommand.Start
-            {
-                OperationId = workflowOperationId plan.ReferenceId plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress direction
-                RepositoryId = plan.RepositoryId
-                StoragePoolId = plan.Manifest.StoragePoolId
-                ManifestAddress = plan.Manifest.ManifestAddress
-                Direction = direction
-                Ranges = plan.WorkflowRanges
-            }
+        ManifestContributionWorkflowCommand.Start(
+            workflowOperationId plan.ReferenceId plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress direction,
+            plan.RepositoryId,
+            plan.Manifest.StoragePoolId,
+            plan.Manifest.ManifestAddress,
+            direction,
+            plan.WorkflowRanges
+        )
 
     let private planManifestReferences
         repositoryId
@@ -460,9 +459,12 @@ module Reference =
                                 plan.Manifest.ManifestAddress
                                 metadata.CorrelationId
 
-                        match! workflowActor.Handle startCommand metadata with
-                        | Ok _ -> ()
-                        | Error graceError -> error <- Some graceError
+                        match startCommand with
+                        | ManifestContributionWorkflowCommand.Start (operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges) ->
+                            match! workflowActor.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata with
+                            | Ok _ -> ()
+                            | Error graceError -> error <- Some graceError
+                        | _ -> error <- Some(GraceError.Create "Manifest contribution save boundary expected a workflow start command." metadata.CorrelationId)
 
                 planIndex <- planIndex + 1
 
