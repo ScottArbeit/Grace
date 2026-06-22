@@ -389,6 +389,20 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/save", createJsonContent parameters)
         }
 
+    let createReferenceByBlake3ResponseAsync (endpoint: string) repositoryId (branch: Branch.BranchDto) blake3Hash =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Blake3Hash <- blake3Hash
+            parameters.Message <- "Ambiguous BLAKE3 root locator route proof"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! Client.PostAsync(endpoint, createJsonContent parameters)
+        }
+
     let assignReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId blake3Hash =
         task {
             let parameters = Parameters.Branch.AssignParameters()
@@ -483,6 +497,34 @@ module BranchServerTestHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/branch/enableAssign", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    let enableCommitAsync repositoryId (branch: Branch.BranchDto) =
+        task {
+            let parameters = Parameters.Branch.EnableFeatureParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Enabled <- true
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/enableCommit", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    let enablePromotionAsync repositoryId (branch: Branch.BranchDto) =
+        task {
+            let parameters = Parameters.Branch.EnableFeatureParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Enabled <- true
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/branch/enablePromotion", createJsonContent parameters)
             do! assertOk response
         }
 
@@ -1178,7 +1220,79 @@ type BranchServer() =
 
             let! ambiguousBody = ambiguousResponse.Content.ReadAsStringAsync()
             Assert.That(ambiguousResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), ambiguousBody)
+            Assert.That((deserialize<GraceError> ambiguousBody).Error, Does.Contain("ambiguous"))
             do! assertLatestSaveUnchanged repositoryId ambiguousBranch
+        }
+
+    [<Test>]
+    member _.ReferenceCreationRoutesRejectAmbiguousBlake3RootPrefixBeforeMutation() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let branchId = repositoryDefaultBranchIds[0]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! saveBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousSave{Guid.NewGuid():N}"
+            let! commitBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousCommit{Guid.NewGuid():N}"
+            let! promoteBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousPromote{Guid.NewGuid():N}"
+            let! assignBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousAssign{Guid.NewGuid():N}"
+
+            let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"ambiguous-reference-create/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        firstChild
+                        firstRoot
+                        secondChild
+                        secondRoot
+                    ]
+
+            do! BranchServerTestHelpers.enableCommitAsync repositoryId commitBranch
+            do! BranchServerTestHelpers.enablePromotionAsync repositoryId promoteBranch
+            do! BranchServerTestHelpers.enableAssignAsync repositoryId assignBranch
+
+            let assertAmbiguousResponse (response: HttpResponseMessage) =
+                task {
+                    let! body = response.Content.ReadAsStringAsync()
+                    Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
+                    Assert.That((deserialize<GraceError> body).Error, Does.Contain("ambiguous"))
+                }
+
+            let! saveResponse = BranchServerTestHelpers.createReferenceByBlake3ResponseAsync "/branch/save" repositoryId saveBranch (Blake3Hash sharedPrefix)
+
+            do! assertAmbiguousResponse saveResponse
+
+            let! commitResponse =
+                BranchServerTestHelpers.createReferenceByBlake3ResponseAsync "/branch/commit" repositoryId commitBranch (Blake3Hash sharedPrefix)
+
+            do! assertAmbiguousResponse commitResponse
+
+            let! promoteResponse =
+                BranchServerTestHelpers.createReferenceByBlake3ResponseAsync "/branch/promote" repositoryId promoteBranch (Blake3Hash sharedPrefix)
+
+            do! assertAmbiguousResponse promoteResponse
+
+            let! assignResponse =
+                BranchServerTestHelpers.assignReferenceByBlake3ResponseAsync repositoryId assignBranch DirectoryVersionId.Empty (Blake3Hash sharedPrefix)
+
+            do! assertAmbiguousResponse assignResponse
+
+            let! afterSaveBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{saveBranch.BranchId}"
+            Assert.That(afterSaveBranch.LatestSave.ReferenceId, Is.EqualTo(saveBranch.LatestSave.ReferenceId))
+            Assert.That(afterSaveBranch.LatestSave.DirectoryId, Is.EqualTo(saveBranch.LatestSave.DirectoryId))
+
+            let! afterCommitBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{commitBranch.BranchId}"
+            Assert.That(afterCommitBranch.LatestCommit.ReferenceId, Is.EqualTo(commitBranch.LatestCommit.ReferenceId))
+            Assert.That(afterCommitBranch.LatestCommit.DirectoryId, Is.EqualTo(commitBranch.LatestCommit.DirectoryId))
+
+            let! afterPromoteBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{promoteBranch.BranchId}"
+            Assert.That(afterPromoteBranch.LatestPromotion.ReferenceId, Is.EqualTo(promoteBranch.LatestPromotion.ReferenceId))
+            Assert.That(afterPromoteBranch.LatestPromotion.DirectoryId, Is.EqualTo(promoteBranch.LatestPromotion.DirectoryId))
+
+            let! afterAssignBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{assignBranch.BranchId}"
+            Assert.That(afterAssignBranch.LatestPromotion.ReferenceId, Is.EqualTo(assignBranch.LatestPromotion.ReferenceId))
+            Assert.That(afterAssignBranch.LatestPromotion.DirectoryId, Is.EqualTo(assignBranch.LatestPromotion.DirectoryId))
         }
 
     [<Test>]
