@@ -242,9 +242,18 @@ module Watch =
             && statusUpdateTriggers.IsEmpty
         )
 
-    let private drainStatusOnlyTriggers () =
-        directoriesToProcess.Clear()
-        statusUpdateTriggers.Clear()
+    let private statusOnlyTriggerSnapshot () = directoriesToProcess.Keys.ToArray(), statusUpdateTriggers.Keys.ToArray()
+
+    let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: string array) =
+        let mutable unitValue = ()
+
+        for directory in directorySnapshot do
+            directoriesToProcess.TryRemove(directory, &unitValue)
+            |> ignore
+
+        for statusTrigger in statusTriggerSnapshot do
+            statusUpdateTriggers.TryRemove(statusTrigger, &unitValue)
+            |> ignore
 
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
         match tokenResult with
@@ -660,13 +669,14 @@ module Watch =
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
                     if filesToProcess.IsEmpty then
+                        let directorySnapshot, statusTriggerSnapshot = statusOnlyTriggerSnapshot ()
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
 
                         match! (updateGraceStatusClient graceStatus correlationId) with
                         | Some newGraceStatus ->
                             graceStatus <- newGraceStatus
-                            drainStatusOnlyTriggers ()
+                            drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
                         | None ->
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.

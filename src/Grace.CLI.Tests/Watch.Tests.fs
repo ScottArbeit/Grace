@@ -322,6 +322,41 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
+    let ``status-only triggers added during status update remain pending for next pass`` () =
+        withTempRepo (fun root ->
+            let beforeUpdatePath = Path.Combine(root, "before-update-delete.txt")
+            let duringUpdatePath = Path.Combine(root, "during-update-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent beforeUpdatePath)
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+
+                if updateCalls = 1 then Watch.OnDeleted(deletedEvent duringUpdatePath)
+
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterFirstPass = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFirstPass.StatusUpdateTriggers
+            |> should equal [| "during-update-delete.txt" |]
+
+            let successCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterSecondPass = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSecondPass.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
     let ``status-only triggers remain pending when status file read fails`` () =
         withTempRepo (fun root ->
             let filePath = Path.Combine(root, "read-failure-delete.txt")
