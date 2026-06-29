@@ -1663,6 +1663,120 @@ module Services =
                     processChangedDirectoriesBottomUp newGraceStatus changedDirectoryVersions newDirectoryVersions
                 | None -> ()
 
+    let private normalizeDirectoryDifferencePath (relativePath: RelativePath) =
+        let normalized = normalizeFilePath $"{relativePath}"
+
+        if normalized = Constants.RootDirectoryPath then
+            Constants.RootDirectoryPath
+        else
+            normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+    let private isDirectoryPathInSubtree (subtreeRoot: RelativePath) (candidate: RelativePath) =
+        let normalizedSubtreeRoot = normalizeDirectoryDifferencePath subtreeRoot
+        let normalizedCandidate = normalizeDirectoryDifferencePath candidate
+
+        normalizedCandidate.Equals(normalizedSubtreeRoot, StringComparison.OrdinalIgnoreCase)
+        || normalizedCandidate.StartsWith($"{normalizedSubtreeRoot}/", StringComparison.OrdinalIgnoreCase)
+
+    let private selectTopLevelDeletedDirectories (differences: IEnumerable<FileSystemDifference>) =
+        let topLevelDeletedDirectories = List<RelativePath>()
+
+        let deletedDirectories =
+            differences
+                .Where(fun difference ->
+                    isDirectoryChange difference
+                    && difference.DifferenceType = Delete)
+                .Select(fun difference -> normalizeDirectoryDifferencePath difference.RelativePath)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .OrderBy(fun relativePath -> countSegments relativePath)
+
+        for deletedDirectory in deletedDirectories do
+            let ancestorAlreadyDeleted =
+                topLevelDeletedDirectories
+                |> Seq.exists (fun existingDeletedDirectory ->
+                    not (existingDeletedDirectory.Equals(deletedDirectory, StringComparison.OrdinalIgnoreCase))
+                    && isDirectoryPathInSubtree existingDeletedDirectory deletedDirectory)
+
+            if not ancestorAlreadyDeleted then
+                topLevelDeletedDirectories.Add(deletedDirectory)
+
+        topLevelDeletedDirectories
+
+    let private tryFindSurvivingDirectoryVersion
+        (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
+        (newGraceStatus: GraceStatus)
+        (relativePath: RelativePath)
+        =
+
+        let mutable changedDirectoryVersion = LocalDirectoryVersion.Default
+
+        if changedDirectoryVersions.TryGetValue(relativePath, &changedDirectoryVersion) then
+            Some changedDirectoryVersion
+        else
+            let directoryVersion = newGraceStatus.Index.Values.FirstOrDefault((fun dv -> dv.RelativePath = relativePath), LocalDirectoryVersion.Default)
+
+            if directoryVersion.DirectoryVersionId <> Guid.Empty then
+                Some directoryVersion
+            else
+                None
+
+    let rec private tryFindNearestSurvivingParentDirectoryVersion
+        (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
+        (newGraceStatus: GraceStatus)
+        (relativePath: RelativePath)
+        =
+
+        match getParentPath relativePath with
+        | None -> None
+        | Some parentPath ->
+            match tryFindSurvivingDirectoryVersion changedDirectoryVersions newGraceStatus parentPath with
+            | Some parentDirectoryVersion -> Some parentDirectoryVersion
+            | None -> tryFindNearestSurvivingParentDirectoryVersion changedDirectoryVersions newGraceStatus parentPath
+
+    let private processDirectoryDeletion
+        (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
+        (newGraceStatus: GraceStatus)
+        (relativePath: RelativePath)
+        =
+
+        if relativePath = Constants.RootDirectoryPath then
+            ()
+        else
+            let deletedDirectoryVersions =
+                newGraceStatus
+                    .Index
+                    .Values
+                    .Where(fun dv -> isDirectoryPathInSubtree relativePath dv.RelativePath)
+                    .ToList()
+
+            let deletedDirectoryVersion = deletedDirectoryVersions.FirstOrDefault((fun dv -> dv.RelativePath = relativePath), LocalDirectoryVersion.Default)
+
+            if deletedDirectoryVersion.DirectoryVersionId
+               <> Guid.Empty then
+                for deletedDirectoryVersion in deletedDirectoryVersions do
+                    let mutable removedDirectoryVersion = LocalDirectoryVersion.Default
+
+                    newGraceStatus.Index.TryRemove(deletedDirectoryVersion.DirectoryVersionId, &removedDirectoryVersion)
+                    |> ignore
+
+                    let mutable changedRemovedDirectoryVersion = LocalDirectoryVersion.Default
+
+                    changedDirectoryVersions.TryRemove(deletedDirectoryVersion.RelativePath, &changedRemovedDirectoryVersion)
+                    |> ignore
+
+                match tryFindNearestSurvivingParentDirectoryVersion changedDirectoryVersions newGraceStatus relativePath with
+                | Some parentDirectoryVersion ->
+                    parentDirectoryVersion.Directories.Remove(deletedDirectoryVersion.DirectoryVersionId)
+                    |> ignore
+
+                    changedDirectoryVersions.AddOrUpdate(
+                        parentDirectoryVersion.RelativePath,
+                        (fun _ -> parentDirectoryVersion),
+                        (fun _ _ -> parentDirectoryVersion)
+                    )
+                    |> ignore
+                | None -> ()
+
     /// Main refactored function
     let getNewGraceStatusAndDirectoryVersions (previousGraceStatus: GraceStatus) (differences: IEnumerable<FileSystemDifference>) =
         task {
@@ -1703,11 +1817,10 @@ module Services =
                             changedDirectoryVersions.AddOrUpdate(difference.RelativePath, (fun _ -> newDirectoryVersion), (fun _ _ -> newDirectoryVersion))
                             |> ignore
                     | None -> ()
-                | Delete ->
-                    let mutable directoryVersion = newGraceStatus.Index.Values.First(fun dv -> dv.RelativePath = difference.RelativePath)
+                | Delete -> ()
 
-                    newGraceStatus.Index.TryRemove(directoryVersion.DirectoryVersionId, &directoryVersion)
-                    |> ignore
+            for deletedDirectory in selectTopLevelDeletedDirectories differences do
+                processDirectoryDeletion changedDirectoryVersions newGraceStatus deletedDirectory
 
             // Process file changes (Add/Change/Delete)
             for difference in differences.Where(fun d -> isFileChange d) do

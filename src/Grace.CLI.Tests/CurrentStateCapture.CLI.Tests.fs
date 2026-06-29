@@ -58,6 +58,58 @@ module CurrentStateCaptureCliTests =
 
     let private graceStatus directoryVersionId sha256Hash = graceStatusWithRootBlake3 directoryVersionId sha256Hash rootBlake3
 
+    let private sha256Hash (bytes: byte array) =
+        SHA256.HashData(bytes)
+        |> Convert.ToHexString
+        |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+    let private directoryVersion
+        (configuration: GraceConfiguration)
+        (directoryVersionId: DirectoryVersionId)
+        (relativePath: RelativePath)
+        (directoryIds: DirectoryVersionId seq)
+        (files: LocalFileVersion seq)
+        =
+        LocalDirectoryVersion.CreateWithHashes
+            directoryVersionId
+            configuration.OwnerId
+            configuration.OrganizationId
+            configuration.RepositoryId
+            relativePath
+            (Sha256Hash $"sha-{directoryVersionId:N}")
+            (Blake3Hash $"blake3-{directoryVersionId:N}")
+            (List<DirectoryVersionId>(directoryIds))
+            (List<LocalFileVersion>(files))
+            (files |> Seq.sumBy (fun file -> int64 file.Size))
+            DateTime.UtcNow
+
+    let private fileVersion (relativePath: RelativePath) (contents: string) =
+        let bytes = Encoding.UTF8.GetBytes(contents)
+
+        LocalFileVersion.CreateWithHashes
+            relativePath
+            (sha256Hash bytes)
+            (Blake3Hash(ContentAddress.computeBlake3Hex bytes))
+            false
+            (int64 bytes.Length)
+            (Grace.Shared.Utilities.getCurrentInstant ())
+            true
+            DateTime.UtcNow
+
+    let private graceStatusFromDirectories (root: LocalDirectoryVersion) (directories: LocalDirectoryVersion seq) =
+        let index = GraceIndex()
+
+        for directoryVersion in directories do
+            index.TryAdd(directoryVersion.DirectoryVersionId, directoryVersion)
+            |> ignore
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = root.DirectoryVersionId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        }
+
     let private referenceDto referenceId directoryVersionId sha256Hash =
         { ReferenceDto.Default with
             ReferenceId = referenceId
@@ -70,11 +122,6 @@ module CurrentStateCaptureCliTests =
 
     let private branch saveEnabled latestReference =
         { BranchDto.Default with BranchId = currentBranchId; SaveEnabled = saveEnabled; LatestReference = latestReference; LatestSave = latestReference }
-
-    let private sha256Hash (bytes: byte array) =
-        SHA256.HashData(bytes)
-        |> Convert.ToHexString
-        |> fun value -> Sha256Hash(value.ToLowerInvariant())
 
     let private manifestReferenceFor bytes =
         let blockAddress = ContentBlockAddress(ContentAddress.computeBlake3Hex bytes)
@@ -112,13 +159,16 @@ module CurrentStateCaptureCliTests =
         let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-{Guid.NewGuid():N}")
         let previousDirectory = Environment.CurrentDirectory
         let previousConfiguration = if configurationFileExists () then Some(Current()) else None
+        let previousParseResult = parseResult
 
         try
             Directory.CreateDirectory(root) |> ignore
             Environment.CurrentDirectory <- root
+            parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
             let configuration = configureForRoot root
             action root configuration
         finally
+            parseResult <- previousParseResult
             Environment.CurrentDirectory <- previousDirectory
 
             match previousConfiguration with
@@ -126,6 +176,180 @@ module CurrentStateCaptureCliTests =
             | None -> resetConfiguration ()
 
             if Directory.Exists(root) then Directory.Delete(root, true)
+
+    [<Test>]
+    let ``directory delete removes subtree reference from nearest surviving parent`` () =
+        withTempRepo (fun root configuration ->
+            Directory.CreateDirectory(Path.Combine(root, "src"))
+            |> ignore
+
+            let rootId = Guid.NewGuid()
+            let srcId = Guid.NewGuid()
+            let deletedId = Guid.NewGuid()
+            let nestedDeletedId = Guid.NewGuid()
+            let deletedFile = fileVersion (RelativePath "src/old/file.txt") "deleted file"
+            let nestedDeleted = directoryVersion configuration nestedDeletedId (RelativePath "src/old/nested") Seq.empty Seq.empty
+            let deleted = directoryVersion configuration deletedId (RelativePath "src/old") [| nestedDeletedId |] [| deletedFile |]
+            let src = directoryVersion configuration srcId (RelativePath "src") [| deletedId |] Seq.empty
+            let previousRoot = directoryVersion configuration rootId Constants.RootDirectoryPath [| srcId |] Seq.empty
+
+            let previousStatus =
+                graceStatusFromDirectories
+                    previousRoot
+                    [|
+                        previousRoot
+                        src
+                        deleted
+                        nestedDeleted
+                    |]
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath "src/old/file.txt")
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath "src/old/nested")
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath "src/old")
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            updatedStatus.Index.Values
+            |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = RelativePath "src/old")
+            |> should equal false
+
+            updatedStatus.Index.Values
+            |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = RelativePath "src/old/nested")
+            |> should equal false
+
+            let updatedRoot = updatedStatus.Index[updatedStatus.RootDirectoryId]
+
+            updatedRoot.DirectoryVersionId
+            |> should not' (equal rootId)
+
+            updatedRoot.Directories.Count |> should equal 1
+
+            let updatedSrc = updatedStatus.Index[updatedRoot.Directories[0]]
+
+            updatedSrc.RelativePath
+            |> should equal (RelativePath "src")
+
+            updatedSrc.DirectoryVersionId
+            |> should not' (equal srcId)
+
+            updatedSrc.Directories
+            |> Seq.exists (fun directoryId ->
+                directoryId = deletedId
+                || directoryId = nestedDeletedId)
+            |> should equal false
+
+            newDirectoryVersions
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> should
+                equivalent
+                [
+                    RelativePath "src"
+                    Constants.RootDirectoryPath
+                ])
+
+    [<Test>]
+    let ``directory delete for unknown path is ignored without changing root`` () =
+        withTempRepo (fun _ configuration ->
+            let rootId = Guid.NewGuid()
+            let previousRoot = directoryVersion configuration rootId Constants.RootDirectoryPath Seq.empty Seq.empty
+            let previousStatus = graceStatusFromDirectories previousRoot [| previousRoot |]
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath "missing")
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            updatedStatus.RootDirectoryId
+            |> should equal previousStatus.RootDirectoryId
+
+            updatedStatus.RootDirectorySha256Hash
+            |> should equal previousStatus.RootDirectorySha256Hash
+
+            updatedStatus.RootDirectoryBlake3Hash
+            |> should equal previousStatus.RootDirectoryBlake3Hash
+
+            updatedStatus.Index.Count
+            |> should equal previousStatus.Index.Count
+
+            newDirectoryVersions.Count |> should equal 0)
+
+    [<Test>]
+    let ``file delete still removes file reference and rebuilds root`` () =
+        withTempRepo (fun _ configuration ->
+            let rootId = Guid.NewGuid()
+            let deletedFile = fileVersion (RelativePath "deleted.txt") "deleted file"
+            let previousRoot = directoryVersion configuration rootId Constants.RootDirectoryPath Seq.empty [| deletedFile |]
+            let previousStatus = graceStatusFromDirectories previousRoot [| previousRoot |]
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath "deleted.txt")
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            let updatedRoot = updatedStatus.Index[updatedStatus.RootDirectoryId]
+
+            updatedRoot.DirectoryVersionId
+            |> should not' (equal rootId)
+
+            updatedRoot.Files.Count |> should equal 0
+            newDirectoryVersions.Count |> should equal 1
+
+            newDirectoryVersions[0].RelativePath
+            |> should equal Constants.RootDirectoryPath)
+
+    [<Test>]
+    let ``empty directory delete removes child reference from root`` () =
+        withTempRepo (fun _ configuration ->
+            let rootId = Guid.NewGuid()
+            let emptyId = Guid.NewGuid()
+            let empty = directoryVersion configuration emptyId (RelativePath "empty") Seq.empty Seq.empty
+            let previousRoot = directoryVersion configuration rootId Constants.RootDirectoryPath [| emptyId |] Seq.empty
+            let previousStatus = graceStatusFromDirectories previousRoot [| previousRoot; empty |]
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath "empty")
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            updatedStatus.Index.Values
+            |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = RelativePath "empty")
+            |> should equal false
+
+            let updatedRoot = updatedStatus.Index[updatedStatus.RootDirectoryId]
+
+            updatedRoot.DirectoryVersionId
+            |> should not' (equal rootId)
+
+            updatedRoot.Directories.Count |> should equal 0
+            newDirectoryVersions.Count |> should equal 1
+
+            newDirectoryVersions[0].RelativePath
+            |> should equal Constants.RootDirectoryPath)
 
     let private defaultOperations branchDto =
         {
