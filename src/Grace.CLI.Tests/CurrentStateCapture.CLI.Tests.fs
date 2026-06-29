@@ -255,6 +255,78 @@ module CurrentStateCaptureCliTests =
                 ])
 
     [<Test>]
+    let ``directory delete preserves sibling that differs only by case`` () =
+        withTempRepo (fun root configuration ->
+            Directory.CreateDirectory(Path.Combine(root, "src"))
+            |> ignore
+
+            let rootId = Guid.NewGuid()
+            let srcId = Guid.NewGuid()
+            let deletedId = Guid.NewGuid()
+            let deletedNestedId = Guid.NewGuid()
+            let survivingId = Guid.NewGuid()
+            let deletedNested = directoryVersion configuration deletedNestedId (RelativePath "src/Foo/nested") Seq.empty Seq.empty
+            let deleted = directoryVersion configuration deletedId (RelativePath "src/Foo") [| deletedNestedId |] Seq.empty
+            let surviving = directoryVersion configuration survivingId (RelativePath "src/foo") Seq.empty Seq.empty
+            let src = directoryVersion configuration srcId (RelativePath "src") [| deletedId; survivingId |] Seq.empty
+            let previousRoot = directoryVersion configuration rootId Constants.RootDirectoryPath [| srcId |] Seq.empty
+
+            let previousStatus =
+                graceStatusFromDirectories
+                    previousRoot
+                    [|
+                        previousRoot
+                        src
+                        deleted
+                        deletedNested
+                        surviving
+                    |]
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath "src/Foo/nested")
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath "src/Foo")
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            updatedStatus.Index.Values
+            |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = RelativePath "src/Foo")
+            |> should equal false
+
+            updatedStatus.Index.Values
+            |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = RelativePath "src/Foo/nested")
+            |> should equal false
+
+            updatedStatus.Index.ContainsKey(survivingId)
+            |> should equal true
+
+            let updatedRoot = updatedStatus.Index[updatedStatus.RootDirectoryId]
+            updatedRoot.Directories.Count |> should equal 1
+
+            let updatedSrc = updatedStatus.Index[updatedRoot.Directories[0]]
+
+            updatedSrc.RelativePath
+            |> should equal (RelativePath "src")
+
+            updatedSrc.Directories
+            |> Seq.map (fun directoryId -> updatedStatus.Index[directoryId].RelativePath)
+            |> should equivalent [ RelativePath "src/foo" ]
+
+            newDirectoryVersions
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> should
+                equivalent
+                [
+                    RelativePath "src"
+                    Constants.RootDirectoryPath
+                ])
+
+    [<Test>]
     let ``directory delete for unknown path is ignored without changing root`` () =
         withTempRepo (fun _ configuration ->
             let rootId = Guid.NewGuid()

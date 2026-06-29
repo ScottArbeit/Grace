@@ -1675,8 +1675,8 @@ module Services =
         let normalizedSubtreeRoot = normalizeDirectoryDifferencePath subtreeRoot
         let normalizedCandidate = normalizeDirectoryDifferencePath candidate
 
-        normalizedCandidate.Equals(normalizedSubtreeRoot, StringComparison.OrdinalIgnoreCase)
-        || normalizedCandidate.StartsWith($"{normalizedSubtreeRoot}/", StringComparison.OrdinalIgnoreCase)
+        normalizedCandidate.Equals(normalizedSubtreeRoot, StringComparison.Ordinal)
+        || normalizedCandidate.StartsWith($"{normalizedSubtreeRoot}/", StringComparison.Ordinal)
 
     let private selectTopLevelDeletedDirectories (differences: IEnumerable<FileSystemDifference>) =
         let topLevelDeletedDirectories = List<RelativePath>()
@@ -1687,14 +1687,14 @@ module Services =
                     isDirectoryChange difference
                     && difference.DifferenceType = Delete)
                 .Select(fun difference -> normalizeDirectoryDifferencePath difference.RelativePath)
-                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Distinct(StringComparer.Ordinal)
                 .OrderBy(fun relativePath -> countSegments relativePath)
 
         for deletedDirectory in deletedDirectories do
             let ancestorAlreadyDeleted =
                 topLevelDeletedDirectories
                 |> Seq.exists (fun existingDeletedDirectory ->
-                    not (existingDeletedDirectory.Equals(deletedDirectory, StringComparison.OrdinalIgnoreCase))
+                    not (existingDeletedDirectory.Equals(deletedDirectory, StringComparison.Ordinal))
                     && isDirectoryPathInSubtree existingDeletedDirectory deletedDirectory)
 
             if not ancestorAlreadyDeleted then
