@@ -382,6 +382,27 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
+    let ``deleted directory queues status update when rename cached directory ignore`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-directory-name")
+            let directoryPath = Path.Combine(root, "cached-directory")
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            Watch.OnRenamed(renamedEvent oldPath directoryPath)
+            Watch.clearPendingWatchWorkForTests ()
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "cached-directory" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
     let ``duplicate deleted file events drain as one status update trigger`` () =
         withTempRepo (fun root ->
             let filePath = Path.Combine(root, "duplicate-delete.txt")

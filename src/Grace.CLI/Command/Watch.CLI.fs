@@ -181,9 +181,42 @@ module Watch =
             else
                 None
 
+    let private shouldIgnoreDeletedPath (fullPath: string) =
+        let configuration = Current()
+        let normalizedFullPath = Path.GetFullPath(fullPath)
+        let graceDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.GraceDirectory))
+        let fileInfo = FileInfo(fullPath)
+
+        let isInGraceDirectory =
+            normalizedFullPath.Equals(graceDirectory, StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.StartsWith(
+                graceDirectory
+                + string Path.DirectorySeparatorChar,
+                StringComparison.InvariantCultureIgnoreCase
+            )
+
+        let directoryIgnoreMatches graceIgnoreLine =
+            if isNull fileInfo.Directory then
+                false
+            else
+                checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
+
+        isInGraceDirectory
+        || normalizedFullPath.Equals(configuration.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+        || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+        || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+        || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+        || normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase)
+        || configuration.GraceDirectoryIgnoreEntries
+           |> Array.exists directoryIgnoreMatches
+        || configuration.GraceDirectoryIgnoreEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine)
+        || configuration.GraceFileIgnoreEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine)
+
     let private enqueueStatusUpdateTrigger fullPath =
         match repositoryRelativePath fullPath with
-        | Some relativePath when not <| shouldIgnoreFile fullPath ->
+        | Some relativePath when not <| shouldIgnoreDeletedPath fullPath ->
             statusUpdateTriggers.TryAdd(relativePath, ())
             |> ignore
 
