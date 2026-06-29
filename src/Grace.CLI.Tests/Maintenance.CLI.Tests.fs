@@ -4,6 +4,7 @@ open FsUnit
 open Grace.CLI
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Types.Common
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -99,6 +100,34 @@ module MaintenanceCliTests =
             .ValueKind
         |> should equal JsonValueKind.Number
 
+        returnValue
+            .GetProperty(
+                "RootSha256Hash"
+            )
+            .GetString()
+            .Length
+        |> should equal 64
+
+        returnValue
+            .GetProperty(
+                "RootBlake3Hash"
+            )
+            .GetString()
+            .Length
+        |> should equal 64
+
+    let private writeStatusMetaOnlySnapshot root =
+        let status =
+            { GraceStatus.Default with
+                RootDirectoryId = DirectoryVersionId("11111111-1111-1111-1111-111111111111")
+                RootDirectorySha256Hash = Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                RootDirectoryBlake3Hash = Blake3Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+            }
+
+        LocalStateDb.replaceStatusSnapshot (Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)) status
+        |> Async.AwaitTask
+        |> Async.RunSynchronously
+
     [<Test>]
     let ``maintenance check ignore entries json emits one clean envelope`` () =
         withTempRepo (fun _ ->
@@ -150,7 +179,23 @@ module MaintenanceCliTests =
             |> should equal JsonValueKind.Number
 
             returnValue.GetProperty("TotalFileSize").ValueKind
-            |> should equal JsonValueKind.Number)
+            |> should equal JsonValueKind.Number
+
+            returnValue
+                .GetProperty(
+                    "RootSha256Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64
+
+            returnValue
+                .GetProperty(
+                    "RootBlake3Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64)
 
     [<Test>]
     let ``maintenance update-index json exception emits one clean error envelope`` () =
@@ -192,8 +237,9 @@ module MaintenanceCliTests =
 
     [<Test>]
     let ``maintenance scan json emits scan envelope with clean stdout`` () =
-        withTempRepo (fun _ ->
+        withTempRepo (fun root ->
             createIndex ()
+            File.WriteAllText(Path.Combine(root, "changed.txt"), "changed content")
 
             let exitCode, standardOut, standardError = runJsonMaintenance [| "scan" |]
 
@@ -225,7 +271,30 @@ module MaintenanceCliTests =
                     "NewDirectoryVersions"
                 )
                 .ValueKind
-            |> should equal JsonValueKind.Array)
+            |> should equal JsonValueKind.Array
+
+            let newDirectoryVersions = returnValue.GetProperty("NewDirectoryVersions")
+
+            newDirectoryVersions.GetArrayLength()
+            |> should greaterThan 0
+
+            let newDirectoryVersion = newDirectoryVersions[0]
+
+            newDirectoryVersion
+                .GetProperty(
+                    "Sha256Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64
+
+            newDirectoryVersion
+                .GetProperty(
+                    "Blake3Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64)
 
     [<Test>]
     let ``maintenance stats json emits stats envelope with clean stdout`` () =
@@ -255,7 +324,46 @@ module MaintenanceCliTests =
                     "RootSha256Hash"
                 )
                 .ValueKind
-            |> should not' (equal JsonValueKind.Undefined))
+            |> should not' (equal JsonValueKind.Undefined)
+
+            returnValue
+                .GetProperty(
+                    "RootSha256Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64
+
+            returnValue
+                .GetProperty(
+                    "RootBlake3Hash"
+                )
+                .GetString()
+                .Length
+            |> should equal 64)
+
+    [<Test>]
+    let ``maintenance stats json includes root hashes from status metadata when root row is absent`` () =
+        withTempRepo (fun root ->
+            writeStatusMetaOnlySnapshot root
+
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "stats" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue
+                .GetProperty("RootSha256Hash")
+                .GetString()
+            |> should equal "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+            returnValue
+                .GetProperty("RootBlake3Hash")
+                .GetString()
+            |> should equal "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
 
     [<Test>]
     let ``maintenance list contents json emits contents envelope with clean stdout`` () =
@@ -277,4 +385,60 @@ module MaintenanceCliTests =
             |> should equal JsonValueKind.Number
 
             returnValue.GetProperty("Directories").ValueKind
-            |> should equal JsonValueKind.Array)
+            |> should equal JsonValueKind.Array
+
+            let directories = returnValue.GetProperty("Directories")
+
+            directories.GetArrayLength()
+            |> should greaterThan 0
+
+            let directory = directories[0]
+
+            directory.GetProperty("Sha256Hash").GetString()
+                .Length
+            |> should equal 64
+
+            directory.GetProperty("Blake3Hash").GetString()
+                .Length
+            |> should equal 64
+
+            let files = directory.GetProperty("Files")
+            files.GetArrayLength() |> should greaterThan 0
+
+            let file = files[0]
+
+            file.GetProperty("Sha256Hash").GetString().Length
+            |> should equal 64
+
+            file.GetProperty("Blake3Hash").GetString().Length
+            |> should equal 64)
+
+    [<Test>]
+    let ``maintenance list contents json with directories disabled emits dual hash summary`` () =
+        withTempRepo (fun _ ->
+            createIndex ()
+
+            let exitCode, standardOut, standardError =
+                runJsonMaintenance [| "list-contents"
+                                      "--list-directories"
+                                      "false" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+            let summary = returnValue.GetProperty("Summary")
+
+            summary.GetProperty("RootSha256Hash").GetString()
+                .Length
+            |> should equal 64
+
+            summary.GetProperty("RootBlake3Hash").GetString()
+                .Length
+            |> should equal 64
+
+            returnValue
+                .GetProperty("Directories")
+                .GetArrayLength()
+            |> should equal 0)

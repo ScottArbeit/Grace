@@ -62,12 +62,16 @@ module Storage =
 
     type GetContentBlockUploadUriParameters() =
         inherit StorageParameters()
+        member val public UploadSessionId: UploadSessionId = Guid.Empty with get, set
         member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
         member val public AuthorizedScope: RelativePath = String.Empty with get, set
 
     type GetContentBlockDownloadUriParameters() =
         inherit StorageParameters()
+        member val public AuthorizedScope: RelativePath = String.Empty with get, set
+        member val public StoragePoolId: StoragePoolId = String.Empty with get, set
         member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
+        member val public ManifestAddress: ManifestAddress = String.Empty with get, set
 
     /// Parameters for /storage/discoverContentBlocks.
     ///
@@ -95,6 +99,7 @@ module Storage =
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
         member val public ExpiresAt: Instant = Instant.MinValue with get, set
         member val public MinimumReuseRunLength: int = 0 with get, set
+        member val public KeyChunkAddresses = Array.empty<ChunkAddress> with get, set
         member val public Hints = Array.empty<ContentBlockReuseRangeHint> with get, set
 
     type ClaimReuseRangesParameters() =
@@ -168,7 +173,14 @@ module Storage =
             Message: string
         }
 
-    type UploadMetadata = { RelativePath: RelativePath; BlobUriWithSasToken: Uri; Sha256Hash: Sha256Hash; ContentReference: FileContentReference }
+    type UploadMetadata =
+        {
+            RelativePath: RelativePath
+            BlobUriWithSasToken: Uri
+            Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
+            ContentReference: FileContentReference
+        }
 
     type GetUploadMetadataForFilesParameters() =
         inherit StorageParameters()

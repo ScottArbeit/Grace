@@ -104,10 +104,12 @@ All URIs are relative to *http://localhost:5000*
 *DefaultApi* | [**registerContentBlockUpload**](docs/DefaultApi.md#registercontentblockupload) | **POST** /storage/registerContentBlockUpload | Registers a ContentBlock upload intent.
 *DefaultApi* | [**startManifestUploadSession**](docs/DefaultApi.md#startmanifestuploadsession) | **POST** /storage/startManifestUploadSession | Starts a manifest upload session.
 *DiffsApi* | [**getDiff**](docs/DiffsApi.md#getdiff) | **POST** /diff/getDiff | Get a diff.
+*DiffsApi* | [**getDiffByBlake3Hash**](docs/DiffsApi.md#getdiffbyblake3hash) | **POST** /diff/getDiffByBlake3Hash | Get a diff by BLAKE3 hash.
 *DiffsApi* | [**getDiffBySha256Hash**](docs/DiffsApi.md#getdiffbysha256hash) | **POST** /diff/getDiffBySha256Hash | Get a diff by SHA-256 hash.
 *DiffsApi* | [**populateDiff**](docs/DiffsApi.md#populatediff) | **POST** /diff/populate | Populate a diff actor.
 *DirectoriesApi* | [**createDirectoryVersion**](docs/DirectoriesApi.md#createdirectoryversion) | **POST** /directory/create | Create a new directory version.
 *DirectoriesApi* | [**getDirectoryVersion**](docs/DirectoriesApi.md#getdirectoryversion) | **POST** /directory/get | Get a directory version.
+*DirectoriesApi* | [**getDirectoryVersionByBlake3Hash**](docs/DirectoriesApi.md#getdirectoryversionbyblake3hash) | **POST** /directory/getByBlake3Hash | Get a directory version by BLAKE3 hash.
 *DirectoriesApi* | [**getDirectoryVersionBySha256Hash**](docs/DirectoriesApi.md#getdirectoryversionbysha256hash) | **POST** /directory/getBySha256Hash | Get a directory version by SHA-256 hash.
 *DirectoriesApi* | [**listDirectoryVersionsById**](docs/DirectoriesApi.md#listdirectoryversionsbyid) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**listDirectoryVersionsRecursive**](docs/DirectoriesApi.md#listdirectoryversionsrecursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
@@ -186,6 +188,7 @@ All URIs are relative to *http://localhost:5000*
 - [BranchCommandReturnValue](docs/BranchCommandReturnValue.md)
 - [BranchDto](docs/BranchDto.md)
 - [BranchDtoUpdatedAt](docs/BranchDtoUpdatedAt.md)
+- [BranchHashQueryParameters](docs/BranchHashQueryParameters.md)
 - [BranchParameters](docs/BranchParameters.md)
 - [BranchQueryParameters](docs/BranchQueryParameters.md)
 - [BranchReturnValue](docs/BranchReturnValue.md)
@@ -225,8 +228,11 @@ All URIs are relative to *http://localhost:5000*
 - [DirectoryParameters](docs/DirectoryParameters.md)
 - [DirectoryVersion](docs/DirectoryVersion.md)
 - [DirectoryVersionApiDto](docs/DirectoryVersionApiDto.md)
+- [DirectoryVersionHashLookupResult](docs/DirectoryVersionHashLookupResult.md)
+- [DirectoryVersionHashLookupReturnValue](docs/DirectoryVersionHashLookupReturnValue.md)
 - [DirectoryVersionListReturnValue](docs/DirectoryVersionListReturnValue.md)
 - [DirectoryVersionReturnValue](docs/DirectoryVersionReturnValue.md)
+- [DirectoryVersionSha256HashLookupReturnValue](docs/DirectoryVersionSha256HashLookupReturnValue.md)
 - [DiscoverContentBlocksParameters](docs/DiscoverContentBlocksParameters.md)
 - [DiscoverContentBlocksResult](docs/DiscoverContentBlocksResult.md)
 - [DiscoverContentBlocksReturnValue](docs/DiscoverContentBlocksReturnValue.md)
@@ -246,10 +252,12 @@ All URIs are relative to *http://localhost:5000*
 - [GetBranchVersionParameters](docs/GetBranchVersionParameters.md)
 - [GetBranchesByBranchIdParameters](docs/GetBranchesByBranchIdParameters.md)
 - [GetBranchesParameters](docs/GetBranchesParameters.md)
+- [GetByBlake3HashParameters](docs/GetByBlake3HashParameters.md)
 - [GetByDirectoryIdsParameters](docs/GetByDirectoryIdsParameters.md)
 - [GetBySha256HashParameters](docs/GetBySha256HashParameters.md)
 - [GetContentBlockDownloadUriParameters](docs/GetContentBlockDownloadUriParameters.md)
 - [GetContentBlockUploadUriParameters](docs/GetContentBlockUploadUriParameters.md)
+- [GetDiffByBlake3HashParameters](docs/GetDiffByBlake3HashParameters.md)
 - [GetDiffByReferenceTypeParameters](docs/GetDiffByReferenceTypeParameters.md)
 - [GetDiffBySha256HashParameters](docs/GetDiffBySha256HashParameters.md)
 - [GetDiffParameters](docs/GetDiffParameters.md)

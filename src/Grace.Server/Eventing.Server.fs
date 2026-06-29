@@ -179,7 +179,7 @@ module EventingPublisher =
             |> Some
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
-            | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, referenceType, _, links) ->
+            | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, _, referenceType, _, links) ->
                 if referenceType = ReferenceType.Promotion then
                     match tryGetTerminalPromotionSetId links with
                     | Some promotionSetId ->

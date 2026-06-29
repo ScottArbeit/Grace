@@ -65,19 +65,31 @@ GetContentBlockUploadUriParameters:
     - $ref: '#/StorageParameters'
   type: object
   properties:
+    UploadSessionId:
+      type: string
+      format: uuid
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
     AuthorizedScope:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
 
 GetContentBlockDownloadUriParameters:
-  description: Parameters for /storage/getContentBlockDownloadUri.
+  description: >-
+    Parameters for /storage/getContentBlockDownloadUri. The request carries the server-accepted StoragePoolId,
+    ManifestAddress, and one ContentBlockAddress for an authorized manifest-backed reconstruction path. It must not
+    embed the full FileManifest for every block request.
   allOf:
     - $ref: '#/StorageParameters'
   type: object
   properties:
+    AuthorizedScope:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     ContentBlockAddress:
       $ref: '#/ContentBlockAddress'
+    ManifestAddress:
+      $ref: '#/ManifestAddress'
 
 DiscoverContentBlocksParameters:
   description: >-
@@ -136,6 +148,8 @@ StartUploadSession:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
     RepositoryId:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     AuthorizedScope:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     FileContentHash:
@@ -154,6 +168,7 @@ StartUploadSession:
     - OwnerId
     - OrganizationId
     - RepositoryId
+    - StoragePoolId
     - AuthorizedScope
     - FileContentHash
     - ExpectedSize
@@ -173,7 +188,12 @@ IssueDedupeDiscoveryParameters:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
     MinimumReuseRunLength:
       type: integer
-      minimum: 8
+      minimum: 1
+    KeyChunkAddresses:
+      type: array
+      maxItems: 256
+      items:
+        $ref: '#/ChunkAddress'
     Hints:
       type: array
       maxItems: 1024
@@ -384,12 +404,15 @@ UploadMetadata:
       format: uri
     Sha256Hash:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    Blake3Hash:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
     ContentReference:
       $ref: '#/FileContentReference'
   required:
     - RelativePath
     - BlobUriWithSasToken
     - Sha256Hash
+    - Blake3Hash
     - ContentReference
 
 FileContentReference:
@@ -406,8 +429,9 @@ FileContentReference:
         - WholeFileContent
         - FileManifest
     Manifest:
-      nullable: true
-      $ref: '#/FileManifest'
+      anyOf:
+        - $ref: '#/FileManifest'
+        - type: 'null'
   required:
     - Class
     - ReferenceType
@@ -453,6 +477,8 @@ UploadSessionDto:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
     RepositoryId:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     AuthorizedScope:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
     FileContentHash:
@@ -504,6 +530,7 @@ UploadSessionDto:
     - OwnerId
     - OrganizationId
     - RepositoryId
+    - StoragePoolId
     - AuthorizedScope
     - FileContentHash
     - ExpectedSize
@@ -833,12 +860,18 @@ ContentBlockStoragePlacement:
   description: Object-storage placement metadata for a confirmed ContentBlock payload.
   type: object
   properties:
+    StorageAccountName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageAccountName'
+    StorageContainerName:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/StorageContainerName'
     ObjectKey:
       type: string
     ETag:
       type: string
       nullable: true
   required:
+    - StorageAccountName
+    - StorageContainerName
     - ObjectKey
 
 FinalizeManifestBlockPayload:
@@ -852,7 +885,9 @@ FinalizeManifestBlockPayload:
       format: byte
 
 FileManifest:
-  description: Server-accepted reconstruction contract for one manifest-backed file.
+  description: >-
+    Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected
+    by Grace Server, not authority for a client to choose physical storage shards.
   type: object
   properties:
     Class:
@@ -865,6 +900,8 @@ FileManifest:
       $ref: '#/ChunkingSuiteId'
     FileContentHash:
       $ref: '#/FileContentHash'
+    StoragePoolId:
+      $ref: '#/StoragePoolId'
     Size:
       type: integer
       format: int64
@@ -877,6 +914,7 @@ FileManifest:
     - ManifestAddress
     - ChunkingSuiteId
     - FileContentHash
+    - StoragePoolId
     - Size
     - Blocks
 
@@ -923,7 +961,9 @@ FileContentHash:
   pattern: '^[a-f0-9]{64}$'
 
 StoragePoolId:
-  description: StoragePool-wide CAS scope identifier.
+  description: >-
+    StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not
+    use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
   type: string
 
 ChunkingSuiteId:

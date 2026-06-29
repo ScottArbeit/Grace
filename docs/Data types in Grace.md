@@ -15,6 +15,14 @@ After the diagram, you'll find descriptions of each data type. You can skip dire
 
 I'm sure the types will evolve a bit as we move towards a 1.0 release, but the overall structure should be stable now.
 
+## No Production Data
+
+Grace is not in production yet. The data contracts in this document should describe the current desired Grace model, not
+a migration promise for old production records.
+
+There is no production data to import, migrate, preserve, or grandfather. When a type gains a new invariant,
+such as a required hash value or a stricter validator, do not add compatibility paths for hypothetical old data.
+
 After those descriptions, at the bottom of this document, you'll find a [detailed entity relationship diagram](#detailed-entity-relationship-diagram). This ERD is incomplete, and there are, of course, many other data types in Grace. It's meant to illustrate the most interesting parts, to help you understand the structure of a repository and its contents. Please refer to it as you read the explanations of each type.
 
 ## Entity Relationship Diagram
@@ -95,7 +103,10 @@ DirectoryVersion holds the data for a specific version of a directory anywhere i
 
 In other words, DirectoryVersion is how we capture each unique state in a repository.
 
-One interesting thing here is that, like the other entities here, Grace uses a Guid for the primary key DirectoryVersionId, and does not use the Sha256Hash as the unique key (even though it always will be unique). My reason for choosing to have an artificial key instead of just using the Sha256Hash is the challenge that Git has had, and is having, migrating to SHA-256, given how deeply embedded SHA-1 is in the naming of objects in Git. It seems best to keep Sha256Hash as a data field, and not as a key, to make it easier to change the hash algorithm in the future.
+One interesting thing here is that, like the other entities here, Grace uses a Guid for the primary key
+DirectoryVersionId, and does not use a version hash as the unique key. That choice matters now that Grace carries both
+BLAKE3 and SHA-256 version hashes. Keeping hash values as data fields rather than primary keys lets Grace change or
+add hash algorithms without repeating the kind of deep object-name coupling that made Git's SHA-1 transition hard.
 
 Also, DirectoryVersion has the RepositoryId it belongs to, but does not keep a BranchId. This is because a unique version of the Repository, i.e. a DirectoryVersion, can be pointed to from multiple References and from multiple Branches.
 
@@ -103,7 +114,8 @@ So, DirectoryVersion contains:
 
 - DirectoryVersionId - This is a Guid that uniquely identifies each DirectoryVersion.
 - RepositoryId - not BranchId
-- Sha256Hash - Computed over the contents of the directory; the algorithms for computing the Sha256Hash of a [file](https://github.com/ScottArbeit/Grace/blob/337ed395b7f5d033ceb9d178b4fd9442fa383ee5/src/Grace.Shared/Services.Shared.fs#L53) and a [directory](https://github.com/ScottArbeit/Grace/blob/337ed395b7f5d033ceb9d178b4fd9442fa383ee5/src/Grace.Shared/Services.Shared.fs#L92) are in [Services.Shared.fs](https://github.com/ScottArbeit/Grace/blob/main/src/Grace.Shared/Services.Shared.fs).
+- Blake3Hash - The default BLAKE3 version hash for this DirectoryVersion.
+- Sha256Hash - The retained SHA-256 version hash for this DirectoryVersion.
 - RelativePath - no leading '/'; for instance `src/foo/bar.fs`
 - Directories - a list of DirectoryVersionId's that refer to the sub-DirectoryVersions.
 - Files - a list of FileVersions, one for each not-ignored file in the directory
@@ -126,7 +138,10 @@ The interesting parts of a Reference are:
 - ReferenceId - This is a Guid that uniquely identifies each Reference.
 - BranchId - The Branch that this Reference is in. A Reference can only be in one Branch.
 - DirectoryVersionId - The RootDirectoryVersion that this Reference points to.
-- Sha256Hash - The Sha256Hash of the DirectoryVersionId that this Reference points to. Denormalized here for performance reasons.
+- Blake3Hash - The BLAKE3 version hash of the root DirectoryVersion that this Reference points to. Denormalized here
+  for lookup and display.
+- Sha256Hash - The SHA-256 version hash of the root DirectoryVersion that this Reference points to. Denormalized here
+  for lookup, verification, and comparison.
 - ReferenceType - What kind of Reference is this?
   - Promotion - This is a Reference that was created by promoting a Commit reference from a child branch to this branch.
   - Commit - Commits are candidates for promotion.
@@ -158,7 +173,8 @@ The interesting parts of a FileVersion are:
 
 - RepositoryId - The Repository that this FileVersion is in.
 - RelativePath - The path of the file, relative to the Repository root.
-- Sha256Hash - The Sha256Hash of the file.
+- Blake3Hash - The default BLAKE3 file version hash, computed from the file byte stream.
+- Sha256Hash - The retained SHA-256 file version hash, computed from the file byte stream.
 - IsBinary - Is the file binary?
 - Size - The size of the file (int64).
 - BlobUri - The URI of the file in object storage.
@@ -223,6 +239,7 @@ erDiagram
     Reference {
         ReferenceId Guid
         DirectoryVersionId Guid
+        Blake3Hash string
         Sha256Hash string
         ReferenceType ReferenceType
         ReferenceTest string
@@ -232,6 +249,7 @@ erDiagram
         DirectoryVersionId Guid
         RepositoryId Guid
         RelativePath string
+        Blake3Hash string
         Sha256Hash string
         Directories DirectoryVersionId[]
         Files FileVersion[]
@@ -240,6 +258,7 @@ erDiagram
     FileVersion {
         RepositoryId Guid
         RelativePath string
+        Blake3Hash string
         Sha256Hash string
         IsBinary bool
         Size int64

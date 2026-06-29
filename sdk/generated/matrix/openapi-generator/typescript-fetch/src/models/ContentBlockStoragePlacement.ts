@@ -24,6 +24,18 @@ export interface ContentBlockStoragePlacement {
      * @type {string}
      * @memberof ContentBlockStoragePlacement
      */
+    storageAccountName: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof ContentBlockStoragePlacement
+     */
+    storageContainerName: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof ContentBlockStoragePlacement
+     */
     objectKey: string;
     /**
      * 
@@ -37,6 +49,8 @@ export interface ContentBlockStoragePlacement {
  * Check if a given object implements the ContentBlockStoragePlacement interface.
  */
 export function instanceOfContentBlockStoragePlacement(value: object): value is ContentBlockStoragePlacement {
+    if (!('storageAccountName' in value) || value['storageAccountName'] === undefined) return false;
+    if (!('storageContainerName' in value) || value['storageContainerName'] === undefined) return false;
     if (!('objectKey' in value) || value['objectKey'] === undefined) return false;
     return true;
 }
@@ -51,6 +65,8 @@ export function ContentBlockStoragePlacementFromJSONTyped(json: any, ignoreDiscr
     }
     return {
         
+        'storageAccountName': json['StorageAccountName'],
+        'storageContainerName': json['StorageContainerName'],
         'objectKey': json['ObjectKey'],
         'eTag': json['ETag'] == null ? undefined : json['ETag'],
     };
@@ -67,6 +83,8 @@ export function ContentBlockStoragePlacementToJSONTyped(value?: ContentBlockStor
 
     return {
         
+        'StorageAccountName': value['storageAccountName'],
+        'StorageContainerName': value['storageContainerName'],
         'ObjectKey': value['objectKey'],
         'ETag': value['eTag'],
     };

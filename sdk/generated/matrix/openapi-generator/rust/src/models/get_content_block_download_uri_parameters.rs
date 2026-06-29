@@ -31,9 +31,17 @@ pub struct GetContentBlockDownloadUriParameters {
     pub repository_id: Option<String>,
     #[serde(rename = "RepositoryName", skip_serializing_if = "Option::is_none")]
     pub repository_name: Option<String>,
+    #[serde(rename = "AuthorizedScope", skip_serializing_if = "Option::is_none")]
+    pub authorized_scope: Option<String>,
+    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+    #[serde(rename = "StoragePoolId", skip_serializing_if = "Option::is_none")]
+    pub storage_pool_id: Option<String>,
     /// Lowercase 64-character BLAKE3-derived ContentBlock address.
     #[serde(rename = "ContentBlockAddress", skip_serializing_if = "Option::is_none")]
     pub content_block_address: Option<String>,
+    /// Lowercase 64-character BLAKE3-derived FileManifest address.
+    #[serde(rename = "ManifestAddress", skip_serializing_if = "Option::is_none")]
+    pub manifest_address: Option<String>,
 }
 
 impl GetContentBlockDownloadUriParameters {
@@ -47,7 +55,10 @@ impl GetContentBlockDownloadUriParameters {
             organization_name: None,
             repository_id: None,
             repository_name: None,
+            authorized_scope: None,
+            storage_pool_id: None,
             content_block_address: None,
+            manifest_address: None,
         }
     }
 }

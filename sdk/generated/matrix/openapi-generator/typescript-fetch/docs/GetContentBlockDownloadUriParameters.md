@@ -14,7 +14,10 @@ Name | Type
 `organizationName` | string
 `repositoryId` | string
 `repositoryName` | string
+`authorizedScope` | string
+`storagePoolId` | string
 `contentBlockAddress` | string
+`manifestAddress` | string
 
 ## Example
 
@@ -31,7 +34,10 @@ const example = {
   "organizationName": null,
   "repositoryId": null,
   "repositoryName": null,
+  "authorizedScope": null,
+  "storagePoolId": null,
   "contentBlockAddress": null,
+  "manifestAddress": null,
 } satisfies GetContentBlockDownloadUriParameters
 
 console.log(example)

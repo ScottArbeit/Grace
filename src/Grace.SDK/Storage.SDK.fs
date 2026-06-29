@@ -40,7 +40,109 @@ module Storage =
         ex.Status = int HttpStatusCode.Conflict
         && String.Equals(ex.ErrorCode, blobAlreadyExistsErrorCode, StringComparison.OrdinalIgnoreCase)
 
-    let private contentBlockPlacement contentBlockAddress etag = { ObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress; ETag = etag }
+    let private tryGetFragmentValue name (uri: Uri) =
+        if isNull uri
+           || String.IsNullOrWhiteSpace uri.Fragment then
+            None
+        else
+            uri
+                .Fragment
+                .TrimStart('#')
+                .Split([| '&' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.tryPick (fun part ->
+                let index = part.IndexOf('=')
+
+                if index <= 0 then
+                    None
+                else
+                    let key = Uri.UnescapeDataString(part.Substring(0, index))
+
+                    if key.Equals(name, StringComparison.OrdinalIgnoreCase) then
+                        Some(Uri.UnescapeDataString(part.Substring(index + 1)))
+                    else
+                        None)
+
+    let internal contentBlockPlacementFromUriUsingConfiguredEndpoint (configuredBlobEndpoint: Uri) configuredAccountName (blobUriWithSasToken: Uri) etag =
+        let pathSegments =
+            blobUriWithSasToken
+                .AbsolutePath
+                .Trim('/')
+                .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map Uri.UnescapeDataString
+
+        let host = blobUriWithSasToken.Host
+
+        let isPathStyleAzurite =
+            host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(host) |> fst
+
+        let isConfiguredCustomEndpoint =
+            not (isNull configuredBlobEndpoint)
+            && host.Equals(configuredBlobEndpoint.Host, StringComparison.OrdinalIgnoreCase)
+
+        let isAzureBlobEndpoint = host.IndexOf(".blob.", StringComparison.OrdinalIgnoreCase) > 0
+        let fragmentAccountName = tryGetFragmentValue "graceStorageAccount" blobUriWithSasToken
+
+        let hasFragmentAccountName =
+            fragmentAccountName.IsSome
+            && not (String.IsNullOrWhiteSpace fragmentAccountName.Value)
+
+        let fragmentMatchesPathStyleAccount =
+            hasFragmentAccountName
+            && pathSegments.Length >= 3
+            && pathSegments[0]
+                .Equals(fragmentAccountName.Value, StringComparison.OrdinalIgnoreCase)
+
+        let usePathStyleParsing =
+            isPathStyleAzurite
+            && (not hasFragmentAccountName
+                || fragmentMatchesPathStyleAccount)
+
+        let accountName =
+            if hasFragmentAccountName then
+                fragmentAccountName.Value
+            elif usePathStyleParsing && pathSegments.Length >= 3 then
+                pathSegments[0]
+            elif
+                isConfiguredCustomEndpoint
+                && not (String.IsNullOrWhiteSpace configuredAccountName)
+            then
+                configuredAccountName
+            elif isAzureBlobEndpoint then
+                let firstDot = host.IndexOf('.')
+                if firstDot > 0 then host.Substring(0, firstDot) else host
+            else
+                String.Empty
+
+        let containerIndex = if usePathStyleParsing then 1 else 0
+
+        let containerName =
+            if pathSegments.Length > containerIndex then
+                pathSegments[containerIndex]
+            else
+                String.Empty
+
+        let objectKey =
+            if pathSegments.Length > containerIndex + 1 then
+                String.Join("/", pathSegments |> Array.skip (containerIndex + 1))
+            else
+                String.Empty
+
+        { StorageAccountName = accountName; StorageContainerName = StorageContainerName containerName; ObjectKey = objectKey; ETag = etag }
+
+    let internal contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
+        contentBlockPlacementFromUriUsingConfiguredEndpoint null String.Empty blobUriWithSasToken etag
+
+    let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
+        if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then
+            fileVersion.GetObjectFileName
+        else
+            let file = FileInfo($"{fileVersion.RelativePath}")
+
+            if file.Extension = String.Empty then
+                $"{file.Name}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}"
+            else
+                $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}{file.Extension}"
 
     let internal readStringResponseWithLifecycle (response: HttpResponseMessage) correlationId errorPrefix =
         task {
@@ -82,9 +184,11 @@ module Storage =
                             else
                                 getNativeFilePath fileVersion.RelativeDirectory
 
-                        let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, fileVersion.GetObjectFileName)
+                        let localObjectCacheFileName = getLocalObjectCacheFileName fileVersion
 
-                        let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, fileVersion.GetObjectFileName)
+                        let tempFilePath = Path.Combine(Path.GetTempPath(), relativeDirectory, localObjectCacheFileName)
+
+                        let objectFilePath = Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, localObjectCacheFileName)
 
                         let tempFileInfo = FileInfo(tempFilePath)
                         let objectFileInfo = FileInfo(objectFilePath)
@@ -211,6 +315,7 @@ module Storage =
                 metadata[nameof RepositoryName] <- $"{Current().RepositoryName}"
                 metadata[nameof RepositoryId] <- $"{Current().RepositoryId}"
                 metadata[nameof Sha256Hash] <- fileVersion.Sha256Hash
+                metadata[nameof Blake3Hash] <- fileVersion.Blake3Hash
                 metadata["UncompressedSize"] <- $"{fileInfo.Length}"
 
                 match Current().ObjectStorageProvider with
@@ -242,8 +347,7 @@ module Storage =
                                     $"""attachment; creation-date="{fileVersion.CreatedAt.ToString(InstantPattern.General.PatternText, CultureInfo.InvariantCulture)}" """
                             )
 
-                        let objectFilePath =
-                            $"{Current().ObjectDirectory}{Path.DirectorySeparatorChar}{fileVersion.RelativePath}{Path.DirectorySeparatorChar}{fileVersion.GetObjectFileName}"
+                        let objectFilePath = Path.Combine(Current().ObjectDirectory, string fileVersion.RelativePath, getLocalObjectCacheFileName fileVersion)
 
                         let normalizedObjectFilePath = Path.GetFullPath(objectFilePath)
 
@@ -300,6 +404,7 @@ module Storage =
                             let returnValue = GraceReturnValue.Create "File successfully saved to object storage." correlationId
 
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
@@ -308,6 +413,7 @@ module Storage =
                             let returnValue = GraceReturnValue.Create "File already exists in object storage." correlationId
 
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
@@ -320,6 +426,7 @@ module Storage =
                             // If the file already exists in Blob Storage, we don't need to do anything.
                             let returnValue = GraceReturnValue.Create "File already exists in object storage." correlationId
                             returnValue.Properties.Add(nameof Sha256Hash, fileVersion.Sha256Hash)
+                            returnValue.Properties.Add(nameof Blake3Hash, fileVersion.Blake3Hash)
                             returnValue.Properties.Add(nameof RelativePath, fileVersion.RelativePath)
                             returnValue.Properties.Add(nameof RepositoryId, repositoryId)
                             return Ok returnValue
@@ -354,12 +461,12 @@ module Storage =
                     use payloadStream = new MemoryStream(payload, writable = false)
                     let! response = blockBlobClient.UploadAsync(payloadStream)
 
-                    return Ok(GraceReturnValue.Create (contentBlockPlacement contentBlockAddress (Some(response.Value.ETag.ToString()))) correlationId)
+                    return Ok(GraceReturnValue.Create (contentBlockPlacementFromUri blobUriWithSasToken (Some(response.Value.ETag.ToString()))) correlationId)
                 | ObjectStorageProvider.AWSS3 -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
                 | ObjectStorageProvider.GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) correlationId)
             with
             | :? RequestFailedException as ex when isExistingContentBlockUploadConflict ex ->
-                return Ok(GraceReturnValue.Create (contentBlockPlacement contentBlockAddress None) correlationId)
+                return Ok(GraceReturnValue.Create (contentBlockPlacementFromUri blobUriWithSasToken None) correlationId)
             | ex ->
                 let exceptionResponse = ExceptionResponse.Create ex
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)

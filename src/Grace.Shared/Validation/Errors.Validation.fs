@@ -46,6 +46,7 @@ module Errors =
         | InvalidReferenceType
         | InvalidRepositoryId
         | InvalidRepositoryName
+        | InvalidBlake3Hash
         | InvalidSha256Hash
         | PromotionIsDisabled
         | PromotionNotAvailableBecauseThereAreNoPromotableReferences
@@ -105,6 +106,7 @@ module Errors =
             | InvalidReferenceType -> getLocalizedString StringResourceName.InvalidReferenceType
             | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
             | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
             | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
             | PromotionIsDisabled -> getLocalizedString StringResourceName.PromotionIsDisabled
             | PromotionNotAvailableBecauseThereAreNoPromotableReferences ->
@@ -144,6 +146,26 @@ module Errors =
             | Some error -> ConfigError.getErrorMessage error
             | None -> String.Empty
 
+    type VersionHashError =
+        | Blake3HashIsRequired
+        | InvalidBlake3Hash
+        | InvalidSha256VersionHash
+        | Sha256VersionHashIsRequired
+
+        interface IErrorDiscriminatedUnion
+
+        static member getErrorMessage(versionHashError: VersionHashError) : string =
+            match versionHashError with
+            | Blake3HashIsRequired -> getLocalizedString StringResourceName.Blake3HashIsRequired
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
+            | InvalidSha256VersionHash -> getLocalizedString StringResourceName.InvalidSha256VersionHash
+            | Sha256VersionHashIsRequired -> getLocalizedString StringResourceName.Sha256VersionHashIsRequired
+
+        static member getErrorMessage(versionHashError: VersionHashError option) : string =
+            match versionHashError with
+            | Some error -> VersionHashError.getErrorMessage error
+            | None -> String.Empty
+
     type ConnectError =
         | RepositoryDoesNotExist
         | InvalidRepositoryId
@@ -162,6 +184,8 @@ module Errors =
         | InvalidOwnerName
         | InvalidRepositoryId
         | InvalidRepositoryName
+        | Blake3HashIsRequired
+        | InvalidBlake3Hash
         | InvalidSha256Hash
         | Sha256HashIsRequired
 
@@ -177,6 +201,8 @@ module Errors =
             | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
             | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
             | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+            | Blake3HashIsRequired -> getLocalizedString StringResourceName.Blake3HashIsRequired
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
             | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
             | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
 
@@ -200,11 +226,13 @@ module Errors =
         | InvalidOwnerName
         | InvalidRepositoryId
         | InvalidRepositoryName
+        | InvalidBlake3Hash
         | InvalidSha256Hash
         | InvalidSize
         | ObjectCacheFileNotFound
         | RelativePathMustNotBeEmpty
         | RepositoryDoesNotExist
+        | Blake3HashIsRequired
         | Sha256HashIsRequired
         | Sha256HashDoesNotMatch
 
@@ -226,11 +254,13 @@ module Errors =
             | InvalidOwnerName -> getLocalizedString StringResourceName.InvalidOwnerName
             | InvalidRepositoryId -> getLocalizedString StringResourceName.InvalidRepositoryId
             | InvalidRepositoryName -> getLocalizedString StringResourceName.InvalidRepositoryName
+            | InvalidBlake3Hash -> getLocalizedString StringResourceName.InvalidBlake3Hash
             | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
             | InvalidSize -> getLocalizedString StringResourceName.InvalidSize
             | ObjectCacheFileNotFound -> getLocalizedString StringResourceName.ObjectCacheFileNotFound
             | RelativePathMustNotBeEmpty -> getLocalizedString StringResourceName.RelativePathMustNotBeEmpty
             | RepositoryDoesNotExist -> getLocalizedString StringResourceName.RepositoryDoesNotExist
+            | Blake3HashIsRequired -> getLocalizedString StringResourceName.Blake3HashIsRequired
             | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
             | Sha256HashDoesNotMatch -> getLocalizedString StringResourceName.Sha256HashDoesNotMatch
 
@@ -873,6 +903,7 @@ module Errors =
         | :? PolicyError as policyError -> PolicyError.getErrorMessage policyError
         | :? ReviewError as reviewError -> ReviewError.getErrorMessage reviewError
         | :? QueueError as queueError -> QueueError.getErrorMessage queueError
+        | :? VersionHashError as versionHashError -> VersionHashError.getErrorMessage versionHashError
         | :? ValidationSetError as validationSetError -> ValidationSetError.getErrorMessage validationSetError
         | :? ValidationResultError as validationResultError -> ValidationResultError.getErrorMessage validationResultError
         | :? ArtifactError as artifactError -> ArtifactError.getErrorMessage artifactError

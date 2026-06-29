@@ -496,6 +496,39 @@ module Constants =
             TimeSpan.FromSeconds(1.0)
         )
 
+    /// Validates that a string is a lowercase full SHA-256 hash value.
+    ///
+    /// Regex: ^[0-9a-f]{64}$
+    let Sha256FullHashRegex =
+        new Regex(
+            "^[0-9a-f]{64}$",
+            RegexOptions.CultureInvariant
+            ||| RegexOptions.Compiled,
+            TimeSpan.FromSeconds(1.0)
+        )
+
+    /// Validates that a string is a full or partial valid BLAKE3 hash value, between 2 and 64 hexadecimal characters.
+    ///
+    /// Regex: ^[0-9a-fA-F]{2,64}$
+    let Blake3HashPrefixRegex =
+        new Regex(
+            "^[0-9a-fA-F]{2,64}$",
+            RegexOptions.CultureInvariant
+            ||| RegexOptions.Compiled,
+            TimeSpan.FromSeconds(1.0)
+        )
+
+    /// Validates that a string is a lowercase full BLAKE3 hash value.
+    ///
+    /// Regex: ^[0-9a-f]{64}$
+    let Blake3FullHashRegex =
+        new Regex(
+            "^[0-9a-f]{64}$",
+            RegexOptions.CultureInvariant
+            ||| RegexOptions.Compiled,
+            TimeSpan.FromSeconds(1.0)
+        )
+
     /// The backoff policy used by Grace for server requests.
     let private backoffWithJitter = Backoff.DecorrelatedJitterBackoffV2(medianFirstRetryDelay = (TimeSpan.FromSeconds(0.25)), retryCount = 7, fastFirst = false)
 
@@ -553,6 +586,18 @@ module Constants =
     /// The default name of the account in object storage that holds Grace objects.
     [<Literal>]
     let DefaultObjectStorageAccount = "gracevcsdevelopment"
+
+    /// The default server-owned StoragePool for shared local/Azurite CAS placement.
+    [<Literal>]
+    let DefaultStoragePoolId = "default"
+
+    /// The default container for StoragePool-scoped CAS objects.
+    [<Literal>]
+    let DefaultCasStorageContainerName = "grace-cas"
+
+    /// The default object-key prefix inside the CAS storage container.
+    [<Literal>]
+    let DefaultCasStoragePrefix = ""
 
     /// Values used with Grace's MemoryCache.
     module MemoryCache =

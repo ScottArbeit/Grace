@@ -35,6 +35,20 @@ module DirectoryVersion =
 
     let activitySource = new ActivitySource("Branch")
 
+    let private directorySaveDepth (relativePath: RelativePath) =
+        let trimmedPath = $"{relativePath}".Trim().TrimEnd('/', '\\')
+
+        if String.IsNullOrWhiteSpace trimmedPath
+           || trimmedPath = "." then
+            0
+        else
+            trimmedPath
+                .Split(
+                    [| '/'; '\\' |],
+                    StringSplitOptions.RemoveEmptyEntries
+                )
+                .Length
+
     let processCommand<'T when 'T :> DirectoryVersionParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -264,33 +278,143 @@ module DirectoryVersion =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
 
-                let validations (parameters: GetBySha256HashParameters) =
-                    [|
-                        Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
-                        Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
-                        String.isNotEmpty parameters.Sha256Hash DirectoryVersionError.Sha256HashIsRequired
-                        Repository.repositoryIdExists
-                            graceIds.OrganizationId
-                            $"{parameters.RepositoryId}"
-                            parameters.CorrelationId
-                            DirectoryVersionError.RepositoryDoesNotExist
-                    |]
+                try
+                    let! parameters = context |> parse<GetBySha256HashParameters>
 
-                let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
-                    task {
-                        let parameters = context.Items[nameof GetBySha256HashParameters] :?> GetBySha256HashParameters
+                    let validations =
+                        [|
+                            Guid.isValidAndNotEmptyGuid $"{parameters.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
+                            Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
+                            String.isNotEmpty parameters.Sha256Hash DirectoryVersionError.Sha256HashIsRequired
+                            String.isValidSha256HashPrefix parameters.Sha256Hash DirectoryVersionError.InvalidSha256Hash
+                            Repository.repositoryIdExists
+                                graceIds.OrganizationId
+                                $"{parameters.RepositoryId}"
+                                parameters.CorrelationId
+                                DirectoryVersionError.RepositoryDoesNotExist
+                        |]
 
-                        match!
-                            getDirectoryVersionBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) (getCorrelationId context)
-                            with
-                        | Some directoryVersion -> return directoryVersion
-                        | None -> return DirectoryVersion.Default
-                    }
+                    let! validationsPassed = validations |> allPass
 
-                let! parameters = context |> parse<GetBySha256HashParameters>
-                context.Items[ nameof GetBySha256HashParameters ] <- parameters
-                return! processQuery context parameters validations 1 query
+                    if validationsPassed then
+                        let! resolution =
+                            getDirectoryVersionResolutionBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) correlationId
+
+                        match resolution with
+                        | NoMatches ->
+                            let graceReturnValue = GraceReturnValue.Create DirectoryVersion.Default correlationId
+
+                            graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+                            graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+                            graceReturnValue.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
+                            graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
+
+                            return! context |> result200Ok graceReturnValue
+                        | UniqueMatch directoryVersion ->
+                            let graceReturnValue = GraceReturnValue.Create directoryVersion correlationId
+
+                            graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+                            graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+                            graceReturnValue.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
+                            graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
+
+                            return! context |> result200Ok graceReturnValue
+                        | AmbiguousMatches _ ->
+                            let graceError =
+                                GraceError.Create $"The supplied SHA-256 hash prefix '{parameters.Sha256Hash}' is ambiguous in repository scope." correlationId
+
+                            graceError.Properties.Add("Path", context.Request.Path.Value)
+                            return! context |> result400BadRequest graceError
+                    else
+                        let! error = validations |> getFirstError
+                        let graceError = GraceError.Create (DirectoryVersionError.getErrorMessage error) correlationId
+
+                        graceError.Properties.Add("Path", context.Request.Path.Value)
+                        return! context |> result400BadRequest graceError
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
+            }
+
+    let private addGraceIds (context: HttpContext) (graceReturnValue: GraceReturnValue<'T>) =
+        let graceIds = getGraceIds context
+        graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+        graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+        graceReturnValue.Properties[ nameof RepositoryId ] <- graceIds.RepositoryId
+        graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
+        graceReturnValue
+
+    let private directoryVersionHashError (context: HttpContext) message =
+        let graceError = GraceError.Create message (getCorrelationId context)
+        graceError.Properties.Add("Path", context.Request.Path.Value)
+        graceError
+
+    /// Get a directory version by its BLAKE3 hash or unique BLAKE3 prefix.
+    let GetByBlake3Hash: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let graceIds = getGraceIds context
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context |> parse<GetByBlake3HashParameters>
+
+                    let validations =
+                        [|
+                            Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
+                            String.isNotEmpty parameters.Blake3Hash DirectoryVersionError.Blake3HashIsRequired
+                            String.isValidBlake3HashPrefix parameters.Blake3Hash DirectoryVersionError.InvalidBlake3Hash
+                            Repository.repositoryIdExists
+                                graceIds.OrganizationId
+                                $"{parameters.RepositoryId}"
+                                parameters.CorrelationId
+                                DirectoryVersionError.RepositoryDoesNotExist
+                        |]
+
+                    let! validationsPassed = validations |> allPass
+
+                    if validationsPassed then
+                        let! resolution =
+                            getDirectoryVersionResolutionByBlake3Hash (Guid.Parse(parameters.RepositoryId)) (Blake3Hash parameters.Blake3Hash) correlationId
+
+                        match resolution with
+                        | NoMatches ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    directoryVersionHashError
+                                        context
+                                        $"No DirectoryVersion matched the supplied BLAKE3 hash prefix '{parameters.Blake3Hash}' in repository scope."
+                                )
+                        | UniqueMatch directoryVersion ->
+                            let graceReturnValue =
+                                GraceReturnValue.Create directoryVersion correlationId
+                                |> addGraceIds context
+
+                            return! context |> result200Ok graceReturnValue
+                        | AmbiguousMatches _ ->
+                            return!
+                                context
+                                |> result400BadRequest (
+                                    directoryVersionHashError
+                                        context
+                                        $"The supplied BLAKE3 hash prefix '{parameters.Blake3Hash}' is ambiguous in repository scope."
+                                )
+                    else
+                        let! error = validations |> getFirstError
+
+                        return!
+                            context
+                            |> result400BadRequest (directoryVersionHashError context (DirectoryVersionError.getErrorMessage error))
+                with
+                | ex ->
+                    return!
+                        context
+                        |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
             }
 
     /// Get the Uri of the zip file for a directory version.
@@ -367,38 +491,42 @@ module DirectoryVersion =
                         let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
                         let! repositoryDto = repositoryActorProxy.Get(correlationId)
 
-                        do!
-                            Parallel.ForEachAsync(
-                                parameters.DirectoryVersions,
-                                Constants.ParallelOptions,
-                                (fun directoryVersion ct ->
-                                    ValueTask(
-                                        task {
-                                            try
-                                                // Check if the directory version exists. If it doesn't, create it.
-                                                let directoryVersionActor =
-                                                    DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
+                        let orderedDirectoryVersions =
+                            parameters.DirectoryVersions
+                            |> Seq.sortByDescending (fun directoryVersion -> directorySaveDepth directoryVersion.RelativePath)
+                            |> Seq.toArray
 
-                                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
-                                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
-                                                if not <| exists then
-                                                    let! createResult =
-                                                        directoryVersionActor.Handle
-                                                            (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
-                                                            (createMetadata context)
+                        for directoryVersion in orderedDirectoryVersions do
+                            try
+                                // Check if the directory version exists. If it doesn't, create it.
+                                let directoryVersionActor = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
-                                                    results.Enqueue(createResult)
-                                            with
-                                            | ex ->
-                                                let exceptionResponse = Utilities.ExceptionResponse.Create ex
+                                let! exists = directoryVersionActor.Exists parameters.CorrelationId
+                                //logToConsole $"In SaveDirectoryVersions: {dv.DirectoryId} exists: {exists}"
+                                if not <| exists then
+                                    if String.IsNullOrWhiteSpace $"{directoryVersion.Blake3Hash}" then
+                                        results.Enqueue(
+                                            Error(
+                                                GraceError.Create
+                                                    $"DirectoryVersion '{directoryVersion.RelativePath}' must include DirectoryVersion.Blake3Hash before Save."
+                                                    correlationId
+                                            )
+                                        )
+                                    else
+                                        let! createResult =
+                                            directoryVersionActor.Handle
+                                                (DirectoryVersionCommand.Create(directoryVersion, repositoryDto))
+                                                (createMetadata context)
 
-                                                logToConsole
-                                                    $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+                                        results.Enqueue(createResult)
+                            with
+                            | ex ->
+                                let exceptionResponse = Utilities.ExceptionResponse.Create ex
 
-                                                logToConsole $"{exceptionResponse}"
-                                        }
-                                    ))
-                            )
+                                logToConsole
+                                    $"****Error in SaveDirectoryVersions: directoryVersion.Directories.Count: {directoryVersion.Directories.Count}; directoryVersion.Files.Count: {directoryVersion.Files.Count}."
+
+                                logToConsole $"{exceptionResponse}"
 
                         let firstError =
                             results

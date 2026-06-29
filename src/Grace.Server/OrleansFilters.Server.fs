@@ -44,6 +44,7 @@ module Orleans =
 
                         let organizationId () = $"{orleansContext[nameof OrganizationId]}"
                         let repositoryId () = $"{orleansContext[nameof RepositoryId]}"
+                        let firstGrainKeySegment () = $"{grainId.Key}".Split('|')[0]
 
                         let partitionKey =
                             match grainType with
@@ -61,11 +62,14 @@ module Orleans =
                             | StateName.Policy -> repositoryId ()
                             | StateName.PromotionSet -> repositoryId ()
                             | StateName.PromotionQueue -> repositoryId ()
+                            | StateName.RepositoryContentCounter -> firstGrainKeySegment ()
                             | StateName.ValidationSet -> repositoryId ()
                             | StateName.ValidationResult -> repositoryId ()
                             | StateName.Artifact -> repositoryId ()
                             | StateName.ApprovalRequest -> repositoryId ()
                             | StateName.ApprovalRequestIndex -> repositoryId ()
+                            | StateName.ContentBlockMetadata -> firstGrainKeySegment ()
+                            | StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()
                             | StateName.Reference -> repositoryId ()
                             | StateName.Reminder -> StateName.Reminder
                             | StateName.Repository -> organizationId ()

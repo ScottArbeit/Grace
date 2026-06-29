@@ -149,7 +149,9 @@
         DirectoryId:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryId
         Sha256Hash:
-          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Sha256HashReferenceCompatibility
+        Blake3Hash:
+          $ref: Shared.Components.OpenAPI.yaml#/components/schemas/Blake3HashReferenceCompatibility
         ReferenceType:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType
         ReferenceText:
@@ -176,6 +178,8 @@
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName
         ObjectStorageProvider:
           $ref: Shared.Components.OpenAPI.yaml#/components/schemas/ObjectStorageProvider
+        StoragePoolId:
+          $ref: Storage.Components.OpenAPI.yaml#/StoragePoolId
         StorageAccountName:
           type: string
         StorageContainerName:

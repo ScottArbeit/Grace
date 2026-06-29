@@ -28,6 +28,17 @@ type StorageAuthorizationResourcesTests() =
             Assert.That(actualPath, Is.EqualTo(expectedPath))
         | other -> Assert.Fail($"Expected Resource.Path but received {other}.")
 
+    let assertMissingDownloadScope (authorizedScope: RelativePath) =
+        let parameters = Storage.GetContentBlockDownloadUriParameters()
+        parameters.ContentBlockAddress <- "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+        parameters.AuthorizedScope <- authorizedScope
+
+        let result = StorageAuthorizationResources.tryContentBlockDownloadResource "unit-test-correlation" ownerId organizationId repositoryId parameters
+
+        match result with
+        | Error error -> Assert.That(error.Error, Is.EqualTo("AuthorizedScope is required for ContentBlock manifest download authorization."))
+        | Ok resource -> Assert.Fail($"Expected missing AuthorizedScope to be rejected but received {resource}.")
+
     [<Test>]
     member _.UploadMetadataFileVersionsMapToPathResources() =
         let parameters = Storage.GetUploadMetadataForFilesParameters()
@@ -72,7 +83,7 @@ type StorageAuthorizationResourcesTests() =
     [<Test>]
     member _.ContentBlockUploadHonorsExplicitAuthorizedScope() =
         let parameters = Storage.GetContentBlockUploadUriParameters()
-        parameters.ContentBlockAddress <- "sha256-explicit"
+        parameters.ContentBlockAddress <- "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
         parameters.AuthorizedScope <- "manifest/file.bin"
 
         let resource = StorageAuthorizationResources.contentBlockUploadResource ownerId organizationId repositoryId parameters
@@ -82,21 +93,30 @@ type StorageAuthorizationResourcesTests() =
     [<Test>]
     member _.ContentBlockUploadFallsBackToContentBlockObjectKeyWhenScopeIsBlank() =
         let parameters = Storage.GetContentBlockUploadUriParameters()
-        parameters.ContentBlockAddress <- "sha256-blank-scope"
+        parameters.ContentBlockAddress <- "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
         parameters.AuthorizedScope <- "   "
 
         let resource = StorageAuthorizationResources.contentBlockUploadResource ownerId organizationId repositoryId parameters
 
-        assertPathResource (StorageKeys.contentBlockObjectKey "sha256-blank-scope") resource
+        assertPathResource (StorageKeys.contentBlockObjectKey "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb") resource
 
     [<Test>]
-    member _.ContentBlockDownloadUsesContentBlockObjectKey() =
+    member _.ContentBlockDownloadUsesExplicitAuthorizedScope() =
         let parameters = Storage.GetContentBlockDownloadUriParameters()
-        parameters.ContentBlockAddress <- "sha256-download"
+        parameters.ContentBlockAddress <- "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+        parameters.AuthorizedScope <- "manifest/download.bin"
 
-        let resource = StorageAuthorizationResources.contentBlockDownloadResource ownerId organizationId repositoryId parameters
+        let result = StorageAuthorizationResources.tryContentBlockDownloadResource "unit-test-correlation" ownerId organizationId repositoryId parameters
 
-        assertPathResource (StorageKeys.contentBlockObjectKey "sha256-download") resource
+        match result with
+        | Ok resource -> assertPathResource "manifest/download.bin" resource
+        | Error error -> Assert.Fail($"Expected explicit AuthorizedScope to create a path resource but received {error.Error}.")
+
+    [<Test>]
+    member _.ContentBlockDownloadRejectsMissingAuthorizedScopeBeforePathResourceCreation() =
+        assertMissingDownloadScope null
+        assertMissingDownloadScope String.Empty
+        assertMissingDownloadScope "   "
 
     [<Test>]
     member _.UploadSessionStorageUsesAuthorizedScope() =

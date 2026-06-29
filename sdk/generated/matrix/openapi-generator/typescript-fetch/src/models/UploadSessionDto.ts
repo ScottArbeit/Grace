@@ -86,6 +86,12 @@ export interface UploadSessionDto {
      */
     repositoryId: string;
     /**
+     * StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+     * @type {string}
+     * @memberof UploadSessionDto
+     */
+    storagePoolId: string;
+    /**
      * 
      * @type {string}
      * @memberof UploadSessionDto
@@ -202,6 +208,7 @@ export function instanceOfUploadSessionDto(value: object): value is UploadSessio
     if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
     if (!('organizationId' in value) || value['organizationId'] === undefined) return false;
     if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
+    if (!('storagePoolId' in value) || value['storagePoolId'] === undefined) return false;
     if (!('authorizedScope' in value) || value['authorizedScope'] === undefined) return false;
     if (!('fileContentHash' in value) || value['fileContentHash'] === undefined) return false;
     if (!('expectedSize' in value) || value['expectedSize'] === undefined) return false;
@@ -236,6 +243,7 @@ export function UploadSessionDtoFromJSONTyped(json: any, ignoreDiscriminator: bo
         'ownerId': json['OwnerId'],
         'organizationId': json['OrganizationId'],
         'repositoryId': json['RepositoryId'],
+        'storagePoolId': json['StoragePoolId'],
         'authorizedScope': json['AuthorizedScope'],
         'fileContentHash': json['FileContentHash'],
         'expectedSize': json['ExpectedSize'],
@@ -271,6 +279,7 @@ export function UploadSessionDtoToJSONTyped(value?: UploadSessionDto | null, ign
         'OwnerId': value['ownerId'],
         'OrganizationId': value['organizationId'],
         'RepositoryId': value['repositoryId'],
+        'StoragePoolId': value['storagePoolId'],
         'AuthorizedScope': value['authorizedScope'],
         'FileContentHash': value['fileContentHash'],
         'ExpectedSize': value['expectedSize'],

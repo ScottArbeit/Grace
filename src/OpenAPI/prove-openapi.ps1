@@ -578,6 +578,20 @@ function Assert-OpenApiNamedBlockDoesNotContain {
     }
 }
 
+function Assert-OpenApiSchemaHasProperty {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string] $PropertyName,
+        [string] $Message
+    )
+
+    $propertyBlock = Get-OpenApiSchemaPropertyBlock $Text $SchemaName $PropertyName
+    if ($null -eq $propertyBlock) {
+        Add-Failure $Message
+    }
+}
+
 function Get-YamlIndentLength {
     param([string] $Line)
 
@@ -747,11 +761,20 @@ function Assert-OperationHasJsonRequestExample {
 function Assert-OperationSha256ExamplesAreValid {
     param(
         [object] $Operation,
-        [string[]] $RequiredFields
+        [string[]] $RequiredFields,
+        [string] $Pattern = '^[A-Fa-f0-9]{64}$',
+        [string] $ValidationLabel = 'valid 64-character SHA-256 hex value'
     )
 
     if ($null -eq $Operation) {
         return
+    }
+
+    $usesDefaultValidation = -not $PSBoundParameters.ContainsKey('Pattern')
+    $isSha256PrefixLookup = $Operation.OperationId -in @('GetDiffBySha256Hash', 'GetDirectoryVersionBySha256Hash')
+    if ($usesDefaultValidation -and $isSha256PrefixLookup) {
+        $Pattern = '^[A-Fa-f0-9]{2,64}$'
+        $ValidationLabel = 'valid 2- to 64-character SHA-256 prefix'
     }
 
     $location = "$($Operation.File):$($Operation.LineNumber) $($Operation.Method.ToUpperInvariant()) $($Operation.Path)"
@@ -766,8 +789,8 @@ function Assert-OperationSha256ExamplesAreValid {
         $fieldValue = $match.Groups['value'].Value.Trim("'`"")
         [void] $fieldsSeen.Add($fieldName)
 
-        if ($fieldValue -notmatch '^[A-Fa-f0-9]{64}$') {
-            Add-Failure "OpenAPI example field '$fieldName' must be a valid 64-character SHA-256 hex value: $location has '$fieldValue'."
+        if ($fieldValue -notmatch $Pattern) {
+            Add-Failure ("OpenAPI example field '{0}' must be a {1}: {2} has '{3}'." -f $fieldName, $ValidationLabel, $location, $fieldValue)
         }
     }
 
@@ -809,7 +832,8 @@ function Test-OpenApiBranchReferenceDiffDetails {
         [pscustomobject]@{ File = 'Branch.Paths.OpenAPI.yaml'; OperationId = 'ListBranchTags'; Tag = 'Branches' },
         [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'PopulateDiff'; Tag = 'Diffs' },
         [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'GetDiff'; Tag = 'Diffs' },
-        [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'GetDiffBySha256Hash'; Tag = 'Diffs' }
+        [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'GetDiffBySha256Hash'; Tag = 'Diffs' },
+        [pscustomobject]@{ File = 'Diff.Paths.OpenAPI.yaml'; OperationId = 'GetDiffByBlake3Hash'; Tag = 'Diffs' }
     )
 
     $branchCommandOperationIds = @(
@@ -897,6 +921,8 @@ function Test-OpenApiBranchReferenceDiffDetails {
 
     $getDiffBySha256HashOperation = Get-RequiredOpenApiOperation $Operations 'Diff.Paths.OpenAPI.yaml' 'GetDiffBySha256Hash'
     Assert-OperationSha256ExamplesAreValid $getDiffBySha256HashOperation @('Sha256Hash1', 'Sha256Hash2')
+
+    $getDiffByBlake3HashOperation = Get-RequiredOpenApiOperation $Operations 'Diff.Paths.OpenAPI.yaml' 'GetDiffByBlake3Hash'
 
     foreach ($operationId in $branchCommandOperationIds) {
         $operation = Get-RequiredOpenApiOperation $Operations 'Branch.Paths.OpenAPI.yaml' $operationId
@@ -1037,7 +1063,8 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersion'; Tag = 'Directories'; Response = 'DirectoryVersionResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsRecursive'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'ListDirectoryVersionsById'; Tag = 'Directories'; Response = 'DirectoryVersionListResponse' },
-        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionBySha256Hash'; Tag = 'Directories'; Response = 'DirectoryVersionResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionBySha256Hash'; Tag = 'Directories'; Response = 'DirectoryVersionSha256HashLookupResponse' },
+        [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'GetDirectoryVersionByBlake3Hash'; Tag = 'Directories'; Response = 'DirectoryVersionHashLookupResponse' },
         [pscustomobject]@{ File = 'Directory.Paths.OpenAPI.yaml'; OperationId = 'SaveDirectoryVersions'; Tag = 'Directories'; Response = 'DirectoryCommandResponse' }
     )
 
@@ -1132,6 +1159,7 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
             'DirectoryVersionId:',
             'DirectoryVersionApiDto:',
             'DirectoryVersionReturnValue:',
+            'DirectoryVersionHashLookupReturnValue:',
             'DirectoryVersionListReturnValue:'
         )) {
         Assert-TextContains $directoryComponentsText $requiredDirectoryContract "Directory OpenAPI components are missing '$requiredDirectoryContract'."
@@ -1183,8 +1211,14 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
     Assert-OperationSha256ExamplesAreValid $getBySha256HashOperation @('Sha256Hash')
     Assert-OperationTextMatches `
         $getBySha256HashOperation `
-        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionResponse'" `
-        'GetDirectoryVersionBySha256Hash must use the server-returned directory-version DTO envelope.'
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionSha256HashLookupResponse'" `
+        'GetDirectoryVersionBySha256Hash must use the SHA lookup envelope that narrowly models the no-match sentinel.'
+
+    $getByBlake3HashOperation = Get-RequiredOpenApiOperation $Operations 'Directory.Paths.OpenAPI.yaml' 'GetDirectoryVersionByBlake3Hash'
+    Assert-OperationTextMatches `
+        $getByBlake3HashOperation `
+        "(?s)responses:\s*.*?'200':\s*.*?\`$ref:\s*'\./Directory\.Components\.OpenAPI\.yaml#/DirectoryVersionHashLookupResponse'" `
+        'GetDirectoryVersionByBlake3Hash must use the strict raw directory-version envelope.'
 }
 
 function Test-OpenApiSharedContractDetails {
@@ -1223,6 +1257,42 @@ function Test-OpenApiSharedContractDetails {
     }
 
     $sharedText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredHashContract in @(
+            [pscustomobject]@{ Schema = 'FileVersion'; Property = 'Sha256Hash' },
+            [pscustomobject]@{ Schema = 'FileVersion'; Property = 'Blake3Hash' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'DirectoryVersionId' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'Sha256Hash' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'Blake3Hash' },
+            [pscustomobject]@{ Schema = 'DirectoryVersion'; Property = 'HashesValidated' }
+        )) {
+        Assert-OpenApiSchemaHasProperty `
+            $sharedText `
+            $requiredHashContract.Schema `
+            $requiredHashContract.Property `
+            "$($requiredHashContract.Schema) must expose $($requiredHashContract.Property) in the public OpenAPI schema."
+    }
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $sharedText }) `
+        "(?s)DirectoryVersion:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'#/components/schemas/Sha256Hash'" `
+        'Persisted DirectoryVersion.Sha256Hash must stay a strict full SHA-256 hash.'
+
+    $directoryComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Components.OpenAPI.yaml') -Raw
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
+        "(?s)DirectoryVersionHashLookupResult:\s*.*?Sha256Hash:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/Sha256HashLookupSentinelCompatibility'" `
+        'Only the directory hash lookup response may model the DirectoryVersion.Default empty SHA-256 sentinel.'
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
+        "(?s)DirectoryVersionSha256HashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'#/DirectoryVersionHashLookupResult'" `
+        'Only SHA directory hash lookup responses may use the sentinel-aware result schema rather than weakening persisted DirectoryVersion.'
+
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $directoryComponentsText }) `
+        "(?s)DirectoryVersionHashLookupReturnValue:\s*.*?ReturnValue:\s*.*?\`$ref:\s*'Shared\.Components\.OpenAPI\.yaml#/components/schemas/DirectoryVersion'" `
+        'BLAKE3 directory hash lookup responses must keep the strict persisted DirectoryVersion schema.'
+
     foreach ($requiredGraceErrorPart in @(
             'Grace domain error envelope',
             'Authentication challenges and framework authorization',
@@ -1234,6 +1304,10 @@ function Test-OpenApiSharedContractDetails {
         )) {
         Assert-TextContains $sharedText $requiredGraceErrorPart "GraceError contract is missing '$requiredGraceErrorPart'."
     }
+
+    $directoryPathsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Directory.Paths.OpenAPI.yaml') -Raw
+    Assert-TextContains $directoryPathsText 'Blake3Hash: 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d' `
+        'Directory create/save examples must show BLAKE3 alongside SHA-256.'
 
     Assert-TextContains $sharedText 'distinct from the X-Correlation-Id transport header' 'Body CorrelationId must be documented as distinct from the transport header.'
 

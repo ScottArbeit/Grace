@@ -20,6 +20,7 @@ open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.DirectoryVersion
 open Grace.Types.Common
+open Grace.Types.ContentBlockMetadata
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.ObjectPool
 open NodaTime
@@ -43,75 +44,133 @@ open Azure.Storage
 
 module DirectoryVersion =
 
-    /// Result of validating a single file's SHA-256 hash.
+    /// Result of validating a single whole-file content reference.
     type FileValidationResult =
-        | Valid of fileVersion: FileVersion * computedHash: Sha256Hash * elapsedMs: float
-        | HashMismatch of fileVersion: FileVersion * expectedHash: Sha256Hash * computedHash: Sha256Hash * elapsedMs: float
+        | Valid of fileVersion: FileVersion * computedSha256Hash: Sha256Hash * computedBlake3Hash: Blake3Hash * elapsedMs: float
+        | HashMismatch of
+            fileVersion: FileVersion *
+            expectedSha256Hash: Sha256Hash *
+            computedSha256Hash: Sha256Hash *
+            expectedBlake3Hash: Blake3Hash *
+            computedBlake3Hash: Blake3Hash *
+            elapsedMs: float
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
 
-    /// Validates a single file's SHA-256 hash by downloading from storage and computing.
+    let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersionDtos: DirectoryVersionDto seq) correlationId =
+        let directoryVersionDtoArray = directoryVersionDtos |> Seq.toArray
+
+        let directoryVersionIds =
+            HashSet<DirectoryVersionId>(
+                directoryVersionDtoArray
+                |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId)
+            )
+
+        if not (directoryVersionIds.Contains rootDirectoryVersionId) then
+            Error(
+                (GraceError.Create "Recursive directory traversal did not include the root DirectoryVersion." correlationId)
+                    .enhance (nameof DirectoryVersionId, rootDirectoryVersionId)
+            )
+        else
+            let missingChild =
+                directoryVersionDtoArray
+                |> Seq.collect (fun directoryVersionDto ->
+                    directoryVersionDto.DirectoryVersion.Directories
+                    |> Seq.map (fun childDirectoryVersionId -> directoryVersionDto.DirectoryVersion, childDirectoryVersionId))
+                |> Seq.tryFind (fun (_, childDirectoryVersionId) -> not (directoryVersionIds.Contains childDirectoryVersionId))
+
+            match missingChild with
+            | Some (parentDirectoryVersion, childDirectoryVersionId) ->
+                Error(
+                    (GraceError.Create "Recursive directory traversal did not include a declared child DirectoryVersion." correlationId)
+                        .enhance(nameof DirectoryVersionId, rootDirectoryVersionId)
+                        .enhance("ParentDirectoryVersionId", parentDirectoryVersion.DirectoryVersionId)
+                        .enhance ("ChildDirectoryVersionId", childDirectoryVersionId)
+                )
+            | None -> Ok directoryVersionDtoArray
+
+    /// Validates a single file's version hashes by downloading from storage and computing.
     /// Note: Non-binary files are stored as GZip-compressed streams, so we need to decompress them first.
     let validateFileSha256 (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             let stopwatch = Stopwatch.StartNew()
 
             try
-                let! blobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
+                let! blobClient = getReadableAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
                 let! existsResponse = blobClient.ExistsAsync()
 
                 if not existsResponse.Value then
                     stopwatch.Stop()
                     return MissingInStorage(fileVersion, stopwatch.Elapsed.TotalMilliseconds)
                 else
-                    // Download the stream from blob storage
-                    use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
+                    let computeHashesFromBlob () =
+                        task {
+                            use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
 
-                    // Compute SHA-256 hash using the server-specific validation function.
-                    // Text files are stored as GZip streams and need decompression.
-                    let! computedHash =
-                        if fileVersion.IsBinary then
-                            computeSha256ForFile blobStream fileVersion.RelativePath
-                        else
-                            task {
+                            if fileVersion.IsBinary then
+                                return! computeHashesForFile blobStream fileVersion.RelativePath
+                            else
                                 use gzStream = new GZipStream(stream = blobStream, mode = CompressionMode.Decompress, leaveOpen = false)
-                                return! computeSha256ForFile gzStream fileVersion.RelativePath
-                            }
+                                return! computeHashesForFile gzStream fileVersion.RelativePath
+                        }
+
+                    let! computedSha256Hash, computedBlake3Hash = computeHashesFromBlob ()
 
                     stopwatch.Stop()
 
-                    if computedHash = fileVersion.Sha256Hash then
-                        return Valid(fileVersion, computedHash, stopwatch.Elapsed.TotalMilliseconds)
+                    if computedSha256Hash = fileVersion.Sha256Hash
+                       && (String.IsNullOrWhiteSpace fileVersion.Blake3Hash
+                           || computedBlake3Hash = fileVersion.Blake3Hash) then
+                        return Valid(fileVersion, computedSha256Hash, computedBlake3Hash, stopwatch.Elapsed.TotalMilliseconds)
                     else
-                        return HashMismatch(fileVersion, fileVersion.Sha256Hash, computedHash, stopwatch.Elapsed.TotalMilliseconds)
+                        return
+                            HashMismatch(
+                                fileVersion,
+                                fileVersion.Sha256Hash,
+                                computedSha256Hash,
+                                fileVersion.Blake3Hash,
+                                computedBlake3Hash,
+                                stopwatch.Elapsed.TotalMilliseconds
+                            )
             with
             | ex ->
                 stopwatch.Stop()
                 return ValidationError(fileVersion, ex.Message, stopwatch.Elapsed.TotalMilliseconds)
         }
 
-    /// Determines which files need validation by comparing with a previously validated DirectoryVersion.
-    /// Returns the list of files that need to be validated.
-    let getFilesToValidate (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
-        if previouslyValidatedFiles.Count > 0 then
-            // Create a set of (RelativePath, Sha256Hash) pairs from the old files
-            let previousFilesLookup = Dictionary<RelativePath, Sha256Hash>()
-
-            previouslyValidatedFiles
-            |> Seq.iter (fun previousFile -> previousFilesLookup.Add(previousFile.RelativePath, previousFile.Sha256Hash))
-
-            // Return files that are not in the old set (new or changed)
-            newFiles
-                .Where(fun f -> not (previousFilesLookup.Contains(KeyValuePair(f.RelativePath, f.Sha256Hash))))
-                .ToArray()
-        else
-            newFiles.ToArray()
-
     let private normalizeContentReference (fileVersion: FileVersion) =
         if isNull (box fileVersion.ContentReference) then
             FileContentReference.WholeFileContent
         else
             fileVersion.ContentReference
+
+    /// Determines which files need validation by comparing with a previously validated DirectoryVersion.
+    /// Returns the list of files that need to be validated.
+    let getFilesToValidate (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
+        if previouslyValidatedFiles.Count > 0 then
+            let contentReferenceIdentity (fileVersion: FileVersion) =
+                let contentReference = normalizeContentReference fileVersion
+
+                match contentReference.ReferenceType, contentReference.Manifest with
+                | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
+                | referenceType, _ -> $"{referenceType}"
+
+            let fileIdentity (fileVersion: FileVersion) =
+                (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
+
+            let previousFilesLookup = HashSet<RelativePath * Sha256Hash * Blake3Hash * string>()
+
+            previouslyValidatedFiles
+            |> Seq.iter (fun previousFile ->
+                previousFilesLookup.Add(fileIdentity previousFile)
+                |> ignore)
+
+            // Return files that are not in the old set (new or changed)
+            newFiles
+                .Where(fun f -> not (previousFilesLookup.Contains(fileIdentity f)))
+                .ToArray()
+        else
+            newFiles.ToArray()
 
     let private isWholeFileContentReference (fileVersion: FileVersion) =
         (normalizeContentReference fileVersion)
@@ -120,6 +179,219 @@ module DirectoryVersion =
     let getFilesToValidateForSaveBoundary (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
         getFilesToValidate newFiles previouslyValidatedFiles
         |> Array.filter isWholeFileContentReference
+
+    let private directoryVersionHashError correlationId (directoryVersion: DirectoryVersion) message =
+        GraceError.Create $"DirectoryVersion '{directoryVersion.RelativePath}' {message}" correlationId
+
+    let private hasMissingHash (value: string) = String.IsNullOrWhiteSpace value
+
+    let private hasValidatedLegacyDirectoryBlake3Gap (directoryVersion: DirectoryVersion) =
+        hasMissingHash directoryVersion.Blake3Hash
+        && not (hasMissingHash directoryVersion.Sha256Hash)
+        && directoryVersion.HashesValidated
+
+    let private hasLegacyManifestBackedFileBlake3Gap (fileVersion: FileVersion) =
+        let contentReference = normalizeContentReference fileVersion
+
+        match contentReference.ReferenceType, contentReference.Manifest with
+        | FileContentReferenceType.FileManifest, Some manifest ->
+            hasMissingHash fileVersion.Blake3Hash
+            && not (String.IsNullOrWhiteSpace manifest.FileContentHash)
+            && ContentAddress.isValidAddress manifest.FileContentHash
+            && fileVersion.Size = manifest.Size
+        | _ -> false
+
+    let private hasLegacyWholeFileBlake3Gap (fileVersion: FileVersion) =
+        hasMissingHash fileVersion.Blake3Hash
+        && not (hasMissingHash fileVersion.Sha256Hash)
+        && isWholeFileContentReference fileVersion
+
+    let private contentReferenceIdentity (fileVersion: FileVersion) =
+        let contentReference = normalizeContentReference fileVersion
+
+        match contentReference.ReferenceType, contentReference.Manifest with
+        | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
+        | referenceType, _ -> $"{referenceType}"
+
+    let private fileIdentity (fileVersion: FileVersion) =
+        (fileVersion.RelativePath, fileVersion.Size, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
+
+    let private hasUnchangedLegacyWholeFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
+        hasLegacyWholeFileBlake3Gap fileVersion
+        && previouslyValidatedFiles
+           |> Seq.exists (fun previousFile ->
+               hasLegacyWholeFileBlake3Gap previousFile
+               && fileIdentity previousFile = fileIdentity fileVersion)
+
+    let private hasUnchangedLegacyManifestBackedFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
+        hasLegacyManifestBackedFileBlake3Gap fileVersion
+        && previouslyValidatedFiles
+           |> Seq.exists (fun previousFile ->
+               hasLegacyManifestBackedFileBlake3Gap previousFile
+               && fileIdentity previousFile = fileIdentity fileVersion)
+
+    let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
+        if directoryVersion.Size
+           <> Constants.InitialDirectorySize then
+            directoryVersion
+        else
+            let normalizedDirectoryVersion = DirectoryVersion()
+            normalizedDirectoryVersion.Class <- directoryVersion.Class
+            normalizedDirectoryVersion.DirectoryVersionId <- directoryVersion.DirectoryVersionId
+            normalizedDirectoryVersion.OwnerId <- directoryVersion.OwnerId
+            normalizedDirectoryVersion.OrganizationId <- directoryVersion.OrganizationId
+            normalizedDirectoryVersion.RepositoryId <- directoryVersion.RepositoryId
+            normalizedDirectoryVersion.RelativePath <- directoryVersion.RelativePath
+            normalizedDirectoryVersion.Sha256Hash <- directoryVersion.Sha256Hash
+            normalizedDirectoryVersion.Blake3Hash <- directoryVersion.Blake3Hash
+            normalizedDirectoryVersion.Directories <- directoryVersion.Directories
+            normalizedDirectoryVersion.Files <- directoryVersion.Files
+            normalizedDirectoryVersion.Size <- getDirectorySize directoryVersion.Files
+            normalizedDirectoryVersion.CreatedAt <- directoryVersion.CreatedAt
+            normalizedDirectoryVersion.HashesValidated <- directoryVersion.HashesValidated
+            normalizedDirectoryVersion
+
+    let computeDirectoryVersionHashesFromChildren (relativePath: RelativePath) (childDirectoryVersions: seq<DirectoryVersion>) (files: seq<FileVersion>) =
+        let directoryEntries =
+            childDirectoryVersions
+            |> Seq.map (fun directoryVersion ->
+                DirectoryVersionPreimageEntry.Directory
+                    directoryVersion.RelativePath
+                    directoryVersion.Size
+                    directoryVersion.Blake3Hash
+                    directoryVersion.Sha256Hash)
+
+        let fileEntries =
+            files
+            |> Seq.map (fun fileVersion ->
+                DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash)
+
+        let entries =
+            Seq.append directoryEntries fileEntries
+            |> Seq.toArray
+
+        computeSha256ForDirectoryEntries relativePath entries, computeBlake3ForDirectory relativePath entries
+
+    let validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+        correlationId
+        (directoryVersion: DirectoryVersion)
+        (childDirectoryVersions: seq<DirectoryVersion>)
+        (previouslyValidatedFiles: FileVersion seq)
+        =
+        let mutable error: GraceError option = None
+        let childDirectoryVersions = childDirectoryVersions |> Seq.toArray
+        let previouslyValidatedFiles = previouslyValidatedFiles |> Seq.toArray
+
+        if hasMissingHash directoryVersion.Sha256Hash then
+            error <- Some(directoryVersionHashError correlationId directoryVersion "must include DirectoryVersion.Sha256Hash before Save.")
+        elif hasMissingHash directoryVersion.Blake3Hash then
+            error <- Some(directoryVersionHashError correlationId directoryVersion "must include DirectoryVersion.Blake3Hash before Save.")
+        else
+            let mutable childIndex = 0
+
+            while childIndex < childDirectoryVersions.Length
+                  && error.IsNone do
+                let childDirectoryVersion = childDirectoryVersions[childIndex]
+
+                if hasMissingHash childDirectoryVersion.Sha256Hash then
+                    error <-
+                        Some(
+                            directoryVersionHashError
+                                correlationId
+                                directoryVersion
+                                $"has child directory '{childDirectoryVersion.RelativePath}' without Sha256Hash."
+                        )
+                elif
+                    hasMissingHash childDirectoryVersion.Blake3Hash
+                    && not (hasValidatedLegacyDirectoryBlake3Gap childDirectoryVersion)
+                then
+                    error <-
+                        Some(
+                            directoryVersionHashError
+                                correlationId
+                                directoryVersion
+                                $"has child directory '{childDirectoryVersion.RelativePath}' without Blake3Hash."
+                        )
+
+                childIndex <- childIndex + 1
+
+            let mutable fileIndex = 0
+
+            while fileIndex < directoryVersion.Files.Count
+                  && error.IsNone do
+                let fileVersion = directoryVersion.Files[fileIndex]
+
+                if hasMissingHash fileVersion.Sha256Hash then
+                    error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Sha256Hash.")
+                elif
+                    hasMissingHash fileVersion.Blake3Hash
+                    && not (hasUnchangedLegacyManifestBackedFileBlake3Gap previouslyValidatedFiles fileVersion)
+                    && not (hasUnchangedLegacyWholeFileBlake3Gap previouslyValidatedFiles fileVersion)
+                then
+                    error <- Some(directoryVersionHashError correlationId directoryVersion $"has child file '{fileVersion.RelativePath}' without Blake3Hash.")
+
+                fileIndex <- fileIndex + 1
+
+        match error with
+        | Some error -> Error error
+        | None ->
+            let expectedSha256Hash, expectedBlake3Hash =
+                computeDirectoryVersionHashesFromChildren directoryVersion.RelativePath childDirectoryVersions directoryVersion.Files
+
+            if expectedSha256Hash <> directoryVersion.Sha256Hash then
+                Error(
+                    directoryVersionHashError
+                        correlationId
+                        directoryVersion
+                        $"has mismatched Sha256Hash. Expected {expectedSha256Hash}; received {directoryVersion.Sha256Hash}."
+                )
+            elif expectedBlake3Hash <> directoryVersion.Blake3Hash then
+                Error(
+                    directoryVersionHashError
+                        correlationId
+                        directoryVersion
+                        $"has mismatched Blake3Hash. Expected {expectedBlake3Hash}; received {directoryVersion.Blake3Hash}."
+                )
+            else
+                Ok()
+
+    let validateDirectoryVersionHashesWithChildren correlationId (directoryVersion: DirectoryVersion) (childDirectoryVersions: seq<DirectoryVersion>) =
+        validateDirectoryVersionHashesWithChildrenAndPreviousFiles correlationId directoryVersion childDirectoryVersions Array.empty<FileVersion>
+
+    let private getChildDirectoryVersionsForValidation repositoryId correlationId (directoryVersion: DirectoryVersion) =
+        task {
+            let childDirectoryVersions = ResizeArray<DirectoryVersion>()
+            let mutable error: GraceError option = None
+            let mutable childIndex = 0
+
+            while childIndex < directoryVersion.Directories.Count
+                  && error.IsNone do
+                let childDirectoryId = directoryVersion.Directories[childIndex]
+                let childDirectoryActor = DirectoryVersion.CreateActorProxy childDirectoryId repositoryId correlationId
+                let! exists = childDirectoryActor.Exists correlationId
+
+                if not exists then
+                    error <- Some(directoryVersionHashError correlationId directoryVersion $"references missing child DirectoryVersionId '{childDirectoryId}'.")
+                else
+                    let! childDirectoryDto = childDirectoryActor.Get correlationId
+                    let childDirectoryVersion = normalizeDirectoryVersionForSaveBoundary childDirectoryDto.DirectoryVersion
+
+                    if
+                        hasMissingHash childDirectoryVersion.Blake3Hash
+                        && not (hasMissingHash childDirectoryVersion.Sha256Hash)
+                    then
+                        // The child came from an existing actor, so this local DTO can carry the persisted-child marker
+                        // that lets parent saves tolerate immutable SHA-only legacy children without relaxing new creates.
+                        childDirectoryVersion.HashesValidated <- true
+
+                    childDirectoryVersions.Add childDirectoryVersion
+
+                childIndex <- childIndex + 1
+
+            match error with
+            | Some error -> return Error error
+            | None -> return Ok(childDirectoryVersions.ToArray())
+        }
 
     let private manifestValidationError correlationId (fileVersion: FileVersion) message =
         GraceError.Create $"FileManifest reference for '{fileVersion.RelativePath}' {message}" correlationId
@@ -165,10 +437,17 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must be finalized before Save.")
             elif not (ContentAddress.isValidAddress manifest.ManifestAddress) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid ManifestAddress before Save.")
+            elif String.IsNullOrWhiteSpace manifest.StoragePoolId then
+                Error(manifestValidationError correlationId fileVersion "must include a StoragePoolId before Save.")
             elif String.IsNullOrWhiteSpace manifest.ChunkingSuiteId then
                 Error(manifestValidationError correlationId fileVersion "must include a ChunkingSuiteId before Save.")
             elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
                 Error(manifestValidationError correlationId fileVersion "has an invalid FileContentHash before Save.")
+            elif
+                not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
+                && fileVersion.Blake3Hash <> manifest.FileContentHash
+            then
+                Error(manifestValidationError correlationId fileVersion "must match FileVersion.Blake3Hash before Save.")
             elif manifest.Size <= 0L then
                 Error(manifestValidationError correlationId fileVersion "must have a positive size before Save.")
             elif fileVersion.Size <> manifest.Size then
@@ -190,8 +469,10 @@ module DirectoryVersion =
         with
         | ex -> Error(GraceError.CreateWithException ex $"FileManifest reference for '{fileVersion.RelativePath}' is invalid before Save." correlationId)
 
+    type ManifestReferenceForSaveBoundary = { Manifest: FileManifest; AuthorizedScope: RelativePath }
+
     let getManifestReferencesForSaveBoundary (directoryVersion: DirectoryVersion) correlationId =
-        let manifests = Dictionary<ManifestAddress, FileManifest>()
+        let manifests = Dictionary<StoragePoolId * ManifestAddress * RelativePath, ManifestReferenceForSaveBoundary>()
         let mutable index = 0
         let mutable error: GraceError option = None
 
@@ -206,8 +487,10 @@ module DirectoryVersion =
                 | Some manifest ->
                     match validateManifestBackedFileForSaveBoundary correlationId fileVersion manifest with
                     | Ok () ->
-                        if not (manifests.ContainsKey manifest.ManifestAddress) then
-                            manifests.Add(manifest.ManifestAddress, manifest)
+                        let manifestKey = manifest.StoragePoolId, manifest.ManifestAddress, fileVersion.RelativePath
+
+                        if not (manifests.ContainsKey manifestKey) then
+                            manifests.Add(manifestKey, { Manifest = manifest; AuthorizedScope = fileVersion.RelativePath })
                     | Error graceError -> error <- Some graceError
 
             index <- index + 1
@@ -215,6 +498,84 @@ module DirectoryVersion =
         match error with
         | Some graceError -> Error graceError
         | None -> Ok(manifests.Values |> Seq.toList)
+
+    let contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
+
+    let validateManifestReferencesForSaveBoundaryWithResolver
+        (getScopedRangePresence: StoragePoolId
+                                     -> RepositoryId
+                                     -> RelativePath
+                                     -> ManifestAddress
+                                     -> ContentBlockAddress
+                                     -> ContentBlockRangeQuery
+                                     -> Task<ContentBlockRangePresence>)
+        repositoryId
+        correlationId
+        (manifestReferences: ManifestReferenceForSaveBoundary seq)
+        =
+        task {
+            let manifestReferenceArray = manifestReferences |> Seq.toArray
+            let mutable manifestIndex = 0
+            let mutable error: GraceError option = None
+
+            while manifestIndex < manifestReferenceArray.Length
+                  && error.IsNone do
+                let manifestReference = manifestReferenceArray[manifestIndex]
+                let manifest = manifestReference.Manifest
+                let mutable blockIndex = 0
+
+                while blockIndex < manifest.Blocks.Count && error.IsNone do
+                    let block = manifest.Blocks[blockIndex]
+                    let query: ContentBlockRangeQuery = { OrdinalStart = 0; OrdinalCount = 1 }
+
+                    let! presence =
+                        getScopedRangePresence
+                            manifest.StoragePoolId
+                            repositoryId
+                            manifestReference.AuthorizedScope
+                            manifest.ManifestAddress
+                            block.Address
+                            query
+
+                    if presence = ContentBlockRangePresence.Absent then
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"FileManifest '{manifest.ManifestAddress}' references ContentBlock '{block.Address}' at manifest block index {blockIndex}, but no finalized scoped ContentBlock metadata range exists for repository '{repositoryId}' and authorized scope '{manifestReference.AuthorizedScope}' at content-block ordinal 0."
+                                    correlationId
+                            )
+
+                    blockIndex <- blockIndex + 1
+
+                manifestIndex <- manifestIndex + 1
+
+            return
+                match error with
+                | Some graceError -> Error graceError
+                | None -> Ok()
+        }
+
+    let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifestReferences =
+        let getScopedRangePresence storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress query =
+            task {
+                let dedupeIndexActor = orleansClient.CreateActorProxyWithCorrelationId<IDedupeIndexActor>("dedupe-index:v1", correlationId)
+
+                match!
+                    dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                        (
+                            storagePoolId,
+                            repositoryId,
+                            authorizedScope,
+                            manifestAddress,
+                            contentBlockAddress,
+                            correlationId
+                        )
+                    with
+                | Some metadata -> return Grace.Types.ContentBlockMetadata.rangePresence metadata query
+                | None -> return ContentBlockRangePresence.Absent
+            }
+
+        validateManifestReferencesForSaveBoundaryWithResolver getScopedRangePresence repositoryId correlationId manifestReferences
 
     type DirectoryVersionActor
         (
@@ -635,79 +996,90 @@ module DirectoryVersion =
                                     .OrderBy(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.RelativePath)
                                     .ToArray()
 
-                            // Save the recursive results to Azure Blob Storage.
-                            let repositoryActorProxy =
-                                Repository.CreateActorProxy
-                                    directoryVersionDto.DirectoryVersion.OrganizationId
-                                    directoryVersionDto.DirectoryVersion.RepositoryId
-                                    correlationId
+                            match validateRecursiveDirectoryVersionsComplete directoryVersion.DirectoryVersionId subdirectoryVersionsList correlationId with
+                            | Error graceError ->
+                                log.LogWarning(
+                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}): Skipping recursive directory version cache write because traversal was incomplete. Error: {error}",
+                                    getCurrentInstantExtended (),
+                                    getMachineName,
+                                    correlationId,
+                                    this.GetPrimaryKey(),
+                                    graceError
+                                )
+                            | Ok completeSubdirectoryVersionsList ->
+                                // Save the recursive results to Azure Blob Storage only after completeness is known.
+                                let repositoryActorProxy =
+                                    Repository.CreateActorProxy
+                                        directoryVersionDto.DirectoryVersion.OrganizationId
+                                        directoryVersionDto.DirectoryVersion.RepositoryId
+                                        correlationId
 
-                            let! repositoryDto = repositoryActorProxy.Get correlationId
+                                let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                            let tags = Dictionary<string, string>()
-                            tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
-                            tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
-                            tags.Add(nameof RepositoryId, $"{repositoryDto.RepositoryId}")
-                            tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
-                            tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
-                            tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
-                            tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
+                                let tags = Dictionary<string, string>()
+                                tags.Add(nameof OwnerId, $"{repositoryDto.OwnerId}")
+                                tags.Add(nameof OrganizationId, $"{repositoryDto.OrganizationId}")
+                                tags.Add(nameof RepositoryId, $"{repositoryDto.RepositoryId}")
+                                tags.Add(nameof DirectoryVersionId, $"{directoryVersionDto.DirectoryVersion.DirectoryVersionId}")
+                                tags.Add(nameof RelativePath, $"{directoryVersionDto.DirectoryVersion.RelativePath}")
+                                tags.Add(nameof Sha256Hash, $"{directoryVersionDto.DirectoryVersion.Sha256Hash}")
+                                tags.Add("RecursiveSize", $"{directoryVersionDto.RecursiveSize}")
 
-                            // Write the JSON using MessagePack serialization for efficiency.
-                            let blockBlobOpenWriteOptions =
-                                BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
+                                // Write the JSON using MessagePack serialization for efficiency.
+                                let blockBlobOpenWriteOptions =
+                                    BlockBlobOpenWriteOptions(Tags = tags, HttpHeaders = BlobHttpHeaders(ContentType = "application/msgpack"))
 
-                            let conditionsSummary =
-                                let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty ("Conditions")
+                                let conditionsSummary =
+                                    let conditionsProperty = typeof<BlockBlobOpenWriteOptions>.GetProperty ("Conditions")
 
-                                if isNull conditionsProperty then
-                                    "not supported"
-                                else
-                                    let conditionsValue = conditionsProperty.GetValue(blockBlobOpenWriteOptions)
-
-                                    if isNull conditionsValue then
-                                        "null"
+                                    if isNull conditionsProperty then
+                                        "not supported"
                                     else
-                                        let conditionProperties = conditionsValue.GetType().GetProperties()
+                                        let conditionsValue = conditionsProperty.GetValue(blockBlobOpenWriteOptions)
 
-                                        conditionProperties
-                                        |> Seq.map (fun propertyInfo ->
-                                            let value = propertyInfo.GetValue(conditionsValue)
-                                            $"{propertyInfo.Name}={value}")
-                                        |> String.concat "; "
+                                        if isNull conditionsValue then
+                                            "null"
+                                        else
+                                            let conditionProperties = conditionsValue.GetType().GetProperties()
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Blob write conditions: {conditionsSummary}.",
-                                this.GetPrimaryKey(),
-                                conditionsSummary
-                            )
+                                            conditionProperties
+                                            |> Seq.map (fun propertyInfo ->
+                                                let value = propertyInfo.GetValue(conditionsValue)
+                                                $"{propertyInfo.Name}={value}")
+                                            |> String.concat "; "
 
-                            use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
-                            do! MessagePackSerializer.SerializeAsync(blobStream, subdirectoryVersionsList, messagePackSerializerOptions)
-                            do! blobStream.DisposeAsync()
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Blob write conditions: {conditionsSummary}.",
+                                    this.GetPrimaryKey(),
+                                    conditionsSummary
+                                )
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
-                                this.GetPrimaryKey(),
-                                directoryVersionDto.DirectoryVersion.RelativePath
-                            )
+                                use! blobStream = directoryVersionBlobClient.OpenWriteAsync(overwrite = true, options = blockBlobOpenWriteOptions)
+                                do! MessagePackSerializer.SerializeAsync(blobStream, completeSubdirectoryVersionsList, messagePackSerializerOptions)
+                                do! blobStream.DisposeAsync()
 
-                            // Create a reminder to delete the cached state after the configured number of cache days.
-                            let deletionReminderState: PhysicalDeletionReminderState =
-                                { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Saving cached list of directory versions. RelativePath: {relativePath}.",
+                                    this.GetPrimaryKey(),
+                                    directoryVersionDto.DirectoryVersion.RelativePath
+                                )
 
-                            do!
-                                (this :> IGraceReminderWithGuidKey)
-                                    .ScheduleReminderAsync
-                                    ReminderTypes.DeleteCachedState
-                                    (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
-                                    (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
-                                    correlationId
+                                // Create a reminder to delete the cached state after the configured number of cache days.
+                                let deletionReminderState: PhysicalDeletionReminderState =
+                                    { DeleteReason = getDiscriminatedUnionCaseName ReminderTypes.DeleteCachedState; CorrelationId = correlationId }
 
-                            log.LogDebug(
-                                "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Delete cached state reminder was set.",
-                                this.GetPrimaryKey()
-                            )
+                                do!
+                                    (this :> IGraceReminderWithGuidKey)
+                                        .ScheduleReminderAsync
+                                        ReminderTypes.DeleteCachedState
+                                        (Duration.FromDays(float repositoryDto.DirectoryVersionCacheDays))
+                                        (ReminderState.DirectoryVersionDeleteCachedState deletionReminderState)
+                                        correlationId
+
+                                log.LogDebug(
+                                    "In DirectoryVersionActor.GetRecursiveDirectoryVersions({id}); Delete cached state reminder was set.",
+                                    this.GetPrimaryKey()
+                                )
 
                             return subdirectoryVersionsList
                     with
@@ -739,7 +1111,29 @@ module DirectoryVersion =
                                             metadata.CorrelationId
                                     )
                             else
-                                return Ok command
+                                match! getChildDirectoryVersionsForValidation repositoryDto.RepositoryId metadata.CorrelationId directoryVersion with
+                                | Error graceError -> return Error graceError
+                                | Ok childDirectoryVersions ->
+                                    let! mostRecentDirectoryVersion =
+                                        getMostRecentDirectoryVersionByRelativePath
+                                            repositoryDto.RepositoryId
+                                            directoryVersion.RelativePath
+                                            metadata.CorrelationId
+
+                                    let previouslyValidatedFiles =
+                                        match mostRecentDirectoryVersion with
+                                        | Some previousDirectoryVersion -> previousDirectoryVersion.Files :> seq<FileVersion>
+                                        | None -> Seq.empty
+
+                                    match
+                                        validateDirectoryVersionHashesWithChildrenAndPreviousFiles
+                                            metadata.CorrelationId
+                                            directoryVersion
+                                            childDirectoryVersions
+                                            previouslyValidatedFiles
+                                        with
+                                    | Error graceError -> return Error graceError
+                                    | Ok () -> return Ok command
 
                         | _ ->
                             if directoryVersionDto.DirectoryVersion.CreatedAt = DirectoryVersion.Default.CreatedAt then
@@ -757,189 +1151,214 @@ module DirectoryVersion =
                                     | Create (directoryVersion, repositoryDto) ->
                                         match getManifestReferencesForSaveBoundary directoryVersion metadata.CorrelationId with
                                         | Error graceError -> return Error graceError
-                                        | Ok _ ->
-                                            // Determine which whole-file entries need validation using incremental validation logic.
-                                            // Manifest-backed files were already accepted by UploadSession finalization; WholeFileContent remains unchanged.
-                                            let! mostRecentDirectoryVersion =
-                                                getMostRecentDirectoryVersionByRelativePath
-                                                    repositoryDto.RepositoryId
-                                                    directoryVersion.RelativePath
-                                                    metadata.CorrelationId
+                                        | Ok manifests ->
+                                            match! validateManifestReferencesForSaveBoundary repositoryDto.RepositoryId metadata.CorrelationId manifests with
+                                            | Error graceError -> return Error graceError
+                                            | Ok () ->
 
-                                            let filesToValidate =
-                                                match mostRecentDirectoryVersion with
-                                                | Some previousDirectoryVersion ->
-                                                    getFilesToValidateForSaveBoundary directoryVersion.Files previousDirectoryVersion.Files
-                                                | None -> getFilesToValidateForSaveBoundary directoryVersion.Files (List<FileVersion>())
+                                                // Determine which whole-file entries need validation using incremental validation logic.
+                                                // Manifest-backed files are accepted only after their ContentBlock metadata ranges exist.
+                                                let! mostRecentDirectoryVersion =
+                                                    getMostRecentDirectoryVersionByRelativePath
+                                                        repositoryDto.RepositoryId
+                                                        directoryVersion.RelativePath
+                                                        metadata.CorrelationId
 
-                                            log.LogDebug(
-                                                "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Starting SHA-256 validation for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FileCount: {FileCount}; FilesToValidate: {FilesToValidate}.",
-                                                getCurrentInstantExtended (),
-                                                getMachineName,
-                                                metadata.CorrelationId,
-                                                directoryVersion.DirectoryVersionId,
-                                                directoryVersion.RelativePath,
-                                                directoryVersion.Files.Count,
-                                                filesToValidate.Length
-                                            )
+                                                let filesToValidate =
+                                                    match mostRecentDirectoryVersion with
+                                                    | Some previousDirectoryVersion ->
+                                                        getFilesToValidateForSaveBoundary directoryVersion.Files previousDirectoryVersion.Files
+                                                    | None -> getFilesToValidateForSaveBoundary directoryVersion.Files (List<FileVersion>())
 
-                                            let validationResults = ConcurrentQueue<FileValidationResult>()
-
-                                            // Validate files in parallel
-                                            do!
-                                                Parallel.ForEachAsync(
-                                                    filesToValidate,
-                                                    Constants.ParallelOptions,
-                                                    (fun fileVersion ct ->
-                                                        ValueTask(
-                                                            task {
-                                                                let! result = validateFileSha256 repositoryDto fileVersion metadata.CorrelationId
-                                                                validationResults.Enqueue result
-                                                            }
-                                                        ))
-                                                )
-
-                                            let validationResults = validationResults.ToArray()
-
-                                            // Collect failures
-                                            let failures =
-                                                validationResults
-                                                |> Array.filter (fun result ->
-                                                    match result with
-                                                    | Valid _ -> false
-                                                    | _ -> true)
-                                                |> Array.toList
-
-                                            let validCount =
-                                                validationResults
-                                                |> Array.filter (fun result ->
-                                                    match result with
-                                                    | Valid _ -> true
-                                                    | _ -> false)
-                                                |> Array.length
-
-                                            let totalElapsedMs =
-                                                validationResults
-                                                |> Array.sumBy (fun result ->
-                                                    match result with
-                                                    | Valid (_, _, ms) -> ms
-                                                    | HashMismatch (_, _, _, ms) -> ms
-                                                    | MissingInStorage (_, ms) -> ms
-                                                    | ValidationError (_, _, ms) -> ms)
-
-                                            // Log validation results
-                                            for result in validationResults do
-                                                match result with
-                                                | Valid (fv, computedHash, elapsedMs) ->
-                                                    log.LogDebug(
-                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation passed; File: {RelativePath}; Hash: {Hash}; ElapsedMs: {ElapsedMs}.",
-                                                        getCurrentInstantExtended (),
-                                                        getMachineName,
-                                                        metadata.CorrelationId,
-                                                        fv.RelativePath,
-                                                        computedHash,
-                                                        elapsedMs
-                                                    )
-                                                | HashMismatch (fv, expectedHash, computedHash, elapsedMs) ->
-                                                    log.LogWarning(
-                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 hash mismatch; File: {RelativePath}; ExpectedHash: {ExpectedHash}; ComputedHash: {ComputedHash}; ElapsedMs: {ElapsedMs}.",
-                                                        getCurrentInstantExtended (),
-                                                        getMachineName,
-                                                        metadata.CorrelationId,
-                                                        fv.RelativePath,
-                                                        expectedHash,
-                                                        computedHash,
-                                                        elapsedMs
-                                                    )
-                                                | MissingInStorage (fv, elapsedMs) ->
-                                                    log.LogWarning(
-                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; File not found in object storage; File: {RelativePath}; ExpectedHash: {ExpectedHash}; ElapsedMs: {ElapsedMs}.",
-                                                        getCurrentInstantExtended (),
-                                                        getMachineName,
-                                                        metadata.CorrelationId,
-                                                        fv.RelativePath,
-                                                        fv.Sha256Hash,
-                                                        elapsedMs
-                                                    )
-                                                | ValidationError (fv, errorMessage, elapsedMs) ->
-                                                    log.LogError(
-                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation error; File: {RelativePath}; Error: {ErrorMessage}; ElapsedMs: {ElapsedMs}.",
-                                                        getCurrentInstantExtended (),
-                                                        getMachineName,
-                                                        metadata.CorrelationId,
-                                                        fv.RelativePath,
-                                                        errorMessage,
-                                                        elapsedMs
-                                                    )
-
-                                            // Check if any validation failed
-                                            if failures.Length > 0 then
-                                                // Build error message with details about failures
-                                                let errorDetails =
-                                                    failures
-                                                    |> List.map (fun failure ->
-                                                        match failure with
-                                                        | HashMismatch (fv, expected, computed, _) ->
-                                                            $"File '{fv.RelativePath}': hash mismatch (expected: {expected}, computed: {computed})"
-                                                        | MissingInStorage (fv, _) -> $"File '{fv.RelativePath}': not found in object storage"
-                                                        | ValidationError (fv, msg, _) -> $"File '{fv.RelativePath}': validation error ({msg})"
-                                                        | _ -> "Unknown error")
-                                                    |> String.concat "; "
-
-                                                log.LogWarning(
-                                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation failed for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FailedCount: {FailedCount}; ValidCount: {ValidCount}; TotalElapsedMs: {TotalElapsedMs}.",
+                                                log.LogDebug(
+                                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; Starting SHA-256 validation for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FileCount: {FileCount}; FilesToValidate: {FilesToValidate}.",
                                                     getCurrentInstantExtended (),
                                                     getMachineName,
                                                     metadata.CorrelationId,
                                                     directoryVersion.DirectoryVersionId,
                                                     directoryVersion.RelativePath,
-                                                    failures.Length,
-                                                    validCount,
-                                                    totalElapsedMs
+                                                    directoryVersion.Files.Count,
+                                                    filesToValidate.Length
                                                 )
 
-                                                // Determine the appropriate error type
-                                                let hasHashMismatch =
-                                                    failures
-                                                    |> List.exists (fun f ->
-                                                        match f with
-                                                        | HashMismatch _ -> true
+                                                let validationResults = ConcurrentQueue<FileValidationResult>()
+
+                                                // Validate files in parallel
+                                                do!
+                                                    Parallel.ForEachAsync(
+                                                        filesToValidate,
+                                                        Constants.ParallelOptions,
+                                                        (fun fileVersion ct ->
+                                                            ValueTask(
+                                                                task {
+                                                                    let! result = validateFileSha256 repositoryDto fileVersion metadata.CorrelationId
+                                                                    validationResults.Enqueue result
+                                                                }
+                                                            ))
+                                                    )
+
+                                                let validationResults = validationResults.ToArray()
+
+                                                // Collect failures
+                                                let failures =
+                                                    validationResults
+                                                    |> Array.filter (fun result ->
+                                                        match result with
+                                                        | Valid _ -> false
+                                                        | _ -> true)
+                                                    |> Array.toList
+
+                                                let validCount =
+                                                    validationResults
+                                                    |> Array.filter (fun result ->
+                                                        match result with
+                                                        | Valid _ -> true
                                                         | _ -> false)
+                                                    |> Array.length
 
-                                                let hasMissing =
-                                                    failures
-                                                    |> List.exists (fun f ->
-                                                        match f with
-                                                        | MissingInStorage _ -> true
-                                                        | _ -> false)
+                                                let totalElapsedMs =
+                                                    validationResults
+                                                    |> Array.sumBy (fun result ->
+                                                        match result with
+                                                        | Valid (_, _, _, ms) -> ms
+                                                        | HashMismatch (_, _, _, _, _, ms) -> ms
+                                                        | MissingInStorage (_, ms) -> ms
+                                                        | ValidationError (_, _, ms) -> ms)
 
-                                                let errorMessage =
-                                                    if hasMissing then
-                                                        DirectoryVersionError.getErrorMessage DirectoryVersionError.FileNotFoundInObjectStorage
-                                                        + " "
-                                                        + errorDetails
-                                                    elif hasHashMismatch then
-                                                        DirectoryVersionError.getErrorMessage DirectoryVersionError.FileSha256HashDoesNotMatch
-                                                        + " "
-                                                        + errorDetails
-                                                    else
-                                                        $"File integrity check failed: {errorDetails}"
+                                                // Log validation results
+                                                for result in validationResults do
+                                                    match result with
+                                                    | Valid (fv, computedSha256Hash, computedBlake3Hash, elapsedMs) ->
+                                                        log.LogDebug(
+                                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; file version hash validation passed; File: {RelativePath}; Sha256Hash: {Sha256Hash}; Blake3Hash: {Blake3Hash}; ElapsedMs: {ElapsedMs}.",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            metadata.CorrelationId,
+                                                            fv.RelativePath,
+                                                            computedSha256Hash,
+                                                            computedBlake3Hash,
+                                                            elapsedMs
+                                                        )
+                                                    | HashMismatch (fv,
+                                                                    expectedSha256Hash,
+                                                                    computedSha256Hash,
+                                                                    expectedBlake3Hash,
+                                                                    computedBlake3Hash,
+                                                                    elapsedMs) ->
+                                                        log.LogWarning(
+                                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; file version hash mismatch; File: {RelativePath}; ExpectedSha256Hash: {ExpectedSha256Hash}; ComputedSha256Hash: {ComputedSha256Hash}; ExpectedBlake3Hash: {ExpectedBlake3Hash}; ComputedBlake3Hash: {ComputedBlake3Hash}; ElapsedMs: {ElapsedMs}.",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            metadata.CorrelationId,
+                                                            fv.RelativePath,
+                                                            expectedSha256Hash,
+                                                            computedSha256Hash,
+                                                            expectedBlake3Hash,
+                                                            computedBlake3Hash,
+                                                            elapsedMs
+                                                        )
+                                                    | MissingInStorage (fv, elapsedMs) ->
+                                                        log.LogWarning(
+                                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; File not found in object storage; File: {RelativePath}; ExpectedHash: {ExpectedHash}; ElapsedMs: {ElapsedMs}.",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            metadata.CorrelationId,
+                                                            fv.RelativePath,
+                                                            fv.Sha256Hash,
+                                                            elapsedMs
+                                                        )
+                                                    | ValidationError (fv, errorMessage, elapsedMs) ->
+                                                        log.LogError(
+                                                            "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation error; File: {RelativePath}; Error: {ErrorMessage}; ElapsedMs: {ElapsedMs}.",
+                                                            getCurrentInstantExtended (),
+                                                            getMachineName,
+                                                            metadata.CorrelationId,
+                                                            fv.RelativePath,
+                                                            errorMessage,
+                                                            elapsedMs
+                                                        )
 
-                                                return Error(GraceError.Create errorMessage metadata.CorrelationId)
-                                            else
-                                                log.LogInformation(
-                                                    "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation succeeded for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; ValidatedCount: {ValidatedCount}; TotalElapsedMs: {TotalElapsedMs}.",
-                                                    getCurrentInstantExtended (),
-                                                    getMachineName,
-                                                    metadata.CorrelationId,
-                                                    directoryVersion.DirectoryVersionId,
-                                                    directoryVersion.RelativePath,
-                                                    validCount,
-                                                    totalElapsedMs
-                                                )
+                                                // Check if any validation failed
+                                                if failures.Length > 0 then
+                                                    // Build error message with details about failures
+                                                    let errorDetails =
+                                                        failures
+                                                        |> List.map (fun failure ->
+                                                            match failure with
+                                                            | HashMismatch (fv, expectedSha256, computedSha256, expectedBlake3, computedBlake3, _) ->
+                                                                $"File '{fv.RelativePath}': hash mismatch (expected SHA-256: {expectedSha256}, computed SHA-256: {computedSha256}, expected BLAKE3: {expectedBlake3}, computed BLAKE3: {computedBlake3})"
+                                                            | MissingInStorage (fv, _) -> $"File '{fv.RelativePath}': not found in object storage"
+                                                            | ValidationError (fv, msg, _) -> $"File '{fv.RelativePath}': validation error ({msg})"
+                                                            | _ -> "Unknown error")
+                                                        |> String.concat "; "
 
-                                                let newDirectoryVersion = { directoryVersion with HashesValidated = true }
-                                                return Ok(Created newDirectoryVersion)
+                                                    log.LogWarning(
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation failed for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; FailedCount: {FailedCount}; ValidCount: {ValidCount}; TotalElapsedMs: {TotalElapsedMs}.",
+                                                        getCurrentInstantExtended (),
+                                                        getMachineName,
+                                                        metadata.CorrelationId,
+                                                        directoryVersion.DirectoryVersionId,
+                                                        directoryVersion.RelativePath,
+                                                        failures.Length,
+                                                        validCount,
+                                                        totalElapsedMs
+                                                    )
+
+                                                    // Determine the appropriate error type
+                                                    let hasHashMismatch =
+                                                        failures
+                                                        |> List.exists (fun f ->
+                                                            match f with
+                                                            | HashMismatch _ -> true
+                                                            | _ -> false)
+
+                                                    let hasMissing =
+                                                        failures
+                                                        |> List.exists (fun f ->
+                                                            match f with
+                                                            | MissingInStorage _ -> true
+                                                            | _ -> false)
+
+                                                    let errorMessage =
+                                                        if hasMissing then
+                                                            DirectoryVersionError.getErrorMessage DirectoryVersionError.FileNotFoundInObjectStorage
+                                                            + " "
+                                                            + errorDetails
+                                                        elif hasHashMismatch then
+                                                            DirectoryVersionError.getErrorMessage DirectoryVersionError.FileSha256HashDoesNotMatch
+                                                            + " "
+                                                            + errorDetails
+                                                        else
+                                                            $"File integrity check failed: {errorDetails}"
+
+                                                    return Error(GraceError.Create errorMessage metadata.CorrelationId)
+                                                else
+                                                    log.LogInformation(
+                                                        "{CurrentInstant}: Node: {HostName}; CorrelationId: {correlationId}; SHA-256 validation succeeded for DirectoryVersion; DirectoryVersionId: {DirectoryVersionId}; RelativePath: {RelativePath}; ValidatedCount: {ValidatedCount}; TotalElapsedMs: {TotalElapsedMs}.",
+                                                        getCurrentInstantExtended (),
+                                                        getMachineName,
+                                                        metadata.CorrelationId,
+                                                        directoryVersion.DirectoryVersionId,
+                                                        directoryVersion.RelativePath,
+                                                        validCount,
+                                                        totalElapsedMs
+                                                    )
+
+                                                    let newDirectoryVersion = DirectoryVersion()
+                                                    newDirectoryVersion.Class <- directoryVersion.Class
+                                                    newDirectoryVersion.DirectoryVersionId <- directoryVersion.DirectoryVersionId
+                                                    newDirectoryVersion.OwnerId <- directoryVersion.OwnerId
+                                                    newDirectoryVersion.OrganizationId <- directoryVersion.OrganizationId
+                                                    newDirectoryVersion.RepositoryId <- directoryVersion.RepositoryId
+                                                    newDirectoryVersion.RelativePath <- directoryVersion.RelativePath
+                                                    newDirectoryVersion.Sha256Hash <- directoryVersion.Sha256Hash
+                                                    newDirectoryVersion.Blake3Hash <- directoryVersion.Blake3Hash
+                                                    newDirectoryVersion.Directories <- directoryVersion.Directories
+                                                    newDirectoryVersion.Files <- directoryVersion.Files
+                                                    newDirectoryVersion.Size <- directoryVersion.Size
+                                                    newDirectoryVersion.CreatedAt <- directoryVersion.CreatedAt
+                                                    newDirectoryVersion.HashesValidated <- true
+                                                    return Ok(Created newDirectoryVersion)
                                     | SetRecursiveSize recursiveSize -> return Ok(RecursiveSizeSet recursiveSize)
                                     | DeleteLogical deleteReason ->
                                         let repositoryActorProxy =
@@ -983,7 +1402,13 @@ module DirectoryVersion =
                         this.correlationId <- metadata.CorrelationId
                         currentCommand <- getDiscriminatedUnionCaseName command
 
-                        match! isValid command metadata with
+                        let normalizedCommand =
+                            match command with
+                            | DirectoryVersionCommand.Create (directoryVersion, repositoryDto) ->
+                                DirectoryVersionCommand.Create(normalizeDirectoryVersionForSaveBoundary directoryVersion, repositoryDto)
+                            | _ -> command
+
+                        match! isValid normalizedCommand metadata with
                         | Ok command -> return! processCommand command metadata
                         | Error error -> return Error error
                     with
@@ -1082,7 +1507,7 @@ module DirectoryVersion =
                             // Step 4: Process the files in the current directory.
                             for fileVersion in fileVersions do
 
-                                let! fileBlobClient = getAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
+                                let! fileBlobClient = getReadableAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
                                 let! existsResult = fileBlobClient.ExistsAsync()
 
                                 if existsResult.Value = true then

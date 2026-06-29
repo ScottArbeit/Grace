@@ -20,6 +20,8 @@ type ReferenceDtoTests() =
     let branchId = Guid.Parse("55555555-5555-5555-5555-555555555555")
     let directoryId = Guid.Parse("66666666-6666-6666-6666-666666666666")
     let promotionSetId = Guid.Parse("77777777-7777-7777-7777-777777777777")
+    let rootSha256Hash = Sha256Hash "root-sha256"
+    let rootBlake3Hash = Blake3Hash "root-blake3"
 
     let createMetadata principal timestamp =
         {
@@ -40,7 +42,8 @@ type ReferenceDtoTests() =
                     repositoryId,
                     branchId,
                     directoryId,
-                    Sha256Hash "abc123",
+                    rootSha256Hash,
+                    rootBlake3Hash,
                     ReferenceType.Commit,
                     ReferenceText "commit reference",
                     Seq.empty
@@ -52,8 +55,16 @@ type ReferenceDtoTests() =
     member _.CreatedEventWithPrincipalPopulatesCreatedBy() =
         let updated = ReferenceDto.UpdateDto (createdEvent "alice@example.test") ReferenceDto.Default
 
+        Assert.That(updated.Sha256Hash, Is.EqualTo(rootSha256Hash))
+        Assert.That(updated.Blake3Hash, Is.EqualTo(rootBlake3Hash))
+        Assert.That(updated.DirectoryId, Is.EqualTo(directoryId))
         Assert.That(updated.CreatedBy, Is.EqualTo(Some "alice@example.test"))
         Assert.That(updated.CreatedAt, Is.EqualTo(timestamp))
+
+    [<Test>]
+    member _.DefaultReferenceDtoUsesExplicitEmptyBlake3ForLegacyReplayBoundary() =
+        Assert.That(ReferenceDto.Default.Sha256Hash, Is.EqualTo(Sha256Hash String.Empty))
+        Assert.That(ReferenceDto.Default.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
 
     [<Test>]
     member _.DefaultAndBlankCreatedPrincipalKeepCreatedByMissing() =

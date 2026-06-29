@@ -43,6 +43,12 @@ module CommandOutputContractRegistryTests =
         | "--directory-version-cache-days"
         | "--logical-delete-days"
         | "--save-days" -> "30"
+        | "--blake3-hash"
+        | "--blake3-hash-1"
+        | "--blake3-hash-2"
+        | "--sha256-hash"
+        | "--sha256-hash-1"
+        | "--sha256-hash-2" -> "abcd1234"
         | "--claim" -> "user:user-1"
         | "--conflict-resolution-policy" -> "NoConflicts"
         | "--default-server-api-version" -> "Latest"
@@ -215,16 +221,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 205
+        |> should equal 206
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 196
+        |> should equal 197
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 184
+        |> should equal 185
 
         countBy ImmediateJsonErrorOnly |> should equal 1
 
@@ -265,7 +271,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 184
+        jsonReady |> should equal 185
         intentionallyHumanOnly |> should equal 1
         deferredV2 |> should equal 11
         sourceOnly |> should equal 9
@@ -279,7 +285,7 @@ module CommandOutputContractRegistryTests =
         |> should equal CommandOutputContract.entries.Length
 
     [<Test>]
-    let ``every live routed leaf command has one registry entry`` () =
+    let ``every live leaf command has one registry entry`` () =
         let discovered =
             CommandOutputContract.discoverLeafCommands GraceCommand.rootCommand
             |> List.map commandId
@@ -288,7 +294,15 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.routedEntries
             |> List.map (fun entry -> entry.Identity.CommandId)
 
-        discovered.Length |> should equal 196
+        let sourceOnlyIds =
+            CommandOutputContract.sourceOnlyEntries
+            |> List.map (fun entry -> entry.Identity.CommandId)
+
+        discovered.Length
+        |> should equal CommandOutputContract.routedEntries.Length
+
+        for sourceOnlyId in sourceOnlyIds do
+            discovered |> should not' (contain sourceOnlyId)
 
         discovered.Length
         |> should equal (discovered |> List.distinct |> List.length)
@@ -406,12 +420,28 @@ module CommandOutputContractRegistryTests =
         | None -> Assert.Fail("branch annotate should have a registry entry.")
 
     [<Test>]
+    let ``diff blake3 json mode is centrally rendered instead of human-progress only`` () =
+        let identity = CommandOutputContract.commandIdentity [ "diff" ] "blake3"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            entry.CurrentJsonBehavior
+            |> should equal CommonRenderOutputEnvelope
+
+            entry.EnvelopeContract
+            |> should equal (ExistingGraceResultEnvelope ReuseExistingApiOrSdkDto)
+
+            entry.Features.JsonMode
+            |> should equal ExistingBehavior
+        | None -> Assert.Fail("diff blake3 should have a registry entry.")
+
+    [<Test>]
     let ``current common renderer entries keep the Grace envelope model`` () =
         let commonEntries =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 184
+        commonEntries.Length |> should equal 185
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -428,7 +458,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 184
+        commonEntries.Length |> should equal 185
 
         let parserInvalidEntries =
             commonEntries
@@ -511,7 +541,7 @@ module CommandOutputContractRegistryTests =
         parseResult.Errors.Count |> should equal 0
 
         let dto: Common.LocalOutputDto.MaintenanceStatsDto =
-            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef" }
+            { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef"; RootBlake3Hash = Some "af1349b9f5f9a1a6" }
 
         let exitCode, output =
             captureStdout (fun () ->
@@ -544,6 +574,11 @@ module CommandOutputContractRegistryTests =
             .GetString()
         |> should equal "0123456789abcdef"
 
+        returnValue
+            .GetProperty("RootBlake3Hash")
+            .GetString()
+        |> should equal "af1349b9f5f9a1a6"
+
         let mutable camelCaseReturnValue = Unchecked.defaultof<JsonElement>
 
         root.TryGetProperty("returnValue", &camelCaseReturnValue)
@@ -551,6 +586,90 @@ module CommandOutputContractRegistryTests =
 
         Constants.JsonSerializerOptions.PropertyNamingPolicy
         |> should equal null
+
+    [<Test>]
+    let ``maintenance list contents local dto serializes explicit dual hash fields`` () =
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "--output"
+                    "Json"
+                    "maintenance"
+                    "list-contents"
+                |]
+            )
+
+        parseResult.Errors.Count |> should equal 0
+
+        let dto: Common.LocalOutputDto.MaintenanceListContentsDto =
+            {
+                Summary = { DirectoryCount = 1; FileCount = 1; TotalFileSize = 12L; RootSha256Hash = Some "root-sha256"; RootBlake3Hash = Some "root-blake3" }
+                Directories =
+                    [|
+                        {
+                            RelativePath = "."
+                            DirectoryVersionId = Guid.Parse placeholderGuid
+                            Sha256Hash = "directory-sha256"
+                            Blake3Hash = "directory-blake3"
+                            Size = 12L
+                            LastWriteTimeUtc = DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc)
+                            Files =
+                                [|
+                                    {
+                                        RelativePath = "README.md"
+                                        FileName = "README.md"
+                                        Sha256Hash = "file-sha256"
+                                        Blake3Hash = "file-blake3"
+                                        Size = 12L
+                                        LastWriteTimeUtc = DateTime(2026, 6, 5, 0, 0, 0, DateTimeKind.Utc)
+                                    }
+                                |]
+                        }
+                    |]
+            }
+
+        let exitCode, output =
+            captureStdout (fun () ->
+                GraceReturnValue.Create dto "corr-local-list-contents-dto"
+                |> Ok
+                |> Common.renderOutput parseResult)
+
+        exitCode |> should equal 0
+        assertOneJsonObjectStdout output
+
+        use document = parseJsonDocument output
+
+        let summary =
+            document
+                .RootElement
+                .GetProperty("ReturnValue")
+                .GetProperty("Summary")
+
+        summary.GetProperty("RootSha256Hash").GetString()
+        |> should equal "root-sha256"
+
+        summary.GetProperty("RootBlake3Hash").GetString()
+        |> should equal "root-blake3"
+
+        let directory =
+            document
+                .RootElement
+                .GetProperty("ReturnValue")
+                .GetProperty("Directories")[0]
+
+        directory.GetProperty("Sha256Hash").GetString()
+        |> should equal "directory-sha256"
+
+        directory.GetProperty("Blake3Hash").GetString()
+        |> should equal "directory-blake3"
+
+        let file = directory.GetProperty("Files")[0]
+
+        file.GetProperty("Sha256Hash").GetString()
+        |> should equal "file-sha256"
+
+        file.GetProperty("Blake3Hash").GetString()
+        |> should equal "file-blake3"
 
     [<Test>]
     let ``watch json mode is registered as immediate error only`` () =

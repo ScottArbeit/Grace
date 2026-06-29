@@ -42,6 +42,8 @@ pub struct IssueDedupeDiscoveryParameters {
     pub expires_at: Option<chrono::DateTime<chrono::FixedOffset>>,
     #[serde(rename = "MinimumReuseRunLength", skip_serializing_if = "Option::is_none")]
     pub minimum_reuse_run_length: Option<i32>,
+    #[serde(rename = "KeyChunkAddresses", skip_serializing_if = "Option::is_none")]
+    pub key_chunk_addresses: Option<Vec<String>>,
     #[serde(rename = "Hints", skip_serializing_if = "Option::is_none")]
     pub hints: Option<Vec<models::ContentBlockReuseRangeHint>>,
 }
@@ -62,6 +64,7 @@ impl IssueDedupeDiscoveryParameters {
             operation_id: None,
             expires_at: None,
             minimum_reuse_run_length: None,
+            key_chunk_addresses: None,
             hints: None,
         }
     }

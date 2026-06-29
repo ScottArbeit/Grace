@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.Storage
 open Grace.Types.ContentBlockMetadata
 open Grace.Types.Common
+open Grace.Types.Repository
 open Grace.Types.UploadSession
 open NodaTime
 open NUnit.Framework
@@ -84,7 +85,13 @@ type DedupeIndexServerTests() =
             StoragePoolId = storagePoolId
             ContentBlockAddress = block.Address
             BlockFormatVersion = 1s
-            StoragePlacement = { ObjectKey = $"cas/content-blocks/{block.Address}"; ETag = Some $"etag-{metadataVersion}" }
+            StoragePlacement =
+                {
+                    StorageAccountName = "cas-account"
+                    StorageContainerName = StorageContainerName "cas-container"
+                    ObjectKey = StorageKeys.contentBlockObjectKey block.Address
+                    ETag = Some $"etag-{metadataVersion}"
+                }
             Ranges =
                 [|
                     {
@@ -108,6 +115,8 @@ type DedupeIndexServerTests() =
 
     let discover records requested = DedupeIndex.discover storagePoolId requested timestamp records
 
+    let defaultRepository repositoryId = { RepositoryDto.Default with RepositoryId = repositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+
     let candidateShape (candidate: ContentBlockDiscoveryCandidate) =
         candidate.ContentBlockAddress, candidate.OrdinalStart, candidate.OrdinalCount, candidate.MetadataVersion, candidate.ProtectedChunkAddresses
 
@@ -115,6 +124,16 @@ type DedupeIndexServerTests() =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
         let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
         $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
+
+    [<Test>]
+    member _.ProtectedChunkAddressKnownVectorKeepsSha256LabelAndPreimageStable() =
+        let chunkAddress = ChunkAddress "chunk-blake3-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+        let protectedAddress = protectedChunkAddress storagePoolId chunkAddress
+
+        Assert.That(protectedAddress, Is.EqualTo("protected-sha256:12ddb278d672194eeefe9d1bec08a381a8a514a40c65fc206296f68b213dab86"))
+
+        Assert.That(protectedAddress, Does.StartWith("protected-sha256:"))
+        Assert.That(protectedAddress, Does.Not.Contain("blake3"))
 
     [<Test>]
     member _.WritesOnlyAfterFinalizedManifestAndActiveMetadataWithoutRawInventory() =
@@ -146,6 +165,142 @@ type DedupeIndexServerTests() =
             Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(rawChunkAddress))
 
     [<Test>]
+    member _.FinalizedSdkGranularityOneChunkBlocksPublishCrossRepositoryCandidates() =
+        let repoA = defaultRepository (Guid.Parse("9a6b2b42-22de-4763-9d2c-f7187128bafe"))
+        let repoB = defaultRepository (Guid.Parse("40901fa3-3e69-4028-bf1d-2763d53a633e"))
+        let block = encodedBlock "sdk-one-chunk" 1
+        let manifest = manifestFor block
+
+        let metadata =
+            { metadataFor 1 12L block with
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                Ranges =
+                    [|
+                        { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = block.Payload.LongLength }
+                    |]
+            }
+
+        let records =
+            DedupeIndex.recordsAfterFinalize
+                {
+                    StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                    Session = { finalizedSession manifest with RepositoryId = repoA.RepositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+                    Manifest = manifest
+                    BlockPayloads = [| payloadFor block |]
+                    Metadata = [| metadata |]
+                }
+
+        let requestedChunk = (decodedChunkAddresses block)[0]
+        let repoBResult = DedupeIndex.discover (DedupeIndex.storagePoolIdForRepository repoB) [| requestedChunk |] timestamp records
+
+        let candidate =
+            repoBResult.CandidateContentBlocks
+            |> Array.exactlyOne
+
+        Assert.That(candidate.StoragePoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
+        Assert.That(candidate.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
+        Assert.That(candidate.ContentBlockAddress, Is.EqualTo(block.Address))
+        Assert.That(candidate.OrdinalStart, Is.EqualTo(0))
+        Assert.That(candidate.OrdinalCount, Is.EqualTo(1))
+        Assert.That(candidate.MetadataVersion, Is.EqualTo(metadata.MetadataVersion))
+        Assert.That(candidate.ProtectedChunkAddresses, Has.Length.EqualTo(1))
+        Assert.That(candidate.ProtectedChunkAddresses[0], Is.EqualTo(protectedChunkAddress StoragePoolRouting.defaultStoragePoolId requestedChunk))
+        Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(requestedChunk))
+        Assert.That(repoBResult.Policy.MinimumAcceptedReuseRunLength, Is.EqualTo(1))
+
+        Assert.That(
+            repoBResult.Policy.MinimumAcceptedReuseRunLength,
+            Is.LessThan(MinimumAcceptedReuseRunLength),
+            "Whole-block one-chunk candidates must be issued with a claimable minimum even though larger-block fragments still use the guarded threshold."
+        )
+
+        let hint = DedupeIndex.toReuseRangeHint candidate
+
+        let discovery =
+            UploadSessionCommand.IssueDedupeDiscovery
+                {
+                    OperationId = "op-one-chunk-discovery"
+                    ExpiresAt = timestamp.Plus(Duration.FromMinutes(5L))
+                    MinimumReuseRunLength = repoBResult.Policy.MinimumAcceptedReuseRunLength
+                    Hints = [| hint |]
+                }
+
+        let started =
+            { UploadSessionDto.Default with
+                UploadSessionId = Guid.NewGuid()
+                RepositoryId = repoB.RepositoryId
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                LifecycleState = UploadSessionLifecycleState.Started
+            }
+
+        let eventMetadata =
+            {
+                Timestamp = timestamp
+                CorrelationId = "corr-one-chunk-claimable"
+                Principal = "tester"
+                ClientType = Microsoft.FSharp.Core.Option.None
+                Properties = Dictionary<string, string>()
+            }
+
+        let issuedSession, discoveryEvents =
+            match Grace.Actors.UploadSession.decideCommand [] started discovery eventMetadata with
+            | Ok decision -> decision.Session, decision.Events
+            | Error error ->
+                Assert.Fail($"Expected one-chunk discovery issue to succeed, got {error.Error}.")
+                UploadSessionDto.Default, []
+
+        let claim =
+            UploadSessionCommand.ClaimReuseRanges
+                {
+                    OperationId = "op-one-chunk-claim"
+                    DiscoveryOperationId = "op-one-chunk-discovery"
+                    Ranges =
+                        [|
+                            { Hint = hint; Metadata = metadata }
+                        |]
+                }
+
+        match Grace.Actors.UploadSession.decideCommand discoveryEvents issuedSession claim eventMetadata with
+        | Ok decision ->
+            Assert.That(decision.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .ContentBlockAddress,
+                Is.EqualTo(block.Address)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .OrdinalCount,
+                Is.EqualTo(1)
+            )
+
+            Assert.That(
+                decision.Session.ClaimedReuseRanges[0]
+                    .MetadataVersion,
+                Is.EqualTo(metadata.MetadataVersion)
+            )
+        | Error error -> Assert.Fail($"Expected whole one-chunk reuse range claim to succeed, got {error.Error}.")
+
+    [<Test>]
+    member _.OneChunkFragmentsInsideLargerBlocksStayBelowTheAcceptedReuseRunLength() =
+        let block = encodedBlock "larger-block-short-fragment" 12
+        let manifest = manifestFor block
+
+        let fragmentMetadata =
+            { metadataFor 1 13L block with
+                Ranges =
+                    [|
+                        { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = int64 block.Chunks[0].Length }
+                    |]
+            }
+
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block fragmentMetadata)
+
+        Assert.That(records, Is.Empty, "A one-chunk fragment inside a larger ContentBlock must not bypass the minimum reuse-run guard.")
+
+    [<Test>]
     member _.ProtectedChunkAddressesUseStablePreimageSeparator() =
         let block = encodedBlock "stable-protection" 12
         let manifest = manifestFor block
@@ -155,6 +310,263 @@ type DedupeIndexServerTests() =
 
         Assert.That(records, Is.Not.Empty)
         Assert.That(records[0].ProtectedChunkAddresses[0], Is.EqualTo(expectedProtectedAddress))
+
+    [<Test>]
+    member _.DefaultStoragePoolExposesCrossRepositoryMetadataAfterPhysicalPlacementIsShardAware() =
+        let repoA = defaultRepository (Guid.Parse("507ccba8-8026-426c-ab65-c36d44625f1f"))
+        let repoB = defaultRepository (Guid.Parse("9ab312e7-d73f-48ca-8f44-07e6e4954a89"))
+        let repoAStoragePoolId = DedupeIndex.storagePoolIdForRepository repoA
+        let repoBStoragePoolId = DedupeIndex.storagePoolIdForRepository repoB
+        let block = encodedBlock "cross-repository-default-pool" 12
+        let manifest = manifestFor block
+        let repoAMetadata = { metadataFor 1 9L block with StoragePoolId = repoAStoragePoolId }
+
+        let repoARecords =
+            DedupeIndex.recordsAfterFinalize
+                {
+                    StoragePoolId = repoAStoragePoolId
+                    Session = { finalizedSession manifest with RepositoryId = repoA.RepositoryId }
+                    Manifest = manifest
+                    BlockPayloads = [| payloadFor block |]
+                    Metadata = [| repoAMetadata |]
+                }
+
+        let requestedChunk = (decodedChunkAddresses block)[0]
+        let repoAResult = DedupeIndex.discover repoAStoragePoolId [| requestedChunk |] timestamp repoARecords
+        let repoBResult = DedupeIndex.discover repoBStoragePoolId [| requestedChunk |] timestamp repoARecords
+
+        Assert.That(repoA.StoragePoolId, Is.EqualTo(repoB.StoragePoolId))
+        Assert.That(repoAStoragePoolId, Is.EqualTo(repoBStoragePoolId))
+        Assert.That(repoAResult.CandidateContentBlocks, Has.Length.EqualTo(1))
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks,
+            Has.Length.EqualTo(1),
+            "Repo B should discover repo A metadata when both repositories use the same StoragePool and physical CAS placement is shard-aware."
+        )
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks[0]
+                .StoragePoolId,
+            Is.EqualTo(StoragePoolRouting.defaultStoragePoolId)
+        )
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks[0]
+                .ManifestAddress,
+            Is.EqualTo(manifest.ManifestAddress)
+        )
+
+        Assert.That(
+            repoBResult.CandidateContentBlocks[0]
+                .ContentBlockAddress,
+            Is.EqualTo(block.Address)
+        )
+
+    [<Test>]
+    member _.FinalizedManifestRegistrationsAreScopedByRepositoryBeforeSharedPoolCollapse() =
+        let uploadSessionId = Guid.Parse("7121d3c7-61dc-4a47-a433-62d5a42288a7")
+        let scope = "/shared/path.bin"
+        let block = encodedBlock "shared-finalized-manifest-scope" 12
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 51L block
+        let repoA = Guid.Parse("ff4b53c2-bac9-4d8b-b31b-5f7f2d82d6d8")
+        let repoB = Guid.Parse("568ee3cc-5c49-4446-80c7-910875ea1a03")
+
+        let sessionFor repositoryId =
+            { finalizedSession manifest with
+                UploadSessionId = uploadSessionId
+                RepositoryId = repositoryId
+                AuthorizedScope = scope
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+            }
+
+        let registrationFor repositoryId : DedupeIndex.FinalizedManifestRegistration =
+            {
+                StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                Session = sessionFor repositoryId
+                Manifest = manifest
+                BlockPayloads = [| payloadFor block |]
+            }
+
+        let stateAfterRepoA, _ = DedupeIndex.registerFinalizedManifestInState DedupeIndex.DedupeIndexState.Empty (registrationFor repoA)
+
+        let stateAfterRepoB, _ = DedupeIndex.registerFinalizedManifestInState stateAfterRepoA (registrationFor repoB)
+        let stateAfterMetadata, _ = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterRepoB metadata
+
+        Assert.That(stateAfterMetadata.FinalizedManifests, Has.Length.EqualTo(2))
+
+        Assert.That(
+            DedupeIndex.finalizedScopedManifestContainsBlock
+                StoragePoolRouting.defaultStoragePoolId
+                repoA
+                scope
+                manifest.ManifestAddress
+                block.Address
+                stateAfterMetadata,
+            Is.True
+        )
+
+        Assert.That(
+            DedupeIndex.finalizedScopedManifestContainsBlock
+                StoragePoolRouting.defaultStoragePoolId
+                repoB
+                scope
+                manifest.ManifestAddress
+                block.Address
+                stateAfterMetadata,
+            Is.True
+        )
+
+    [<Test>]
+    member _.SharedPoolMetadataRefreshRewritesAllMatchingManifestRegistrations() =
+        let block = encodedBlock "shared-refresh-all-manifests" 12
+        let firstManifest = { manifestFor block with ManifestAddress = ManifestAddress "manifest-shared-refresh-first" }
+
+        let secondManifest = { manifestFor block with ManifestAddress = ManifestAddress "manifest-shared-refresh-second" }
+
+        let metadata = { metadataFor 2 61L block with StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+
+        let registrationFor manifest : DedupeIndex.FinalizedManifestRegistration =
+            let session = { finalizedSession manifest with StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
+
+            { StoragePoolId = StoragePoolRouting.defaultStoragePoolId; Session = session; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        let stateAfterFirst, _ = DedupeIndex.registerFinalizedManifestInState DedupeIndex.DedupeIndexState.Empty (registrationFor firstManifest)
+        let stateAfterSecond, _ = DedupeIndex.registerFinalizedManifestInState stateAfterFirst (registrationFor secondManifest)
+        let stateAfterMetadata, newRecords = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterSecond metadata
+
+        let refreshedManifestAddresses =
+            stateAfterMetadata.Records
+            |> Array.filter (fun record ->
+                record.StoragePoolId = StoragePoolRouting.defaultStoragePoolId
+                && record.ContentBlockAddress = block.Address
+                && record.MetadataVersion = metadata.MetadataVersion)
+            |> Array.map (fun record -> record.ManifestAddress)
+            |> Set.ofArray
+
+        Assert.That(newRecords, Has.Length.GreaterThanOrEqualTo(2))
+        Assert.That(refreshedManifestAddresses.Contains firstManifest.ManifestAddress, Is.True)
+        Assert.That(refreshedManifestAddresses.Contains secondManifest.ManifestAddress, Is.True)
+
+    [<Test>]
+    member _.CoalescedActiveRangesPublishBoundedWindowsBeyondFirstMaxWindow() =
+        let block =
+            encodedBlock
+                "bounded-windows"
+                (MaxWindowChunks
+                 + MinimumAcceptedReuseRunLength
+                 + 4)
+
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 52L block
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+
+        let laterWindow =
+            records
+            |> Array.tryFind (fun record -> record.OrdinalStart = MaxWindowChunks)
+
+        Assert.That(
+            records
+            |> Array.exists (fun record -> record.OrdinalStart = 0),
+            Is.True
+        )
+
+        Assert.That(laterWindow.IsSome, Is.True, "Long coalesced ranges must expose later bounded windows.")
+
+        let laterChunk = (decodedChunkAddresses block)[MaxWindowChunks]
+        let result = discover records [| laterChunk |]
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(MaxWindowChunks))
+
+    [<Test>]
+    member _.CoalescedActiveRangesPublishOverlappingTailWindowWhenRemainderIsShort() =
+        let block = encodedBlock "short-tail-window" (MaxWindowChunks + 4)
+        let manifest = manifestFor block
+        let metadata = metadataFor 1 53L block
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+
+        let tailStart = 4
+
+        Assert.That(
+            records
+            |> Array.exists (fun record -> record.OrdinalStart = 0),
+            Is.True
+        )
+
+        Assert.That(
+            records
+            |> Array.exists (fun record ->
+                record.OrdinalStart = tailStart
+                && record.OrdinalCount = MaxWindowChunks),
+            Is.True,
+            "A short tail after a full dedupe window still needs an overlapping record so tail chunks remain discoverable."
+        )
+
+        let tailChunk = (decodedChunkAddresses block)[MaxWindowChunks + 3]
+        let result = discover records [| tailChunk |]
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(tailStart))
+
+    [<Test>]
+    member _.ContiguousPerChunkActiveRangesPublishOnlyMaximalChainWindows() =
+        let block = encodedBlock "per-chunk-maximal-chain" (MinimumAcceptedReuseRunLength + 4)
+        let manifest = manifestFor block
+
+        let ranges =
+            block.Chunks
+            |> Array.mapi (fun index chunk ->
+                { OrdinalStart = index; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = chunk.PhysicalOffset; PhysicalLength = int64 chunk.Length })
+
+        let metadata =
+            { metadataFor 1 55L block with Ranges = ranges; TotalPhysicalBytes = block.Payload.LongLength; ActivePhysicalBytes = block.Payload.LongLength }
+
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+
+        Assert.That(records, Has.Length.EqualTo(1))
+        Assert.That(records[0].OrdinalStart, Is.EqualTo(0))
+        Assert.That(records[0].OrdinalCount, Is.EqualTo(block.Chunks.Length))
+
+        let suffixChunk = (decodedChunkAddresses block)[MinimumAcceptedReuseRunLength]
+        let result = discover records [| suffixChunk |]
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(0))
+
+    [<Test>]
+    member _.CoalescedActiveRangesBacktracksAroundDuplicatePhysicalCopies() =
+        let block = encodedBlock "alternate-chain" 12
+        let manifest = manifestFor block
+
+        let metadata =
+            { metadataFor 1 54L block with
+                Ranges =
+                    [|
+                        { OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = 400L }
+                        { OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 1024L; PhysicalLength = 400L }
+                        { OrdinalStart = 4; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 400L; PhysicalLength = 400L }
+                    |]
+                TotalPhysicalBytes = 1200L
+                ActivePhysicalBytes = 1200L
+            }
+
+        let records = DedupeIndex.recordsAfterFinalize (sourceFor (finalizedSession manifest) manifest block metadata)
+        let requestedChunk = (decodedChunkAddresses block)[4]
+        let result = discover records [| requestedChunk |]
+
+        Assert.That(
+            records
+            |> Array.exists (fun record ->
+                record.OrdinalStart = 0
+                && record.OrdinalCount = MinimumAcceptedReuseRunLength),
+            Is.True,
+            "The duplicate physical copy at the same logical start must not interrupt the active split chain."
+        )
+
+        Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
+        Assert.That(result.CandidateContentBlocks[0].OrdinalCount, Is.EqualTo(MinimumAcceptedReuseRunLength))
 
     [<Test>]
     member _.DiscoveryLimitsCandidateWindowsForAKeyChunk() =
@@ -427,6 +839,81 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].StoragePoolId, Is.EqualTo(storagePoolId))
         Assert.That(result.CandidateContentBlocks[0].MetadataVersion, Is.EqualTo(localMetadata.MetadataVersion))
+
+    [<Test>]
+    member _.IdenticalContentBlocksRemainReusableOnlyInsideTheSameStoragePool() =
+        let block = encodedBlock "identical-cross-pool" 12
+        let poolA = StoragePoolId "pool-a"
+        let poolB = StoragePoolId "pool-b"
+
+        let manifestForPool storagePoolId =
+            let size =
+                block.Chunks
+                |> Array.sumBy (fun chunk -> int64 chunk.Length)
+
+            let manifest =
+                FileManifest.Create(
+                    ManifestAddress String.Empty,
+                    RabinChunking.SuiteName,
+                    FileContentHash(ContentAddress.computeBlake3Hex block.Payload),
+                    size,
+                    storagePoolId,
+                    [
+                        ContentBlock.Create(block.Address, 0L, size)
+                    ]
+                )
+
+            { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+        let sessionFor storagePoolId manifest =
+            { finalizedSession manifest with StoragePoolId = storagePoolId; FinalizedManifestAddress = Some manifest.ManifestAddress }
+
+        let metadataForPool storagePoolId metadataVersion =
+            { metadataFor 1 metadataVersion block with
+                StoragePoolId = storagePoolId
+                StoragePlacement =
+                    {
+                        StorageAccountName = $"cas-{storagePoolId}"
+                        StorageContainerName = StorageContainerName $"cas-{storagePoolId}"
+                        ObjectKey = $"{storagePoolId}/{StorageKeys.contentBlockObjectKey block.Address}"
+                        ETag = Some $"etag-{metadataVersion}"
+                    }
+            }
+
+        let registrationFor storagePoolId manifest : DedupeIndex.FinalizedManifestRegistration =
+            { StoragePoolId = storagePoolId; Session = sessionFor storagePoolId manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
+
+        let manifestA = manifestForPool poolA
+        let manifestB = manifestForPool poolB
+
+        let stateAfterPoolARegistration, _ = DedupeIndex.registerFinalizedManifestInState DedupeIndex.DedupeIndexState.Empty (registrationFor poolA manifestA)
+
+        let stateAfterPoolAMetadata, _ = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterPoolARegistration (metadataForPool poolA 31L)
+
+        let stateAfterPoolBRegistration, _ = DedupeIndex.registerFinalizedManifestInState stateAfterPoolAMetadata (registrationFor poolB manifestB)
+        let stateAfterBothPools, _ = DedupeIndex.writeAfterAuthoritativeMetadataInState stateAfterPoolBRegistration (metadataForPool poolB 41L)
+
+        let requestedChunk = (decodedChunkAddresses block)[0]
+        let poolAResult = DedupeIndex.discover poolA [| requestedChunk |] timestamp stateAfterBothPools.Records
+        let poolBResult = DedupeIndex.discover poolB [| requestedChunk |] timestamp stateAfterBothPools.Records
+        let defaultPoolResult = DedupeIndex.discover storagePoolId [| requestedChunk |] timestamp stateAfterBothPools.Records
+
+        let poolACandidate =
+            poolAResult.CandidateContentBlocks
+            |> Array.exactlyOne
+
+        let poolBCandidate =
+            poolBResult.CandidateContentBlocks
+            |> Array.exactlyOne
+
+        Assert.That(defaultPoolResult.CandidateContentBlocks, Is.Empty)
+        Assert.That(poolACandidate.StoragePoolId, Is.EqualTo(poolA))
+        Assert.That(poolACandidate.ManifestAddress, Is.EqualTo(manifestA.ManifestAddress))
+        Assert.That(poolACandidate.ContentBlockAddress, Is.EqualTo(block.Address))
+        Assert.That(poolBCandidate.StoragePoolId, Is.EqualTo(poolB))
+        Assert.That(poolBCandidate.ManifestAddress, Is.EqualTo(manifestB.ManifestAddress))
+        Assert.That(poolBCandidate.ContentBlockAddress, Is.EqualTo(block.Address))
+        Assert.That(poolACandidate.ProtectedChunkAddresses[0], Is.Not.EqualTo(poolBCandidate.ProtectedChunkAddresses[0]))
 
     [<Test>]
     member _.NewerNonAuthoritativeMetadataEvictsOlderCandidateWindows() =

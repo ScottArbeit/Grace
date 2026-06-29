@@ -2,6 +2,8 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.CLI.Command
+open Grace.Types.Common
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -54,3 +56,27 @@ module ConnectTests =
 
             File.Exists(getGraceConfigPath root)
             |> should equal true)
+
+    [<Test>]
+    let ``connect skip decision requires matching blake3 when remote has one`` () =
+        let remoteFile =
+            FileVersion.CreateWithHashes
+                (RelativePath "same-sha-different-blake3.txt")
+                (Sha256Hash "shared-sha")
+                (Blake3Hash "remote-blake3")
+                String.Empty
+                false
+                10L
+
+        Connect.existingFileMatchesRemoteVersion (Sha256Hash "shared-sha") (Blake3Hash "local-blake3") remoteFile
+        |> should equal false
+
+        Connect.existingFileMatchesRemoteVersion (Sha256Hash "shared-sha") (Blake3Hash "remote-blake3") remoteFile
+        |> should equal true
+
+    [<Test>]
+    let ``connect skip decision keeps legacy empty blake3 remote compatible`` () =
+        let remoteFile = FileVersion.Create (RelativePath "legacy-sha-only.txt") (Sha256Hash "legacy-sha") String.Empty false 10L
+
+        Connect.existingFileMatchesRemoteVersion (Sha256Hash "legacy-sha") (Blake3Hash "different-local-blake3") remoteFile
+        |> should equal true

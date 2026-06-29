@@ -44,6 +44,35 @@ module PromotionSet =
 
     type private DirectorySnapshot = { DirectoriesByPath: Dictionary<RelativePath, DirectoryVersion>; FilesByPath: Dictionary<RelativePath, FileVersion> }
 
+    type internal ComputedDirectoryMetadata = { DirectoryVersionId: DirectoryVersionId; Sha256Hash: Sha256Hash; Blake3Hash: Blake3Hash; Size: int64 }
+
+    let internal localDirectoryVersionForPromotionHash ownerId organizationId repositoryId relativePath metadata lastWriteTimeUtc =
+        LocalDirectoryVersion.CreateWithHashes
+            metadata.DirectoryVersionId
+            ownerId
+            organizationId
+            repositoryId
+            relativePath
+            metadata.Sha256Hash
+            metadata.Blake3Hash
+            (List<DirectoryVersionId>())
+            (List<LocalFileVersion>())
+            metadata.Size
+            lastWriteTimeUtc
+
+    let internal fileVersionEquivalent (left: FileVersion option) (right: FileVersion option) =
+        match left, right with
+        | Option.None, Option.None -> true
+        | Option.Some leftFile, Option.Some rightFile ->
+            let leftBlake3Hash = string leftFile.Blake3Hash
+            let rightBlake3Hash = string rightFile.Blake3Hash
+
+            leftFile.Sha256Hash = rightFile.Sha256Hash
+            && (String.IsNullOrWhiteSpace leftBlake3Hash
+                || String.IsNullOrWhiteSpace rightBlake3Hash
+                || leftFile.Blake3Hash = rightFile.Blake3Hash)
+        | _ -> false
+
     type private StepConflictFile =
         {
             FilePath: RelativePath
@@ -538,11 +567,7 @@ module PromotionSet =
             else
                 Option.None
 
-        member private this.FileVersionEquivalent(left: FileVersion option, right: FileVersion option) =
-            match left, right with
-            | Option.None, Option.None -> true
-            | Option.Some leftFile, Option.Some rightFile -> leftFile.Sha256Hash = rightFile.Sha256Hash
-            | _ -> false
+        member private this.FileVersionEquivalent(left: FileVersion option, right: FileVersion option) = fileVersionEquivalent left right
 
         member private this.LoadDirectorySnapshot(directoryVersionId: DirectoryVersionId) =
             task {
@@ -619,9 +644,9 @@ module PromotionSet =
                 try
                     let payloadBytes = Encoding.UTF8.GetBytes(textContent)
                     use hashStream = new MemoryStream(payloadBytes)
-                    let! sha256Hash = computeSha256ForFile hashStream filePath
+                    let! sha256Hash, blake3Hash = computeHashesForFile hashStream filePath
 
-                    let fileVersion = FileVersion.Create filePath sha256Hash String.Empty false (int64 payloadBytes.Length)
+                    let fileVersion = FileVersion.CreateWithHashes filePath sha256Hash blake3Hash String.Empty false (int64 payloadBytes.Length)
 
                     let! writeUri = getUriWithWriteSharedAccessSignatureForFileVersion repositoryDto fileVersion metadata.CorrelationId
                     let blobClient = BlobClient(writeUri)
@@ -893,7 +918,7 @@ module PromotionSet =
 
                     directoryPathIndex <- directoryPathIndex + 1
 
-                let computedDirectoryMetadata = Dictionary<RelativePath, DirectoryVersionId * Sha256Hash>(StringComparer.OrdinalIgnoreCase)
+                let computedDirectoryMetadata = Dictionary<RelativePath, ComputedDirectoryMetadata>(StringComparer.OrdinalIgnoreCase)
                 let directoryVersionsToCreate = ResizeArray<DirectoryVersion>()
                 let mutable materializationError: GraceError option = Option.None
                 let mutable buildIndex = 0
@@ -917,20 +942,16 @@ module PromotionSet =
 
                     while childIndex < childDirectoryPathsArray.Length do
                         let childDirectoryPath = childDirectoryPathsArray[childIndex]
-                        let childDirectoryId, childSha = computedDirectoryMetadata[childDirectoryPath]
-                        childDirectoryIds.Add(childDirectoryId)
+                        let childMetadata = computedDirectoryMetadata[childDirectoryPath]
+                        childDirectoryIds.Add(childMetadata.DirectoryVersionId)
 
                         localChildDirectories.Add(
-                            LocalDirectoryVersion.Create
-                                childDirectoryId
+                            localDirectoryVersionForPromotionHash
                                 promotionSetDto.OwnerId
                                 promotionSetDto.OrganizationId
                                 promotionSetDto.RepositoryId
                                 childDirectoryPath
-                                childSha
-                                (List<DirectoryVersionId>())
-                                (List<LocalFileVersion>())
-                                0L
+                                childMetadata
                                 DateTime.UtcNow
                         )
 
@@ -954,15 +975,26 @@ module PromotionSet =
                             localDirectoryFiles.Add(fileVersion.ToLocalFileVersion DateTime.UtcNow)
                             orderedFileIndex <- orderedFileIndex + 1
 
-                    let computedSha = computeSha256ForDirectory directoryPath localChildDirectories localDirectoryFiles
+                    let directorySize = getDirectorySize directoryFiles
+
+                    let preimageEntries =
+                        Seq.append
+                            (localChildDirectories
+                             |> Seq.map (fun directory ->
+                                 DirectoryVersionPreimageEntry.Directory directory.RelativePath directory.Size directory.Blake3Hash directory.Sha256Hash))
+                            (localDirectoryFiles
+                             |> Seq.map (fun file -> DirectoryVersionPreimageEntry.File file.RelativePath file.Size file.Blake3Hash file.Sha256Hash))
+                        |> Seq.toArray
+
+                    let computedSha = computeSha256ForDirectoryEntries directoryPath preimageEntries
+                    let computedBlake3 = computeBlake3ForDirectory directoryPath preimageEntries
 
                     let tryReuseDirectoryId (snapshot: DirectorySnapshot) =
                         let mutable existingDirectoryVersion = DirectoryVersion.Default
 
-                        if
-                            snapshot.DirectoriesByPath.TryGetValue(directoryPath, &existingDirectoryVersion)
-                            && existingDirectoryVersion.Sha256Hash = computedSha
-                        then
+                        if snapshot.DirectoriesByPath.TryGetValue(directoryPath, &existingDirectoryVersion)
+                           && existingDirectoryVersion.Sha256Hash = computedSha
+                           && existingDirectoryVersion.Blake3Hash = computedBlake3 then
                             Option.Some existingDirectoryVersion.DirectoryVersionId
                         else
                             Option.None
@@ -981,20 +1013,27 @@ module PromotionSet =
 
                     if reusedDirectoryVersionId.IsNone then
                         let directoryVersion =
-                            DirectoryVersion.Create
+                            DirectoryVersion.CreateWithHashes
                                 directoryVersionId
                                 promotionSetDto.OwnerId
                                 promotionSetDto.OrganizationId
                                 promotionSetDto.RepositoryId
                                 directoryPath
                                 computedSha
+                                computedBlake3
                                 childDirectoryIds
                                 directoryFiles
-                                (getDirectorySize directoryFiles)
+                                directorySize
 
                         directoryVersionsToCreate.Add(directoryVersion)
 
-                    computedDirectoryMetadata[directoryPath] <- (directoryVersionId, computedSha)
+                    computedDirectoryMetadata[directoryPath] <- {
+                                                                    DirectoryVersionId = directoryVersionId
+                                                                    Sha256Hash = computedSha
+                                                                    Blake3Hash = computedBlake3
+                                                                    Size = directorySize
+                                                                }
+
                     buildIndex <- buildIndex + 1
 
                 let mutable createIndex = 0
@@ -1019,10 +1058,10 @@ module PromotionSet =
                 match materializationError with
                 | Option.Some graceError -> return Error graceError
                 | Option.None ->
-                    let mutable rootDirectory = Unchecked.defaultof<(DirectoryVersionId * Sha256Hash)>
+                    let mutable rootDirectory = Unchecked.defaultof<ComputedDirectoryMetadata>
 
                     if computedDirectoryMetadata.TryGetValue(RootDirectoryPath, &rootDirectory) then
-                        return Ok(fst rootDirectory)
+                        return Ok rootDirectory.DirectoryVersionId
                     else
                         return
                             Error(
@@ -1780,6 +1819,7 @@ module PromotionSet =
                             promotionSetDto.TargetBranchId,
                             step.AppliedDirectoryVersionId,
                             directoryVersionDto.DirectoryVersion.Sha256Hash,
+                            directoryVersionDto.DirectoryVersion.Blake3Hash,
                             ReferenceType.Promotion,
                             referenceText,
                             links

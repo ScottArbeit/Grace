@@ -14,17 +14,42 @@ module ContentBlockMetadata =
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockStoragePlacement =
         {
+            [<Id(0u)>]
+            StorageAccountName: StorageAccountName
+            [<Id(1u)>]
+            StorageContainerName: StorageContainerName
+            [<Id(2u)>]
             ObjectKey: string
+            [<Id(3u)>]
             ETag: string option
         }
 
-        static member Empty = { ObjectKey = String.Empty; ETag = None }
+        static member Empty =
+            { StorageAccountName = String.Empty; StorageContainerName = StorageContainerName String.Empty; ObjectKey = String.Empty; ETag = None }
 
     [<CLIMutable; GenerateSerializer>]
-    type ContentBlockMetadataRange = { OrdinalStart: int; OrdinalCount: int; ActiveManifestCount: int; PhysicalOffset: int64; PhysicalLength: int64 }
+    type ContentBlockMetadataRange =
+        {
+            [<Id(0u)>]
+            OrdinalStart: int
+            [<Id(1u)>]
+            OrdinalCount: int
+            [<Id(2u)>]
+            ActiveManifestCount: int
+            [<Id(3u)>]
+            PhysicalOffset: int64
+            [<Id(4u)>]
+            PhysicalLength: int64
+        }
 
     [<CLIMutable; GenerateSerializer>]
-    type ContentBlockRangeQuery = { OrdinalStart: int; OrdinalCount: int }
+    type ContentBlockRangeQuery =
+        {
+            [<Id(0u)>]
+            OrdinalStart: int
+            [<Id(1u)>]
+            OrdinalCount: int
+        }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockRangePresence =
@@ -45,7 +70,15 @@ module ContentBlockMetadata =
         static member GetKnownTypes() = GetKnownTypes<ContentBlockRangeGcSafety>()
 
     [<CLIMutable; GenerateSerializer>]
-    type ContentBlockRangeGcSafetyContext = { Presence: ContentBlockRangePresence; HasPendingContributionWorkflow: bool; HasActiveReuseClaim: bool }
+    type ContentBlockRangeGcSafetyContext =
+        {
+            [<Id(0u)>]
+            Presence: ContentBlockRangePresence
+            [<Id(1u)>]
+            HasPendingContributionWorkflow: bool
+            [<Id(2u)>]
+            HasActiveReuseClaim: bool
+        }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockCompactionSelection =
@@ -60,20 +93,30 @@ module ContentBlockMetadata =
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockCompactionCandidateContext =
         {
+            [<Id(0u)>]
             Now: Instant
+            [<Id(1u)>]
             ExpectedMetadataVersion: MetadataVersion
+            [<Id(2u)>]
             HasActiveUpload: bool
+            [<Id(3u)>]
             HasActiveFinalization: bool
+            [<Id(4u)>]
             HasActiveRangeClaim: bool
+            [<Id(5u)>]
             HasActiveCompaction: bool
         }
 
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockCompactionChurnState =
         {
+            [<Id(0u)>]
             HasActiveUpload: bool
+            [<Id(1u)>]
             HasActiveFinalization: bool
+            [<Id(2u)>]
             HasActiveRangeClaim: bool
+            [<Id(3u)>]
             HasActiveCompaction: bool
         }
 
@@ -82,15 +125,25 @@ module ContentBlockMetadata =
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadata =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             StoragePoolId: StoragePoolId
+            [<Id(2u)>]
             ContentBlockAddress: ContentBlockAddress
+            [<Id(3u)>]
             BlockFormatVersion: int16
+            [<Id(4u)>]
             StoragePlacement: ContentBlockStoragePlacement
+            [<Id(5u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(6u)>]
             TotalPhysicalBytes: int64
+            [<Id(7u)>]
             ActivePhysicalBytes: int64
+            [<Id(8u)>]
             MetadataVersion: MetadataVersion
+            [<Id(9u)>]
             UpdatedAt: Instant
         }
 
@@ -109,38 +162,71 @@ module ContentBlockMetadata =
             }
 
     [<GenerateSerializer>]
-    type ReplaceContentBlockMetadata = { OperationId: string; ExpectedMetadataVersion: MetadataVersion option; Metadata: ContentBlockMetadata }
+    type ReplaceContentBlockMetadata =
+        {
+            [<Id(0u)>]
+            OperationId: string
+            [<Id(1u)>]
+            ExpectedMetadataVersion: MetadataVersion option
+            [<Id(2u)>]
+            Metadata: ContentBlockMetadata
+        }
 
     [<GenerateSerializer>]
     type MergeContentBlockPhysicalRanges =
         {
+            [<Id(0u)>]
             OperationId: string
+            [<Id(1u)>]
             StoragePoolId: StoragePoolId
+            [<Id(2u)>]
             ContentBlockAddress: ContentBlockAddress
+            [<Id(3u)>]
             BlockFormatVersion: int16
+            [<Id(4u)>]
             StoragePlacement: ContentBlockStoragePlacement
+            [<Id(5u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(6u)>]
+            ExpectedMetadataVersion: MetadataVersion option
+            [<Id(7u)>]
+            RequireMissingMetadata: bool
+            [<Id(8u)>]
+            ExpectedRanges: ContentBlockMetadataRange array
+            [<Id(9u)>]
+            IsFinalizeContribution: bool
         }
 
     [<GenerateSerializer>]
     type CompactContentBlockPhysicalRanges =
         {
+            [<Id(0u)>]
             OperationId: string
+            [<Id(1u)>]
             ExpectedMetadataVersion: MetadataVersion
+            [<Id(2u)>]
             StoragePlacement: ContentBlockStoragePlacement
+            [<Id(3u)>]
             Ranges: ContentBlockMetadataRange array
+            [<Id(4u)>]
             CandidateContext: ContentBlockCompactionCandidateContext
         }
 
     [<GenerateSerializer>]
-    type SetContentBlockCompactionChurnState = { OperationId: string; ChurnState: ContentBlockCompactionChurnState }
+    type SetContentBlockCompactionChurnState =
+        {
+            [<Id(0u)>]
+            OperationId: string
+            [<Id(1u)>]
+            ChurnState: ContentBlockCompactionChurnState
+        }
 
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
-        | ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
-        | MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
-        | CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
-        | SetCompactionChurnState of setChurnState: SetContentBlockCompactionChurnState
+        | [<Id(0u)>] ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
+        | [<Id(1u)>] MergePhysicalRanges of merge: MergeContentBlockPhysicalRanges
+        | [<Id(2u)>] CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
+        | [<Id(3u)>] SetCompactionChurnState of setChurnState: SetContentBlockCompactionChurnState
 
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 
@@ -187,14 +273,225 @@ module ContentBlockMetadata =
             Message: string
         }
 
-    let findRanges (metadata: ContentBlockMetadata) query =
-        if query.OrdinalCount <= 0 then
-            Array.empty
+    let private trySelectContiguousRangeEvidence (metadata: ContentBlockMetadata) query =
+        if isNull (box metadata)
+           || isNull metadata.Ranges
+           || isNull (box query)
+           || query.OrdinalStart < 0
+           || query.OrdinalCount <= 0
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
+            None
         else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
+
+            let candidates =
+                metadata.Ranges
+                |> Array.choose (fun range ->
+                    if range.ActiveManifestCount > 0
+                       && range.OrdinalStart >= 0
+                       && range.OrdinalCount > 0
+                       && range.OrdinalCount
+                          <= Int32.MaxValue - range.OrdinalStart
+                       && range.PhysicalLength > 0L
+                       && range.PhysicalLength
+                          <= Int64.MaxValue - range.PhysicalOffset
+                       && range.OrdinalStart >= query.OrdinalStart
+                       && rangeEnd range <= queryEnd then
+                        Some range
+                    else
+                        None)
+                |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
+
+            let rec tryBuildChain nextOrdinal nextPhysicalOffset selected =
+                if nextOrdinal = queryEnd then
+                    Some(List.rev selected |> List.toArray)
+                else
+                    candidates
+                    |> Array.filter (fun candidate ->
+                        candidate.OrdinalStart = nextOrdinal
+                        && candidate.PhysicalOffset = nextPhysicalOffset)
+                    |> Array.tryPick (fun candidate ->
+                        let candidateEnd =
+                            if candidate.OrdinalCount > Int32.MaxValue - candidate.OrdinalStart then
+                                Int32.MaxValue
+                            else
+                                candidate.OrdinalStart + candidate.OrdinalCount
+
+                        let candidatePhysicalEnd =
+                            if candidate.PhysicalLength > Int64.MaxValue - candidate.PhysicalOffset then
+                                Int64.MaxValue
+                            else
+                                candidate.PhysicalOffset
+                                + candidate.PhysicalLength
+
+                        if candidateEnd > queryEnd then
+                            None
+                        else
+                            tryBuildChain candidateEnd candidatePhysicalEnd (candidate :: selected))
+
+            candidates
+            |> Array.filter (fun candidate -> candidate.OrdinalStart = query.OrdinalStart)
+            |> Array.tryPick (fun candidate ->
+                let candidateEnd =
+                    if candidate.OrdinalCount > Int32.MaxValue - candidate.OrdinalStart then
+                        Int32.MaxValue
+                    else
+                        candidate.OrdinalStart + candidate.OrdinalCount
+
+                let candidatePhysicalEnd =
+                    if candidate.PhysicalLength > Int64.MaxValue - candidate.PhysicalOffset then
+                        Int64.MaxValue
+                    else
+                        candidate.PhysicalOffset
+                        + candidate.PhysicalLength
+
+                if candidateEnd > queryEnd then
+                    None
+                else
+                    tryBuildChain candidateEnd candidatePhysicalEnd [ candidate ])
+
+    let private trySynthesizeContiguousRange (metadata: ContentBlockMetadata) query =
+        match trySelectContiguousRangeEvidence metadata query with
+        | None -> None
+        | Some selected ->
+            let first = selected[0]
+
+            Some
+                {
+                    OrdinalStart = query.OrdinalStart
+                    OrdinalCount = query.OrdinalCount
+                    ActiveManifestCount =
+                        selected
+                        |> Seq.map (fun range -> range.ActiveManifestCount)
+                        |> Seq.min
+                    PhysicalOffset = first.PhysicalOffset
+                    PhysicalLength =
+                        selected
+                        |> Seq.sumBy (fun range -> range.PhysicalLength)
+                }
+
+    let private trySynthesizeUniformCoveringRange (metadata: ContentBlockMetadata) query =
+        if query.OrdinalStart < 0
+           || query.OrdinalCount <= 1
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
+            None
+        else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) =
+                if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
+                    Int32.MaxValue
+                else
+                    range.OrdinalStart + range.OrdinalCount
+
             metadata.Ranges
             |> Array.filter (fun range ->
-                range.OrdinalStart = query.OrdinalStart
-                && range.OrdinalCount = query.OrdinalCount)
+                range.ActiveManifestCount > 0
+                && range.OrdinalStart >= 0
+                && range.OrdinalCount > 0
+                && range.OrdinalCount
+                   <= Int32.MaxValue - range.OrdinalStart
+                && range.PhysicalOffset >= 0L
+                && range.PhysicalLength > 0L
+                && range.PhysicalLength
+                   <= Int64.MaxValue - range.PhysicalOffset
+                && range.OrdinalStart <= query.OrdinalStart
+                && rangeEnd range >= queryEnd
+                && range.PhysicalLength % int64 range.OrdinalCount = 0L)
+            |> Array.sortBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
+            |> Array.tryHead
+            |> Option.map (fun range ->
+                let bytesPerOrdinal = range.PhysicalLength / int64 range.OrdinalCount
+                let ordinalOffset = query.OrdinalStart - range.OrdinalStart
+
+                { range with
+                    OrdinalStart = query.OrdinalStart
+                    OrdinalCount = query.OrdinalCount
+                    PhysicalOffset =
+                        range.PhysicalOffset
+                        + (int64 ordinalOffset * bytesPerOrdinal)
+                    PhysicalLength = int64 query.OrdinalCount * bytesPerOrdinal
+                })
+
+    let findRanges (metadata: ContentBlockMetadata) query =
+        if isNull (box metadata)
+           || isNull metadata.Ranges
+           || isNull (box query)
+           || query.OrdinalCount <= 0 then
+            Array.empty
+        else
+            let exactRanges =
+                metadata.Ranges
+                |> Array.filter (fun range ->
+                    range.OrdinalStart = query.OrdinalStart
+                    && range.OrdinalCount = query.OrdinalCount)
+
+            let activeExactRanges =
+                exactRanges
+                |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+            if activeExactRanges.Length > 0 then
+                activeExactRanges
+            else
+                match trySynthesizeContiguousRange metadata query with
+                | Some range -> [| range |]
+                | None ->
+                    match trySynthesizeUniformCoveringRange metadata query with
+                    | Some range -> [| range |]
+                    | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
+
+    let findRangeEvidence (metadata: ContentBlockMetadata) query =
+        if isNull (box metadata)
+           || isNull metadata.Ranges
+           || isNull (box query)
+           || query.OrdinalStart < 0
+           || query.OrdinalCount <= 0
+           || query.OrdinalCount > Int32.MaxValue - query.OrdinalStart then
+            Array.empty
+        else
+            let queryEnd = query.OrdinalStart + query.OrdinalCount
+
+            let rangeEnd (range: ContentBlockMetadataRange) =
+                if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
+                    Int32.MaxValue
+                else
+                    range.OrdinalStart + range.OrdinalCount
+
+            let exactRanges =
+                metadata.Ranges
+                |> Array.filter (fun range ->
+                    range.OrdinalStart = query.OrdinalStart
+                    && range.OrdinalCount = query.OrdinalCount)
+
+            let activeExactRanges =
+                exactRanges
+                |> Array.filter (fun range -> range.ActiveManifestCount > 0)
+
+            if activeExactRanges.Length > 0 then
+                activeExactRanges
+            else
+                match trySelectContiguousRangeEvidence metadata query with
+                | Some ranges -> ranges
+                | None ->
+                    let activeCoveringRanges =
+                        metadata.Ranges
+                        |> Array.filter (fun range ->
+                            range.ActiveManifestCount > 0
+                            && range.OrdinalStart >= 0
+                            && range.OrdinalCount > 0
+                            && range.OrdinalCount
+                               <= Int32.MaxValue - range.OrdinalStart
+                            && range.PhysicalLength > 0L
+                            && range.PhysicalLength
+                               <= Int64.MaxValue - range.PhysicalOffset
+                            && range.OrdinalStart <= query.OrdinalStart
+                            && rangeEnd range >= queryEnd)
+
+                    if activeCoveringRanges.Length > 0 then activeCoveringRanges
+                    elif exactRanges.Length > 0 then exactRanges
+                    else Array.empty
 
     let tryFindRange metadata query =
         findRanges metadata query

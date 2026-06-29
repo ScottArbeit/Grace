@@ -4,6 +4,7 @@ open Azure
 open Grace.Actors.Services
 open Grace.Shared
 open Grace.Shared.Utilities
+open Grace.Types.ContentBlockMetadata
 open Grace.Types.Common
 open Grace.Types.Repository
 open System
@@ -26,6 +27,12 @@ module internal AnnotationMaterialization =
 
     type ObjectPayloadReader = string -> CorrelationId -> CancellationToken -> Task<Result<byte array, GraceError>>
 
+    type ContentBlockMetadataResolver =
+        FileManifest -> ContentBlockAddress -> CorrelationId -> CancellationToken -> Task<Result<ContentBlockMetadata, GraceError>>
+
+    type ContentBlockPlacementPayloadReader =
+        ContentBlockStoragePlacement -> ContentBlockAddress -> CorrelationId -> CancellationToken -> Task<Result<byte array, GraceError>>
+
     let private error correlationId message = GraceError.Create message correlationId
 
     let private copyBytes (bytes: byte array) =
@@ -37,6 +44,8 @@ module internal AnnotationMaterialization =
         SHA256.HashData(bytes)
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
+
+    let private blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
 
     let private validateFileVersionShape (fileVersion: FileVersion) correlationId =
         if isNull (box fileVersion) then
@@ -70,6 +79,11 @@ module internal AnnotationMaterialization =
             && not (String.Equals(sha256Hex bytes, fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase))
         then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Sha256Hash.")
+        elif
+            not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
+            && not (String.Equals(blake3Hex bytes, fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase))
+        then
+            Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' materialized bytes do not match FileVersion.Blake3Hash.")
         else
             Ok(copyBytes bytes)
 
@@ -117,7 +131,65 @@ module internal AnnotationMaterialization =
 
     let private describeManifestValidationError validationError = $"Invalid manifest reconstruction: {validationError}."
 
-    let private manifestPayloads (manifest: FileManifest) (readObjectPayload: ObjectPayloadReader) correlationId (cancellationToken: CancellationToken) =
+    let private completeContentBlockStoragePlacement (placement: ContentBlockStoragePlacement) =
+        not (isNull (box placement))
+        && not (String.IsNullOrWhiteSpace placement.StorageAccountName)
+        && not (String.IsNullOrWhiteSpace placement.StorageContainerName)
+        && not (String.IsNullOrWhiteSpace placement.ObjectKey)
+
+    let private validateManifestStoragePool (fileVersion: FileVersion) (manifest: FileManifest) correlationId =
+        if String.IsNullOrWhiteSpace manifest.StoragePoolId then
+            Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' FileManifest StoragePoolId is required.")
+        else
+            Ok()
+
+    let private validateManifestBlockMetadata
+        (fileVersion: FileVersion)
+        (manifest: FileManifest)
+        (contentBlockAddress: ContentBlockAddress)
+        (metadata: ContentBlockMetadata)
+        correlationId
+        =
+        if isNull (box metadata) then
+            Error(
+                error correlationId $"Annotation target '{fileVersion.RelativePath}' ContentBlockMetadata is absent for manifest block {contentBlockAddress}."
+            )
+        elif metadata.StoragePoolId <> manifest.StoragePoolId then
+            Error(
+                error
+                    correlationId
+                    $"Annotation target '{fileVersion.RelativePath}' ContentBlockMetadata StoragePoolId does not match FileManifest.StoragePoolId for {contentBlockAddress}."
+            )
+        elif metadata.ContentBlockAddress
+             <> contentBlockAddress then
+            Error(
+                error
+                    correlationId
+                    $"Annotation target '{fileVersion.RelativePath}' ContentBlockMetadata ContentBlockAddress does not match FileManifest block {contentBlockAddress}."
+            )
+        elif metadata.BlockFormatVersion <= 0s then
+            Error(
+                error
+                    correlationId
+                    $"Annotation target '{fileVersion.RelativePath}' ContentBlockMetadata BlockFormatVersion is required for manifest block {contentBlockAddress}."
+            )
+        elif not (completeContentBlockStoragePlacement metadata.StoragePlacement) then
+            Error(
+                error
+                    correlationId
+                    $"Annotation target '{fileVersion.RelativePath}' ContentBlockMetadata StoragePlacement is incomplete for manifest block {contentBlockAddress}."
+            )
+        else
+            Ok metadata.StoragePlacement
+
+    let private manifestPayloads
+        (fileVersion: FileVersion)
+        (manifest: FileManifest)
+        (resolveContentBlockMetadata: ContentBlockMetadataResolver)
+        (readContentBlockPayload: ContentBlockPlacementPayloadReader)
+        correlationId
+        (cancellationToken: CancellationToken)
+        =
         task {
             let payloads = ResizeArray<ManifestValidation.ManifestBlockPayload>()
 
@@ -136,11 +208,16 @@ module internal AnnotationMaterialization =
             while index < blockAddresses.Length
                   && Option.isNone error do
                 let address = blockAddresses[index]
-                let objectKey = StorageKeys.contentBlockObjectKey address
 
-                match! readObjectPayload objectKey correlationId cancellationToken with
-                | Ok payload -> payloads.Add(ManifestValidation.createBlockPayload address payload)
-                | Error readError -> error <- Some readError
+                match! resolveContentBlockMetadata manifest address correlationId cancellationToken with
+                | Error metadataError -> error <- Some metadataError
+                | Ok metadata ->
+                    match validateManifestBlockMetadata fileVersion manifest address metadata correlationId with
+                    | Error validationError -> error <- Some validationError
+                    | Ok placement ->
+                        match! readContentBlockPayload placement address correlationId cancellationToken with
+                        | Ok payload -> payloads.Add(ManifestValidation.createBlockPayload address payload)
+                        | Error readError -> error <- Some readError
 
                 index <- index + 1
 
@@ -152,7 +229,8 @@ module internal AnnotationMaterialization =
     let private materializeManifestBytes
         (fileVersion: FileVersion)
         (manifest: FileManifest)
-        (readObjectPayload: ObjectPayloadReader)
+        (resolveContentBlockMetadata: ContentBlockMetadataResolver)
+        (readContentBlockPayload: ContentBlockPlacementPayloadReader)
         correlationId
         cancellationToken
         =
@@ -174,14 +252,32 @@ module internal AnnotationMaterialization =
                             $"Annotation target '{fileVersion.RelativePath}' is too large to materialize as text. FileManifest.Size {manifest.Size} bytes exceeds the {MaxMaterializedTextBytes} byte limit."
                     )
             else
-                match! manifestPayloads manifest readObjectPayload correlationId cancellationToken with
-                | Error readError -> return Error readError
-                | Ok payloads ->
-                    match ManifestValidation.validate RabinChunking.SuiteName manifest payloads with
-                    | Ok bytes -> return validateExactFileBytes fileVersion bytes correlationId
-                    | Error validationError ->
-                        return Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' {describeManifestValidationError validationError}")
+                match validateManifestStoragePool fileVersion manifest correlationId with
+                | Error validationError -> return Error validationError
+                | Ok () ->
+                    match! manifestPayloads fileVersion manifest resolveContentBlockMetadata readContentBlockPayload correlationId cancellationToken with
+                    | Error readError -> return Error readError
+                    | Ok payloads ->
+                        match ManifestValidation.validate RabinChunking.SuiteName manifest payloads with
+                        | Ok bytes -> return validateExactFileBytes fileVersion bytes correlationId
+                        | Error validationError ->
+                            return
+                                Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' {describeManifestValidationError validationError}")
         }
+
+    let private unsupportedManifestMetadataResolver (manifest: FileManifest) contentBlockAddress correlationId _ =
+        Task.FromResult(
+            Error(
+                error
+                    correlationId
+                    $"Annotation target FileManifest block {contentBlockAddress} cannot be materialized without finalized StoragePool placement evidence."
+            )
+        )
+
+    let private unsupportedContentBlockPayloadReader placement contentBlockAddress correlationId _ =
+        Task.FromResult(
+            Error(error correlationId $"Annotation target FileManifest block {contentBlockAddress} cannot be read without a ContentBlock placement reader.")
+        )
 
     let private materializeWholeFileBytes (fileVersion: FileVersion) (readObjectPayload: ObjectPayloadReader) correlationId cancellationToken =
         task {
@@ -195,8 +291,10 @@ module internal AnnotationMaterialization =
             | Error readError -> return Error readError
         }
 
-    let materializeTextWithObjectReader
-        (readObjectPayload: ObjectPayloadReader)
+    let materializeTextWithReaders
+        (readWholeFileObjectPayload: ObjectPayloadReader)
+        (resolveContentBlockMetadata: ContentBlockMetadataResolver)
+        (readContentBlockPayload: ContentBlockPlacementPayloadReader)
         (fileVersion: FileVersion)
         correlationId
         (cancellationToken: CancellationToken)
@@ -207,10 +305,12 @@ module internal AnnotationMaterialization =
             | Ok () ->
                 let! bytesResult =
                     match fileVersion.ContentReference.ReferenceType with
-                    | FileContentReferenceType.WholeFileContent -> materializeWholeFileBytes fileVersion readObjectPayload correlationId cancellationToken
+                    | FileContentReferenceType.WholeFileContent ->
+                        materializeWholeFileBytes fileVersion readWholeFileObjectPayload correlationId cancellationToken
                     | FileContentReferenceType.FileManifest ->
                         match fileVersion.ContentReference.Manifest with
-                        | Some manifest -> materializeManifestBytes fileVersion manifest readObjectPayload correlationId cancellationToken
+                        | Some manifest ->
+                            materializeManifestBytes fileVersion manifest resolveContentBlockMetadata readContentBlockPayload correlationId cancellationToken
                         | None ->
                             Task.FromResult(
                                 Error(
@@ -229,6 +329,20 @@ module internal AnnotationMaterialization =
                     | Error decodeError -> return Error decodeError
                     | Ok text -> return Ok { FileVersion = fileVersion; Bytes = bytes; Text = text }
         }
+
+    let materializeTextWithObjectReader
+        (readObjectPayload: ObjectPayloadReader)
+        (fileVersion: FileVersion)
+        correlationId
+        (cancellationToken: CancellationToken)
+        =
+        materializeTextWithReaders
+            readObjectPayload
+            unsupportedManifestMetadataResolver
+            unsupportedContentBlockPayloadReader
+            fileVersion
+            correlationId
+            cancellationToken
 
     let private azureObjectPayloadReader
         (repositoryDto: RepositoryDto)
@@ -263,14 +377,79 @@ module internal AnnotationMaterialization =
                 return Error(error correlationId "Annotation content materialization cannot use an unknown object storage provider.")
         }
 
-    let materializeTargetText (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId cancellationToken =
-        let reader (objectKey: string) correlationId cancellationToken =
-            let maxPayloadBytes =
-                if objectKey.StartsWith(StorageKeys.contentBlockObjectKey String.Empty, StringComparison.Ordinal) then
-                    MaxContentBlockPayloadBytes
-                else
-                    MaxContentBlockPayloadBytes
+    let private azureContentBlockPlacementPayloadReader
+        maxPayloadBytes
+        (placement: ContentBlockStoragePlacement)
+        (contentBlockAddress: ContentBlockAddress)
+        correlationId
+        (cancellationToken: CancellationToken)
+        =
+        task {
+            try
+                match! getAzureContentBlockClientForPlacement placement correlationId with
+                | Error error -> return Error error
+                | Ok blobClient ->
+                    let! properties = blobClient.GetPropertiesAsync(cancellationToken = cancellationToken)
 
-            azureObjectPayloadReader repositoryDto maxPayloadBytes objectKey correlationId cancellationToken
+                    if properties.Value.ContentLength > maxPayloadBytes then
+                        return
+                            Error(
+                                error
+                                    correlationId
+                                    $"Annotation ContentBlock payload '{contentBlockAddress}' is too large to read. Content length {properties.Value.ContentLength} bytes exceeds the {maxPayloadBytes} byte read limit."
+                            )
+                    else
+                        let! download = blobClient.DownloadContentAsync(cancellationToken)
+                        return Ok(download.Value.Content.ToArray())
+            with
+            | :? RequestFailedException as ex ->
+                return
+                    Error(
+                        error correlationId $"Annotation ContentBlock payload '{contentBlockAddress}' could not be read from stored CAS placement: {ex.Message}"
+                    )
+        }
 
-        materializeTextWithObjectReader reader fileVersion correlationId cancellationToken
+    let private finalizedManifestMetadataResolver
+        (repositoryDto: RepositoryDto)
+        (fileVersion: FileVersion)
+        (authorizedScope: string)
+        (manifest: FileManifest)
+        contentBlockAddress
+        correlationId
+        _
+        =
+        task {
+            let dedupeIndexActor = Grace.Actors.DedupeIndexActor.CreateActorProxy correlationId
+
+            let! metadata =
+                dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata(
+                    manifest.StoragePoolId,
+                    repositoryDto.RepositoryId,
+                    authorizedScope,
+                    manifest.ManifestAddress,
+                    contentBlockAddress,
+                    correlationId
+                )
+
+            match metadata with
+            | Some metadata -> return Ok metadata
+            | None ->
+                return
+                    Error(
+                        error
+                            correlationId
+                            $"Annotation target '{fileVersion.RelativePath}' has no finalized StoragePool placement evidence for FileManifest block {contentBlockAddress}."
+                    )
+        }
+
+    let materializeTargetText (repositoryDto: RepositoryDto) authorizedScope (fileVersion: FileVersion) correlationId cancellationToken =
+        let wholeFileReader (objectKey: string) correlationId cancellationToken =
+            azureObjectPayloadReader repositoryDto MaxContentBlockPayloadBytes objectKey correlationId cancellationToken
+
+        let metadataResolver manifest contentBlockAddress correlationId cancellationToken =
+            finalizedManifestMetadataResolver repositoryDto fileVersion authorizedScope manifest contentBlockAddress correlationId cancellationToken
+
+        let contentBlockReader placement contentBlockAddress correlationId cancellationToken =
+            azureContentBlockPlacementPayloadReader MaxContentBlockPayloadBytes placement contentBlockAddress correlationId cancellationToken
+
+        materializeTextWithReaders wholeFileReader metadataResolver contentBlockReader fileVersion correlationId cancellationToken

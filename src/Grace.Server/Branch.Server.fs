@@ -35,6 +35,37 @@ open System.Text.Json
 open System.Threading.Tasks
 
 module Branch =
+
+    let private branchHashLookupErrorItemKey = "BranchHashLookupError"
+
+    let private branchHashLookupDescription (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
+        let sha256HashText = string sha256Hash
+        let blake3HashText = string blake3Hash
+
+        if
+            not (String.IsNullOrWhiteSpace sha256HashText)
+            && not (String.IsNullOrWhiteSpace blake3HashText)
+        then
+            $"SHA-256 prefix '{sha256HashText}' and BLAKE3 prefix '{blake3HashText}'"
+        elif not (String.IsNullOrWhiteSpace blake3HashText) then
+            $"BLAKE3 prefix '{blake3HashText}'"
+        else
+            $"SHA-256 prefix '{sha256HashText}'"
+
+    let private setAmbiguousBranchHashLookupError (context: HttpContext) sha256Hash blake3Hash correlationId =
+        let graceError = GraceError.Create $"The supplied {branchHashLookupDescription sha256Hash blake3Hash} is ambiguous in repository scope." correlationId
+
+        graceError.Properties.Add("Path", context.Request.Path.Value)
+        context.Items[ branchHashLookupErrorItemKey ] <- graceError
+
+    let private tryGetBranchHashLookupError (context: HttpContext) =
+        let mutable item = null
+
+        if context.Items.TryGetValue(branchHashLookupErrorItemKey, &item) then
+            Some(item :?> GraceError)
+        else
+            None
+
     type Validations<'T when 'T :> BranchParameters> = 'T -> ValueTask<Result<unit, BranchError>> array
 
     let activitySource = new ActivitySource("Branch")
@@ -128,7 +159,7 @@ module Branch =
             match tryFindFileVersion path contents with
             | None -> return Ok None
             | Some fileVersion ->
-                match! AnnotationMaterialization.materializeTargetText repositoryDto fileVersion correlationId context.RequestAborted with
+                match! AnnotationMaterialization.materializeTargetText repositoryDto path fileVersion correlationId context.RequestAborted with
                 | Ok materialized ->
                     let document =
                         { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = materialized.Bytes }
@@ -530,24 +561,28 @@ module Branch =
 
                 if validationsPassed then
                     let! cmd = command parameters
-                    let! result = handleCommand cmd
-                    let duration = getDurationRightAligned_ms startTime
 
-                    log.LogInformation(
-                        "{CurrentInstant}: Node: {hostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
-                        getCurrentInstantExtended (),
-                        getMachineName,
-                        duration,
-                        correlationId,
-                        context.Request.Path,
-                        context.Response.StatusCode,
-                        graceIds.OwnerIdString,
-                        graceIds.OrganizationIdString,
-                        graceIds.RepositoryIdString,
-                        graceIds.BranchIdString
-                    )
+                    match tryGetBranchHashLookupError context with
+                    | Some graceError -> return! context |> result400BadRequest graceError
+                    | None ->
+                        let! result = handleCommand cmd
+                        let duration = getDurationRightAligned_ms startTime
 
-                    return result
+                        log.LogInformation(
+                            "{CurrentInstant}: Node: {hostName}; Duration: {duration}; CorrelationId: {correlationId}; Finished {path}; Status code: {statusCode}; OwnerId: {ownerId}; OrganizationId: {organizationId}; RepositoryId: {repositoryId}; BranchId: {branchId}.",
+                            getCurrentInstantExtended (),
+                            getMachineName,
+                            duration,
+                            correlationId,
+                            context.Request.Path,
+                            context.Response.StatusCode,
+                            graceIds.OwnerIdString,
+                            graceIds.OrganizationIdString,
+                            graceIds.RepositoryIdString,
+                            graceIds.BranchIdString
+                        )
+
+                        return result
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = BranchError.getErrorMessage error
@@ -588,6 +623,87 @@ module Branch =
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
+    let private resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId =
+        task {
+            if directoryVersionId <> DirectoryVersionId.Empty then
+                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
+                let! directoryVersionDto = directoryVersionActorProxy.Get correlationId
+                let directoryVersion = directoryVersionDto.DirectoryVersion
+                let requestedSha256Hash = string sha256Hash
+                let requestedBlake3Hash = string blake3Hash
+
+                if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
+                    return Services.NoMatches
+                elif directoryVersion.RelativePath
+                     <> Constants.RootDirectoryPath
+                     && directoryVersion.RelativePath <> "/" then
+                    return Services.NoMatches
+                elif
+                    not (String.IsNullOrEmpty requestedSha256Hash)
+                    && not (
+                        (string directoryVersion.Sha256Hash)
+                            .StartsWith(requestedSha256Hash, StringComparison.OrdinalIgnoreCase)
+                    )
+                then
+                    return Services.NoMatches
+                elif
+                    not (String.IsNullOrEmpty requestedBlake3Hash)
+                    && not (
+                        (string directoryVersion.Blake3Hash)
+                            .StartsWith(requestedBlake3Hash, StringComparison.OrdinalIgnoreCase)
+                    )
+                then
+                    return Services.NoMatches
+                else
+                    return Services.UniqueMatch directoryVersion
+            elif
+                not (String.IsNullOrEmpty(string blake3Hash))
+                && not (String.IsNullOrEmpty(string sha256Hash))
+            then
+                return! Services.getRootDirectoryVersionResolutionByHashQuery repositoryId sha256Hash blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string blake3Hash)) then
+                return! Services.getRootDirectoryVersionResolutionByBlake3Hash repositoryId blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string sha256Hash)) then
+                return! Services.getRootDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
+            else
+                return Services.NoMatches
+        }
+
+    let private tryResolveRootDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
+        task { return! getRootDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
+
+    let private tryResolveDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
+        task { return! Services.getDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
+
+    let private referenceCommandFromRoot
+        (context: HttpContext)
+        (createCommand: DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
+        repositoryId
+        directoryVersionId
+        sha256Hash
+        blake3Hash
+        referenceText
+        correlationId
+        =
+        task {
+            match! resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId with
+            | Services.UniqueMatch directoryVersion ->
+                return createCommand (directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, directoryVersion.Blake3Hash, referenceText)
+            | Services.NoMatches -> return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
+            | Services.AmbiguousMatches _ ->
+                setAmbiguousBranchHashLookupError context sha256Hash blake3Hash correlationId
+                return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
+        }
+
+    let validateReferenceRootLocator (parameters: CreateReferenceParameters) =
+        Input.oneOfTheseValuesMustBeProvided
+            [|
+                parameters.DirectoryVersionId
+                parameters.Sha256Hash
+                parameters.Blake3Hash
+            |]
+            BranchError.EitherDirectoryVersionIdOrSha256HashRequired
+
     let processQuery<'T, 'U when 'T :> BranchParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -615,17 +731,20 @@ module Branch =
                     // Execute the query.
                     let! queryResult = query context maxCount actorProxy
 
-                    // Wrap the query result in a GraceReturnValue.
-                    let graceReturnValue =
-                        (GraceReturnValue.Create queryResult correlationId)
-                            .enhance(parameterDictionary)
-                            .enhance(nameof OwnerId, graceIds.OwnerId)
-                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof BranchId, graceIds.BranchId)
-                            .enhance ("Path", context.Request.Path.Value)
+                    match tryGetBranchHashLookupError context with
+                    | Some graceError -> return! context |> result400BadRequest graceError
+                    | None ->
+                        // Wrap the query result in a GraceReturnValue.
+                        let graceReturnValue =
+                            (GraceReturnValue.Create queryResult correlationId)
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof BranchId, graceIds.BranchId)
+                                .enhance ("Path", context.Request.Path.Value)
 
-                    return! context |> result200Ok graceReturnValue
+                        return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
 
@@ -784,11 +903,13 @@ module Branch =
 
                 let validations (parameters: AssignParameters) =
                     [|
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                         Input.oneOfTheseValuesMustBeProvided
                             [|
                                 parameters.DirectoryVersionId
                                 parameters.Sha256Hash
+                                parameters.Blake3Hash
                             |]
                             BranchError.EitherDirectoryVersionIdOrSha256HashRequired
                         Branch.branchAllowsAssign
@@ -803,20 +924,27 @@ module Branch =
 
                 let command (parameters: AssignParameters) =
                     task {
-                        if parameters.DirectoryVersionId <> Guid.Empty then
-                            let directoryVersionActorProxy =
-                                DirectoryVersion.CreateActorProxy parameters.DirectoryVersionId repositoryId parameters.CorrelationId
-
-                            let! directoryVersionDto = directoryVersionActorProxy.Get(parameters.CorrelationId)
-
+                        match!
+                            resolveRootDirectoryVersionForReferenceCommand
+                                repositoryId
+                                parameters.DirectoryVersionId
+                                parameters.Sha256Hash
+                                parameters.Blake3Hash
+                                parameters.CorrelationId
+                            with
+                        | Services.UniqueMatch directoryVersion ->
                             return
-                                Some(Assign(parameters.DirectoryVersionId, directoryVersionDto.DirectoryVersion.Sha256Hash, ReferenceText parameters.Message))
-                        elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                            match! getDirectoryVersionBySha256Hash (Guid.Parse(graceIds.RepositoryIdString)) parameters.Sha256Hash parameters.CorrelationId with
-                            | Some directoryVersion ->
-                                return Some(Assign(directoryVersion.DirectoryVersionId, directoryVersion.Sha256Hash, ReferenceText parameters.Message))
-                            | None -> return None
-                        else
+                                Some(
+                                    Assign(
+                                        directoryVersion.DirectoryVersionId,
+                                        directoryVersion.Sha256Hash,
+                                        directoryVersion.Blake3Hash,
+                                        ReferenceText parameters.Message
+                                    )
+                                )
+                        | Services.NoMatches -> return None
+                        | Services.AmbiguousMatches _ ->
+                            setAmbiguousBranchHashLookupError context parameters.Sha256Hash parameters.Blake3Hash parameters.CorrelationId
                             return None
                     }
 
@@ -827,14 +955,29 @@ module Branch =
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
                 |> ignore
 
-                match! command parameters with
-                | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
-                | None ->
+                match! String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash with
+                | Error error ->
                     return!
                         context
-                        |> result400BadRequest (
-                            GraceError.Create (getErrorMessage BranchError.EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
-                        )
+                        |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context))
+                | Ok () ->
+                    match! String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash with
+                    | Error error ->
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create (BranchError.getErrorMessage error) (getCorrelationId context))
+                    | Ok () ->
+                        match! command parameters with
+                        | Some command -> return! processCommand context validations (fun parameters -> ValueTask<BranchCommand>(command))
+                        | None ->
+                            match tryGetBranchHashLookupError context with
+                            | Some graceError -> return! context |> result400BadRequest graceError
+                            | None ->
+                                return!
+                                    context
+                                    |> result400BadRequest (
+                                        GraceError.Create (getErrorMessage BranchError.EitherDirectoryVersionIdOrSha256HashRequired) (getCorrelationId context)
+                                    )
             }
 
     /// Creates a promotion reference in the parent of the specified branch, based on the most-recent commit.
@@ -847,7 +990,9 @@ module Branch =
                     [|
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -860,8 +1005,16 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    Promote(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        context
+                        Promote
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        parameters.Blake3Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Promote)
                 return! processCommand context validations command
@@ -877,7 +1030,9 @@ module Branch =
                     [|
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -890,8 +1045,16 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Commit(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        context
+                        BranchCommand.Commit
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        parameters.Blake3Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Commit)
                 return! processCommand context validations command
@@ -906,7 +1069,9 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -919,8 +1084,16 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Checkpoint(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        context
+                        BranchCommand.Checkpoint
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        parameters.Blake3Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Checkpoint)
                 return! processCommand context validations command
@@ -937,7 +1110,9 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 4096 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -950,8 +1125,16 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Save(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        context
+                        BranchCommand.Save
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        parameters.Blake3Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Save)
                 return! processCommand context validations command
@@ -966,7 +1149,9 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -979,8 +1164,16 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.Tag(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        context
+                        BranchCommand.Tag
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        parameters.Blake3Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof Tag)
                 return! processCommand context validations command
@@ -995,7 +1188,9 @@ module Branch =
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
-                        String.isValidSha256Hash parameters.Sha256Hash BranchError.Sha256HashIsRequired
+                        String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                        String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
+                        validateReferenceRootLocator parameters
                         Branch.branchAllowsReferenceType
                             graceIds.OwnerId
                             graceIds.OrganizationId
@@ -1008,8 +1203,16 @@ module Branch =
                     |]
 
                 let command (parameters: CreateReferenceParameters) =
-                    BranchCommand.CreateExternal(parameters.DirectoryVersionId, parameters.Sha256Hash, ReferenceText parameters.Message)
-                    |> returnValueTask
+                    referenceCommandFromRoot
+                        context
+                        BranchCommand.CreateExternal
+                        graceIds.RepositoryId
+                        parameters.DirectoryVersionId
+                        parameters.Sha256Hash
+                        parameters.Blake3Hash
+                        (ReferenceText parameters.Message)
+                        parameters.CorrelationId
+                    |> ValueTask<BranchCommand>
 
                 context.Items.Add("Command", nameof CreateExternal)
                 return! processCommand context validations command
@@ -2105,7 +2308,8 @@ module Branch =
                 try
                     let validations (parameters: ListContentsParameters) =
                         [|
-                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
                         |]
 
@@ -2116,6 +2320,7 @@ module Branch =
                             if
                                 String.IsNullOrEmpty(listContentsParameters.ReferenceId)
                                 && String.IsNullOrEmpty(listContentsParameters.Sha256Hash)
+                                && String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
@@ -2143,14 +2348,23 @@ module Branch =
                                 let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                 return recursiveSize
                             else
-                                // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match! Services.getDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
-                                | Some directoryVersion ->
+                                match!
+                                    Services.getDirectoryVersionResolutionByHashQuery
+                                        graceIds.RepositoryId
+                                        listContentsParameters.Sha256Hash
+                                        listContentsParameters.Blake3Hash
+                                        correlationId
+                                    with
+                                | Services.UniqueMatch directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                     return recursiveSize
-                                | None -> return Constants.InitialDirectorySize
+                                | Services.NoMatches -> return Constants.InitialDirectorySize
+                                | Services.AmbiguousMatches _ ->
+                                    setAmbiguousBranchHashLookupError context listContentsParameters.Sha256Hash listContentsParameters.Blake3Hash correlationId
+
+                                    return Constants.InitialDirectorySize
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -2201,7 +2415,8 @@ module Branch =
                 try
                     let validations (parameters: ListContentsParameters) =
                         [|
-                            String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+                            String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
                             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
                         |]
 
@@ -2212,6 +2427,7 @@ module Branch =
                             if
                                 String.IsNullOrEmpty(listContentsParameters.ReferenceId)
                                 && String.IsNullOrEmpty(listContentsParameters.Sha256Hash)
+                                && String.IsNullOrEmpty(listContentsParameters.Blake3Hash)
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
@@ -2242,15 +2458,24 @@ module Branch =
 
                                 return contents
                             else
-                                // By process of elimination, we have a Sha256Hash, so we'll retrieve the DirectoryVersion using that..
-                                match! getRootDirectoryVersionBySha256Hash graceIds.RepositoryId listContentsParameters.Sha256Hash correlationId with
-                                | Some directoryVersion ->
+                                match!
+                                    Services.getRootDirectoryVersionResolutionByHashQuery
+                                        graceIds.RepositoryId
+                                        listContentsParameters.Sha256Hash
+                                        listContentsParameters.Blake3Hash
+                                        correlationId
+                                    with
+                                | Services.UniqueMatch directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                     return contents
-                                | None -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
+                                | Services.NoMatches -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
+                                | Services.AmbiguousMatches _ ->
+                                    setAmbiguousBranchHashLookupError context listContentsParameters.Sha256Hash listContentsParameters.Blake3Hash correlationId
+
+                                    return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -2292,7 +2517,8 @@ module Branch =
 
     let private getVersionValidations (parameters: GetBranchVersionParameters) =
         [|
-            String.isEmptyOrValidSha256Hash parameters.Sha256Hash BranchError.InvalidSha256Hash
+            String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
+            String.isEmptyOrValidBlake3HashPrefix parameters.Blake3Hash BranchError.InvalidBlake3Hash
             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
         |]
 
@@ -2304,8 +2530,16 @@ module Branch =
         (correlationId: CorrelationId)
         =
         task {
-            if not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                return! getRootDirectoryVersionBySha256Hash repositoryId parameters.Sha256Hash correlationId
+            if
+                not (String.IsNullOrEmpty(parameters.Sha256Hash))
+                || not (String.IsNullOrEmpty(parameters.Blake3Hash))
+            then
+                match! Services.getRootDirectoryVersionResolutionByHashQuery repositoryId parameters.Sha256Hash parameters.Blake3Hash correlationId with
+                | Services.UniqueMatch directoryVersion -> return Some directoryVersion
+                | Services.NoMatches -> return None
+                | Services.AmbiguousMatches _ ->
+                    setAmbiguousBranchHashLookupError context parameters.Sha256Hash parameters.Blake3Hash correlationId
+                    return None
             elif
                 not
                 <| String.IsNullOrEmpty(parameters.ReferenceId)
@@ -2316,7 +2550,7 @@ module Branch =
                 let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
 
                 match latestReference with
-                | Some referenceDto -> return! getRootDirectoryVersionBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
+                | Some referenceDto -> return! getRootDirectoryVersionByReferenceId repositoryId referenceDto.ReferenceId correlationId
                 | None -> return None
         }
 

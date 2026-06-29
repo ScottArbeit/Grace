@@ -120,19 +120,22 @@ module Repository =
                                     // Create an empty directory version, and use that for the initial promotion
                                     let emptyDirectoryId = DirectoryVersionId.NewGuid()
 
-                                    let emptySha256Hash = computeSha256ForDirectory RootDirectoryPath (List<LocalDirectoryVersion>()) (List<LocalFileVersion>())
+                                    let emptyDirectoryEntries = Array.Empty<DirectoryVersionPreimageEntry>()
+                                    let emptySha256Hash = computeSha256ForDirectoryEntries RootDirectoryPath emptyDirectoryEntries
+                                    let emptyBlake3Hash = computeBlake3ForDirectory RootDirectoryPath emptyDirectoryEntries
 
                                     let directoryVersionActorProxy =
                                         DirectoryVersion.CreateActorProxy emptyDirectoryId repositoryDto.RepositoryId this.correlationId
 
                                     let emptyDirectoryVersion =
-                                        DirectoryVersion.Create
+                                        DirectoryVersion.CreateWithHashes
                                             emptyDirectoryId
                                             repositoryDto.OwnerId
                                             repositoryDto.OrganizationId
                                             repositoryDto.RepositoryId
                                             RootDirectoryPath
                                             emptySha256Hash
+                                            emptyBlake3Hash
                                             (List<DirectoryVersionId>())
                                             (List<FileVersion>())
                                             0L
@@ -149,6 +152,7 @@ module Repository =
                                             (BranchCommand.Promote(
                                                 emptyDirectoryId,
                                                 emptySha256Hash,
+                                                emptyBlake3Hash,
                                                 (getLocalizedString StringResourceName.InitialPromotionMessage)
                                             ))
                                             repositoryEvent.Metadata
@@ -470,6 +474,19 @@ module Repository =
                                     match command with
                                     | Create (repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider) ->
                                         return Created(repositoryName, repositoryId, ownerId, organizationId, objectStorageProvider)
+                                    | SetStoragePoolId storagePoolId when String.IsNullOrWhiteSpace storagePoolId ->
+                                        return raise (ApplicationException("Repository StoragePoolId cannot be blank."))
+                                    | SetStoragePoolId storagePoolId when
+                                        storagePoolId
+                                        <> StoragePoolId Constants.DefaultStoragePoolId
+                                        ->
+                                        return
+                                            raise (
+                                                ApplicationException(
+                                                    $"StoragePoolId '{storagePoolId}' is not configured. Non-default StoragePool routing fails closed until configured pool loading exists."
+                                                )
+                                            )
+                                    | SetStoragePoolId storagePoolId -> return StoragePoolIdSet storagePoolId
                                     | Initialize -> return Initialized
                                     | SetObjectStorageProvider objectStorageProvider -> return ObjectStorageProviderSet objectStorageProvider
                                     | SetStorageAccountName storageAccountName -> return StorageAccountNameSet storageAccountName

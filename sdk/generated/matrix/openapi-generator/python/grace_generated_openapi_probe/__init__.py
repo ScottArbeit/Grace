@@ -62,6 +62,7 @@ __all__ = [
     "BranchCommandReturnValue",
     "BranchDto",
     "BranchDtoUpdatedAt",
+    "BranchHashQueryParameters",
     "BranchParameters",
     "BranchQueryParameters",
     "BranchReturnValue",
@@ -101,8 +102,11 @@ __all__ = [
     "DirectoryParameters",
     "DirectoryVersion",
     "DirectoryVersionApiDto",
+    "DirectoryVersionHashLookupResult",
+    "DirectoryVersionHashLookupReturnValue",
     "DirectoryVersionListReturnValue",
     "DirectoryVersionReturnValue",
+    "DirectoryVersionSha256HashLookupReturnValue",
     "DiscoverContentBlocksParameters",
     "DiscoverContentBlocksResult",
     "DiscoverContentBlocksReturnValue",
@@ -122,10 +126,12 @@ __all__ = [
     "GetBranchVersionParameters",
     "GetBranchesByBranchIdParameters",
     "GetBranchesParameters",
+    "GetByBlake3HashParameters",
     "GetByDirectoryIdsParameters",
     "GetBySha256HashParameters",
     "GetContentBlockDownloadUriParameters",
     "GetContentBlockUploadUriParameters",
+    "GetDiffByBlake3HashParameters",
     "GetDiffByReferenceTypeParameters",
     "GetDiffBySha256HashParameters",
     "GetDiffParameters",
@@ -303,6 +309,7 @@ from grace_generated_openapi_probe.models.branch_api_dto import BranchApiDto as 
 from grace_generated_openapi_probe.models.branch_command_return_value import BranchCommandReturnValue as BranchCommandReturnValue
 from grace_generated_openapi_probe.models.branch_dto import BranchDto as BranchDto
 from grace_generated_openapi_probe.models.branch_dto_updated_at import BranchDtoUpdatedAt as BranchDtoUpdatedAt
+from grace_generated_openapi_probe.models.branch_hash_query_parameters import BranchHashQueryParameters as BranchHashQueryParameters
 from grace_generated_openapi_probe.models.branch_parameters import BranchParameters as BranchParameters
 from grace_generated_openapi_probe.models.branch_query_parameters import BranchQueryParameters as BranchQueryParameters
 from grace_generated_openapi_probe.models.branch_return_value import BranchReturnValue as BranchReturnValue
@@ -342,8 +349,11 @@ from grace_generated_openapi_probe.models.directory_command_return_value import 
 from grace_generated_openapi_probe.models.directory_parameters import DirectoryParameters as DirectoryParameters
 from grace_generated_openapi_probe.models.directory_version import DirectoryVersion as DirectoryVersion
 from grace_generated_openapi_probe.models.directory_version_api_dto import DirectoryVersionApiDto as DirectoryVersionApiDto
+from grace_generated_openapi_probe.models.directory_version_hash_lookup_result import DirectoryVersionHashLookupResult as DirectoryVersionHashLookupResult
+from grace_generated_openapi_probe.models.directory_version_hash_lookup_return_value import DirectoryVersionHashLookupReturnValue as DirectoryVersionHashLookupReturnValue
 from grace_generated_openapi_probe.models.directory_version_list_return_value import DirectoryVersionListReturnValue as DirectoryVersionListReturnValue
 from grace_generated_openapi_probe.models.directory_version_return_value import DirectoryVersionReturnValue as DirectoryVersionReturnValue
+from grace_generated_openapi_probe.models.directory_version_sha256_hash_lookup_return_value import DirectoryVersionSha256HashLookupReturnValue as DirectoryVersionSha256HashLookupReturnValue
 from grace_generated_openapi_probe.models.discover_content_blocks_parameters import DiscoverContentBlocksParameters as DiscoverContentBlocksParameters
 from grace_generated_openapi_probe.models.discover_content_blocks_result import DiscoverContentBlocksResult as DiscoverContentBlocksResult
 from grace_generated_openapi_probe.models.discover_content_blocks_return_value import DiscoverContentBlocksReturnValue as DiscoverContentBlocksReturnValue
@@ -363,10 +373,12 @@ from grace_generated_openapi_probe.models.get_branch_parameters import GetBranch
 from grace_generated_openapi_probe.models.get_branch_version_parameters import GetBranchVersionParameters as GetBranchVersionParameters
 from grace_generated_openapi_probe.models.get_branches_by_branch_id_parameters import GetBranchesByBranchIdParameters as GetBranchesByBranchIdParameters
 from grace_generated_openapi_probe.models.get_branches_parameters import GetBranchesParameters as GetBranchesParameters
+from grace_generated_openapi_probe.models.get_by_blake3_hash_parameters import GetByBlake3HashParameters as GetByBlake3HashParameters
 from grace_generated_openapi_probe.models.get_by_directory_ids_parameters import GetByDirectoryIdsParameters as GetByDirectoryIdsParameters
 from grace_generated_openapi_probe.models.get_by_sha256_hash_parameters import GetBySha256HashParameters as GetBySha256HashParameters
 from grace_generated_openapi_probe.models.get_content_block_download_uri_parameters import GetContentBlockDownloadUriParameters as GetContentBlockDownloadUriParameters
 from grace_generated_openapi_probe.models.get_content_block_upload_uri_parameters import GetContentBlockUploadUriParameters as GetContentBlockUploadUriParameters
+from grace_generated_openapi_probe.models.get_diff_by_blake3_hash_parameters import GetDiffByBlake3HashParameters as GetDiffByBlake3HashParameters
 from grace_generated_openapi_probe.models.get_diff_by_reference_type_parameters import GetDiffByReferenceTypeParameters as GetDiffByReferenceTypeParameters
 from grace_generated_openapi_probe.models.get_diff_by_sha256_hash_parameters import GetDiffBySha256HashParameters as GetDiffBySha256HashParameters
 from grace_generated_openapi_probe.models.get_diff_parameters import GetDiffParameters as GetDiffParameters

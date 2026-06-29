@@ -19,8 +19,9 @@ import re  # noqa: F401
 import json
 
 from datetime import datetime
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
+from typing_extensions import Annotated
 from uuid import UUID
 from grace_generated_openapi_probe.models.reference_type import ReferenceType
 from typing import Optional, Set
@@ -35,12 +36,39 @@ class ReferenceDto(BaseModel):
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
     branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     directory_id: Optional[UUID] = Field(default=None, alias="DirectoryId")
-    sha256_hash: Optional[StrictStr] = Field(default=None, alias="Sha256Hash")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase 64-character SHA-256 hash for legacy or default reference DTOs.", alias="Sha256Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Empty value or lowercase 64-character BLAKE3 hash for legacy reference DTOs.", alias="Blake3Hash")
     reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
     reference_text: Optional[StrictStr] = Field(default=None, alias="ReferenceText")
     created_by: Optional[StrictStr] = Field(default=None, alias="CreatedBy")
     created_at: Optional[datetime] = Field(default=None, alias="CreatedAt")
-    __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "BranchId", "DirectoryId", "Sha256Hash", "ReferenceType", "ReferenceText", "CreatedBy", "CreatedAt"]
+    __properties: ClassVar[List[str]] = ["Class", "ReferenceId", "BranchId", "DirectoryId", "Sha256Hash", "Blake3Hash", "ReferenceType", "ReferenceText", "CreatedBy", "CreatedAt"]
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^$|^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^$|^[a-f0-9]{64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -98,6 +126,7 @@ class ReferenceDto(BaseModel):
             "BranchId": obj.get("BranchId"),
             "DirectoryId": obj.get("DirectoryId"),
             "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
             "ReferenceType": obj.get("ReferenceType"),
             "ReferenceText": obj.get("ReferenceText"),
             "CreatedBy": obj.get("CreatedBy"),

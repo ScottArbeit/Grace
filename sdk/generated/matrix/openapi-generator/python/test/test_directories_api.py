@@ -41,6 +41,13 @@ class TestDirectoriesApi(unittest.TestCase):
         """
         pass
 
+    def test_get_directory_version_by_blake3_hash(self) -> None:
+        """Test case for get_directory_version_by_blake3_hash
+
+        Get a directory version by BLAKE3 hash.
+        """
+        pass
+
     def test_get_directory_version_by_sha256_hash(self) -> None:
         """Test case for get_directory_version_by_sha256_hash
 

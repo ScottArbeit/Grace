@@ -31,3 +31,19 @@ type OrleansPartitionKeyProviderTests() =
         let sourceText = File.ReadAllText(filePath)
 
         Assert.That(sourceText, Does.Contain("| StateName.WorkItemNumberCounter -> repositoryId ()"))
+
+    [<Test>]
+    member _.ContentBlockMetadataMapsToFirstGrainKeySegment() =
+        let filePath = tryResolveSourcePath ()
+        let sourceText = File.ReadAllText(filePath)
+
+        Assert.That(sourceText, Does.Contain("let firstGrainKeySegment () = $\"{grainId.Key}\".Split('|')[0]"))
+        Assert.That(sourceText, Does.Contain("| StateName.ContentBlockMetadata -> firstGrainKeySegment ()"))
+
+    [<Test>]
+    member _.ManifestContentBoundaryActorsMapToRepositorySegment() =
+        let filePath = tryResolveSourcePath ()
+        let sourceText = File.ReadAllText(filePath)
+
+        Assert.That(sourceText, Does.Contain("| StateName.RepositoryContentCounter -> firstGrainKeySegment ()"))
+        Assert.That(sourceText, Does.Contain("| StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()"))

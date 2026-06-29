@@ -28,6 +28,7 @@ docs/BranchApiDto.md
 docs/BranchCommandReturnValue.md
 docs/BranchDto.md
 docs/BranchDtoUpdatedAt.md
+docs/BranchHashQueryParameters.md
 docs/BranchParameters.md
 docs/BranchQueryParameters.md
 docs/BranchReturnValue.md
@@ -71,8 +72,11 @@ docs/DirectoryCommandReturnValue.md
 docs/DirectoryParameters.md
 docs/DirectoryVersion.md
 docs/DirectoryVersionApiDto.md
+docs/DirectoryVersionHashLookupResult.md
+docs/DirectoryVersionHashLookupReturnValue.md
 docs/DirectoryVersionListReturnValue.md
 docs/DirectoryVersionReturnValue.md
+docs/DirectoryVersionSha256HashLookupReturnValue.md
 docs/DiscoverContentBlocksParameters.md
 docs/DiscoverContentBlocksResult.md
 docs/DiscoverContentBlocksReturnValue.md
@@ -92,10 +96,12 @@ docs/GetBranchParameters.md
 docs/GetBranchVersionParameters.md
 docs/GetBranchesByBranchIdParameters.md
 docs/GetBranchesParameters.md
+docs/GetByBlake3HashParameters.md
 docs/GetByDirectoryIdsParameters.md
 docs/GetBySha256HashParameters.md
 docs/GetContentBlockDownloadUriParameters.md
 docs/GetContentBlockUploadUriParameters.md
+docs/GetDiffByBlake3HashParameters.md
 docs/GetDiffByReferenceTypeParameters.md
 docs/GetDiffBySha256HashParameters.md
 docs/GetDiffParameters.md
@@ -264,6 +270,7 @@ src/models/BranchApiDto.ts
 src/models/BranchCommandReturnValue.ts
 src/models/BranchDto.ts
 src/models/BranchDtoUpdatedAt.ts
+src/models/BranchHashQueryParameters.ts
 src/models/BranchParameters.ts
 src/models/BranchQueryParameters.ts
 src/models/BranchReturnValue.ts
@@ -303,8 +310,11 @@ src/models/DirectoryCommandReturnValue.ts
 src/models/DirectoryParameters.ts
 src/models/DirectoryVersion.ts
 src/models/DirectoryVersionApiDto.ts
+src/models/DirectoryVersionHashLookupResult.ts
+src/models/DirectoryVersionHashLookupReturnValue.ts
 src/models/DirectoryVersionListReturnValue.ts
 src/models/DirectoryVersionReturnValue.ts
+src/models/DirectoryVersionSha256HashLookupReturnValue.ts
 src/models/DiscoverContentBlocksParameters.ts
 src/models/DiscoverContentBlocksResult.ts
 src/models/DiscoverContentBlocksReturnValue.ts
@@ -324,10 +334,12 @@ src/models/GetBranchParameters.ts
 src/models/GetBranchVersionParameters.ts
 src/models/GetBranchesByBranchIdParameters.ts
 src/models/GetBranchesParameters.ts
+src/models/GetByBlake3HashParameters.ts
 src/models/GetByDirectoryIdsParameters.ts
 src/models/GetBySha256HashParameters.ts
 src/models/GetContentBlockDownloadUriParameters.ts
 src/models/GetContentBlockUploadUriParameters.ts
+src/models/GetDiffByBlake3HashParameters.ts
 src/models/GetDiffByReferenceTypeParameters.ts
 src/models/GetDiffBySha256HashParameters.ts
 src/models/GetDiffParameters.ts

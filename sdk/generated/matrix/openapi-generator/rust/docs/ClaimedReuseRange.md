@@ -4,7 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**storage_pool_id** | **String** | StoragePool-wide CAS scope identifier. | 
+**storage_pool_id** | **String** | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly. | 
 **content_block_address** | **String** | Lowercase 64-character BLAKE3-derived ContentBlock address. | 
 **ordinal_start** | **i32** |  | 
 **ordinal_count** | **i32** |  | 

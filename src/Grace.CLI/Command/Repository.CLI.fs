@@ -480,7 +480,7 @@ module Repository =
                                                         Parallel.ForEach(
                                                             graceStatus.Index.Values,
                                                             Constants.ParallelOptions,
-                                                            (fun ldv ->
+                                                            (fun (ldv: LocalDirectoryVersion) ->
                                                                 for fileVersion in ldv.Files do
                                                                     fileVersions.TryAdd(fileVersion.RelativePath, fileVersion)
                                                                     |> ignore)
@@ -561,11 +561,10 @@ module Repository =
                                                                                     * double (fileVersions.Count() - uploadMetadata.Count)
                                                                                 )
 
-                                                                                // Index all of the file versions by their SHA256 hash; we'll look up the files to upload with it.
-                                                                                let filesIndexedBySha256Hash =
-                                                                                    Dictionary<Sha256Hash, LocalFileVersion>(
+                                                                                let filesIndexedByIdentity =
+                                                                                    Dictionary<RelativePath * Sha256Hash * Blake3Hash, LocalFileVersion>(
                                                                                         fileVersions.Select (fun kvp ->
-                                                                                            KeyValuePair(kvp.Value.Sha256Hash, kvp.Value))
+                                                                                            KeyValuePair(localFileVersionIdentity kvp.Value, kvp.Value))
                                                                                     )
 
                                                                                 // Upload the files in this chunk to object storage.
@@ -577,7 +576,7 @@ module Repository =
                                                                                             ValueTask(
                                                                                                 task {
                                                                                                     let fileVersion =
-                                                                                                        filesIndexedBySha256Hash[upload.Sha256Hash]
+                                                                                                        filesIndexedByIdentity[uploadMetadataIdentity upload]
                                                                                                             .ToFileVersion
 
                                                                                                     let! result =

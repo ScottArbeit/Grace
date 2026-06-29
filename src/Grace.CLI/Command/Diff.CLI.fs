@@ -136,6 +136,7 @@ module Diff =
                 Description = "The first partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
+            |> HashOptions.addVersionHashValidator HashOptions.Sha256Compatibility OptionName.Sha256Hash1
 
         let sha256Hash2 =
             new Option<Sha256Hash>(
@@ -145,6 +146,27 @@ module Diff =
                 Description = "The second partial or full SHA-256 hash to compare in the diff.",
                 Arity = ArgumentArity.ExactlyOne
             )
+            |> HashOptions.addVersionHashValidator HashOptions.Sha256Compatibility OptionName.Sha256Hash2
+
+        let blake3Hash1 =
+            new Option<Blake3Hash>(
+                OptionName.Blake3Hash1,
+                [| OptionName.B1 |],
+                Required = true,
+                Description = "The first partial or full BLAKE3 hash to compare in the diff.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+            |> HashOptions.addVersionHashValidator HashOptions.Blake3 OptionName.Blake3Hash1
+
+        let blake3Hash2 =
+            new Option<Blake3Hash>(
+                OptionName.Blake3Hash2,
+                [| OptionName.B2 |],
+                Required = true,
+                Description = "The second partial or full BLAKE3 hash to compare in the diff.",
+                Arity = ArgumentArity.ExactlyOne
+            )
+            |> HashOptions.addVersionHashValidator HashOptions.Blake3 OptionName.Blake3Hash2
 
         let tag =
             new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
@@ -320,7 +342,6 @@ module Diff =
 
                                         let! (updatedGraceStatus, newDirectoryVersions) = getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                        do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
                                         rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                         rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                         previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
@@ -343,9 +364,13 @@ module Diff =
                                                      |> Seq.toArray)
                                             )
 
-                                        match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                        | Ok returnValue -> ()
-                                        | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
+                                        let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                                        let uploadedFileVersions =
+                                            match uploadResult with
+                                            | Ok returnValue -> returnValue.ReturnValue
+                                            | Error error ->
+                                                raise (InvalidOperationException($"Failed to upload changed files to object storage. {error.Error}"))
 
                                         t3.Value <- 100.0
 
@@ -362,14 +387,24 @@ module Diff =
                                                 saveParameters.RepositoryName <- graceIds.RepositoryName
                                                 saveParameters.CorrelationId <- getCorrelationId parseResult
 
+                                                let! savedDirectoryVersionsResult =
+                                                    getSavedDirectoryVersionsForRootDirectory previousGraceStatus.RootDirectoryId (getCorrelationId parseResult)
+
+                                                let savedDirectoryVersions =
+                                                    match savedDirectoryVersionsResult with
+                                                    | Ok returnValue -> returnValue
+                                                    | Error error ->
+                                                        raise (InvalidOperationException($"Failed to retrieve saved directory versions. {error.Error}"))
+
                                                 saveParameters.DirectoryVersions <-
-                                                    newDirectoryVersions
-                                                        .Select(fun dv -> dv.ToDirectoryVersion)
-                                                        .ToList()
+                                                    applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                                        uploadedFileVersions
+                                                        savedDirectoryVersions
+                                                        newDirectoryVersions
 
                                                 match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                 | Ok returnValue -> ()
-                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                | Error error -> raise (InvalidOperationException($"Failed to upload new directory versions. {error.Error}"))
                                             })
                                                 .Wait()
 
@@ -378,6 +413,8 @@ module Diff =
                                         t5.StartTask()
 
                                         if newDirectoryVersions.Count > 0 then
+                                            let updatedGraceStatus = syncGraceStatusRootDirectoryHash updatedGraceStatus
+
                                             (task {
                                                 match!
                                                     createSaveReference
@@ -387,9 +424,11 @@ module Diff =
                                                         (getCorrelationId parseResult)
                                                     with
                                                 | Ok saveReference -> ()
-                                                | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                                | Error error -> raise (InvalidOperationException($"Failed to create a save reference. {error.Error}"))
                                             })
                                                 .Wait()
+
+                                            do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
 
                                         t5.Value <- 100.0
 
@@ -623,7 +662,6 @@ module Diff =
                                             let! (updatedGraceStatus, newDirectoryVersions) =
                                                 getNewGraceStatusAndDirectoryVersions previousGraceStatus differences
 
-                                            do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
                                             rootDirectoryId <- updatedGraceStatus.RootDirectoryId
                                             rootDirectorySha256Hash <- updatedGraceStatus.RootDirectorySha256Hash
                                             previousDirectoryIds <- updatedGraceStatus.Index.Keys.ToHashSet()
@@ -646,9 +684,13 @@ module Diff =
                                                          |> Seq.toArray)
                                                 )
 
-                                            match! uploadFilesToObjectStorage getUploadMetadataForFilesParameters with
-                                            | Ok returnValue -> ()
-                                            | Error error -> logToAnsiConsole Colors.Error $"Failed to upload changed files to object storage. {error}"
+                                            let! uploadResult = uploadFilesToObjectStorage getUploadMetadataForFilesParameters
+
+                                            let uploadedFileVersions =
+                                                match uploadResult with
+                                                | Ok returnValue -> returnValue.ReturnValue
+                                                | Error error ->
+                                                    raise (InvalidOperationException($"Failed to upload changed files to object storage. {error.Error}"))
 
                                             t3.Value <- 100.0
 
@@ -665,14 +707,27 @@ module Diff =
                                                     saveParameters.RepositoryName <- graceIds.RepositoryName
                                                     saveParameters.CorrelationId <- getCorrelationId parseResult
 
+                                                    let! savedDirectoryVersionsResult =
+                                                        getSavedDirectoryVersionsForRootDirectory
+                                                            previousGraceStatus.RootDirectoryId
+                                                            (getCorrelationId parseResult)
+
+                                                    let savedDirectoryVersions =
+                                                        match savedDirectoryVersionsResult with
+                                                        | Ok returnValue -> returnValue
+                                                        | Error error ->
+                                                            raise (InvalidOperationException($"Failed to retrieve saved directory versions. {error.Error}"))
+
                                                     saveParameters.DirectoryVersions <-
-                                                        newDirectoryVersions
-                                                            .Select(fun dv -> dv.ToDirectoryVersion)
-                                                            .ToList()
+                                                        applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                                                            uploadedFileVersions
+                                                            savedDirectoryVersions
+                                                            newDirectoryVersions
 
                                                     match! DirectoryVersion.SaveDirectoryVersions saveParameters with
                                                     | Ok returnValue -> ()
-                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to upload new directory versions. {error}"
+                                                    | Error error ->
+                                                        raise (InvalidOperationException($"Failed to upload new directory versions. {error.Error}"))
                                                 })
                                                     .Wait()
 
@@ -681,6 +736,8 @@ module Diff =
                                             t5.StartTask()
 
                                             if newDirectoryVersions.Count > 0 then
+                                                let updatedGraceStatus = syncGraceStatusRootDirectoryHash updatedGraceStatus
+
                                                 (task {
                                                     match!
                                                         createSaveReference
@@ -689,9 +746,11 @@ module Diff =
                                                             (getCorrelationId parseResult)
                                                         with
                                                     | Ok saveReference -> ()
-                                                    | Error error -> logToAnsiConsole Colors.Error $"Failed to create a save reference. {error}"
+                                                    | Error error -> raise (InvalidOperationException($"Failed to create a save reference. {error.Error}"))
                                                 })
                                                     .Wait()
+
+                                                do! applyGraceStatusIncremental updatedGraceStatus newDirectoryVersions differences
 
                                             t5.Value <- 100.0
 
@@ -730,6 +789,63 @@ module Diff =
                         return 0
                     else
                         // Do the thing here
+                        return 0
+                | Error error -> return (Error error) |> renderOutput parseResult
+            }
+
+    type Blake3Handler() =
+        inherit AsynchronousCommandLineAction()
+
+        override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
+            task {
+                if parseResult |> verbose then printParseResult parseResult
+
+                let validateIncomingParameters = parseResult |> Validations.CommonValidations
+
+                match validateIncomingParameters with
+                | Ok _ ->
+                    let graceIds = getNormalizedIdsAndNames parseResult
+
+                    if (parseResult |> hasOutput)
+                       || (parseResult |> json) then
+                        let blake3Hash1 = parseResult.GetValue(Options.blake3Hash1)
+                        let blake3Hash2 = parseResult.GetValue(Options.blake3Hash2)
+
+                        let getDiffByBlake3HashParameters =
+                            GetDiffByBlake3HashParameters(
+                                OwnerId = graceIds.OwnerIdString,
+                                OwnerName = graceIds.OwnerName,
+                                OrganizationId = graceIds.OrganizationIdString,
+                                OrganizationName = graceIds.OrganizationName,
+                                RepositoryId = graceIds.RepositoryIdString,
+                                RepositoryName = graceIds.RepositoryName,
+                                Blake3Hash1 = blake3Hash1,
+                                Blake3Hash2 = blake3Hash2,
+                                CorrelationId = graceIds.CorrelationId
+                            )
+
+                        match! Diff.GetDiffByBlake3Hash(getDiffByBlake3HashParameters) with
+                        | Ok returnValue ->
+                            if parseResult |> json then
+                                return Ok returnValue |> renderOutput parseResult
+                            else
+                                let diffDto = returnValue.ReturnValue
+                                printDiffResults diffDto
+
+                                for markup in markupList do
+                                    writeMarkup markup
+
+                                return 0
+                        | Error error ->
+                            if parseResult |> json then
+                                return Error error |> renderOutput parseResult
+                            else
+                                logToAnsiConsole Colors.Error $"Failed to get diff by BLAKE3 hash. {Markup.Escape(error.Error)}"
+
+                                if parseResult |> verbose then logToAnsiConsole Colors.Verbose (serialize error)
+
+                                return 1
+                    else
                         return 0
                 | Error error -> return (Error error) |> renderOutput parseResult
             }
@@ -817,5 +933,14 @@ module Diff =
 
         shaCommand.Action <- ShaHandler()
         diffCommand.Subcommands.Add(shaCommand)
+
+        let blake3Command =
+            new Command("blake3", Description = "Displays the difference between two versions, specified by partial or full BLAKE3 hash.")
+            |> addCommonOptions
+            |> addOption Options.blake3Hash1
+            |> addOption Options.blake3Hash2
+
+        blake3Command.Action <- Blake3Handler()
+        diffCommand.Subcommands.Add(blake3Command)
 
         diffCommand

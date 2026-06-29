@@ -11,7 +11,7 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// BranchQueryParameters : Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+/// BranchQueryParameters : Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct BranchQueryParameters {
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
@@ -36,6 +36,7 @@ pub struct BranchQueryParameters {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    /// Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
     #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
@@ -43,7 +44,7 @@ pub struct BranchQueryParameters {
 }
 
 impl BranchQueryParameters {
-    /// Parameters for branch query endpoints that can resolve a branch or reference by hash or reference id.
+    /// Parameters for branch query endpoints that can resolve a branch or reference by SHA-256 hash or reference id.
     pub fn new() -> BranchQueryParameters {
         BranchQueryParameters {
             correlation_id: None,

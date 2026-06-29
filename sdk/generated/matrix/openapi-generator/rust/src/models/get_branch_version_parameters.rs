@@ -36,10 +36,14 @@ pub struct GetBranchVersionParameters {
     pub branch_id: Option<uuid::Uuid>,
     #[serde(rename = "BranchName", skip_serializing_if = "Option::is_none")]
     pub branch_name: Option<String>,
+    /// Empty value or lowercase or uppercase 2- to 64-character SHA-256 version hash prefix.
     #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
     pub sha256_hash: Option<String>,
     #[serde(rename = "ReferenceId", skip_serializing_if = "Option::is_none")]
     pub reference_id: Option<uuid::Uuid>,
+    /// Empty value or lowercase or uppercase 2- to 64-character BLAKE3 version hash prefix.
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
     #[serde(rename = "IncludeDeleted", skip_serializing_if = "Option::is_none")]
     pub include_deleted: Option<bool>,
 }
@@ -60,6 +64,7 @@ impl GetBranchVersionParameters {
             branch_name: None,
             sha256_hash: None,
             reference_id: None,
+            blake3_hash: None,
             include_deleted: None,
         }
     }

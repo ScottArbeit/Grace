@@ -15,6 +15,7 @@ Name | Type
 `branchId` | string
 `directoryId` | string
 `sha256Hash` | string
+`blake3Hash` | string
 `referenceType` | [ReferenceType](ReferenceType.md)
 `referenceText` | string
 `links` | Array&lt;string&gt;
@@ -37,7 +38,8 @@ const example = {
   "repositoryId": ab6f35ef-6e01-440b-8f9b-c343a5272095,
   "branchId": de7bf47d-23ae-4599-af68-68a317ea390d,
   "directoryId": 33a4e36b-828f-4fae-9343-50b6560dc842,
-  "sha256Hash": 805331A98813206270E35564769E8BB59EEA02AEB7B27C7D6C63E625E1857243,
+  "sha256Hash": 805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243,
+  "blake3Hash": 9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d,
   "referenceType": null,
   "referenceText": null,
   "links": null,

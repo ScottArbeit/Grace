@@ -27,6 +27,22 @@ For small typo fixes or tiny docs corrections, keep the spirit of the process bu
 - Use the existing issue details to prevent likely Codex Code Review Bot findings before the pull request exists. This
   means sharper invariants, forbidden implementation shapes, adversarial cases, and test evidence rather than more
   issue-template ceremony.
+- Grace is not in production. There is no production data to import, migrate, preserve, or grandfather. Do not weaken
+  contracts, validators, generated clients, runtime behavior, or tests to preserve imaginary old data.
+
+## No Production Data
+
+Grace is still pre-production. There is no production data to import, migrate, preserve, or grandfather.
+
+That premise has concrete review consequences:
+
+- Public API, CLI, OpenAPI, SDK, and storage contracts should state the desired invariant for current Grace behavior.
+- Do not broaden those contracts merely to accept missing, empty, or malformed values from hypothetical old data.
+- Do not add import, migration, or grandfathering paths for data that does not exist.
+- Review findings that depend on old production data start from the wrong premise. Correct the premise through
+  documentation, source behavior, tests, or review response rather than weakening the public contract.
+- Issue bodies and worker prompts should name any intentional compatibility exception explicitly. Silence means the
+  current invariant wins.
 
 ## Task Records
 
@@ -253,7 +269,8 @@ issue, but every selected or skipped row should be clear enough that a worker an
 - Proof/test work: identify the false-positive test review is likely to catch. Prove the assertion would fail on
   regression, not just execute the path.
 - DTO/contract work: check JSON shape, MessagePack or other serialization shape, OpenAPI component, aggregate OpenAPI,
-  generated-client impact, SDK/facade impact, docs impact, and compatibility posture.
+  generated-client impact, SDK/facade impact, docs impact, and no-production-data posture. Remember that Grace has no
+  production data to import or preserve; do not add compatibility paths for imaginary old data.
 - CLI work: check `--output Json`, `--select`, `--schema`, `--examples`, stdout cleanliness, stderr/progress behavior,
   exit-code behavior, and whether global options accidentally skip or duplicate side effects.
 - Server/API work: specify ordering for parse, null/blank validation, domain validation, authorization,

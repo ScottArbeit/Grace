@@ -1,5 +1,6 @@
 namespace Grace.Actors
 
+open Azure
 open Azure.Core
 open Azure.Identity
 open Azure.Messaging.ServiceBus
@@ -28,6 +29,7 @@ open Grace.Types.Organization
 open Grace.Types.Owner
 open Grace.Types.Common
 open Grace.Types.Validation
+open Grace.Types.UploadSession
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
@@ -125,6 +127,41 @@ module Services =
         else
             blobUri
 
+    let internal shardBlobHostForConfiguredHost (accountName: string) (configuredHost: string) =
+        let firstDot = configuredHost.IndexOf('.')
+
+        if firstDot > 0
+           && configuredHost
+               .Substring(firstDot)
+                  .IndexOf(".blob.", StringComparison.OrdinalIgnoreCase)
+              >= 0 then
+            $"{accountName}{configuredHost.Substring(firstDot)}"
+        else
+            $"{accountName}.blob.core.windows.net"
+
+    let private shardBlobEndpointUri (accountName: string) (containerAndObjectPath: string) =
+        let configuredEndpoint = AzureEnvironment.storageEndpoints.BlobEndpoint
+
+        if accountName.Equals(AzureEnvironment.storageEndpoints.AccountName, StringComparison.OrdinalIgnoreCase) then
+            Uri($"{configuredEndpoint.AbsoluteUri.TrimEnd('/')}/{containerAndObjectPath.TrimStart('/')}")
+            |> normalizeLocalAzuriteBlobUri accountName
+        else
+            UriBuilder(
+                configuredEndpoint.Scheme,
+                shardBlobHostForConfiguredHost accountName configuredEndpoint.Host,
+                -1,
+                containerAndObjectPath.TrimStart('/')
+            )
+                .Uri
+
+    let private storageSharedKeyCredentialForShard (shard: StoragePoolRouting.StorageShard) =
+        if StoragePoolRouting.sharedKeyCanSignShard shard then
+            sharedKeyCredential.Value
+        else
+            None
+
+    let internal casUserDelegationSasSigningAccountName (route: StoragePoolRouting.StoragePoolRoute) = route.Shard.StorageAccountName
+
     let private createBlobContainerClientFromEndpoint containerName =
         if AzureEnvironment.useManagedIdentityForStorage then
             Context.blobServiceClient.GetBlobContainerClient(containerName)
@@ -138,8 +175,77 @@ module Services =
                 BlobContainerClient(containerUri, credential)
             | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
 
+    let private createBlobContainerClientForShard (shard: StoragePoolRouting.StorageShard) =
+        let containerUri = shardBlobEndpointUri shard.StorageAccountName $"{shard.StorageContainerName}"
+
+        if AzureEnvironment.useManagedIdentityForStorage then
+            BlobContainerClient(containerUri, DefaultAzureCredential())
+        else
+            match storageSharedKeyCredentialForShard shard with
+            | Some credential -> BlobContainerClient(containerUri, credential)
+            | None -> BlobContainerClient(containerUri)
+
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
+
+    type VersionHashPrefixResolution<'T> =
+        | NoMatches
+        | UniqueMatch of 'T
+        | AmbiguousMatches of 'T array
+
+    let internal maxVersionHashPrefixResolutionMatches = 2
+
+    let internal resolveVersionHashPrefixMatches<'T> (matches: seq<'T>) : VersionHashPrefixResolution<'T> =
+        let boundedMatches =
+            matches
+            |> Seq.truncate maxVersionHashPrefixResolutionMatches
+            |> Seq.toArray
+
+        match boundedMatches.Length with
+        | 0 -> NoMatches
+        | 1 -> UniqueMatch boundedMatches[0]
+        | _ -> AmbiguousMatches boundedMatches
+
+    let internal tryGetUniqueVersionHashPrefixMatch<'T> (resolution: VersionHashPrefixResolution<'T>) =
+        match resolution with
+        | UniqueMatch value -> Some value
+        | NoMatches
+        | AmbiguousMatches _ -> None
+
+    let private hashMatchesPrefix (hashPrefix: string) (candidateHash: string) =
+        not (String.IsNullOrWhiteSpace candidateHash)
+        && candidateHash.StartsWith(hashPrefix, StringComparison.OrdinalIgnoreCase)
+
+    let internal resolveScopedVersionHashPrefix<'T> (hashPrefix: string) (getHash: 'T -> string) (matches: seq<'T>) : VersionHashPrefixResolution<'T> =
+        let normalizedPrefix = hashPrefix.Trim()
+
+        matches
+        |> Seq.filter (fun candidate ->
+            let candidateHash = getHash candidate
+
+            hashMatchesPrefix normalizedPrefix candidateHash)
+        |> resolveVersionHashPrefixMatches
+
+    let internal resolveScopedVersionHashPrefixes<'T>
+        (sha256HashPrefix: string)
+        (getSha256Hash: 'T -> string)
+        (blake3HashPrefix: string)
+        (getBlake3Hash: 'T -> string)
+        (matches: seq<'T>)
+        : VersionHashPrefixResolution<'T>
+        =
+        let normalizedSha256HashPrefix = sha256HashPrefix.Trim()
+        let normalizedBlake3HashPrefix = blake3HashPrefix.Trim()
+
+        matches
+        |> Seq.filter (fun candidate ->
+            hashMatchesPrefix normalizedSha256HashPrefix (getSha256Hash candidate)
+            && hashMatchesPrefix normalizedBlake3HashPrefix (getBlake3Hash candidate))
+        |> resolveVersionHashPrefixMatches
+
+    let private isRootDirectoryVersion (directoryVersion: DirectoryVersion) =
+        directoryVersion.RelativePath = Constants.RootDirectoryPath
+        || directoryVersion.RelativePath = RelativePath "/"
 
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
@@ -304,9 +410,141 @@ module Services =
             return containerClient.GetBlockBlobClient blobName
         }
 
+    let resolveRepositoryStoragePoolRoute repositoryDto correlationId = StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId
+
+    let resolveUploadSessionStoragePoolRoute repositoryId storagePoolId correlationId =
+        StoragePoolRouting.resolveStoragePoolRouteForStoragePoolId repositoryId storagePoolId correlationId
+
+    let getCasContainerClient (shard: StoragePoolRouting.StorageShard) correlationId =
+        task {
+            match StoragePoolRouting.validateShard correlationId shard with
+            | Error error -> return Error error
+            | Ok () ->
+                let key = $"CasCon:{shard.StorageAccountName}-{shard.StorageContainerName}"
+
+                let! blobContainerClient =
+                    memoryCache.GetOrCreateAsync(
+                        key,
+                        fun cacheEntry ->
+                            task {
+                                let blobContainerClient = createBlobContainerClientForShard shard
+                                let! _ = blobContainerClient.CreateIfNotExistsAsync(publicAccessType = Models.PublicAccessType.None)
+                                cacheEntry.AbsoluteExpiration <- DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(10.0))
+                                return blobContainerClient
+                            }
+                    )
+
+                return Ok blobContainerClient
+        }
+
+    let getAzureContentBlockClient (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) correlationId =
+        task {
+            let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
+
+            match! getCasContainerClient route.Shard correlationId with
+            | Error error -> return Error error
+            | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient objectKey)
+        }
+
+    let getAzureContentBlockClientForPlacement (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
+        task {
+            let shard: StoragePoolRouting.StorageShard =
+                { StorageAccountName = placement.StorageAccountName; StorageContainerName = placement.StorageContainerName; ObjectKeyPrefix = String.Empty }
+
+            match! getCasContainerClient shard correlationId with
+            | Error error -> return Error error
+            | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient placement.ObjectKey)
+        }
+
+    let getContentBlockStagingObjectKey (repositoryId: RepositoryId) (uploadSessionId: UploadSessionId) (contentBlockAddress: ContentBlockAddress) =
+        $"staging/repositories/{repositoryId}/upload-sessions/{uploadSessionId:N}/content-blocks/{contentBlockAddress}"
+
+    let getContentBlockStagingPlacement
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (repositoryId: RepositoryId)
+        (uploadSessionId: UploadSessionId)
+        (contentBlockAddress: ContentBlockAddress)
+        eTag
+        =
+        StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockStagingObjectKey repositoryId uploadSessionId contentBlockAddress) eTag
+
+    let deleteAzureContentBlockPlacementIfExists (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
+        task {
+            try
+                match! getAzureContentBlockClientForPlacement placement correlationId with
+                | Error error -> return Error error
+                | Ok blobClient ->
+                    let! deleted = blobClient.DeleteIfExistsAsync()
+                    return Ok deleted.Value
+            with
+            | :? RequestFailedException as ex ->
+                return Error(GraceError.Create $"ContentBlock payload could not be deleted from object storage: {ex.Message}" correlationId)
+        }
+
+    let deleteUploadSessionStagingPayloadsForRoute (route: StoragePoolRouting.StoragePoolRoute) (session: UploadSessionDto) correlationId =
+        task {
+            if session.UploadSessionId = UploadSessionId.Empty
+               || session.RepositoryId = RepositoryId.Empty
+               || isNull session.BlockUploadIntents
+               || session.BlockUploadIntents.Length = 0 then
+                return Ok 0
+            else
+                let distinctAddresses =
+                    session.BlockUploadIntents
+                    |> Array.choose (fun intent ->
+                        if
+                            isNull (box intent)
+                            || String.IsNullOrWhiteSpace intent.ContentBlockAddress
+                        then
+                            None
+                        else
+                            Some intent.ContentBlockAddress)
+                    |> Array.distinct
+
+                let mutable deletedCount = 0
+                let mutable firstError = None
+                let mutable index = 0
+
+                while index < distinctAddresses.Length
+                      && firstError.IsNone do
+                    let placement = getContentBlockStagingPlacement route session.RepositoryId session.UploadSessionId distinctAddresses[index] None
+
+                    match! deleteAzureContentBlockPlacementIfExists placement correlationId with
+                    | Ok deleted -> if deleted then deletedCount <- deletedCount + 1
+                    | Error error -> firstError <- Some error
+
+                    index <- index + 1
+
+                match firstError with
+                | Some error -> return Error error
+                | None -> return Ok deletedCount
+        }
+
+    let deleteUploadSessionStagingPayloads (session: UploadSessionDto) correlationId =
+        task {
+            if session.UploadSessionId = UploadSessionId.Empty
+               || session.RepositoryId = RepositoryId.Empty
+               || isNull session.BlockUploadIntents
+               || session.BlockUploadIntents.Length = 0 then
+                return Ok 0
+            else
+                match resolveUploadSessionStoragePoolRoute session.RepositoryId session.StoragePoolId correlationId with
+                | Error error -> return Error error
+                | Ok route -> return! deleteUploadSessionStagingPayloadsForRoute route session correlationId
+        }
+
     let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
-            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
+            return! getAzureBlobClient repositoryDto blobName correlationId
+        }
+
+    let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+        task { return StorageKeys.wholeFileContentObjectKey fileVersion }
+
+    let getReadableAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
+        task {
+            let! blobName = getReadableWholeFileContentObjectKey repositoryDto fileVersion correlationId
             return! getAzureBlobClient repositoryDto blobName correlationId
         }
 
@@ -379,6 +617,100 @@ module Services =
             return UriWithSharedAccessSignature($"{sasUri}")
         }
 
+    let createAzureContentBlockSasUriForObjectKey
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (objectKey: string)
+        (permission: BlobSasPermissions)
+        (correlationId: CorrelationId)
+        =
+        task {
+            match StoragePoolRouting.validateShard correlationId route.Shard with
+            | Error error -> return Error error
+            | Ok () when
+                not AzureEnvironment.useManagedIdentityForStorage
+                && not (StoragePoolRouting.sharedKeyCanSignShard route.Shard)
+                ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"StorageShard '{route.Shard.StorageAccountName}/{route.Shard.StorageContainerName}' cannot be signed with the configured shared-key account '{AzureEnvironment.storageEndpoints.AccountName}'. Configure managed identity for cross-account CAS SAS."
+                            correlationId
+                    )
+            | Ok () ->
+                match! getCasContainerClient route.Shard correlationId with
+                | Error error -> return Error error
+                | Ok blobContainerClient ->
+                    let blobUri = shardBlobEndpointUri route.Shard.StorageAccountName $"{route.Shard.StorageContainerName}/{objectKey}"
+
+                    let blobSasBuilder =
+                        BlobSasBuilder(
+                            permissions = permission,
+                            expiresOn = DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                            StartsOn = DateTimeOffset.UtcNow.Subtract(TimeSpan.FromSeconds(15.0)),
+                            BlobContainerName = blobContainerClient.Name,
+                            BlobName = objectKey,
+                            Resource = "b"
+                        )
+
+                    let! sasUri =
+                        if AzureEnvironment.useManagedIdentityForStorage then
+                            task {
+                                let blobServiceClient = blobContainerClient.GetParentBlobServiceClient()
+
+                                let userDelegationKeyOptions =
+                                    BlobGetUserDelegationKeyOptions(
+                                        DateTimeOffset.UtcNow.Add(TimeSpan.FromMinutes(SharedAccessSignatureExpiration)),
+                                        StartsOn = DateTimeOffset.UtcNow
+                                    )
+
+                                let! userDelegationKey = blobServiceClient.GetUserDelegationKeyAsync(userDelegationKeyOptions)
+
+                                let sasQueryParameters =
+                                    blobSasBuilder.ToSasQueryParameters(userDelegationKey.Value, casUserDelegationSasSigningAccountName route)
+
+                                return Uri($"{blobUri}?{sasQueryParameters}")
+                            }
+                        else
+                            task {
+                                match storageSharedKeyCredentialForShard route.Shard with
+                                | Some credential ->
+                                    let fullUriBlobClient = BlobClient(blobUri, credential)
+
+                                    let fullUriBlobSasBuilder =
+                                        BlobSasBuilder(
+                                            permissions = permission,
+                                            expiresOn = blobSasBuilder.ExpiresOn,
+                                            StartsOn = blobSasBuilder.StartsOn,
+                                            Resource = "b"
+                                        )
+
+                                    return fullUriBlobClient.GenerateSasUri(fullUriBlobSasBuilder)
+                                | None ->
+                                    let blobClient = blobContainerClient.GetBlobClient objectKey
+
+                                    if blobClient.CanGenerateSasUri then
+                                        return blobClient.GenerateSasUri(blobSasBuilder)
+                                    else
+                                        return
+                                            raise (
+                                                InvalidOperationException(
+                                                    "Azure Blob shared key is not configured and the current blob client cannot generate SAS. Configure grace__azure_storage__key, include AccountKey in grace__azure_storage__connectionstring, or enable managed identity for storage."
+                                                )
+                                            )
+                            }
+
+                    return Ok(UriWithSharedAccessSignature($"{sasUri}"))
+        }
+
+    let createAzureContentBlockSasUri
+        (route: StoragePoolRouting.StoragePoolRoute)
+        (contentBlockAddress: ContentBlockAddress)
+        (permission: BlobSasPermissions)
+        (correlationId: CorrelationId)
+        =
+        let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
+        createAzureContentBlockSasUriForObjectKey route objectKey permission correlationId
+
     let azureBlobReadPermissions =
         (BlobSasPermissions.Read
          ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
@@ -398,11 +730,11 @@ module Services =
     /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
     let getUriWithReadSharedAccessSignatureForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
-            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            let! blobName = getReadableWholeFileContentObjectKey repositoryDto fileVersion correlationId
             return! getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
         }
 
-    /// The permissions we need to create, write, or tag blobs. Includes read permission to allow for calls to .ExistsAsync().
+    /// The permissions we need to create, write, read, or tag blobs.
     let azureBlobWritePermissions =
         (BlobSasPermissions.Create
          ||| BlobSasPermissions.Write
@@ -440,7 +772,7 @@ module Services =
     /// Gets a full Uri, including shared access signature, for writing from the object storage provider.
     let getUriWithWriteSharedAccessSignatureForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
-            let blobName = $"{fileVersion.RelativePath}/{fileVersion.GetObjectFileName}"
+            let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
             return! getUriWithWriteSharedAccessSignature repositoryDto blobName correlationId
         }
 
@@ -1303,6 +1635,113 @@ module Services =
             isNotDeletedReference referenceDto
             && hasPromotionSetTerminalLink referenceDto)
 
+    let internal getRootDirectoryVersionByDirectoryVersionId (repositoryId: RepositoryId) (directoryVersionId: DirectoryVersionId) correlationId =
+        task {
+            let mutable directoryVersion = DirectoryVersion.Default
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            """
+                            SELECT TOP 1 c.State
+                            FROM c
+                            WHERE STRINGEQUALS(c.State[0].Event.created.DirectoryVersionId, @directoryVersionId, true)
+                                AND (
+                                    STRINGEQUALS(c.State[0].Event.created.RelativePath, @rootRelativePath, true)
+                                    OR STRINGEQUALS(c.State[0].Event.created.RelativePath, @slashRootRelativePath, true)
+                                )
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
+                        )
+                            .WithParameter("@directoryVersionId", $"{directoryVersionId}")
+                            .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@slashRootRelativePath", RelativePath "/")
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                    while iterator.HasMoreResults
+                          && directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty do
+                        let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+
+                        indexMetrics.Append($"{results.IndexMetrics}, ")
+                        |> ignore
+
+                        requestCharge.Append($"{results.RequestCharge:F3}, ")
+                        |> ignore
+
+                        let eventsForAllDirectories = results.Resource |> Seq.toArray
+                        let mutable index = 0
+
+                        while index < eventsForAllDirectories.Length
+                              && directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty do
+                            let directoryVersionDto =
+                                eventsForAllDirectories[index].State
+                                |> Array.fold
+                                    (fun directoryVersionDto directoryEvent ->
+                                        directoryVersionDto
+                                        |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                    DirectoryVersionDto.Default
+
+                            directoryVersion <- directoryVersionDto.DirectoryVersion
+                            index <- index + 1
+
+                    if (indexMetrics.Length >= 2)
+                       && (requestCharge.Length >= 2)
+                       && Activity.Current <> null then
+                        Activity
+                            .Current
+                            .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                            .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                        |> ignore
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            if directoryVersion.DirectoryVersionId
+               <> DirectoryVersionId.Empty then
+                return Some directoryVersion
+            else
+                return None
+        }
+
+    let internal hydrateLegacyReferenceProjectionBlake3
+        (getDirectoryVersion: RepositoryId -> DirectoryVersionId -> CorrelationId -> Task<DirectoryVersion option>)
+        correlationId
+        (referenceDto: ReferenceDto)
+        =
+        task {
+            if String.IsNullOrWhiteSpace(string referenceDto.Blake3Hash) then
+                let! directoryVersion = getDirectoryVersion referenceDto.RepositoryId referenceDto.DirectoryId correlationId
+
+                match directoryVersion with
+                | Some rootDirectoryVersion ->
+                    let hydratedReferenceDto, _ = ReferenceDto.HydrateLegacyRootDirectoryHash rootDirectoryVersion referenceDto
+                    return hydratedReferenceDto
+                | None -> return referenceDto
+            else
+                return referenceDto
+        }
+
+    let internal projectReferenceEventsWithLegacyBlake3Hydration getDirectoryVersion correlationId referenceEvents =
+        task {
+            let referenceDto =
+                referenceEvents
+                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+
+            return! hydrateLegacyReferenceProjectionBlake3 getDirectoryVersion correlationId referenceDto
+        }
+
     /// Gets a list of references that match a provided SHA-256 hash.
     let getReferencesBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) (maxCount: int) =
         task {
@@ -1344,19 +1783,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+                        let mutable index = 0
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
-                            let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                        while index < eventsForAllReferences.Length do
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getReferencesBySha256Hash"
+                                    eventsForAllReferences[index].State
 
-                            if isNotDeletedReference referenceDto then references.Add(referenceDto))
+                            if isNotDeletedReference referenceDto then references.Add(referenceDto)
+
+                            index <- index + 1
 
                     if (indexMetrics.Length >= 2)
                        && (requestCharge.Length >= 2)
@@ -1377,11 +1816,18 @@ module Services =
                     .ToArray()
         }
 
+    /// Resolves a reference by its SHA-256 hash.
+    let getReferenceResolutionBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) =
+        task {
+            let! references = getReferencesBySha256Hash repositoryId branchId sha256Hash maxVersionHashPrefixResolutionMatches
+            return resolveScopedVersionHashPrefix sha256Hash (fun (referenceDto: ReferenceDto) -> referenceDto.Sha256Hash) references
+        }
+
     /// Gets a reference by its SHA-256 hash.
     let getReferenceBySha256Hash (repositoryId: RepositoryId) (branchId: BranchId) (sha256Hash: Sha256Hash) =
         task {
-            let! references = getReferencesBySha256Hash repositoryId branchId sha256Hash 1
-            if references.Length > 0 then return Some references[0] else return None
+            let! resolution = getReferenceResolutionBySha256Hash repositoryId branchId sha256Hash
+            return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
     /// Gets a list of references for a given branch.
@@ -1424,19 +1870,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+                        let mutable index = 0
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
-                            let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                        while index < eventsForAllReferences.Length do
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    correlationId
+                                    eventsForAllReferences[index].State
 
-                            references.Add(referenceDto))
+                            references.Add(referenceDto)
+
+                            index <- index + 1
 
                     //logToConsole
                     //    $"In Services.Actor.getReferences: BranchId: {branchId}; RepositoryId: {repositoryId}; Retrieved {references.Count} references.{Environment.NewLine}{printQueryDefinition queryDefinition}{Environment.NewLine}{serialize references}"
@@ -1613,19 +2059,19 @@ module Services =
                         requestCharge.Append($"{results.RequestCharge:F3}, ")
                         |> ignore
 
-                        let eventsForAllReferences = results.Resource
+                        let eventsForAllReferences = results.Resource |> Seq.toArray
+                        let mutable index = 0
 
-                        eventsForAllReferences
-                        |> Seq.iter (fun eventsForOneReference ->
-                            let referenceDto =
-                                eventsForOneReference.State
-                                |> Array.fold
-                                    (fun referenceDto referenceEvent ->
-                                        referenceDto
-                                        |> ReferenceDto.UpdateDto referenceEvent)
-                                    ReferenceDto.Default
+                        while index < eventsForAllReferences.Length do
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    correlationId
+                                    eventsForAllReferences[index].State
 
-                            references.Add(referenceDto))
+                            references.Add(referenceDto)
+
+                            index <- index + 1
 
                     if indexMetrics.Length >= 2
                        && requestCharge.Length >= 2
@@ -1697,9 +2143,11 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestReference.IsNone do
-                            let referenceDto =
-                                eventsForAllReferences[index].State
-                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getLatestReference"
+                                    eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
 
@@ -1776,11 +2224,11 @@ module Services =
 
                                             while index < eventsForAllReferences.Length
                                                   && not foundForType do
-                                                let referenceDto =
-                                                    eventsForAllReferences[index].State
-                                                    |> Array.fold
-                                                        (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent)
-                                                        ReferenceDto.Default
+                                                let! referenceDto =
+                                                    projectReferenceEventsWithLegacyBlake3Hydration
+                                                        getRootDirectoryVersionByDirectoryVersionId
+                                                        "getLatestReferenceByReferenceTypes"
+                                                        eventsForAllReferences[index].State
 
                                                 if isNotDeletedReference referenceDto then
                                                     referenceDtos.TryAdd(referenceType, referenceDto)
@@ -1868,9 +2316,11 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestReference.IsNone do
-                            let referenceDto =
-                                eventsForAllReferences[index].State
-                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getLatestReferenceByType"
+                                    eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto then latestReference <- Some referenceDto
 
@@ -1938,9 +2388,11 @@ module Services =
 
                         while index < eventsForAllReferences.Length
                               && latestPromotion.IsNone do
-                            let referenceDto =
-                                eventsForAllReferences[index].State
-                                |> Array.fold (fun current referenceEvent -> current |> ReferenceDto.UpdateDto referenceEvent) ReferenceDto.Default
+                            let! referenceDto =
+                                projectReferenceEventsWithLegacyBlake3Hydration
+                                    getRootDirectoryVersionByDirectoryVersionId
+                                    "getLatestPromotion"
+                                    eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto
                                && hasPromotionSetTerminalLink referenceDto then
@@ -2071,10 +2523,15 @@ module Services =
                     .ToArray()
         }
 
-    /// Gets a DirectoryVersion by searching using a Sha256Hash value.
-    let getDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+    let private getDirectoryVersionResolutionByHashPrefix
+        (hashFieldName: string)
+        (repositoryId: RepositoryId)
+        (hashPrefix: string)
+        (getHash: DirectoryVersion -> string)
+        correlationId
+        =
         task {
-            let mutable directoryVersion = DirectoryVersion.Default
+            let directoryVersions = List<DirectoryVersion>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -2085,23 +2542,22 @@ module Services =
                 try
                     let queryDefinition =
                         QueryDefinition(
-                            """
-                            SELECT TOP 1 c.State
+                            $"""
+                            SELECT TOP @maxCount c.State
                             FROM c
-                            WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
+                            WHERE STARTSWITH(c.State[0].Event.created.{hashFieldName}, @hashPrefix, true)
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
-                            .WithParameter("@sha256Hash", sha256Hash)
+                            .WithParameter("@maxCount", maxVersionHashPrefixResolutionMatches)
+                            .WithParameter("@hashPrefix", hashPrefix)
                             .WithParameter("@grainType", StateName.DirectoryVersion)
                             .WithParameter("@partitionKey", repositoryId)
 
                     try
                         let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
-
-                        let directoryVersionDtos = List<DirectoryVersionDto>()
 
                         while iterator.HasMoreResults do
                             let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
@@ -2124,10 +2580,7 @@ module Services =
                                             |> DirectoryVersionDto.UpdateDto directoryEvent)
                                         DirectoryVersionDto.Default
 
-                                directoryVersionDtos.Add(directoryVersionDto))
-
-                            if directoryVersionDtos.Count > 0 then
-                                directoryVersion <- directoryVersionDtos[0].DirectoryVersion
+                                directoryVersions.Add(directoryVersionDto.DirectoryVersion))
 
                         if (indexMetrics.Length >= 2)
                            && (requestCharge.Length >= 2)
@@ -2141,7 +2594,119 @@ module Services =
                     | ex ->
                         log.LogError(
                             ex,
-                            "{CurrentInstant}: Exception in Services.getDirectoryBySha256Hash(). QueryDefinition: {queryDefinition}",
+                            "{CurrentInstant}: Exception in Services.getDirectoryVersionResolutionByHashPrefix(). HashFieldName: {hashFieldName}; QueryDefinition: {queryDefinition}",
+                            getCurrentInstantExtended (),
+                            hashFieldName,
+                            (serialize queryDefinition)
+                        )
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            return resolveScopedVersionHashPrefix hashPrefix getHash directoryVersions
+        }
+
+    /// Resolves a DirectoryVersion by searching using a Sha256Hash value.
+    let getDirectoryVersionResolutionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+        getDirectoryVersionResolutionByHashPrefix
+            (nameof DirectoryVersion.Default.Sha256Hash)
+            repositoryId
+            sha256Hash
+            (fun directoryVersion -> directoryVersion.Sha256Hash)
+            correlationId
+
+    /// Gets a DirectoryVersion by searching using a Sha256Hash value.
+    let getDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+        task {
+            let! resolution = getDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
+        }
+
+    /// Resolves a DirectoryVersion by searching using a Blake3Hash value.
+    let getDirectoryVersionResolutionByBlake3Hash (repositoryId: RepositoryId) (blake3Hash: Blake3Hash) correlationId =
+        getDirectoryVersionResolutionByHashPrefix
+            (nameof DirectoryVersion.Default.Blake3Hash)
+            repositoryId
+            blake3Hash
+            (fun directoryVersion -> directoryVersion.Blake3Hash)
+            correlationId
+
+    /// Gets a DirectoryVersion by searching using a Blake3Hash value.
+    let getDirectoryVersionByBlake3Hash (repositoryId: RepositoryId) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            let! resolution = getDirectoryVersionResolutionByBlake3Hash repositoryId blake3Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
+        }
+
+    let private getDirectoryVersionResolutionByHashPrefixes (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            let directoryVersions = List<DirectoryVersion>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            $"""
+                            SELECT TOP @maxCount c.State
+                            FROM c
+                            WHERE STARTSWITH(c.State[0].Event.created.{nameof DirectoryVersion.Default.Blake3Hash}, @blake3Hash, true)
+                                AND STARTSWITH(c.State[0].Event.created.{nameof DirectoryVersion.Default.Sha256Hash}, @sha256Hash, true)
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
+                        )
+                            .WithParameter("@maxCount", maxVersionHashPrefixResolutionMatches)
+                            .WithParameter("@sha256Hash", sha256Hash)
+                            .WithParameter("@blake3Hash", blake3Hash)
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    try
+                        let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                        while iterator.HasMoreResults do
+                            let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
+
+                            let eventsForAllDirectories = results.Resource
+
+                            eventsForAllDirectories
+                            |> Seq.iter (fun eventsForOneDirectory ->
+                                let directoryVersionDto =
+                                    eventsForOneDirectory.State
+                                    |> Array.fold
+                                        (fun directoryVersionDto directoryEvent ->
+                                            directoryVersionDto
+                                            |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                        DirectoryVersionDto.Default
+
+                                directoryVersions.Add(directoryVersionDto.DirectoryVersion))
+
+                        if (indexMetrics.Length >= 2)
+                           && (requestCharge.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
+                    with
+                    | ex ->
+                        log.LogError(
+                            ex,
+                            "{CurrentInstant}: Exception in Services.getDirectoryVersionResolutionByHashPrefixes(). QueryDefinition: {queryDefinition}",
                             getCurrentInstantExtended (),
                             (serialize queryDefinition)
                         )
@@ -2150,11 +2715,34 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            if directoryVersion.DirectoryVersionId
-               <> DirectoryVersion.Default.DirectoryVersionId then
-                return Some directoryVersion
+            return
+                resolveScopedVersionHashPrefixes
+                    sha256Hash
+                    (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash)
+                    blake3Hash
+                    (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
+                    directoryVersions
+        }
+
+    let getDirectoryVersionResolutionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            if
+                not (String.IsNullOrEmpty(string blake3Hash))
+                && not (String.IsNullOrEmpty(string sha256Hash))
+            then
+                return! getDirectoryVersionResolutionByHashPrefixes repositoryId sha256Hash blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string blake3Hash)) then
+                return! getDirectoryVersionResolutionByBlake3Hash repositoryId blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string sha256Hash)) then
+                return! getDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
             else
-                return None
+                return NoMatches
+        }
+
+    let getDirectoryVersionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            let! resolution = getDirectoryVersionResolutionByHashQuery repositoryId sha256Hash blake3Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
     /// Gets the most recent DirectoryVersion with HashesValidated = true by RelativePath.
@@ -2230,10 +2818,9 @@ module Services =
                 return None
         }
 
-    /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
-    let getRootDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+    let private getRootDirectoryVersionResolutionByHashPrefix hashFieldName repositoryId hashPrefix getHash correlationId =
         task {
-            let mutable directoryVersion = DirectoryVersion.Default
+            let directoryVersions = List<DirectoryVersion>()
 
             match actorStateStorageProvider with
             | Unknown -> ()
@@ -2245,23 +2832,27 @@ module Services =
                     let queryDefinition =
                         QueryDefinition(
                             $"""
-                            SELECT TOP 1 c.State
+                            SELECT TOP @maxCount c.State
                             FROM c
-                            WHERE STARTSWITH(c.State[0].Event.created.Sha256Hash, @sha256Hash, true)
-                                AND STRINGEQUALS(c.State[0].Event.created.RelativePath, @relativePath, true)
+                            WHERE STARTSWITH(c.State[0].Event.created.{hashFieldName}, @hashPrefix, true)
+                                AND (
+                                    STRINGEQUALS(c.State[0].Event.created.RelativePath, @rootRelativePath, true)
+                                    OR STRINGEQUALS(c.State[0].Event.created.RelativePath, @slashRootRelativePath, true)
+                                )
                                 AND c.GrainType = @grainType
                                 AND c.PartitionKey = @partitionKey
                             ORDER BY c.State[0].Event.created.CreatedAt DESC
                             """
                         )
-                            .WithParameter("@sha256Hash", sha256Hash)
-                            .WithParameter("@relativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@maxCount", maxVersionHashPrefixResolutionMatches)
+                            .WithParameter("@hashPrefix", hashPrefix)
+                            .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@slashRootRelativePath", RelativePath "/")
                             .WithParameter("@grainType", StateName.DirectoryVersion)
                             .WithParameter("@partitionKey", repositoryId)
 
                     try
                         let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
-                        let directoryVersionDtos = List<DirectoryVersionDto>()
 
                         while iterator.HasMoreResults do
                             let! results = iterator.ReadNextAsync()
@@ -2284,10 +2875,7 @@ module Services =
                                             |> DirectoryVersionDto.UpdateDto directoryEvent)
                                         DirectoryVersionDto.Default
 
-                                directoryVersionDtos.Add(directoryVersionDto))
-
-                        if directoryVersionDtos.Count > 0 then
-                            directoryVersion <- directoryVersionDtos[0].DirectoryVersion
+                                directoryVersions.Add(directoryVersionDto.DirectoryVersion))
 
                         if (indexMetrics.Length >= 2)
                            && (requestCharge.Length >= 2)
@@ -2305,8 +2893,9 @@ module Services =
 
                         log.LogError(
                             ex,
-                            "{CurrentInstant}: Exception in Services.getRootDirectoryBySha256Hash(). QueryText: {queryText}. Parameters: {parameters}",
+                            "{CurrentInstant}: Exception in Services.getRootDirectoryVersionResolutionByHashPrefix(). HashFieldName: {hashFieldName}; QueryText: {queryText}. Parameters: {parameters}",
                             getCurrentInstantExtended (),
+                            hashFieldName,
                             (queryDefinition.QueryText),
                             parameters.ToString()
                         )
@@ -2315,11 +2904,155 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> ()
 
-            if directoryVersion.DirectoryVersionId
-               <> DirectoryVersion.Default.DirectoryVersionId then
-                return Some directoryVersion
+            return
+                directoryVersions
+                |> Seq.filter isRootDirectoryVersion
+                |> resolveScopedVersionHashPrefix hashPrefix getHash
+        }
+
+    /// Resolves a Root DirectoryVersion by searching using a Sha256Hash value.
+    let getRootDirectoryVersionResolutionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+        getRootDirectoryVersionResolutionByHashPrefix
+            (nameof DirectoryVersion.Default.Sha256Hash)
+            repositoryId
+            sha256Hash
+            (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash)
+            correlationId
+
+    /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
+    let getRootDirectoryVersionBySha256Hash (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) correlationId =
+        task {
+            let! resolution = getRootDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
+        }
+
+    /// Resolves a Root DirectoryVersion by searching using a Blake3Hash value.
+    let getRootDirectoryVersionResolutionByBlake3Hash (repositoryId: RepositoryId) (blake3Hash: Blake3Hash) correlationId =
+        getRootDirectoryVersionResolutionByHashPrefix
+            (nameof DirectoryVersion.Default.Blake3Hash)
+            repositoryId
+            blake3Hash
+            (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
+            correlationId
+
+    /// Gets a Root DirectoryVersion by searching using a Blake3Hash value.
+    let getRootDirectoryVersionByBlake3Hash (repositoryId: RepositoryId) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            let! resolution = getRootDirectoryVersionResolutionByBlake3Hash repositoryId blake3Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
+        }
+
+    let private getRootDirectoryVersionResolutionByHashPrefixes repositoryId (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            let directoryVersions = List<DirectoryVersion>()
+
+            match actorStateStorageProvider with
+            | Unknown -> ()
+            | AzureCosmosDb ->
+                let indexMetrics = stringBuilderPool.Get()
+                let requestCharge = stringBuilderPool.Get()
+
+                try
+                    let queryDefinition =
+                        QueryDefinition(
+                            $"""
+                            SELECT TOP @maxCount c.State
+                            FROM c
+                            WHERE STARTSWITH(c.State[0].Event.created.{nameof DirectoryVersion.Default.Blake3Hash}, @blake3Hash, true)
+                                AND STARTSWITH(c.State[0].Event.created.{nameof DirectoryVersion.Default.Sha256Hash}, @sha256Hash, true)
+                                AND (
+                                    STRINGEQUALS(c.State[0].Event.created.RelativePath, @rootRelativePath, true)
+                                    OR STRINGEQUALS(c.State[0].Event.created.RelativePath, @slashRootRelativePath, true)
+                                )
+                                AND c.GrainType = @grainType
+                                AND c.PartitionKey = @partitionKey
+                            ORDER BY c.State[0].Event.created.CreatedAt DESC
+                            """
+                        )
+                            .WithParameter("@maxCount", maxVersionHashPrefixResolutionMatches)
+                            .WithParameter("@sha256Hash", sha256Hash)
+                            .WithParameter("@blake3Hash", blake3Hash)
+                            .WithParameter("@rootRelativePath", Constants.RootDirectoryPath)
+                            .WithParameter("@slashRootRelativePath", RelativePath "/")
+                            .WithParameter("@grainType", StateName.DirectoryVersion)
+                            .WithParameter("@partitionKey", repositoryId)
+
+                    try
+                        let iterator = cosmosContainer.GetItemQueryIterator<DirectoryVersionEventValue>(queryDefinition, requestOptions = queryRequestOptions)
+
+                        while iterator.HasMoreResults do
+                            let! results = DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> iterator.ReadNextAsync())
+
+                            indexMetrics.Append($"{results.IndexMetrics}, ")
+                            |> ignore
+
+                            requestCharge.Append($"{results.RequestCharge:F3}, ")
+                            |> ignore
+
+                            let eventsForAllDirectories = results.Resource
+
+                            eventsForAllDirectories
+                            |> Seq.iter (fun eventsForOneDirectory ->
+                                let directoryVersionDto =
+                                    eventsForOneDirectory.State
+                                    |> Array.fold
+                                        (fun directoryVersionDto directoryEvent ->
+                                            directoryVersionDto
+                                            |> DirectoryVersionDto.UpdateDto directoryEvent)
+                                        DirectoryVersionDto.Default
+
+                                directoryVersions.Add(directoryVersionDto.DirectoryVersion))
+
+                        if (indexMetrics.Length >= 2)
+                           && (requestCharge.Length >= 2)
+                           && Activity.Current <> null then
+                            Activity
+                                .Current
+                                .SetTag("indexMetrics", $"{indexMetrics.Remove(indexMetrics.Length - 2, 2)}")
+                                .SetTag("requestCharge", $"{requestCharge.Remove(requestCharge.Length - 2, 2)}")
+                            |> ignore
+                    with
+                    | ex ->
+                        log.LogError(
+                            ex,
+                            "{CurrentInstant}: Exception in Services.getRootDirectoryVersionResolutionByHashPrefixes(). QueryDefinition: {queryDefinition}",
+                            getCurrentInstantExtended (),
+                            (serialize queryDefinition)
+                        )
+                finally
+                    stringBuilderPool.Return(indexMetrics)
+                    stringBuilderPool.Return(requestCharge)
+            | MongoDB -> ()
+
+            return
+                directoryVersions
+                |> Seq.filter isRootDirectoryVersion
+                |> resolveScopedVersionHashPrefixes
+                    sha256Hash
+                    (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Sha256Hash)
+                    blake3Hash
+                    (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
+        }
+
+    let getRootDirectoryVersionResolutionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            if
+                not (String.IsNullOrEmpty(string blake3Hash))
+                && not (String.IsNullOrEmpty(string sha256Hash))
+            then
+                return! getRootDirectoryVersionResolutionByHashPrefixes repositoryId sha256Hash blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string blake3Hash)) then
+                return! getRootDirectoryVersionResolutionByBlake3Hash repositoryId blake3Hash correlationId
+            elif not (String.IsNullOrEmpty(string sha256Hash)) then
+                return! getRootDirectoryVersionResolutionBySha256Hash repositoryId sha256Hash correlationId
             else
-                return None
+                return NoMatches
+        }
+
+    let getRootDirectoryVersionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
+        task {
+            let! resolution = getRootDirectoryVersionResolutionByHashQuery repositoryId sha256Hash blake3Hash correlationId
+            return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
     /// Gets a Root DirectoryVersion by searching using a Sha256Hash value.
@@ -2329,7 +3062,7 @@ module Services =
 
             let! referenceDto = referenceActorProxy.Get correlationId
 
-            return! getRootDirectoryVersionBySha256Hash repositoryId referenceDto.Sha256Hash correlationId
+            return! getRootDirectoryVersionByDirectoryVersionId repositoryId referenceDto.DirectoryId correlationId
         }
 
     /// Checks if all of the supplied DirectoryVersionIds exist.
@@ -2448,19 +3181,18 @@ module Services =
                                 clientElapsedTime
                                 + results.Diagnostics.GetClientElapsedTime()
 
-                            let eventsForAllReferences = results.Resource
+                            let eventsForAllReferences = results.Resource |> Seq.toArray
+                            let mutable index = 0
 
-                            eventsForAllReferences
-                            |> Seq.iter (fun eventsForOneReference ->
-                                let referenceDto =
-                                    eventsForOneReference.State
-                                    |> Array.fold
-                                        (fun referenceDto referenceEvent ->
-                                            referenceDto
-                                            |> ReferenceDto.UpdateDto referenceEvent)
-                                        ReferenceDto.Default
+                            while index < eventsForAllReferences.Length do
+                                let! referenceDto =
+                                    projectReferenceEventsWithLegacyBlake3Hydration
+                                        getRootDirectoryVersionByDirectoryVersionId
+                                        correlationId
+                                        eventsForAllReferences[index].State
 
-                                queryResults.Add(referenceDto.ReferenceId, referenceDto))
+                                queryResults.Add(referenceDto.ReferenceId, referenceDto)
+                                index <- index + 1
 
                         // Add the results to the list in the same order as the supplied referenceIds.
                         referenceIds

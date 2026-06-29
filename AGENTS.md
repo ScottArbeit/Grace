@@ -78,6 +78,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue
   implementable from its body alone without hidden project context. Write the gate as review-prevention guidance that
   predicts likely Codex Code Review Bot findings without adding new issue-template ceremony.
+- Grace is not in production. There is no production data to import, migrate, preserve, or grandfather. Do not weaken
+  public contracts, validators, generated clients, runtime behavior, or tests to preserve imaginary old data. Only build
+  compatibility behavior when an issue explicitly requires it as current Grace behavior.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
 - After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
