@@ -186,6 +186,7 @@ module Watch =
         let normalizedFullPath = Path.GetFullPath(fullPath)
         let graceDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.GraceDirectory))
         let fileInfo = FileInfo(fullPath)
+        let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
 
         let isInGraceDirectory =
             normalizedFullPath.Equals(graceDirectory, StringComparison.InvariantCultureIgnoreCase)
@@ -210,8 +211,8 @@ module Watch =
         || configuration.GraceDirectoryIgnoreEntries
            |> Array.exists directoryIgnoreMatches
         || configuration.GraceDirectoryIgnoreEntries
-           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine)
-        || configuration.GraceFileIgnoreEntries
+           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine)
+        || configuration.GraceDirectoryIgnoreEntries
            |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine)
 
     let private enqueueStatusUpdateTrigger fullPath =

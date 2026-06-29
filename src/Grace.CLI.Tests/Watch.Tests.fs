@@ -232,6 +232,10 @@ module WatchTests =
         Watch.processChangedFilesWithClients readStatusMeta readStatusFile upload updateGraceStatus applyIncremental updateIpc
         |> fun processTask -> processTask.GetAwaiter().GetResult()
 
+    let private writeGraceIgnore root (entries: string array) =
+        File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), String.Join(Environment.NewLine, entries))
+        resetConfiguration ()
+
     [<Test>]
     let ``resolveSignalRAccessTokenResult returns token when present`` () =
         let result = Watch.resolveSignalRAccessTokenResult (Ok(Some "token-value"))
@@ -433,6 +437,44 @@ module WatchTests =
 
             pending.StatusUpdateTriggers
             |> should equal [| "cached-directory" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted directory named like file ignore queues status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.tmp" |]
+
+            let directoryPath = Path.Combine(root, "archive.tmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted directory matching directory ignore does not queue status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let directoryPath = Path.Combine(root, "archive.tmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
 
             pending.FilesToProcess
             |> should equal Array.empty<string>)
