@@ -178,8 +178,10 @@ module WatchTests =
             resetConfiguration ()
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             deleteWatchStatusFileIfExists ()
+            Watch.clearPendingWatchWorkForTests ()
             action tempDir
         finally
+            Watch.clearPendingWatchWorkForTests ()
             deleteWatchStatusFileIfExists ()
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             resetConfiguration ()
@@ -190,6 +192,35 @@ module WatchTests =
                     Directory.Delete(tempDir, true)
                 with
                 | _ -> ()
+
+    let private deletedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
+
+    let private renamedEvent (oldFullPath: string) (fullPath: string) =
+        RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
+
+    let private processPendingWatchWorkForTest () =
+        let status = GraceStatus.Default
+        let mutable updateCalls = 0
+        let mutable uploadCalls = 0
+
+        let readStatus () = Task.FromResult(status)
+
+        let upload _ _ =
+            uploadCalls <- uploadCalls + 1
+            Task.FromResult(())
+
+        let updateGraceStatus status _ =
+            updateCalls <- updateCalls + 1
+            Task.FromResult(Some status)
+
+        let applyIncremental _ _ _ = Task.FromResult(())
+        let updateIpc _ _ = Task.FromResult(())
+
+        let processTask = Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc
+
+        processTask.GetAwaiter().GetResult()
+
+        updateCalls, uploadCalls
 
     [<Test>]
     let ``resolveSignalRAccessTokenResult returns token when present`` () =
@@ -220,6 +251,91 @@ module WatchTests =
             |> should contain "Unable to acquire an access token for SignalR notifications:"
 
             error |> should contain "test error"
+
+    [<Test>]
+    let ``deleted file queues status update work without upload work`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "deleted.txt")
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "deleted.txt" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``ignored and outside delete paths do not queue status update work`` () =
+        withTempRepo (fun root ->
+            let graceArtifactPath = Path.Combine(root, Constants.GraceConfigDirectory, "grace-local.db")
+            let outsidePath = Path.Combine(Path.GetTempPath(), $"grace-watch-outside-{Guid.NewGuid():N}.txt")
+
+            Watch.OnDeleted(deletedEvent graceArtifactPath)
+            Watch.OnDeleted(deletedEvent outsidePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``duplicate deleted file events drain as one status update trigger`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "duplicate-delete.txt")
+
+            Watch.OnDeleted(deletedEvent filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "duplicate-delete.txt" |]
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``renamed file queues old path status trigger and new path upload work`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-name.txt")
+            let newPath = Path.Combine(root, "new-name.txt")
+            File.WriteAllText(newPath, "new rename target")
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "old-name.txt" |]
+
+            pending.FilesToProcess
+            |> should equal [| newPath |])
 
     [<Test>]
     let ``watch exits with auth guidance when no token is configured`` () =
