@@ -127,6 +127,25 @@ module LocalStateDbTests =
         cmd.CommandText <- sql
         cmd.ExecuteScalar() |> Convert.ToInt32
 
+    let private executeScalarIntWithTextParameter (connection: SqliteConnection) (sql: string) parameterName parameterValue =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- sql
+
+        cmd.Parameters.AddWithValue(parameterName, parameterValue)
+        |> ignore
+
+        cmd.ExecuteScalar() |> Convert.ToInt32
+
+    let private countStatusFileRows connection relativePath =
+        executeScalarIntWithTextParameter connection "SELECT COUNT(*) FROM status_files WHERE relative_path = $relative_path;" "$relative_path" relativePath
+
+    let private countStatusDirectoryRows connection relativePath =
+        executeScalarIntWithTextParameter
+            connection
+            "SELECT COUNT(*) FROM status_directories WHERE relative_path = $relative_path;"
+            "$relative_path"
+            relativePath
+
     let private executeScalarInt64 (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
@@ -2023,7 +2042,7 @@ module LocalStateDbTests =
             })
 
     [<Test>]
-    let ``applyStatusIncremental delete file removes the row`` () =
+    let ``applyStatusIncremental delete file removes only the matching status file row`` () =
         withTempDir (fun _ configuration ->
             task {
                 let now = Instant.FromUnixTimeTicks(6000L)
@@ -2031,9 +2050,19 @@ module LocalStateDbTests =
                 let rootId = Guid.NewGuid()
                 let srcId = Guid.NewGuid()
 
-                let file = createFileVersion "src/delete-me.txt" "hash" false 1L now lastWrite
+                let deletedFile = createFileVersion "src/delete-me.txt" "hash-delete" false 1L now lastWrite
+                let siblingFile = createFileVersion "src/delete-me-too.txt" "hash-keep" false 2L now lastWrite
 
-                let srcDir = createDirectoryVersion configuration srcId "src" "src-hash" [||] [| file |] file.Size lastWrite
+                let srcDir =
+                    createDirectoryVersion
+                        configuration
+                        srcId
+                        "src"
+                        "src-hash"
+                        [||]
+                        [| deletedFile; siblingFile |]
+                        (deletedFile.Size + siblingFile.Size)
+                        lastWrite
 
                 let rootDir = createDirectoryVersion configuration rootId Constants.RootDirectoryPath "root-hash" [| srcId |] [||] 0L lastWrite
 
@@ -2059,32 +2088,41 @@ module LocalStateDbTests =
                         Seq.empty
                         [
                             FileSystemDifference.Create Delete FileSystemEntryType.File "src/delete-me.txt"
+                            FileSystemDifference.Create Delete FileSystemEntryType.File "src/delete-me.txt"
+                            FileSystemDifference.Create Delete FileSystemEntryType.File "src/unknown.txt"
                         ]
 
-                let! readBack = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                use connection = openRawConnection configuration.GraceStatusFile
 
-                readBack.Index.Values
-                |> Seq.collect (fun dv -> dv.Files)
-                |> Seq.exists (fun f -> f.RelativePath = "src/delete-me.txt")
-                |> should equal false
+                countStatusFileRows connection "src/delete-me.txt"
+                |> should equal 0
+
+                countStatusFileRows connection "src/delete-me-too.txt"
+                |> should equal 1
+
+                countStatusDirectoryRows connection "src"
+                |> should equal 1
             })
 
     [<Test>]
-    let ``applyStatusIncremental delete directory removes the directory row`` () =
+    let ``applyStatusIncremental delete directory removes only the matching status directory row`` () =
         withTempDir (fun _ configuration ->
             task {
                 let now = Instant.FromUnixTimeTicks(7000L)
                 let lastWrite = DateTime(2022, 1, 2, 3, 4, 5, DateTimeKind.Utc)
                 let rootId = Guid.NewGuid()
                 let srcId = Guid.NewGuid()
+                let srcOldId = Guid.NewGuid()
 
                 let srcDir = createDirectoryVersion configuration srcId "src" "src-hash" [||] [||] 0L lastWrite
+                let srcOldDir = createDirectoryVersion configuration srcOldId "src-old" "src-old-hash" [||] [||] 0L lastWrite
 
-                let rootDir = createDirectoryVersion configuration rootId Constants.RootDirectoryPath "root-hash" [| srcId |] [||] 0L lastWrite
+                let rootDir = createDirectoryVersion configuration rootId Constants.RootDirectoryPath "root-hash" [| srcId; srcOldId |] [||] 0L lastWrite
 
                 let index = GraceIndex()
                 index.TryAdd(rootId, rootDir) |> ignore
                 index.TryAdd(srcId, srcDir) |> ignore
+                index.TryAdd(srcOldId, srcOldDir) |> ignore
 
                 let status =
                     { GraceStatus.Default with
@@ -2104,13 +2142,103 @@ module LocalStateDbTests =
                         Seq.empty
                         [
                             FileSystemDifference.Create Delete FileSystemEntryType.Directory "src"
+                            FileSystemDifference.Create Delete FileSystemEntryType.Directory "src"
+                            FileSystemDifference.Create Delete FileSystemEntryType.Directory "src-missing"
                         ]
 
-                let! readBack = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                use connection = openRawConnection configuration.GraceStatusFile
 
-                readBack.Index.Values
-                |> Seq.exists (fun dv -> dv.RelativePath = "src")
-                |> should equal false
+                countStatusDirectoryRows connection "src"
+                |> should equal 0
+
+                countStatusDirectoryRows connection "src-old"
+                |> should equal 1
+
+                countStatusDirectoryRows connection Constants.RootDirectoryPath
+                |> should equal 1
+            })
+
+    [<Test>]
+    let ``applyStatusIncremental subtree delete differences remove descendant status rows and preserve prefix siblings`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = Instant.FromUnixTimeTicks(8000L)
+                let lastWrite = DateTime(2022, 1, 2, 3, 4, 5, DateTimeKind.Utc)
+                let rootId = Guid.NewGuid()
+                let srcId = Guid.NewGuid()
+                let nestedId = Guid.NewGuid()
+                let srcOldId = Guid.NewGuid()
+
+                let srcFile = createFileVersion "src/delete-me.txt" "src-delete-hash" false 1L now lastWrite
+                let nestedFile = createFileVersion "src/nested/delete-me.txt" "nested-delete-hash" false 2L now lastWrite
+                let prefixSiblingFile = createFileVersion "src-old/keep-me.txt" "src-old-keep-hash" false 3L now lastWrite
+
+                let nestedDir = createDirectoryVersion configuration nestedId "src/nested" "nested-hash" [||] [| nestedFile |] nestedFile.Size lastWrite
+
+                let srcDir = createDirectoryVersion configuration srcId "src" "src-hash" [| nestedId |] [| srcFile |] (srcFile.Size + nestedDir.Size) lastWrite
+
+                let srcOldDir =
+                    createDirectoryVersion configuration srcOldId "src-old" "src-old-hash" [||] [| prefixSiblingFile |] prefixSiblingFile.Size lastWrite
+
+                let rootDir =
+                    createDirectoryVersion
+                        configuration
+                        rootId
+                        Constants.RootDirectoryPath
+                        "root-hash"
+                        [| srcId; srcOldId |]
+                        [||]
+                        (srcDir.Size + srcOldDir.Size)
+                        lastWrite
+
+                let index = GraceIndex()
+                index.TryAdd(rootId, rootDir) |> ignore
+                index.TryAdd(srcId, srcDir) |> ignore
+                index.TryAdd(nestedId, nestedDir) |> ignore
+                index.TryAdd(srcOldId, srcOldDir) |> ignore
+
+                let status =
+                    { GraceStatus.Default with
+                        Index = index
+                        RootDirectoryId = rootId
+                        RootDirectorySha256Hash = rootDir.Sha256Hash
+                        LastSuccessfulFileUpload = now
+                        LastSuccessfulDirectoryVersionUpload = now
+                    }
+
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                do!
+                    LocalStateDb.applyStatusIncremental
+                        configuration.GraceStatusFile
+                        status
+                        Seq.empty
+                        [
+                            FileSystemDifference.Create Delete FileSystemEntryType.File "src/nested/delete-me.txt"
+                            FileSystemDifference.Create Delete FileSystemEntryType.Directory "src"
+                            FileSystemDifference.Create Delete FileSystemEntryType.File "src/delete-me.txt"
+                            FileSystemDifference.Create Delete FileSystemEntryType.Directory "src/nested"
+                        ]
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                countStatusDirectoryRows connection "src"
+                |> should equal 0
+
+                countStatusDirectoryRows connection "src/nested"
+                |> should equal 0
+
+                countStatusFileRows connection "src/delete-me.txt"
+                |> should equal 0
+
+                countStatusFileRows connection "src/nested/delete-me.txt"
+                |> should equal 0
+
+                countStatusDirectoryRows connection "src-old"
+                |> should equal 1
+
+                countStatusFileRows connection "src-old/keep-me.txt"
+                |> should equal 1
             })
 
     [<Test>]
