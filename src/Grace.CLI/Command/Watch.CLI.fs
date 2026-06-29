@@ -627,12 +627,13 @@ module Watch =
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
                     if filesToProcess.IsEmpty then
-                        drainStatusOnlyTriggers ()
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
 
                         match! (updateGraceStatusClient graceStatus correlationId) with
-                        | Some newGraceStatus -> graceStatus <- newGraceStatus
+                        | Some newGraceStatus ->
+                            graceStatus <- newGraceStatus
+                            drainStatusOnlyTriggers ()
                         | None ->
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.

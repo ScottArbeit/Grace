@@ -222,6 +222,16 @@ module WatchTests =
 
         updateCalls, uploadCalls
 
+    let private processPendingWatchWorkWithStatusClients readStatusFile updateGraceStatus =
+        let status = GraceStatus.Default
+        let readStatusMeta () = Task.FromResult(status)
+        let upload _ _ = Task.FromResult(())
+        let applyIncremental _ _ _ = Task.FromResult(())
+        let updateIpc _ _ = Task.FromResult(())
+
+        Watch.processChangedFilesWithClients readStatusMeta readStatusFile upload updateGraceStatus applyIncremental updateIpc
+        |> fun processTask -> processTask.GetAwaiter().GetResult()
+
     [<Test>]
     let ``resolveSignalRAccessTokenResult returns token when present`` () =
         let result = Watch.resolveSignalRAccessTokenResult (Ok(Some "token-value"))
@@ -278,6 +288,80 @@ module WatchTests =
             |> should equal Array.empty<string>
 
             afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only triggers remain pending when status update returns none`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "retry-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let updateGraceStatus _ _ =
+                updateCalls <- updateCalls + 1
+                Task.FromResult(None)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should equal [| "retry-delete.txt" |]
+
+            let successCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterSuccess = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSuccess.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only triggers remain pending when status file read fails`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "read-failure-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let readStatusFile () = Task.FromException<GraceStatus>(InvalidOperationException("transient status read failure"))
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients readStatusFile updateGraceStatus
+
+            updateCalls |> should equal 0
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should equal [| "read-failure-delete.txt" |])
+
+    [<Test>]
+    let ``rename-old status-only trigger remains pending when status update fails`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-status-only-name.txt")
+            let ignoredNewPath = Path.Combine(root, "new-status-only-name.gracetmp")
+
+            Watch.OnRenamed(renamedEvent oldPath ignoredNewPath)
+
+            let updateGraceStatus _ _ = Task.FromException<GraceStatus option>(InvalidOperationException("transient status update failure"))
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should equal [| "old-status-only-name.txt" |]
+
+            afterFailure.FilesToProcess
             |> should equal Array.empty<string>)
 
     [<Test>]
