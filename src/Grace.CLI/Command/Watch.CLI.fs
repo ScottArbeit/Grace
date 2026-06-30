@@ -136,11 +136,15 @@ module Watch =
     /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
     let private directoriesToProcess = ConcurrentDictionary<string, unit>()
 
+    type private StatusUpdateTriggerSnapshot = { RelativePath: string; Generation: int64 }
+
     /// Holds a list of repo-relative paths that should trigger a Grace Status scan without uploading file content.
     ///
     /// FileSystemWatcher delete and rename-old events do not have durable file content to upload. They only need to
     /// wake the timer loop so updateGraceStatus can run scanForDifferences against the current working tree.
-    let private statusUpdateTriggers = ConcurrentDictionary<string, unit>()
+    let mutable private statusUpdateTriggerGeneration = 0L
+
+    let private statusUpdateTriggers = ConcurrentDictionary<string, int64>()
 
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
 
@@ -290,7 +294,9 @@ module Watch =
             not
             <| shouldIgnoreDeletedPath (readTrackedDeletedPathKind relativePath) fullPath
             ->
-            statusUpdateTriggers.TryAdd(relativePath, ())
+            let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
+
+            statusUpdateTriggers.AddOrUpdate(relativePath, generation, (fun _ _ -> generation))
             |> ignore
 
             true
@@ -300,6 +306,10 @@ module Watch =
         filesToProcess.Clear()
         directoriesToProcess.Clear()
         statusUpdateTriggers.Clear()
+
+        Interlocked.Exchange(&statusUpdateTriggerGeneration, 0L)
+        |> ignore
+
         graceStatus <- GraceStatus.Default
         graceStatusHasChanged <- false
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
@@ -318,14 +328,19 @@ module Watch =
             && statusUpdateTriggers.IsEmpty
         )
 
-    let private statusOnlyTriggerSnapshot () = directoriesToProcess.Keys.ToArray(), statusUpdateTriggers.Keys.ToArray()
+    let private statusOnlyTriggerSnapshot () =
+        directoriesToProcess.Keys.ToArray(),
+        statusUpdateTriggers
+            .ToArray()
+            .Select(fun trigger -> { RelativePath = trigger.Key; Generation = trigger.Value })
+            .ToArray()
 
-    let private resetWorkingTreeScanCacheForStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: string array) =
+    let private resetWorkingTreeScanCacheForStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
         if directorySnapshot.Length > 0
            || statusTriggerSnapshot.Length > 0 then
             clearWorkingDirectoryWriteTimesForWatchRescan ()
 
-    let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: string array) =
+    let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
         let mutable unitValue = ()
 
         for directory in directorySnapshot do
@@ -333,7 +348,10 @@ module Watch =
             |> ignore
 
         for statusTrigger in statusTriggerSnapshot do
-            statusUpdateTriggers.TryRemove(statusTrigger, &unitValue)
+            let pair = KeyValuePair(statusTrigger.RelativePath, statusTrigger.Generation)
+
+            (statusUpdateTriggers :> ICollection<KeyValuePair<string, int64>>)
+                .Remove(pair)
             |> ignore
 
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
@@ -755,9 +773,13 @@ module Watch =
                         )
 
                     for fileName in filesToProcess.Keys.Take(50) do
-                        if filesToProcess.TryRemove(fileName, &unitValue) then
+                        if filesToProcess.ContainsKey(fileName) then
                             logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
                             do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath fileName)
+
+                            filesToProcess.TryRemove(fileName, &unitValue)
+                            |> ignore
+
                             processedAnyFile <- true
                             lastFileUploadInstant <- getCurrentInstant ()
 
@@ -817,7 +839,9 @@ module Watch =
             directoriesToProcess.TryAdd(difference.RelativePath, ())
             |> ignore
         | File, Delete ->
-            statusUpdateTriggers.TryAdd(difference.RelativePath, ())
+            let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
+
+            statusUpdateTriggers.AddOrUpdate(difference.RelativePath, generation, (fun _ _ -> generation))
             |> ignore
         | File, _ ->
             filesToProcess.TryAdd(difference.RelativePath, ())
