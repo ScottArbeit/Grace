@@ -506,6 +506,47 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
+    let ``unknown deleted file under ignored parent directory does not queue status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "logs/" |]
+
+            let logsDirectory = Path.Combine(root, "logs")
+            Directory.CreateDirectory(logsDirectory) |> ignore
+            let filePath = Path.Combine(logsDirectory, "ignored.txt")
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted tracked file under ignored parent directory queues status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "logs/" |]
+
+            let logsDirectory = Path.Combine(root, "logs")
+            Directory.CreateDirectory(logsDirectory) |> ignore
+            let filePath = Path.Combine(logsDirectory, "tracked.txt")
+            File.WriteAllText(filePath, "tracked log content")
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "logs/tracked.txt" |] Array.empty<string>)
+            File.Delete(filePath)
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "logs/tracked.txt" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
     let ``dirty status reload keeps tracked ignored-looking delete from being suppressed`` () =
         withTempRepo (fun root ->
             writeGraceIgnore root [| "*.log" |]
@@ -725,6 +766,56 @@ module WatchTests =
 
             pending.FilesToProcess
             |> should equal [| newPath |])
+
+    [<Test>]
+    let ``renamed directory queues old path status trigger and new contents upload work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.tmp" |]
+
+            let oldPath = Path.Combine(root, "old-assets")
+            let newPath = Path.Combine(root, "new-assets")
+            let nestedPath = Path.Combine(newPath, "nested")
+            Directory.CreateDirectory(nestedPath) |> ignore
+
+            let rootFile = Path.Combine(newPath, "asset.txt")
+            let nestedFile = Path.Combine(nestedPath, "nested.txt")
+            let ignoredFile = Path.Combine(nestedPath, "ignored.tmp")
+            File.WriteAllText(rootFile, "root asset")
+            File.WriteAllText(nestedFile, "nested asset")
+            File.WriteAllText(ignoredFile, "ignored asset")
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "old-assets" |]
+
+            pending.FilesToProcess
+            |> should equal ([| rootFile; nestedFile |] |> Array.sort)
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            uploadCalls |> should equal 2
+            updateCalls |> should equal 1)
+
+    [<Test>]
+    let ``startup deleted file difference queues status-only work without upload work`` () =
+        withTempRepo (fun _ ->
+            Watch.queueStartupDifferenceForWatch (FileSystemDifference.Create Delete FileSystemEntryType.File "offline-delete.txt")
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "offline-delete.txt" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0)
 
     [<Test>]
     let ``renamed tracked file matching directory-only ignore queues old path status trigger`` () =

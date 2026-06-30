@@ -271,8 +271,9 @@ module Watch =
 
             (pathKind <> DeletedDirectory
              && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
-            || configuration.GraceDirectoryIgnoreEntries
-               |> Array.exists directoryIgnoreMatches
+            || (pathKind = DeletedPathKindUnknown
+                && configuration.GraceDirectoryIgnoreEntries
+                   |> Array.exists directoryIgnoreMatches)
             || (pathKind <> DeletedFile
                 && configuration.GraceDirectoryIgnoreEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
@@ -429,6 +430,23 @@ module Watch =
                 graceStatusHasChanged <- true
                 logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
+    let private enqueueFileUpload fullPath =
+        let shouldIgnore = shouldIgnoreFile fullPath
+
+        if not shouldIgnore then
+            filesToProcess.TryAdd(fullPath, ()) |> ignore
+            true
+        else
+            false
+
+    let private enqueueDirectoryContentsForUpload directoryPath =
+        if
+            Directory.Exists(directoryPath)
+            && shouldNotIgnoreDirectory directoryPath
+        then
+            for filePath in Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories) do
+                enqueueFileUpload filePath |> ignore
+
     let OnDeleted (args: FileSystemEventArgs) =
         if updateNotInProgress () then
             if enqueueStatusUpdateTrigger args.FullPath then
@@ -440,14 +458,15 @@ module Watch =
 
     let OnRenamed (args: RenamedEventArgs) =
         if updateNotInProgress () then
-            let shouldIgnoreNewFile = shouldIgnoreFile args.FullPath
+            let newPathIsDirectory = Directory.Exists(args.FullPath)
 
             if enqueueStatusUpdateTrigger args.OldFullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
-            if not <| shouldIgnoreNewFile then
+            if newPathIsDirectory then
+                enqueueDirectoryContentsForUpload args.FullPath
+            elif enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                filesToProcess.TryAdd(args.FullPath, ()) |> ignore
 
     let OnError (args: ErrorEventArgs) =
         let correlationId = generateCorrelationId ()
@@ -792,6 +811,18 @@ module Watch =
             applyGraceStatusIncremental
             updateGraceWatchInterprocessFile
 
+    let internal queueStartupDifferenceForWatch difference =
+        match difference.FileSystemEntryType, difference.DifferenceType with
+        | Directory, _ ->
+            directoriesToProcess.TryAdd(difference.RelativePath, ())
+            |> ignore
+        | File, Delete ->
+            statusUpdateTriggers.TryAdd(difference.RelativePath, ())
+            |> ignore
+        | File, _ ->
+            filesToProcess.TryAdd(difference.RelativePath, ())
+            |> ignore
+
     type Watch() =
         inherit AsynchronousCommandLineAction()
 
@@ -1043,13 +1074,7 @@ module Watch =
                         logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
 
                     for difference in differences do
-                        match difference.FileSystemEntryType with
-                        | Directory ->
-                            directoriesToProcess.TryAdd(difference.RelativePath, ())
-                            |> ignore
-                        | File ->
-                            filesToProcess.TryAdd(difference.RelativePath, ())
-                            |> ignore
+                        queueStartupDifferenceForWatch difference
 
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
