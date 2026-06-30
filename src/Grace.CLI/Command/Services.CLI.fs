@@ -535,6 +535,12 @@ module Services =
 
     let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
 
+    let mutable private lastScanForDifferencesSucceeded = true
+
+    let internal wasLastScanForDifferencesSuccessful () = lastScanForDifferencesSucceeded
+
+    let internal setLastScanForDifferencesSuccessfulForWatchTests succeeded = lastScanForDifferencesSucceeded <- succeeded
+
     let internal clearWorkingDirectoryWriteTimesForWatchRescan () = localWriteTimes.Clear()
 
     /// Gets a dictionary of local paths and their last write times.
@@ -688,9 +694,11 @@ module Services =
 
                         differences.Push(FileSystemDifference.Create Delete fileSystemEntryType relativePath)
 
+                lastScanForDifferencesSucceeded <- true
                 return differences.ToList()
             with
             | ex ->
+                lastScanForDifferencesSucceeded <- false
                 logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
                 return List<FileSystemDifference>()
         }

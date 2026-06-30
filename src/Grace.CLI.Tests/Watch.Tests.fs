@@ -418,6 +418,81 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
+    let ``same-path change during upload remains queued for a newer upload`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "changed-during-upload.txt")
+            let mutable uploadCalls = 0
+            let mutable updateCalls = 0
+
+            File.WriteAllText(changedFilePath, "first payload")
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+
+                if uploadCalls = 1 then
+                    File.WriteAllText(changedFilePath, "second payload")
+                    Watch.OnChanged(changedEvent changedFilePath)
+
+                Task.FromResult(())
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+                Task.FromResult(Some status)
+
+            let applyIncremental _ _ _ = Task.FromResult(())
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            updateCalls |> should equal 0
+
+            let afterFirstUpload = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFirstUpload.FilesToProcess
+            |> should equal [| changedFilePath |]
+
+            (Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 2
+            updateCalls |> should equal 1
+
+            let afterSecondUpload = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSecondUpload.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted file cancels same-path pending upload work before status rescan`` () =
+        withTempRepo (fun root ->
+            let deletedFilePath = Path.Combine(root, "queued-then-deleted.txt")
+
+            File.WriteAllText(deletedFilePath, "payload before delete")
+            Watch.OnChanged(changedEvent deletedFilePath)
+            File.Delete(deletedFilePath)
+            Watch.OnDeleted(deletedEvent deletedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "queued-then-deleted.txt" |]
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0)
+
+    [<Test>]
     let ``status-only triggers remain pending when status update returns none`` () =
         withTempRepo (fun root ->
             let filePath = Path.Combine(root, "retry-delete.txt")
@@ -447,6 +522,39 @@ module WatchTests =
 
             afterSuccess.StatusUpdateTriggers
             |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only triggers remain pending when scan failure is swallowed as unchanged status`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "swallowed-scan-failure-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+                Services.setLastScanForDifferencesSuccessfulForWatchTests false
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should
+                equal
+                [|
+                    "swallowed-scan-failure-delete.txt"
+                |]
+
+            Services.setLastScanForDifferencesSuccessfulForWatchTests true
+
+            let successCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            uploadCalls |> should equal 0)
 
     [<Test>]
     let ``status-only triggers added during status update remain pending for next pass`` () =
@@ -906,6 +1014,55 @@ module WatchTests =
 
             uploadCalls |> should equal 2
             updateCalls |> should equal 1)
+
+    [<Test>]
+    let ``renamed directory enumeration failure removes status-only trigger and stays in callback`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-enumeration-name")
+            let newPath = Path.Combine(root, "new-enumeration-name")
+            Directory.CreateDirectory(newPath) |> ignore
+
+            Watch.setEnumerateFilesForDirectoryUploadForWatchTests (fun _ -> raise (UnauthorizedAccessException("blocked enumeration")))
+
+            Assert.DoesNotThrow(Action(fun () -> Watch.OnRenamed(renamedEvent oldPath newPath)))
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``file event during status-only update keeps trigger pending for upload-first retry`` () =
+        withTempRepo (fun root ->
+            let deletedFilePath = Path.Combine(root, "delete-before-race.txt")
+            let createdFilePath = Path.Combine(root, "created-during-status-update.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent deletedFilePath)
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+
+                if updateCalls = 1 then
+                    File.WriteAllText(createdFilePath, "created during status-only rescan")
+                    Watch.OnChanged(changedEvent createdFilePath)
+
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterRace = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterRace.StatusUpdateTriggers
+            |> should equal [| "delete-before-race.txt" |]
+
+            afterRace.FilesToProcess
+            |> should equal [| createdFilePath |])
 
     [<Test>]
     let ``startup deleted file difference queues status-only work without upload work`` () =
