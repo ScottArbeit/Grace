@@ -484,6 +484,23 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
+    let ``unknown deleted file matching file ignore does not queue status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.log" |]
+
+            let filePath = Path.Combine(root, "ignored.log")
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
     let ``deleted directory queues status update when rename cached directory ignore`` () =
         withTempRepo (fun root ->
             let oldPath = Path.Combine(root, "old-directory-name")

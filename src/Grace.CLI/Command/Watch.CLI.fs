@@ -258,6 +258,9 @@ module Watch =
         || (pathKind <> DeletedDirectory
             && configuration.GraceDirectoryIgnoreEntries
                |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
+        || (pathKind = DeletedPathKindUnknown
+            && configuration.GraceFileIgnoreEntries
+               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
 
     let private enqueueStatusUpdateTrigger fullPath =
         match repositoryRelativePath fullPath with
