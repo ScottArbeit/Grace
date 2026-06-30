@@ -704,6 +704,197 @@ module CurrentStateCaptureCliTests =
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
     [<Test>]
+    let ``delete-only file changes create save after directory upload and then apply local status`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-delete-sha"
+        let createdSaveId = Guid.NewGuid()
+        let saveMessage = "Delete deleted.txt"
+        let operationOrder = ResizeArray<string>()
+        let mutable uploadedFileVersions = Seq.empty<LocalFileVersion>
+        let mutable savedDirectoryVersions = List<DirectoryVersion>()
+        let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
+        let mutable createdSaveMessage = String.Empty
+        let mutable appliedStatus = GraceStatus.Default
+        let mutable appliedDirectoryVersions = Seq.empty<LocalDirectoryVersion>
+        let mutable appliedDifferences = Seq.empty<FileSystemDifference>
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath "deleted.txt")
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+
+        let updatedRoot = rootDirectoryVersion updatedRootId updatedRootSha
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                UploadFileVersions =
+                    fun fileVersions ->
+                        uploadedFileVersions <- fileVersions |> Seq.toArray
+                        Task.FromResult(Ok Array.empty<FileVersion>)
+                UploadDirectoryVersions =
+                    fun directoryVersions ->
+                        operationOrder.Add("upload-directories")
+                        savedDirectoryVersions <- directoryVersions
+                        Task.FromResult(Ok())
+                CreateSaveReference =
+                    fun rootDirectoryVersion message ->
+                        operationOrder.Add("create-save")
+                        createdSaveRoot <- rootDirectoryVersion
+                        createdSaveMessage <- message
+                        Task.FromResult(Ok(createdSaveId))
+                ApplyGraceStatusIncremental =
+                    fun status directoryVersions applied ->
+                        operationOrder.Add("apply-status")
+                        appliedStatus <- status
+                        appliedDirectoryVersions <- directoryVersions |> Seq.toArray
+                        appliedDifferences <- applied |> Seq.toArray
+                        Task.FromResult(())
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None saveMessage correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            captured.Source |> should equal CreatedSave
+
+            captured.RootDirectoryId
+            |> should equal updatedRootId
+
+            uploadedFileVersions
+            |> Seq.isEmpty
+            |> should equal true
+
+            savedDirectoryVersions.Count |> should equal 1
+
+            savedDirectoryVersions[0].DirectoryVersionId
+            |> should equal updatedRootId
+
+            createdSaveRoot.DirectoryVersionId
+            |> should equal updatedRootId
+
+            createdSaveMessage |> should equal saveMessage
+
+            appliedStatus.RootDirectoryId
+            |> should equal updatedRootId
+
+            appliedDirectoryVersions
+            |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
+            |> should equal [| updatedRootId |]
+
+            appliedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, difference.RelativePath)
+            |> should
+                equal
+                [|
+                    DifferenceType.Delete, FileSystemEntryType.File, RelativePath "deleted.txt"
+                |]
+
+            operationOrder
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    "upload-directories"
+                    "create-save"
+                    "apply-status"
+                |]
+        | Error error -> Assert.Fail($"Expected delete-only auto-save success, got: {error.Error}")
+
+    [<Test>]
+    let ``directory-only deletes still create save with updated root directory version`` () =
+        let updatedRootId = Guid.NewGuid()
+        let updatedRootSha = Sha256Hash "updated-root-directory-delete-sha"
+        let createdSaveId = Guid.NewGuid()
+        let operationOrder = ResizeArray<string>()
+        let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
+        let mutable createdSaveMessage = "not-empty"
+        let mutable appliedStatus = GraceStatus.Default
+
+        let differences =
+            List<FileSystemDifference>(
+                [|
+                    FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath "empty")
+                |]
+            )
+
+        let updatedStatus = graceStatus updatedRootId updatedRootSha
+        let updatedRoot = rootDirectoryVersion updatedRootId updatedRootSha
+
+        let operations =
+            { defaultOperations (branch true ReferenceDto.Default) with
+                ScanForDifferences = fun _ -> Task.FromResult(differences)
+                BuildUpdatedGraceStatus = fun _ _ -> Task.FromResult(updatedStatus, List<LocalDirectoryVersion>([| updatedRoot |]))
+                UploadFileVersions =
+                    fun fileVersions ->
+                        fileVersions |> Seq.isEmpty |> should equal true
+                        Task.FromResult(Ok Array.empty<FileVersion>)
+                UploadDirectoryVersions =
+                    fun directoryVersions ->
+                        operationOrder.Add("upload-directories")
+                        directoryVersions.Count |> should equal 1
+
+                        directoryVersions[0].DirectoryVersionId
+                        |> should equal updatedRootId
+
+                        Task.FromResult(Ok())
+                CreateSaveReference =
+                    fun rootDirectoryVersion message ->
+                        operationOrder.Add("create-save")
+                        createdSaveRoot <- rootDirectoryVersion
+                        createdSaveMessage <- message
+                        Task.FromResult(Ok(createdSaveId))
+                ApplyGraceStatusIncremental =
+                    fun status _ _ ->
+                        operationOrder.Add("apply-status")
+                        appliedStatus <- status
+                        Task.FromResult(())
+            }
+
+        let result =
+            (resolveCliCurrentStateTargetReference operations None String.Empty correlationId)
+                .Result
+
+        match result with
+        | Ok captured ->
+            captured.TargetReferenceId
+            |> should equal createdSaveId
+
+            captured.Source |> should equal CreatedSave
+
+            captured.RootDirectoryId
+            |> should equal updatedRootId
+
+            createdSaveRoot.DirectoryVersionId
+            |> should equal updatedRootId
+
+            createdSaveMessage |> should equal String.Empty
+
+            appliedStatus.RootDirectoryId
+            |> should equal updatedRootId
+
+            operationOrder
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    "upload-directories"
+                    "create-save"
+                    "apply-status"
+                |]
+        | Error error -> Assert.Fail($"Expected directory-only delete auto-save success, got: {error.Error}")
+
+    [<Test>]
     let ``changed file upload selection comes from updated directory versions`` () =
         let changedPath = RelativePath "src/cached-large.bin"
         let unchangedPath = RelativePath "src/unchanged-large.bin"
