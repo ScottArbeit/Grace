@@ -213,14 +213,21 @@ module Watch =
 
     let private readTrackedDeletedPathKind (relativePath: string) =
         try
-            if graceStatus.Index.Count > 0 then
-                trackedDeletedPathKind graceStatus relativePath
-            else
-                trackedDeletedPathKind (readGraceStatusFile().GetAwaiter().GetResult()) relativePath
+            let status =
+                if graceStatusHasChanged
+                   || graceStatus.Index.Count = 0 then
+                    let refreshedStatus = readGraceStatusFile().GetAwaiter().GetResult()
+                    graceStatus <- refreshedStatus
+                    refreshedStatus
+                else
+                    graceStatus
+
+            trackedDeletedPathKind status relativePath
         with
         | _ -> DeletedPathKindUnknown
 
     let internal setGraceStatusForWatchTests status = graceStatus <- status
+    let internal setGraceStatusHasChangedForWatchTests hasChanged = graceStatusHasChanged <- hasChanged
 
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
         let configuration = Current()
@@ -279,6 +286,7 @@ module Watch =
         directoriesToProcess.Clear()
         statusUpdateTriggers.Clear()
         graceStatus <- GraceStatus.Default
+        graceStatusHasChanged <- false
 
     let internal pendingWatchWorkSnapshotForTests () =
         {

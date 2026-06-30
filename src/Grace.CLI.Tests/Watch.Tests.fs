@@ -501,6 +501,32 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
+    let ``dirty status reload keeps tracked ignored-looking delete from being suppressed`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.log" |]
+
+            let filePath = Path.Combine(root, "important.log")
+            File.WriteAllText(filePath, "tracked log file")
+
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "other.txt" |] Array.empty<string>)
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            (Services.writeGraceStatusFile (graceStatusTracking [| "important.log" |] Array.empty<string>))
+                .GetAwaiter()
+                .GetResult()
+
+            File.Delete(filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "important.log" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
     let ``deleted directory queues status update when rename cached directory ignore`` () =
         withTempRepo (fun root ->
             let oldPath = Path.Combine(root, "old-directory-name")
