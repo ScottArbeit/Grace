@@ -160,6 +160,11 @@ module Watch =
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     let updateNotInProgress () = not <| updateInProgress ()
 
+    type private DeletedPathKind =
+        | DeletedFile
+        | DeletedDirectory
+        | DeletedPathKindUnknown
+
     let private repositoryRelativePath (fullPath: string) =
         let rootDirectory =
             Current().RootDirectory
@@ -181,7 +186,43 @@ module Watch =
             else
                 None
 
-    let private shouldIgnoreDeletedPath (fullPath: string) =
+    let private normalizeRelativePath (relativePath: RelativePath) =
+        $"{relativePath}"
+            .Replace(Path.DirectorySeparatorChar, '/')
+            .Replace(Path.AltDirectorySeparatorChar, '/')
+
+    let private trackedDeletedPathKind (status: GraceStatus) (relativePath: string) =
+        let deletedRelativePath = normalizeRelativePath relativePath
+
+        let isTrackedFile =
+            status.Index.Values
+            |> Seq.exists (fun directoryVersion ->
+                directoryVersion.Files
+                |> Seq.exists (fun fileVersion ->
+                    String.Equals(normalizeRelativePath fileVersion.RelativePath, deletedRelativePath, StringComparison.InvariantCultureIgnoreCase)))
+
+        let isTrackedDirectory =
+            status.Index.Values
+            |> Seq.exists (fun directoryVersion ->
+                String.Equals(normalizeRelativePath directoryVersion.RelativePath, deletedRelativePath, StringComparison.InvariantCultureIgnoreCase))
+
+        match isTrackedFile, isTrackedDirectory with
+        | true, _ -> DeletedFile
+        | false, true -> DeletedDirectory
+        | false, false -> DeletedPathKindUnknown
+
+    let private readTrackedDeletedPathKind (relativePath: string) =
+        try
+            if graceStatus.Index.Count > 0 then
+                trackedDeletedPathKind graceStatus relativePath
+            else
+                trackedDeletedPathKind (readGraceStatusFile().GetAwaiter().GetResult()) relativePath
+        with
+        | _ -> DeletedPathKindUnknown
+
+    let internal setGraceStatusForWatchTests status = graceStatus <- status
+
+    let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
         let configuration = Current()
         let normalizedFullPath = Path.GetFullPath(fullPath)
         let graceDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.GraceDirectory))
@@ -207,17 +248,23 @@ module Watch =
         || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
         || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
         || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
-        || normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase)
+        || (pathKind <> DeletedDirectory
+            && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
         || configuration.GraceDirectoryIgnoreEntries
            |> Array.exists directoryIgnoreMatches
-        || configuration.GraceDirectoryIgnoreEntries
-           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine)
-        || configuration.GraceDirectoryIgnoreEntries
-           |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine)
+        || (pathKind <> DeletedFile
+            && configuration.GraceDirectoryIgnoreEntries
+               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
+        || (pathKind <> DeletedDirectory
+            && configuration.GraceDirectoryIgnoreEntries
+               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
 
     let private enqueueStatusUpdateTrigger fullPath =
         match repositoryRelativePath fullPath with
-        | Some relativePath when not <| shouldIgnoreDeletedPath fullPath ->
+        | Some relativePath when
+            not
+            <| shouldIgnoreDeletedPath (readTrackedDeletedPathKind relativePath) fullPath
+            ->
             statusUpdateTriggers.TryAdd(relativePath, ())
             |> ignore
 
@@ -228,6 +275,7 @@ module Watch =
         filesToProcess.Clear()
         directoriesToProcess.Clear()
         statusUpdateTriggers.Clear()
+        graceStatus <- GraceStatus.Default
 
     let internal pendingWatchWorkSnapshotForTests () =
         {

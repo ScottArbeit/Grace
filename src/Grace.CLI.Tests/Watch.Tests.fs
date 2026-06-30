@@ -236,6 +236,69 @@ module WatchTests =
         File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), String.Join(Environment.NewLine, entries))
         resetConfiguration ()
 
+    let private localFileVersion relativePath =
+        LocalFileVersion.CreateWithHashes
+            relativePath
+            (Sha256Hash $"sha-{relativePath}")
+            (Blake3Hash $"blake3-{relativePath}")
+            false
+            1L
+            (getCurrentInstant ())
+            true
+            DateTime.UtcNow
+
+    let private localDirectoryVersion relativePath directories files =
+        LocalDirectoryVersion.CreateWithHashes
+            (Guid.NewGuid())
+            OwnerId.Empty
+            OrganizationId.Empty
+            RepositoryId.Empty
+            relativePath
+            (Sha256Hash $"sha-{relativePath}")
+            (Blake3Hash $"blake3-{relativePath}")
+            directories
+            files
+            1L
+            DateTime.UtcNow
+
+    let private graceStatusTracking trackedFiles trackedDirectories =
+        let rootDirectoryId = Guid.NewGuid()
+        let index = GraceIndex()
+
+        let childDirectories =
+            trackedDirectories
+            |> Array.map (fun relativePath -> localDirectoryVersion relativePath (List<DirectoryVersionId>()) (List<LocalFileVersion>()))
+
+        let root =
+            LocalDirectoryVersion.CreateWithHashes
+                rootDirectoryId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "root-sha")
+                (Blake3Hash "root-blake3")
+                (List<DirectoryVersionId>(
+                    childDirectories
+                    |> Array.map (fun directory -> directory.DirectoryVersionId)
+                ))
+                (List<LocalFileVersion>(trackedFiles |> Array.map localFileVersion))
+                1L
+                DateTime.UtcNow
+
+        index.TryAdd(rootDirectoryId, root) |> ignore
+
+        for directory in childDirectories do
+            index.TryAdd(directory.DirectoryVersionId, directory)
+            |> ignore
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootDirectoryId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        }
+
     [<Test>]
     let ``resolveSignalRAccessTokenResult returns token when present`` () =
         let result = Watch.resolveSignalRAccessTokenResult (Ok(Some "token-value"))
@@ -448,6 +511,7 @@ module WatchTests =
 
             let directoryPath = Path.Combine(root, "archive.tmp")
             Directory.CreateDirectory(directoryPath) |> ignore
+            Watch.setGraceStatusForWatchTests (graceStatusTracking Array.empty<string> [| "archive.tmp" |])
             Directory.Delete(directoryPath)
 
             Watch.OnDeleted(deletedEvent directoryPath)
@@ -461,12 +525,31 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
+    let ``deleted tracked directory ending gracetmp queues status update work`` () =
+        withTempRepo (fun root ->
+            let directoryPath = Path.Combine(root, "assets.gracetmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
+            Watch.setGraceStatusForWatchTests (graceStatusTracking Array.empty<string> [| "assets.gracetmp" |])
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "assets.gracetmp" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
     let ``deleted directory matching directory ignore does not queue status update work`` () =
         withTempRepo (fun root ->
             writeGraceIgnore root [| "archive.tmp/" |]
 
             let directoryPath = Path.Combine(root, "archive.tmp")
             Directory.CreateDirectory(directoryPath) |> ignore
+            Watch.setGraceStatusForWatchTests (graceStatusTracking Array.empty<string> [| "archive.tmp" |])
             Directory.Delete(directoryPath)
 
             Watch.OnDeleted(deletedEvent directoryPath)
@@ -475,6 +558,26 @@ module WatchTests =
 
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted tracked file matching directory-only ignore queues status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let filePath = Path.Combine(root, "archive.tmp")
+            File.WriteAllText(filePath, "tracked file with directory-only ignored name")
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "archive.tmp" |] Array.empty<string>)
+            File.Delete(filePath)
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
 
             pending.FilesToProcess
             |> should equal Array.empty<string>)
@@ -515,6 +618,26 @@ module WatchTests =
 
             pending.StatusUpdateTriggers
             |> should equal [| "old-name.txt" |]
+
+            pending.FilesToProcess
+            |> should equal [| newPath |])
+
+    [<Test>]
+    let ``renamed tracked file matching directory-only ignore queues old path status trigger`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let oldPath = Path.Combine(root, "archive.tmp")
+            let newPath = Path.Combine(root, "renamed.txt")
+            File.WriteAllText(newPath, "new rename target")
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "archive.tmp" |] Array.empty<string>)
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
 
             pending.FilesToProcess
             |> should equal [| newPath |])
