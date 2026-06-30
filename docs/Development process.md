@@ -576,6 +576,35 @@ The orchestrator must verify that the bot signal applies to the latest pushed co
 complete. Do not merge, close, or call a task review-complete while the latest bot state is still 👀, while a bot comment
 is unresolved, or while the bot has not yet reacted to the current head commit.
 
+### Review Freshness and Fix Serialization
+
+Review-fix routing starts from a frozen action set. The orchestrator must wait for Codex Code Review Bot to finish on
+the latest head commit, then classify findings before assigning any fix worker.
+
+- A fresh finding belongs to the completed bot review for the current head commit, or is repeated after that review
+  completes.
+- A previous-pass finding is stale when a newer head exists and the completed latest-head review does not repeat it.
+  GitHub can keep mapping old review threads onto the current diff, so do not use `isOutdated = false`, the current
+  line number, or the thread's displayed commit alone as proof that the finding is fresh.
+- Do not assign a worker, edit code, or post fix evidence for stale findings. When the maintainer directs stale
+  findings to be closed, reply with a stale disposition, say that no code change addressed the thread, resolve it, and
+  keep the current action set limited to fresh latest-review findings.
+- If the bot has acknowledged the current head with 👀 but has not yet submitted its completed review or no-issues
+  result, continue waiting. Do not infer the action set from early inline threads.
+
+Review-fix workers on a single pull request are serialized by default. A review-fix worker may cover multiple fresh
+findings from the same completed latest-head review when they share a write set or behavior surface. Do not start
+another fix worker for that pull request until the active worker has handed off, pushed its commit, and the orchestrator
+has replied to and resolved the fresh findings it addressed. Parallel fix workers are allowed only when all of these are
+true:
+
+- the findings come from the same completed latest-head review
+- the write sets, tests, and review surfaces are provably disjoint
+- the worker prompts name the disjoint owned and forbidden paths
+- the orchestrator can merge the results without predictable branch churn or conflicting review replies
+
+After every review-fix push, wait for Codex Code Review Bot to finish on the new head before assigning more fix work.
+
 ### Manual Codex Review Trigger Lock
 
 The manual Codex review trigger lock prevents duplicate review requests while Codex Code Review Bot is already working
@@ -651,9 +680,9 @@ The review loop is blocking:
    wait for 👍🏻 or findings.
 3. If the bot switches the PR-body reaction to 👍🏻 and there are no unresolved bot review comments for the current head,
    record that no-issues state in `Review Status` and continue toward merge readiness.
-4. If the bot writes a top-level PR comment or inline pull-request-review comment with findings, update
-   `Review Status`, then send the findings to a fresh implementation subagent to address in the issue-owned
-   branch/worktree.
+4. If the completed latest-head bot review contains fresh findings, update `Review Status`, then send the frozen fresh
+   action set to a fresh implementation subagent to address in the issue-owned branch/worktree. Do not include stale
+   previous-pass findings unless the latest completed review repeats them.
 5. If the review finds a missing acceptance-criterion class, adversarial case, contract-propagation requirement, stale
    validation evidence, repeated trap, or issue-template gap that could affect active or future workers, amend the
    active and future sibling issues before spawning more workers. Update the issue template or agent docs when the trap

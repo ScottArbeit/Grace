@@ -147,6 +147,16 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   top-level PR comments alone; inspect review comments attached to the bot review before merging. For high-risk slices,
   the orchestrator may assign a fresh pre-PR review worker before opening or updating the PR when that is cheaper than a
   likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
+- For Grace PR review-fix routing, wait for Codex Code Review Bot to finish on the latest head before deciding the
+  next fix action set. A fresh finding is one that belongs to the completed bot review for the current head commit, or
+  is repeated after that review completes. Review threads from earlier review passes are stale when a newer head exists,
+  even if GitHub still maps the thread onto the current diff. Do not assign workers, make code changes, or post fix
+  evidence for stale findings; close them only as stale when the maintainer directs that disposition, and say that no
+  code change addressed them.
+- Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
+  fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
+  review surface. After a fix worker pushes, reply to and resolve only the fresh findings it addressed, update
+  `Review Status`, then wait for Codex Code Review Bot to finish on the new head before assigning another fix worker.
 - Never manually trigger Codex Code Review Bot while 👀 is present for the current pull request head. A manual trigger is
   allowed only through the documented missed-ack exception after verifying that no 👀, no 👍🏻, no bot review, and no bot
   comment exists for the current head commit.
