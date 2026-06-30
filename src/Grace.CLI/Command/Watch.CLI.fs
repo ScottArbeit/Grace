@@ -274,7 +274,7 @@ module Watch =
             || (pathKind = DeletedPathKindUnknown
                 && configuration.GraceDirectoryIgnoreEntries
                    |> Array.exists directoryIgnoreMatches)
-            || (pathKind <> DeletedFile
+            || (pathKind = DeletedPathKindUnknown
                 && configuration.GraceDirectoryIgnoreEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
             || (pathKind <> DeletedDirectory

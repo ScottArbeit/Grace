@@ -688,13 +688,32 @@ module WatchTests =
             |> should equal Array.empty<string>)
 
     [<Test>]
-    let ``deleted directory matching directory ignore does not queue status update work`` () =
+    let ``deleted tracked directory matching directory ignore queues status update work`` () =
         withTempRepo (fun root ->
             writeGraceIgnore root [| "archive.tmp/" |]
 
             let directoryPath = Path.Combine(root, "archive.tmp")
             Directory.CreateDirectory(directoryPath) |> ignore
             Watch.setGraceStatusForWatchTests (graceStatusTracking Array.empty<string> [| "archive.tmp" |])
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``unknown deleted directory matching directory ignore does not queue status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let directoryPath = Path.Combine(root, "archive.tmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
             Directory.Delete(directoryPath)
 
             Watch.OnDeleted(deletedEvent directoryPath)
