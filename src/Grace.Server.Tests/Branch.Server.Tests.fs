@@ -1418,7 +1418,14 @@ type BranchServer() =
                         parentBranch.BasedOn.Blake3Hash
                     ]
 
-            let! response = BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId branch DirectoryVersionId.Empty (Blake3Hash childOnlyPrefix)
+            let stableChildOnlyPrefix =
+                if childOnlyPrefix.Length < 16 then
+                    (string child.Blake3Hash).Substring(0, 16)
+                else
+                    childOnlyPrefix
+
+            let! response =
+                BranchServerTestHelpers.saveReferenceByBlake3ResponseAsync repositoryId branch DirectoryVersionId.Empty (Blake3Hash stableChildOnlyPrefix)
 
             let! responseBody = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)

@@ -172,17 +172,24 @@ module WatchTests =
         File.WriteAllText(configPath, "{}")
 
         let originalDir = Environment.CurrentDirectory
+        let originalParseResult = Services.parseResult
 
         try
             Environment.CurrentDirectory <- tempDir
+            Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
             resetConfiguration ()
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
+            Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
+            Watch.clearPendingWatchWorkForTests ()
             action tempDir
         finally
+            Watch.clearPendingWatchWorkForTests ()
+            Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             resetConfiguration ()
+            Services.parseResult <- originalParseResult
             Environment.CurrentDirectory <- originalDir
 
             if Directory.Exists(tempDir) then
@@ -190,6 +197,114 @@ module WatchTests =
                     Directory.Delete(tempDir, true)
                 with
                 | _ -> ()
+
+    let private deletedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
+
+    let private changedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
+
+    let private renamedEvent (oldFullPath: string) (fullPath: string) =
+        RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
+
+    let private processPendingWatchWorkForTest () =
+        let status = GraceStatus.Default
+        let mutable updateCalls = 0
+        let mutable uploadCalls = 0
+
+        let readStatus () = Task.FromResult(status)
+
+        let upload _ _ =
+            uploadCalls <- uploadCalls + 1
+            Task.FromResult(())
+
+        let updateGraceStatus status _ =
+            updateCalls <- updateCalls + 1
+            Task.FromResult(Some status)
+
+        let applyIncremental _ _ _ = Task.FromResult(())
+        let updateIpc _ _ = Task.FromResult(())
+
+        let processTask = Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc
+
+        processTask.GetAwaiter().GetResult()
+
+        updateCalls, uploadCalls
+
+    let private processPendingWatchWorkWithStatusClients readStatusFile updateGraceStatus =
+        let status = GraceStatus.Default
+        let readStatusMeta () = Task.FromResult(status)
+        let upload _ _ = Task.FromResult(())
+        let applyIncremental _ _ _ = Task.FromResult(())
+        let updateIpc _ _ = Task.FromResult(())
+
+        Watch.processChangedFilesWithClients readStatusMeta readStatusFile upload updateGraceStatus applyIncremental updateIpc
+        |> fun processTask -> processTask.GetAwaiter().GetResult()
+
+    let private writeGraceIgnore root (entries: string array) =
+        File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), String.Join(Environment.NewLine, entries))
+        resetConfiguration ()
+
+    let private localFileVersion relativePath =
+        LocalFileVersion.CreateWithHashes
+            relativePath
+            (Sha256Hash $"sha-{relativePath}")
+            (Blake3Hash $"blake3-{relativePath}")
+            false
+            1L
+            (getCurrentInstant ())
+            true
+            DateTime.UtcNow
+
+    let private localDirectoryVersion relativePath directories files =
+        LocalDirectoryVersion.CreateWithHashes
+            (Guid.NewGuid())
+            OwnerId.Empty
+            OrganizationId.Empty
+            RepositoryId.Empty
+            relativePath
+            (Sha256Hash $"sha-{relativePath}")
+            (Blake3Hash $"blake3-{relativePath}")
+            directories
+            files
+            1L
+            DateTime.UtcNow
+
+    let private graceStatusTracking trackedFiles trackedDirectories =
+        let rootDirectoryId = Guid.NewGuid()
+        let index = GraceIndex()
+
+        let childDirectories =
+            trackedDirectories
+            |> Array.map (fun relativePath -> localDirectoryVersion relativePath (List<DirectoryVersionId>()) (List<LocalFileVersion>()))
+
+        let root =
+            LocalDirectoryVersion.CreateWithHashes
+                rootDirectoryId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "root-sha")
+                (Blake3Hash "root-blake3")
+                (List<DirectoryVersionId>(
+                    childDirectories
+                    |> Array.map (fun directory -> directory.DirectoryVersionId)
+                ))
+                (List<LocalFileVersion>(trackedFiles |> Array.map localFileVersion))
+                1L
+                DateTime.UtcNow
+
+        index.TryAdd(rootDirectoryId, root) |> ignore
+
+        for directory in childDirectories do
+            index.TryAdd(directory.DirectoryVersionId, directory)
+            |> ignore
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootDirectoryId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        }
 
     [<Test>]
     let ``resolveSignalRAccessTokenResult returns token when present`` () =
@@ -220,6 +335,818 @@ module WatchTests =
             |> should contain "Unable to acquire an access token for SignalR notifications:"
 
             error |> should contain "test error"
+
+    [<Test>]
+    let ``deleted file queues status update work without upload work`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "deleted.txt")
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "deleted.txt" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``failed upload remains queued and blocks status-only rescan until upload succeeds`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "changed.txt")
+            let deletedFilePath = Path.Combine(root, "deleted-while-upload-pending.txt")
+            let mutable uploadCalls = 0
+            let mutable updateCalls = 0
+
+            File.WriteAllText(changedFilePath, "changed payload")
+            Watch.OnChanged(changedEvent changedFilePath)
+            Watch.OnDeleted(deletedEvent deletedFilePath)
+
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            let failingUpload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromException<unit>(InvalidOperationException("transient upload failure"))
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+                Task.FromResult(Some status)
+
+            let applyIncremental _ _ _ = Task.FromResult(())
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients readStatus readStatus failingUpload updateGraceStatus applyIncremental updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            updateCalls |> should equal 0
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.FilesToProcess
+            |> should equal [| changedFilePath |]
+
+            afterFailure.StatusUpdateTriggers
+            |> should equal [| "deleted-while-upload-pending.txt" |]
+
+            let successCalls, successfulUploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            successfulUploadCalls |> should equal 1
+
+            let afterSuccess = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSuccess.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterSuccess.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``same-path change during upload remains queued for a newer upload`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "changed-during-upload.txt")
+            let mutable uploadCalls = 0
+            let mutable updateCalls = 0
+
+            File.WriteAllText(changedFilePath, "first payload")
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+
+                if uploadCalls = 1 then
+                    File.WriteAllText(changedFilePath, "second payload")
+                    Watch.OnChanged(changedEvent changedFilePath)
+
+                Task.FromResult(())
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+                Task.FromResult(Some status)
+
+            let applyIncremental _ _ _ = Task.FromResult(())
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            updateCalls |> should equal 0
+
+            let afterFirstUpload = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFirstUpload.FilesToProcess
+            |> should equal [| changedFilePath |]
+
+            (Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 2
+            updateCalls |> should equal 1
+
+            let afterSecondUpload = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSecondUpload.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted file cancels same-path pending upload work before status rescan`` () =
+        withTempRepo (fun root ->
+            let deletedFilePath = Path.Combine(root, "queued-then-deleted.txt")
+
+            File.WriteAllText(deletedFilePath, "payload before delete")
+            Watch.OnChanged(changedEvent deletedFilePath)
+            File.Delete(deletedFilePath)
+            Watch.OnDeleted(deletedEvent deletedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "queued-then-deleted.txt" |]
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0)
+
+    [<Test>]
+    let ``ignored delete uses filesystem casing when cancelling pending upload work`` () =
+        withTempRepo (fun root ->
+            Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+            let queuedDirectory = Path.Combine(root, "src", "Foo")
+
+            Directory.CreateDirectory(queuedDirectory)
+            |> ignore
+
+            let queuedFilePath = Path.Combine(queuedDirectory, "pending.txt")
+            File.WriteAllText(queuedFilePath, "queued payload")
+            Watch.OnChanged(changedEvent queuedFilePath)
+            writeGraceIgnore root [| "src/foo/" |]
+
+            let ignoredDeletedDirectory = Path.Combine(root, "src", "foo")
+            Watch.OnDeleted(deletedEvent ignoredDeletedDirectory)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| queuedFilePath |]
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only triggers remain pending when status update returns none`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "retry-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let updateGraceStatus _ _ =
+                updateCalls <- updateCalls + 1
+                Task.FromResult(None)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should equal [| "retry-delete.txt" |]
+
+            let successCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterSuccess = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSuccess.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only triggers remain pending when scan failure is swallowed as unchanged status`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "swallowed-scan-failure-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+                Services.setLastScanForDifferencesSuccessfulForWatchTests false
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should
+                equal
+                [|
+                    "swallowed-scan-failure-delete.txt"
+                |]
+
+            Services.setLastScanForDifferencesSuccessfulForWatchTests true
+
+            let successCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            uploadCalls |> should equal 0)
+
+    [<Test>]
+    let ``status-only triggers added during status update remain pending for next pass`` () =
+        withTempRepo (fun root ->
+            let beforeUpdatePath = Path.Combine(root, "before-update-delete.txt")
+            let duringUpdatePath = Path.Combine(root, "during-update-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent beforeUpdatePath)
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+
+                if updateCalls = 1 then Watch.OnDeleted(deletedEvent duringUpdatePath)
+
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterFirstPass = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFirstPass.StatusUpdateTriggers
+            |> should equal [| "during-update-delete.txt" |]
+
+            let successCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterSecondPass = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSecondPass.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``same status-only trigger added during status update remains pending for next pass`` () =
+        withTempRepo (fun root ->
+            let deletedPath = Path.Combine(root, "same-path-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent deletedPath)
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+
+                if updateCalls = 1 then Watch.OnDeleted(deletedEvent deletedPath)
+
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterFirstPass = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFirstPass.StatusUpdateTriggers
+            |> should equal [| "same-path-delete.txt" |]
+
+            let successCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            successCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterSecondPass = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterSecondPass.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only triggers remain pending when status file read fails`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "read-failure-delete.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let readStatusFile () = Task.FromException<GraceStatus>(InvalidOperationException("transient status read failure"))
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients readStatusFile updateGraceStatus
+
+            updateCalls |> should equal 0
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should equal [| "read-failure-delete.txt" |])
+
+    [<Test>]
+    let ``rename-old status-only trigger remains pending when status update fails`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-status-only-name.txt")
+            let ignoredNewPath = Path.Combine(root, "new-status-only-name.gracetmp")
+
+            Watch.OnRenamed(renamedEvent oldPath ignoredNewPath)
+
+            let updateGraceStatus _ _ = Task.FromException<GraceStatus option>(InvalidOperationException("transient status update failure"))
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            let afterFailure = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterFailure.StatusUpdateTriggers
+            |> should equal [| "old-status-only-name.txt" |]
+
+            afterFailure.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``ignored and outside delete paths do not queue status update work`` () =
+        withTempRepo (fun root ->
+            let graceArtifactPath = Path.Combine(root, Constants.GraceConfigDirectory, "grace-local.db")
+            let outsidePath = Path.Combine(Path.GetTempPath(), $"grace-watch-outside-{Guid.NewGuid():N}.txt")
+
+            Watch.OnDeleted(deletedEvent graceArtifactPath)
+            Watch.OnDeleted(deletedEvent outsidePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``unknown deleted file matching file ignore does not queue status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.log" |]
+
+            let filePath = Path.Combine(root, "ignored.log")
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``unknown deleted file under ignored parent directory does not queue status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "logs/" |]
+
+            let logsDirectory = Path.Combine(root, "logs")
+            Directory.CreateDirectory(logsDirectory) |> ignore
+            let filePath = Path.Combine(logsDirectory, "ignored.txt")
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted tracked file under ignored parent directory queues status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "logs/" |]
+
+            let logsDirectory = Path.Combine(root, "logs")
+            Directory.CreateDirectory(logsDirectory) |> ignore
+            let filePath = Path.Combine(logsDirectory, "tracked.txt")
+            File.WriteAllText(filePath, "tracked log content")
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "logs/tracked.txt" |] Array.empty<string>)
+            File.Delete(filePath)
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "logs/tracked.txt" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``dirty status reload keeps tracked ignored-looking delete from being suppressed`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.log" |]
+
+            let filePath = Path.Combine(root, "important.log")
+            File.WriteAllText(filePath, "tracked log file")
+
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "other.txt" |] Array.empty<string>)
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            (Services.writeGraceStatusFile (graceStatusTracking [| "important.log" |] Array.empty<string>))
+                .GetAwaiter()
+                .GetResult()
+
+            File.Delete(filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "important.log" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status reload failure keeps ignored-looking delete queued for retry`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.log" |]
+
+            let filePath = Path.Combine(root, "important.log")
+
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromException<GraceStatus>(InvalidOperationException("transient status reload failure")))
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "important.log" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only delete rescan clears stale working tree scan cache`` () =
+        withTempRepo (fun root ->
+            let relativePath = "stale-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "tracked content before delete")
+
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            (Services.scanForDifferences status)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            File.Delete(filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            let updateGraceStatus status _ =
+                task {
+                    let! differences = Services.scanForDifferences status
+                    observedDifferences <- differences
+                    return Some status
+                }
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(status)) updateGraceStatus
+
+            observedDifferences
+            |> Seq.exists (fun difference ->
+                difference.DifferenceType = DifferenceType.Delete
+                && difference.FileSystemEntryType = FileSystemEntryType.File
+                && difference.RelativePath = RelativePath relativePath)
+            |> should equal true)
+
+    [<Test>]
+    let ``deleted directory queues status update when rename cached directory ignore`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-directory-name")
+            let directoryPath = Path.Combine(root, "cached-directory")
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            Watch.OnRenamed(renamedEvent oldPath directoryPath)
+            Watch.clearPendingWatchWorkForTests ()
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "cached-directory" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted directory named like file ignore queues status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.tmp" |]
+
+            let directoryPath = Path.Combine(root, "archive.tmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
+            Watch.setGraceStatusForWatchTests (graceStatusTracking Array.empty<string> [| "archive.tmp" |])
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted tracked directory ending gracetmp queues status update work`` () =
+        withTempRepo (fun root ->
+            let directoryPath = Path.Combine(root, "assets.gracetmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
+            Watch.setGraceStatusForWatchTests (graceStatusTracking Array.empty<string> [| "assets.gracetmp" |])
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "assets.gracetmp" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted tracked directory matching directory ignore queues status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let directoryPath = Path.Combine(root, "archive.tmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
+            Watch.setGraceStatusForWatchTests (graceStatusTracking Array.empty<string> [| "archive.tmp" |])
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``unknown deleted directory matching directory ignore does not queue status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let directoryPath = Path.Combine(root, "archive.tmp")
+            Directory.CreateDirectory(directoryPath) |> ignore
+            Directory.Delete(directoryPath)
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``deleted tracked file matching directory-only ignore queues status update work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let filePath = Path.Combine(root, "archive.tmp")
+            File.WriteAllText(filePath, "tracked file with directory-only ignored name")
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "archive.tmp" |] Array.empty<string>)
+            File.Delete(filePath)
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``duplicate deleted file events drain as one status update trigger`` () =
+        withTempRepo (fun root ->
+            let filePath = Path.Combine(root, "duplicate-delete.txt")
+
+            Watch.OnDeleted(deletedEvent filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "duplicate-delete.txt" |]
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``renamed file queues old path status trigger and new path upload work`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-name.txt")
+            let newPath = Path.Combine(root, "new-name.txt")
+            File.WriteAllText(newPath, "new rename target")
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "old-name.txt" |]
+
+            pending.FilesToProcess
+            |> should equal [| newPath |])
+
+    [<Test>]
+    let ``renamed file cancels old path pending upload before queuing new path`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "queued-old-name.txt")
+            let newPath = Path.Combine(root, "queued-new-name.txt")
+
+            File.WriteAllText(oldPath, "payload before rename")
+            Watch.OnChanged(changedEvent oldPath)
+            File.Move(oldPath, newPath)
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "queued-old-name.txt" |]
+
+            pending.FilesToProcess
+            |> should equal [| newPath |])
+
+    [<Test>]
+    let ``renamed directory queues old path status trigger and new contents upload work`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.tmp" |]
+
+            let oldPath = Path.Combine(root, "old-assets")
+            let newPath = Path.Combine(root, "new-assets")
+            let nestedPath = Path.Combine(newPath, "nested")
+            Directory.CreateDirectory(nestedPath) |> ignore
+
+            let rootFile = Path.Combine(newPath, "asset.txt")
+            let nestedFile = Path.Combine(nestedPath, "nested.txt")
+            let ignoredFile = Path.Combine(nestedPath, "ignored.tmp")
+            File.WriteAllText(rootFile, "root asset")
+            File.WriteAllText(nestedFile, "nested asset")
+            File.WriteAllText(ignoredFile, "ignored asset")
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "old-assets" |]
+
+            pending.FilesToProcess
+            |> should equal ([| rootFile; nestedFile |] |> Array.sort)
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            uploadCalls |> should equal 2
+            updateCalls |> should equal 1)
+
+    [<Test>]
+    let ``renamed directory enumeration failure keeps old path trigger for retry`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-enumeration-name")
+            let newPath = Path.Combine(root, "new-enumeration-name")
+            Directory.CreateDirectory(newPath) |> ignore
+
+            Watch.setEnumerateFilesForDirectoryUploadForWatchTests (fun _ -> raise (UnauthorizedAccessException("blocked enumeration")))
+
+            Assert.DoesNotThrow(Action(fun () -> Watch.OnRenamed(renamedEvent oldPath newPath)))
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "old-enumeration-name" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``file event during status-only update keeps trigger pending for upload-first retry`` () =
+        withTempRepo (fun root ->
+            let deletedFilePath = Path.Combine(root, "delete-before-race.txt")
+            let createdFilePath = Path.Combine(root, "created-during-status-update.txt")
+            let mutable updateCalls = 0
+
+            Watch.OnDeleted(deletedEvent deletedFilePath)
+
+            let updateGraceStatus status _ =
+                updateCalls <- updateCalls + 1
+
+                if updateCalls = 1 then
+                    File.WriteAllText(createdFilePath, "created during status-only rescan")
+                    Watch.OnChanged(changedEvent createdFilePath)
+
+                Task.FromResult(Some status)
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
+
+            updateCalls |> should equal 1
+
+            let afterRace = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterRace.StatusUpdateTriggers
+            |> should equal [| "delete-before-race.txt" |]
+
+            afterRace.FilesToProcess
+            |> should equal [| createdFilePath |])
+
+    [<Test>]
+    let ``startup deleted file difference queues status-only work without upload work`` () =
+        withTempRepo (fun _ ->
+            Watch.queueStartupDifferenceForWatch (FileSystemDifference.Create Delete FileSystemEntryType.File "offline-delete.txt")
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "offline-delete.txt" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
+
+            updateCalls |> should equal 1
+            uploadCalls |> should equal 0)
+
+    [<Test>]
+    let ``renamed tracked file matching directory-only ignore queues old path status trigger`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "archive.tmp/" |]
+
+            let oldPath = Path.Combine(root, "archive.tmp")
+            let newPath = Path.Combine(root, "renamed.txt")
+            File.WriteAllText(newPath, "new rename target")
+            Watch.setGraceStatusForWatchTests (graceStatusTracking [| "archive.tmp" |] Array.empty<string>)
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "archive.tmp" |]
+
+            pending.FilesToProcess
+            |> should equal [| newPath |])
 
     [<Test>]
     let ``watch exits with auth guidance when no token is configured`` () =

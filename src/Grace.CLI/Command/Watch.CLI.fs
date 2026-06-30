@@ -126,15 +126,32 @@ module Watch =
 
     let isCheckRequested (parseResult: ParseResult) = parseResult.GetValue(Options.check)
 
+    type private PendingFileWorkSnapshot = { FullPath: string; Generation: int64 }
+
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
     ///
-    /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
-    let private filesToProcess = ConcurrentDictionary<string, unit>()
+    /// The generation lets a same-path change observed during an upload remain queued after the upload removes only
+    /// the snapshot it processed.
+    let private filesToProcess = ConcurrentDictionary<string, int64>()
+
+    let mutable private fileUploadWorkGeneration = 0L
 
     /// Holds a list of the created or changed directories that we need to process, as determined by the FileSystemWatcher.
     ///
     /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
     let private directoriesToProcess = ConcurrentDictionary<string, unit>()
+
+    type private StatusUpdateTriggerSnapshot = { RelativePath: string; Generation: int64 }
+
+    /// Holds a list of repo-relative paths that should trigger a Grace Status scan without uploading file content.
+    ///
+    /// FileSystemWatcher delete and rename-old events do not have durable file content to upload. They only need to
+    /// wake the timer loop so updateGraceStatus can run scanForDifferences against the current working tree.
+    let mutable private statusUpdateTriggerGeneration = 0L
+
+    let private statusUpdateTriggers = ConcurrentDictionary<string, int64>()
+
+    type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
 
     type WatchParameters() =
         inherit ParameterBase()
@@ -151,6 +168,276 @@ module Watch =
     let isNotDirectory path = not <| Directory.Exists(path)
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     let updateNotInProgress () = not <| updateInProgress ()
+
+    type private DeletedPathKind =
+        | DeletedFile
+        | DeletedDirectory
+        | DeletedPathKindUnknown
+        | DeletedPathStatusUnavailable
+
+    let private repositoryRelativePath (fullPath: string) =
+        let rootDirectory =
+            Current().RootDirectory
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        let normalizedFullPath = Path.GetFullPath(fullPath)
+
+        if normalizedFullPath.Equals(rootDirectory, StringComparison.InvariantCultureIgnoreCase) then
+            Some Constants.RootDirectoryPath
+        else
+            let rootDirectoryWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
+
+            if normalizedFullPath.StartsWith(rootDirectoryWithSeparator, StringComparison.InvariantCultureIgnoreCase) then
+                normalizedFullPath
+                    .Substring(rootDirectoryWithSeparator.Length)
+                    .Replace(Path.DirectorySeparatorChar, '/')
+                |> Some
+            else
+                None
+
+    let private normalizeRelativePath (relativePath: RelativePath) =
+        $"{relativePath}"
+            .Replace(Path.DirectorySeparatorChar, '/')
+            .Replace(Path.AltDirectorySeparatorChar, '/')
+
+    let private trackedDeletedPathKind (status: GraceStatus) (relativePath: string) =
+        let deletedRelativePath = normalizeRelativePath relativePath
+
+        let isTrackedFile =
+            status.Index.Values
+            |> Seq.exists (fun directoryVersion ->
+                directoryVersion.Files
+                |> Seq.exists (fun fileVersion ->
+                    String.Equals(normalizeRelativePath fileVersion.RelativePath, deletedRelativePath, StringComparison.InvariantCultureIgnoreCase)))
+
+        let isTrackedDirectory =
+            status.Index.Values
+            |> Seq.exists (fun directoryVersion ->
+                String.Equals(normalizeRelativePath directoryVersion.RelativePath, deletedRelativePath, StringComparison.InvariantCultureIgnoreCase))
+
+        match isTrackedFile, isTrackedDirectory with
+        | true, _ -> DeletedFile
+        | false, true -> DeletedDirectory
+        | false, false -> DeletedPathKindUnknown
+
+    let mutable private readGraceStatusFileForDeletedPathClassification = readGraceStatusFile
+
+    let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
+
+    let private defaultWatchPathComparison () =
+        if OperatingSystem.IsWindows() then
+            StringComparison.OrdinalIgnoreCase
+        else
+            StringComparison.Ordinal
+
+    let mutable private watchPathComparison = defaultWatchPathComparison ()
+
+    let private readTrackedDeletedPathKind (relativePath: string) =
+        try
+            let status =
+                if graceStatusHasChanged
+                   || graceStatus.Index.Count = 0 then
+                    let refreshedStatus =
+                        readGraceStatusFileForDeletedPathClassification()
+                            .GetAwaiter()
+                            .GetResult()
+
+                    graceStatus <- refreshedStatus
+                    refreshedStatus
+                else
+                    graceStatus
+
+            trackedDeletedPathKind status relativePath
+        with
+        | _ -> DeletedPathStatusUnavailable
+
+    let internal setGraceStatusForWatchTests status = graceStatus <- status
+    let internal setGraceStatusHasChangedForWatchTests hasChanged = graceStatusHasChanged <- hasChanged
+    let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
+    let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
+    let internal setWatchPathComparisonForWatchTests comparison = watchPathComparison <- comparison
+
+    let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
+        let configuration = Current()
+        let normalizedFullPath = Path.GetFullPath(fullPath)
+        let graceDirectory = Path.TrimEndingDirectorySeparator(Path.GetFullPath(configuration.GraceDirectory))
+        let fileInfo = FileInfo(fullPath)
+        let deletedDirectoryInfo = DirectoryInfo(normalizedFullPath)
+
+        let isInGraceDirectory =
+            normalizedFullPath.Equals(graceDirectory, StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.StartsWith(
+                graceDirectory
+                + string Path.DirectorySeparatorChar,
+                StringComparison.InvariantCultureIgnoreCase
+            )
+
+        let isGraceStatusArtifact =
+            normalizedFullPath.Equals(configuration.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
+
+        if isInGraceDirectory || isGraceStatusArtifact then
+            true
+        elif pathKind = DeletedPathStatusUnavailable then
+            false
+        else
+            let directoryIgnoreMatches graceIgnoreLine =
+                if isNull fileInfo.Directory then
+                    false
+                else
+                    checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
+
+            (pathKind <> DeletedDirectory
+             && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
+            || (pathKind = DeletedPathKindUnknown
+                && configuration.GraceDirectoryIgnoreEntries
+                   |> Array.exists directoryIgnoreMatches)
+            || (pathKind = DeletedPathKindUnknown
+                && configuration.GraceDirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
+            || (pathKind <> DeletedDirectory
+                && configuration.GraceDirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
+            || (pathKind = DeletedPathKindUnknown
+                && configuration.GraceFileIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
+
+    let private enqueueStatusUpdateTrigger fullPath =
+        match repositoryRelativePath fullPath with
+        | Some relativePath when
+            not
+            <| shouldIgnoreDeletedPath (readTrackedDeletedPathKind relativePath) fullPath
+            ->
+            let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
+
+            statusUpdateTriggers.AddOrUpdate(relativePath, generation, (fun _ _ -> generation))
+            |> ignore
+
+            true
+        | _ -> false
+
+    let private removeStatusUpdateTrigger fullPath =
+        match repositoryRelativePath fullPath with
+        | Some relativePath ->
+            let mutable generation = 0L
+
+            statusUpdateTriggers.TryRemove(relativePath, &generation)
+            |> ignore
+        | _ -> ()
+
+    let private enqueueFileUpload fullPath =
+        let shouldIgnore = shouldIgnoreFile fullPath
+
+        if not shouldIgnore then
+            let generation = Interlocked.Increment(&fileUploadWorkGeneration)
+
+            filesToProcess.AddOrUpdate(fullPath, generation, (fun _ _ -> generation))
+            |> ignore
+
+            true
+        else
+            false
+
+    let private removePendingFileUpload filePath =
+        let mutable generation = 0L
+
+        filesToProcess.TryRemove(filePath, &generation)
+        |> ignore
+
+    let private cancelPendingUploadsForDeletedPath fullPath =
+        removePendingFileUpload fullPath
+
+        match repositoryRelativePath fullPath with
+        | Some relativePath -> removePendingFileUpload relativePath
+        | None -> ()
+
+        let normalizedFullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(fullPath))
+
+        let fullPathPrefix =
+            normalizedFullPath
+            + string Path.DirectorySeparatorChar
+
+        let relativePathPrefix =
+            match repositoryRelativePath fullPath with
+            | Some relativePath -> Some(relativePath.TrimEnd('/') + "/")
+            | None -> None
+
+        for queuedFile in filesToProcess.Keys.ToArray() do
+            let removeQueuedFile =
+                let normalizedQueuedFile =
+                    try
+                        Path.GetFullPath(queuedFile)
+                    with
+                    | _ -> queuedFile
+
+                normalizedQueuedFile.Equals(normalizedFullPath, watchPathComparison)
+                || normalizedQueuedFile.StartsWith(fullPathPrefix, watchPathComparison)
+                || (match relativePathPrefix with
+                    | Some prefix -> queuedFile.StartsWith(prefix, watchPathComparison)
+                    | None -> false)
+
+            if removeQueuedFile then removePendingFileUpload queuedFile
+
+    let internal clearPendingWatchWorkForTests () =
+        filesToProcess.Clear()
+        directoriesToProcess.Clear()
+        statusUpdateTriggers.Clear()
+
+        Interlocked.Exchange(&statusUpdateTriggerGeneration, 0L)
+        |> ignore
+
+        Interlocked.Exchange(&fileUploadWorkGeneration, 0L)
+        |> ignore
+
+        graceStatus <- GraceStatus.Default
+        graceStatusHasChanged <- false
+        readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
+        enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
+        watchPathComparison <- defaultWatchPathComparison ()
+        setLastScanForDifferencesSuccessfulForWatchTests true
+
+    let internal pendingWatchWorkSnapshotForTests () =
+        {
+            FilesToProcess = filesToProcess.Keys.OrderBy(id).ToArray()
+            DirectoriesToProcess = directoriesToProcess.Keys.OrderBy(id).ToArray()
+            StatusUpdateTriggers = statusUpdateTriggers.Keys.OrderBy(id).ToArray()
+        }
+
+    let private hasPendingWatchWork () =
+        not (
+            filesToProcess.IsEmpty
+            && directoriesToProcess.IsEmpty
+            && statusUpdateTriggers.IsEmpty
+        )
+
+    let private statusOnlyTriggerSnapshot () =
+        directoriesToProcess.Keys.ToArray(),
+        statusUpdateTriggers
+            .ToArray()
+            .Select(fun trigger -> { RelativePath = trigger.Key; Generation = trigger.Value })
+            .ToArray()
+
+    let private resetWorkingTreeScanCacheForStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
+        if directorySnapshot.Length > 0
+           || statusTriggerSnapshot.Length > 0 then
+            clearWorkingDirectoryWriteTimesForWatchRescan ()
+
+    let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
+        let mutable unitValue = ()
+
+        for directory in directorySnapshot do
+            directoriesToProcess.TryRemove(directory, &unitValue)
+            |> ignore
+
+        for statusTrigger in statusTriggerSnapshot do
+            let pair = KeyValuePair(statusTrigger.RelativePath, statusTrigger.Generation)
+
+            (statusUpdateTriggers :> ICollection<KeyValuePair<string, int64>>)
+                .Remove(pair)
+            |> ignore
 
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
         match tokenResult with
@@ -223,7 +510,7 @@ module Watch =
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
-                filesToProcess.TryAdd(args.FullPath, ()) |> ignore
+                enqueueFileUpload args.FullPath |> ignore
 
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
@@ -237,7 +524,7 @@ module Watch =
 
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
-                filesToProcess.TryAdd(args.FullPath, ()) |> ignore
+                enqueueFileUpload args.FullPath |> ignore
 
             // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
             if (isGraceStatusArtifact args.FullPath)
@@ -246,15 +533,32 @@ module Watch =
                 graceStatusHasChanged <- true
                 logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
-    let OnDeleted (args: FileSystemEventArgs) =
-        if updateNotInProgress ()
-           && isNotDirectory args.FullPath then
-            let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
+    let private enqueueDirectoryContentsForUpload directoryPath =
+        if
+            Directory.Exists(directoryPath)
+            && shouldNotIgnoreDirectory directoryPath
+        then
+            try
+                for filePath in enumerateFilesForDirectoryUpload directoryPath do
+                    enqueueFileUpload filePath |> ignore
 
-            if not <| shouldIgnore then
+                true
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Error
+                    $"Unable to enumerate renamed directory {directoryPath}; status update will retry after file uploads can be queued. {Markup.Escape(ex.Message)}"
+
+                false
+        else
+            true
+
+    let OnDeleted (args: FileSystemEventArgs) =
+        if updateNotInProgress () then
+            cancelPendingUploadsForDeletedPath args.FullPath
+
+            if enqueueStatusUpdateTrigger args.FullPath then
                 logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
-                logToAnsiConsole Colors.Deleted $"Delete processing is not yet implemented."
 
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
@@ -262,18 +566,20 @@ module Watch =
 
     let OnRenamed (args: RenamedEventArgs) =
         if updateNotInProgress () then
-            let shouldIgnoreOldFile = shouldIgnoreFile args.OldFullPath
-            let shouldIgnoreNewFile = shouldIgnoreFile args.FullPath
+            let newPathIsDirectory = Directory.Exists(args.FullPath)
 
-            if not <| shouldIgnoreOldFile then
-                logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                //logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
-                logToAnsiConsole Colors.Changed $"Delete processing is not yet implemented."
+            cancelPendingUploadsForDeletedPath args.OldFullPath
 
-            if not <| shouldIgnoreNewFile then
+            let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
+
+            if oldPathStatusQueued then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
-                //logToAnsiConsole Colors.Verbose $"Should ignore {args.OldFullPath}: {shouldIgnoreOldFile}. Should ignore {args.FullPath}: {shouldIgnoreNewFile}."
-                filesToProcess.TryAdd(args.FullPath, ()) |> ignore
+
+            if newPathIsDirectory then
+                enqueueDirectoryContentsForUpload args.FullPath
+                |> ignore
+            elif enqueueFileUpload args.FullPath then
+                logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
     let OnError (args: ErrorEventArgs) =
         let correlationId = generateCorrelationId ()
@@ -347,85 +653,124 @@ module Watch =
                 |> Seq.filter (fun fileVersion -> fileIdentities.Contains(uploadedFileVersionIdentity fileVersion))
                 |> Seq.toArray
 
-            let! savedDirectoryVersionsResult = getSavedDirectoryVersionsForRootDirectory graceStatus.RootDirectoryId correlationId
+            let uploadedFileVersionIdentities =
+                directoryUploadedFileVersions
+                |> Seq.map uploadedFileVersionIdentity
+                |> HashSet
 
-            match savedDirectoryVersionsResult with
-            | Error error ->
-                logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
-                return None
-            | Ok savedDirectoryVersions ->
-                // Upload the new directory versions.
-                let directoryVersionsToSave =
-                    applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
-                        directoryUploadedFileVersions
-                        savedDirectoryVersions
-                        newDirectoryVersions
+            let newFileVersionsByPath = Dictionary<RelativePath, LocalFileVersion>()
 
-                let! result = saveDirectoryVersions directoryVersionsToSave correlationId
+            for directoryVersion in newDirectoryVersions do
+                for fileVersion in directoryVersion.Files do
+                    newFileVersionsByPath[fileVersion.RelativePath] <- fileVersion
 
-                match result with
-                | Ok returnValue ->
-                    let newGraceStatus = syncGraceStatusRootDirectoryHash newGraceStatus
+            let unuploadedFileDifferences =
+                differences
+                    .Where(fun diff ->
+                        diff.FileSystemEntryType = FileSystemEntryType.File
+                        && (diff.DifferenceType = DifferenceType.Add
+                            || diff.DifferenceType = DifferenceType.Change))
+                    .Where(fun diff ->
+                        let mutable fileVersion = Unchecked.defaultof<LocalFileVersion>
 
-                    do! updateObjectCacheFile newDirectoryVersions
-
-                    let fileDifferences =
-                        differences
-                            .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
-                            .ToList()
-
-                    let message =
-                        if fileDifferences |> Seq.isEmpty then
-                            String.Empty
+                        if newFileVersionsByPath.TryGetValue(diff.RelativePath, &fileVersion) then
+                            not
+                            <| uploadedFileVersionIdentities.Contains((fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash))
                         else
-                            let sb = stringBuilderPool.Get()
+                            true)
+                    .ToList()
 
-                            try
-                                for fileDifference in fileDifferences do
-                                    //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
-                                    match fileDifference.DifferenceType with
-                                    | Change ->
-                                        sb.AppendLine($"{fileDifference.RelativePath}")
-                                        |> ignore
-                                    | Add ->
-                                        sb.AppendLine($"Add {fileDifference.RelativePath}")
-                                        |> ignore
-                                    | Delete ->
-                                        sb.AppendLine($"Delete {fileDifference.RelativePath}")
-                                        |> ignore
+            if unuploadedFileDifferences.Count > 0 then
+                for fileDifference in unuploadedFileDifferences do
+                    let fullPath = Path.Combine(Current().RootDirectory, string fileDifference.RelativePath)
 
-                                let saveMessage = sb.ToString()
-                                saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
-                            finally
-                                stringBuilderPool.Return(sb)
+                    enqueueFileUpload fullPath |> ignore
 
-                    // If there are changes either to files or just to directories, create a save reference.
-                    if (differences.Count > 0) then
-                        match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
-                        | Ok returnValue ->
-                            let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
-                            // Apply incremental changes to the Grace Status DB.
-                            do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Status update found {unuploadedFileDifferences.Count} file add/change differences without uploaded file content; file uploads will run before retrying the status update."
 
-                            for fileVersion in directoryUploadedFileVersions do
-                                let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+                return None
+            else
+                let! savedDirectoryVersionsResult = getSavedDirectoryVersionsForRootDirectory graceStatus.RootDirectoryId correlationId
 
-                                uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
-                                |> ignore
-
-                            //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
-                            graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
-                            return Some newGraceStatusWithUpdatedTime
-                        | Error error ->
-                            logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
-                            return None
-                    else
-                        // There were no changes to process, so just return the existing GraceStatus.
-                        //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
-                        return Some graceStatus
+                match savedDirectoryVersionsResult with
                 | Error error ->
                     logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                     return None
+                | Ok savedDirectoryVersions ->
+                    // Upload the new directory versions.
+                    let directoryVersionsToSave =
+                        applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions
+                            directoryUploadedFileVersions
+                            savedDirectoryVersions
+                            newDirectoryVersions
+
+                    let! result = saveDirectoryVersions directoryVersionsToSave correlationId
+
+                    match result with
+                    | Ok returnValue ->
+                        let newGraceStatus = syncGraceStatusRootDirectoryHash newGraceStatus
+
+                        do! updateObjectCacheFile newDirectoryVersions
+
+                        let fileDifferences =
+                            differences
+                                .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
+                                .ToList()
+
+                        let message =
+                            if fileDifferences |> Seq.isEmpty then
+                                String.Empty
+                            else
+                                let sb = stringBuilderPool.Get()
+
+                                try
+                                    for fileDifference in fileDifferences do
+                                        //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
+                                        match fileDifference.DifferenceType with
+                                        | Change ->
+                                            sb.AppendLine($"{fileDifference.RelativePath}")
+                                            |> ignore
+                                        | Add ->
+                                            sb.AppendLine($"Add {fileDifference.RelativePath}")
+                                            |> ignore
+                                        | Delete ->
+                                            sb.AppendLine($"Delete {fileDifference.RelativePath}")
+                                            |> ignore
+
+                                    let saveMessage = sb.ToString()
+                                    saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
+                                finally
+                                    stringBuilderPool.Return(sb)
+
+                        // If there are changes either to files or just to directories, create a save reference.
+                        if (differences.Count > 0) then
+                            match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
+                            | Ok returnValue ->
+                                let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+                                // Apply incremental changes to the Grace Status DB.
+                                do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+
+                                for fileVersion in directoryUploadedFileVersions do
+                                    let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+
+                                    uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
+                                    |> ignore
+
+                                //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                                graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
+                                return Some newGraceStatusWithUpdatedTime
+                            | Error error ->
+                                logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                                return None
+                        else
+                            // There were no changes to process, so just return the existing GraceStatus.
+                            //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
+                            return Some graceStatus
+                    | Error error ->
+                        logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                        return None
         }
 
     let private getCachedFileVersionForUploadSkip (fullPath: FilePath) =
@@ -528,26 +873,24 @@ module Watch =
     let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
 
     /// Processes any changed files since the last timer tick.
-    let processChangedFiles () =
+    let internal processChangedFilesWithClients
+        readGraceStatusMetaClient
+        readGraceStatusFileClient
+        copyFileToObjectDirectoryAndUploadToStorageClient
+        updateGraceStatusClient
+        applyGraceStatusIncrementalClient
+        updateGraceWatchInterprocessFileClient
+        =
         task {
             // First, check if there's anything to process.
-            if
-                not
-                    (
-                        filesToProcess.IsEmpty
-                        && directoriesToProcess.IsEmpty
-                    )
-            then
+            if hasPendingWatchWork () then
                 try
                     let correlationId = generateCorrelationId ()
-                    let! graceStatusFromDisk = readGraceStatusMeta ()
+                    let! graceStatusFromDisk = readGraceStatusMetaClient ()
                     graceStatus <- graceStatusFromDisk
 
                     let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
                     let mutable processedAnyFile = false
-
-                    /// This is just a way to throw away the unit value from the ConcurrentDictionary.
-                    let mutable unitValue = ()
 
                     // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
                     //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
@@ -560,31 +903,55 @@ module Watch =
                             CorrelationId = correlationId
                         )
 
-                    for fileName in filesToProcess.Keys.Take(50) do
-                        if filesToProcess.TryRemove(fileName, &unitValue) then
-                            logToAnsiConsole Colors.Verbose $"Processing {fileName}. filesToProcess.Count: {filesToProcess.Count}."
-                            do! copyFileToObjectDirectoryAndUploadToStorage getUploadMetadataForFilesParameters (FilePath fileName)
+                    for pendingFile in
+                        filesToProcess
+                            .ToArray()
+                            .Take(50)
+                            .Select(fun entry -> { FullPath = entry.Key; Generation = entry.Value }) do
+                        let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile.Generation)
+
+                        if (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
+                            .Contains(pendingPair) then
+                            logToAnsiConsole Colors.Verbose $"Processing {pendingFile.FullPath}. filesToProcess.Count: {filesToProcess.Count}."
+                            do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath pendingFile.FullPath)
+
+                            (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
+                                .Remove(pendingPair)
+                            |> ignore
+
                             processedAnyFile <- true
                             lastFileUploadInstant <- getCurrentInstant ()
 
                     if processedAnyFile then
                         graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
-                        do! applyGraceStatusIncremental graceStatus Seq.empty Seq.empty
+                        do! applyGraceStatusIncrementalClient graceStatus Seq.empty Seq.empty
 
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
                     if filesToProcess.IsEmpty then
-                        let! graceStatusSnapshot = readGraceStatusFile ()
+                        let directorySnapshot, statusTriggerSnapshot = statusOnlyTriggerSnapshot ()
+                        let fileWorkGenerationBeforeStatusUpdate = Volatile.Read(&fileUploadWorkGeneration)
+                        let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
+                        resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
 
-                        match! (updateGraceStatus graceStatus correlationId) with
-                        | Some newGraceStatus -> graceStatus <- newGraceStatus
+                        match! (updateGraceStatusClient graceStatus correlationId) with
+                        | Some newGraceStatus ->
+                            if wasLastScanForDifferencesSuccessful ()
+                               && filesToProcess.IsEmpty
+                               && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate then
+                                graceStatus <- newGraceStatus
+                                drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+                            else
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Status file update completed while file upload work or a failed scan was pending; status-only triggers will retry."
                         | None ->
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
 
                     updateGraceStatusDirectoryIds graceStatus
-                    do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
+                    do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
 
                     // Reset the in-memory Grace Status to empty to minimize memory usage.
                     graceStatus <- GraceStatus.Default
@@ -603,6 +970,29 @@ module Watch =
                 do! updateGraceWatchInterprocessFile graceStatusFromDisk (Some graceStatusDirectoryIds)
                 GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
         }
+
+    let processChangedFiles () =
+        processChangedFilesWithClients
+            readGraceStatusMeta
+            readGraceStatusFile
+            copyFileToObjectDirectoryAndUploadToStorage
+            updateGraceStatus
+            applyGraceStatusIncremental
+            updateGraceWatchInterprocessFile
+
+    let internal queueStartupDifferenceForWatch difference =
+        match difference.FileSystemEntryType, difference.DifferenceType with
+        | Directory, _ ->
+            directoriesToProcess.TryAdd(difference.RelativePath, ())
+            |> ignore
+        | File, Delete ->
+            let generation = Interlocked.Increment(&statusUpdateTriggerGeneration)
+
+            statusUpdateTriggers.AddOrUpdate(difference.RelativePath, generation, (fun _ _ -> generation))
+            |> ignore
+        | File, _ ->
+            enqueueFileUpload difference.RelativePath
+            |> ignore
 
     type Watch() =
         inherit AsynchronousCommandLineAction()
@@ -855,13 +1245,7 @@ module Watch =
                         logToAnsiConsole Colors.Verbose $"Found {differences.Count} differences."
 
                     for difference in differences do
-                        match difference.FileSystemEntryType with
-                        | Directory ->
-                            directoriesToProcess.TryAdd(difference.RelativePath, ())
-                            |> ignore
-                        | File ->
-                            filesToProcess.TryAdd(difference.RelativePath, ())
-                            |> ignore
+                        queueStartupDifferenceForWatch difference
 
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
