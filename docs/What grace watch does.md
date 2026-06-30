@@ -49,6 +49,17 @@ Of course, it's open-source, please feel free to examine [Watch.CLI.fs](https://
   - Update the local Grace Status file with the new directory versions.
   - Upload those recomputed directory versions to Grace Server.
   - Create a Save reference by calling Grace Server's `/branch/createSave` endpoint.
+- When a tracked file or directory is deleted, `grace watch` will:
+  - Queue a status update without trying to upload file content for the deleted path.
+  - Rescan the working directory against the local Grace Status file.
+  - Recompute the required directory versions from the nearest changed parent up to the root directory.
+  - Upload those recomputed directory versions to Grace Server.
+  - Create a normal Save reference by calling Grace Server's `/branch/createSave` endpoint.
+  - Update the local Grace Status file only after Grace Server creates the Save reference successfully.
+  - Use a Save message such as `Delete src/old-file.txt` for deleted files. Directory-only deletes can create a
+    Save with an empty message because the changed root directory version is the durable record of the directory change.
+- In V1, renames are captured as the old path being deleted plus the new path being added or changed. Grace does not
+  assign rename identity, tombstones, or a durable "same file moved" relationship for V1 rename capture.
 - When a promotion event from your parent branch is sent to `grace watch` by the server, `grace watch` will run auto-rebase.
 - Every 4.8 minutes, `grace watch` will recompute and rewrite the Grace interprocess-communication (IPC) file, which requires reading and deserializing the local Grace Status file. The size of the IPC file is under 1K for small repos, and scales with the number of directories in the repo. A repo with 275 directories would fit in a 10K IPC file, and a repo with 2,750 directories would fit in a 100K IPC file. They're usually very small.
   > Long story about why we rewrite the file: Imagine that you're at the command line, and you run `grace checkpoint -m ...`. That instance of Grace uses the existence of the IPC file as proof that `grace watch` is running in a separate process. `grace watch` writes the IPC file as soon as it starts, and, deletes it in a `try...finally` clause when it exits. In other words: in any normal exit, including exits caused by unhandled exceptions, the IPC file will be deleted when `grace watch` exits. However: it's possible that `grace watch` could be killed before it has a chance to execute that `finally` clause. For instance, in Windows, if I open Task Manager, right-click on the `grace watch` process, and hit `End Task`, the process dies immediately, and does not execute the `finally` clause. To ensure that there's not a stale IPC file laying around, Grace checks the value of the UpdatedAt field; if it's more than 5 minutes old, Grace will ignore the IPC file and assume that `grace watch` isn't running. So: *that's* why the IPC file gets refreshed every 4.8 minutes: it resets the UpdatedAt field so the file stays under 5 minutes old.
