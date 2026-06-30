@@ -172,19 +172,24 @@ module WatchTests =
         File.WriteAllText(configPath, "{}")
 
         let originalDir = Environment.CurrentDirectory
+        let originalParseResult = Services.parseResult
 
         try
             Environment.CurrentDirectory <- tempDir
+            Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
             resetConfiguration ()
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
+            Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
             Watch.clearPendingWatchWorkForTests ()
             action tempDir
         finally
             Watch.clearPendingWatchWorkForTests ()
+            Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             resetConfiguration ()
+            Services.parseResult <- originalParseResult
             Environment.CurrentDirectory <- originalDir
 
             if Directory.Exists(tempDir) then
@@ -525,6 +530,62 @@ module WatchTests =
 
             pending.FilesToProcess
             |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status reload failure keeps ignored-looking delete queued for retry`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "*.log" |]
+
+            let filePath = Path.Combine(root, "important.log")
+
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromException<GraceStatus>(InvalidOperationException("transient status reload failure")))
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "important.log" |]
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    [<Test>]
+    let ``status-only delete rescan clears stale working tree scan cache`` () =
+        withTempRepo (fun root ->
+            let relativePath = "stale-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "tracked content before delete")
+
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            (Services.scanForDifferences status)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            File.Delete(filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            let updateGraceStatus status _ =
+                task {
+                    let! differences = Services.scanForDifferences status
+                    observedDifferences <- differences
+                    return Some status
+                }
+
+            processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(status)) updateGraceStatus
+
+            observedDifferences
+            |> Seq.exists (fun difference ->
+                difference.DifferenceType = DifferenceType.Delete
+                && difference.FileSystemEntryType = FileSystemEntryType.File
+                && difference.RelativePath = RelativePath relativePath)
+            |> should equal true)
 
     [<Test>]
     let ``deleted directory queues status update when rename cached directory ignore`` () =

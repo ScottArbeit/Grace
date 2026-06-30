@@ -164,6 +164,7 @@ module Watch =
         | DeletedFile
         | DeletedDirectory
         | DeletedPathKindUnknown
+        | DeletedPathStatusUnavailable
 
     let private repositoryRelativePath (fullPath: string) =
         let rootDirectory =
@@ -211,12 +212,18 @@ module Watch =
         | false, true -> DeletedDirectory
         | false, false -> DeletedPathKindUnknown
 
+    let mutable private readGraceStatusFileForDeletedPathClassification = readGraceStatusFile
+
     let private readTrackedDeletedPathKind (relativePath: string) =
         try
             let status =
                 if graceStatusHasChanged
                    || graceStatus.Index.Count = 0 then
-                    let refreshedStatus = readGraceStatusFile().GetAwaiter().GetResult()
+                    let refreshedStatus =
+                        readGraceStatusFileForDeletedPathClassification()
+                            .GetAwaiter()
+                            .GetResult()
+
                     graceStatus <- refreshedStatus
                     refreshedStatus
                 else
@@ -224,10 +231,11 @@ module Watch =
 
             trackedDeletedPathKind status relativePath
         with
-        | _ -> DeletedPathKindUnknown
+        | _ -> DeletedPathStatusUnavailable
 
     let internal setGraceStatusForWatchTests status = graceStatus <- status
     let internal setGraceStatusHasChangedForWatchTests hasChanged = graceStatusHasChanged <- hasChanged
+    let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
 
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
         let configuration = Current()
@@ -244,30 +252,36 @@ module Watch =
                 StringComparison.InvariantCultureIgnoreCase
             )
 
-        let directoryIgnoreMatches graceIgnoreLine =
-            if isNull fileInfo.Directory then
-                false
-            else
-                checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
+        let isGraceStatusArtifact =
+            normalizedFullPath.Equals(configuration.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
+            || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
 
-        isInGraceDirectory
-        || normalizedFullPath.Equals(configuration.GraceStatusFile, StringComparison.InvariantCultureIgnoreCase)
-        || normalizedFullPath.Equals(configuration.GraceStatusFile + "-wal", StringComparison.InvariantCultureIgnoreCase)
-        || normalizedFullPath.Equals(configuration.GraceStatusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
-        || normalizedFullPath.Equals(configuration.GraceStatusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
-        || (pathKind <> DeletedDirectory
-            && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
-        || configuration.GraceDirectoryIgnoreEntries
-           |> Array.exists directoryIgnoreMatches
-        || (pathKind <> DeletedFile
-            && configuration.GraceDirectoryIgnoreEntries
-               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
-        || (pathKind <> DeletedDirectory
-            && configuration.GraceDirectoryIgnoreEntries
-               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
-        || (pathKind = DeletedPathKindUnknown
-            && configuration.GraceFileIgnoreEntries
-               |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
+        if isInGraceDirectory || isGraceStatusArtifact then
+            true
+        elif pathKind = DeletedPathStatusUnavailable then
+            false
+        else
+            let directoryIgnoreMatches graceIgnoreLine =
+                if isNull fileInfo.Directory then
+                    false
+                else
+                    checkIgnoreLineAgainstDirectory fileInfo.Directory graceIgnoreLine
+
+            (pathKind <> DeletedDirectory
+             && normalizedFullPath.EndsWith(".gracetmp", StringComparison.InvariantCultureIgnoreCase))
+            || configuration.GraceDirectoryIgnoreEntries
+               |> Array.exists directoryIgnoreMatches
+            || (pathKind <> DeletedFile
+                && configuration.GraceDirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstDirectory deletedDirectoryInfo graceIgnoreLine))
+            || (pathKind <> DeletedDirectory
+                && configuration.GraceDirectoryIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
+            || (pathKind = DeletedPathKindUnknown
+                && configuration.GraceFileIgnoreEntries
+                   |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
 
     let private enqueueStatusUpdateTrigger fullPath =
         match repositoryRelativePath fullPath with
@@ -287,6 +301,7 @@ module Watch =
         statusUpdateTriggers.Clear()
         graceStatus <- GraceStatus.Default
         graceStatusHasChanged <- false
+        readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
 
     let internal pendingWatchWorkSnapshotForTests () =
         {
@@ -303,6 +318,11 @@ module Watch =
         )
 
     let private statusOnlyTriggerSnapshot () = directoriesToProcess.Keys.ToArray(), statusUpdateTriggers.Keys.ToArray()
+
+    let private resetWorkingTreeScanCacheForStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: string array) =
+        if directorySnapshot.Length > 0
+           || statusTriggerSnapshot.Length > 0 then
+            clearWorkingDirectoryWriteTimesForWatchRescan ()
 
     let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: string array) =
         let mutable unitValue = ()
@@ -732,6 +752,7 @@ module Watch =
                         let directorySnapshot, statusTriggerSnapshot = statusOnlyTriggerSnapshot ()
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
+                        resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
 
                         match! (updateGraceStatusClient graceStatus correlationId) with
                         | Some newGraceStatus ->

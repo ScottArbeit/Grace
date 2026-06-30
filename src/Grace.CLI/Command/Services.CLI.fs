@@ -535,6 +535,8 @@ module Services =
 
     let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
 
+    let internal clearWorkingDirectoryWriteTimesForWatchRescan () = localWriteTimes.Clear()
+
     /// Gets a dictionary of local paths and their last write times.
     let rec getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
         if shouldNotIgnoreDirectory directoryInfo.FullName then
