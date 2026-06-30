@@ -225,6 +225,14 @@ module Watch =
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
+    let private defaultWatchPathComparison () =
+        if OperatingSystem.IsWindows() then
+            StringComparison.OrdinalIgnoreCase
+        else
+            StringComparison.Ordinal
+
+    let mutable private watchPathComparison = defaultWatchPathComparison ()
+
     let private readTrackedDeletedPathKind (relativePath: string) =
         try
             let status =
@@ -248,6 +256,7 @@ module Watch =
     let internal setGraceStatusHasChangedForWatchTests hasChanged = graceStatusHasChanged <- hasChanged
     let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
     let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
+    let internal setWatchPathComparisonForWatchTests comparison = watchPathComparison <- comparison
 
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
         let configuration = Current()
@@ -364,10 +373,10 @@ module Watch =
                     with
                     | _ -> queuedFile
 
-                normalizedQueuedFile.Equals(normalizedFullPath, StringComparison.InvariantCultureIgnoreCase)
-                || normalizedQueuedFile.StartsWith(fullPathPrefix, StringComparison.InvariantCultureIgnoreCase)
+                normalizedQueuedFile.Equals(normalizedFullPath, watchPathComparison)
+                || normalizedQueuedFile.StartsWith(fullPathPrefix, watchPathComparison)
                 || (match relativePathPrefix with
-                    | Some prefix -> queuedFile.StartsWith(prefix, StringComparison.InvariantCultureIgnoreCase)
+                    | Some prefix -> queuedFile.StartsWith(prefix, watchPathComparison)
                     | None -> false)
 
             if removeQueuedFile then removePendingFileUpload queuedFile
@@ -387,6 +396,7 @@ module Watch =
         graceStatusHasChanged <- false
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
+        watchPathComparison <- defaultWatchPathComparison ()
         setLastScanForDifferencesSuccessfulForWatchTests true
 
     let internal pendingWatchWorkSnapshotForTests () =
@@ -558,14 +568,16 @@ module Watch =
         if updateNotInProgress () then
             let newPathIsDirectory = Directory.Exists(args.FullPath)
 
+            cancelPendingUploadsForDeletedPath args.OldFullPath
+
             let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
 
             if oldPathStatusQueued then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
             if newPathIsDirectory then
-                if not (enqueueDirectoryContentsForUpload args.FullPath) then
-                    removeStatusUpdateTrigger args.OldFullPath
+                enqueueDirectoryContentsForUpload args.FullPath
+                |> ignore
             elif enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 

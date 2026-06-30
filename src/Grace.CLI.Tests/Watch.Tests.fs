@@ -493,6 +493,32 @@ module WatchTests =
             uploadCalls |> should equal 0)
 
     [<Test>]
+    let ``ignored delete uses filesystem casing when cancelling pending upload work`` () =
+        withTempRepo (fun root ->
+            Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+            let queuedDirectory = Path.Combine(root, "src", "Foo")
+
+            Directory.CreateDirectory(queuedDirectory)
+            |> ignore
+
+            let queuedFilePath = Path.Combine(queuedDirectory, "pending.txt")
+            File.WriteAllText(queuedFilePath, "queued payload")
+            Watch.OnChanged(changedEvent queuedFilePath)
+            writeGraceIgnore root [| "src/foo/" |]
+
+            let ignoredDeletedDirectory = Path.Combine(root, "src", "foo")
+            Watch.OnDeleted(deletedEvent ignoredDeletedDirectory)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| queuedFilePath |]
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    [<Test>]
     let ``status-only triggers remain pending when status update returns none`` () =
         withTempRepo (fun root ->
             let filePath = Path.Combine(root, "retry-delete.txt")
@@ -984,6 +1010,26 @@ module WatchTests =
             |> should equal [| newPath |])
 
     [<Test>]
+    let ``renamed file cancels old path pending upload before queuing new path`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "queued-old-name.txt")
+            let newPath = Path.Combine(root, "queued-new-name.txt")
+
+            File.WriteAllText(oldPath, "payload before rename")
+            Watch.OnChanged(changedEvent oldPath)
+            File.Move(oldPath, newPath)
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "queued-old-name.txt" |]
+
+            pending.FilesToProcess
+            |> should equal [| newPath |])
+
+    [<Test>]
     let ``renamed directory queues old path status trigger and new contents upload work`` () =
         withTempRepo (fun root ->
             writeGraceIgnore root [| "*.tmp" |]
@@ -1016,7 +1062,7 @@ module WatchTests =
             updateCalls |> should equal 1)
 
     [<Test>]
-    let ``renamed directory enumeration failure removes status-only trigger and stays in callback`` () =
+    let ``renamed directory enumeration failure keeps old path trigger for retry`` () =
         withTempRepo (fun root ->
             let oldPath = Path.Combine(root, "old-enumeration-name")
             let newPath = Path.Combine(root, "new-enumeration-name")
@@ -1029,7 +1075,7 @@ module WatchTests =
             let pending = Watch.pendingWatchWorkSnapshotForTests ()
 
             pending.StatusUpdateTriggers
-            |> should equal Array.empty<string>
+            |> should equal [| "old-enumeration-name" |]
 
             pending.FilesToProcess
             |> should equal Array.empty<string>)
