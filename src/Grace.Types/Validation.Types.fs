@@ -10,15 +10,19 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains validation helpers.
 module Validation =
 
+    /// Represents validation execution mode.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ValidationExecutionMode =
         | Synchronous
         | AsyncCallback
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ValidationExecutionMode>()
 
+    /// Represents validation status.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ValidationStatus =
         | Pass
@@ -26,14 +30,18 @@ module Validation =
         | Block
         | Skipped
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ValidationStatus>()
 
+    /// Represents the validation contract.
     [<GenerateSerializer>]
     type Validation = { Name: string; Version: string; ExecutionMode: ValidationExecutionMode; RequiredForApply: bool }
 
+    /// Represents the validation set rule contract.
     [<GenerateSerializer>]
     type ValidationSetRule = { EventTypes: AutomationEventType list; BranchNameGlob: string }
 
+    /// Represents validation set dto.
     [<GenerateSerializer>]
     type ValidationSetDto =
         {
@@ -53,6 +61,7 @@ module Validation =
             DeleteReason: DeleteReason
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof ValidationSetDto
@@ -71,27 +80,34 @@ module Validation =
                 DeleteReason = String.Empty
             }
 
+    /// Represents validation set command.
     [<KnownType("GetKnownTypes")>]
     type ValidationSetCommand =
         | Create of validationSet: ValidationSetDto
         | Update of validationSet: ValidationSetDto
         | DeleteLogical of force: bool * deleteReason: DeleteReason
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ValidationSetCommand>()
 
+    /// Represents validation set event type.
     [<KnownType("GetKnownTypes")>]
     type ValidationSetEventType =
         | Created of validationSet: ValidationSetDto
         | Updated of validationSet: ValidationSetDto
         | LogicalDeleted of force: bool * deleteReason: DeleteReason
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ValidationSetEventType>()
 
+    /// Represents the validation set event contract.
     type ValidationSetEvent = { Event: ValidationSetEventType; Metadata: EventMetadata }
 
+    /// Represents the validation output contract.
     [<GenerateSerializer>]
     type ValidationOutput = { Status: ValidationStatus; Summary: string; ArtifactIds: ArtifactId list }
 
+    /// Represents validation result dto.
     [<GenerateSerializer>]
     type ValidationResultDto =
         {
@@ -112,6 +128,7 @@ module Validation =
             UpdatedAt: Instant option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof ValidationResultDto
@@ -131,21 +148,28 @@ module Validation =
                 UpdatedAt = None
             }
 
+    /// Represents validation result command.
     [<KnownType("GetKnownTypes")>]
     type ValidationResultCommand =
         | Record of validationResult: ValidationResultDto
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ValidationResultCommand>()
 
+    /// Represents validation result event type.
     [<KnownType("GetKnownTypes")>]
     type ValidationResultEventType =
         | Recorded of validationResult: ValidationResultDto
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ValidationResultEventType>()
 
+    /// Represents the validation result event contract.
     type ValidationResultEvent = { Event: ValidationResultEventType; Metadata: EventMetadata }
 
+    /// Contains validation set dto helpers.
     module ValidationSetDto =
+        /// Carries optional validation fields that can be patched without replacing the full validation record.
         let UpdateDto (validationSetEvent: ValidationSetEvent) (current: ValidationSetDto) =
             let updated =
                 match validationSetEvent.Event with
@@ -161,7 +185,9 @@ module Validation =
 
             { updated with OnBehalfOf = onBehalfOf; UpdatedAt = Some validationSetEvent.Metadata.Timestamp }
 
+    /// Contains validation result dto helpers.
     module ValidationResultDto =
+        /// Carries optional validation fields that can be patched without replacing the full validation record.
         let UpdateDto (validationResultEvent: ValidationResultEvent) (_current: ValidationResultDto) =
             match validationResultEvent.Event with
             | ValidationResultEventType.Recorded validationResult ->

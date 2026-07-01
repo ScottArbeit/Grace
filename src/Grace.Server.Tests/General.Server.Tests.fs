@@ -16,10 +16,12 @@ open Grace.Types
 open FSharp.Control
 open Grace.Shared.Validation.Errors
 
+/// Groups shared helpers for common.
 module Common =
     let okResult: Result<unit, TestError> = Result.Ok()
     let errorResult: Result<unit, TestError> = Result.Error TestError.TestFailed
 
+    /// Tries to resolve get guid property without failing the caller.
     let tryGetGuidProperty (value: obj) =
         let mutable parsed = Guid.Empty
 
@@ -34,11 +36,13 @@ module Common =
                 None
         | _ -> None
 
+    /// Requires guid property and fails the test when missing.
     let requireGuidProperty (name: string) (value: obj) =
         match tryGetGuidProperty value with
         | Some guid -> guid
         | None -> failwith $"Property '{name}' was not a GUID value."
 
+/// Groups shared helpers for services.
 module Services =
     [<Literal>]
     let numberOfRepositories = 3
@@ -61,12 +65,14 @@ module Services =
     let mutable testUserId = String.Empty
     let mutable testUserClaims: string list = []
 
+    /// Defines log to test console behavior for the surrounding tests used by the server integration general scenario.
     let logToTestConsole (message: string) =
         TestContext.Progress.WriteLine(message)
         TestContext.Progress.Flush()
         Console.Error.WriteLine(message)
         Console.Error.Flush()
 
+    /// Gets approximate test count from the running test server.
     let getApproximateTestCount () =
         Assembly.GetExecutingAssembly().GetTypes()
         |> Seq.collect (fun testType ->
@@ -91,6 +97,7 @@ open Services
 [<SetUpFixture>]
 type Setup() =
 
+    /// Resets shared test state before each integration test.
     [<OneTimeSetUp>]
     member public _.Setup() =
         task {
@@ -192,6 +199,7 @@ type Setup() =
                     Array.indexed repositoryIds,
                     Constants.ParallelOptions,
                     (fun repositoryInfo ct ->
+                        /// Defines repository index behavior for the surrounding tests used by the server integration general scenario.
                         let repositoryIndex, repositoryId = repositoryInfo
 
                         ValueTask(
@@ -225,15 +233,18 @@ type Setup() =
             logToTestConsole $"Grace.Server.Tests progress: shared fixture data ready; approximately {approximateTestCount} tests starting."
         }
 
+    /// Verifies the teardown scenario.
     [<OneTimeTearDown>]
     member public _.Teardown() =
         task {
             logToTestConsole "Grace.Server.Tests progress: tests concluded; teardown starting."
 
             let correlationId = generateCorrelationId ()
+            /// Defines log cleanup failure behavior for the surrounding tests used by the server integration general scenario.
             let logCleanupFailure (label: string) (detail: string) = logToTestConsole $"Cleanup {label} failed: {detail}"
 
             let cleanupEnabled =
+                /// Determines whether truthy environment value for test-host decisions.
                 let isTruthyEnvironmentValue (value: string) =
                     value.Equals("1", StringComparison.OrdinalIgnoreCase)
                     || value.Equals("true", StringComparison.OrdinalIgnoreCase)
@@ -246,6 +257,7 @@ type Setup() =
                     | value when not (String.IsNullOrWhiteSpace value) -> isTruthyEnvironmentValue value
                     | _ -> false
 
+            /// Tries to resolve post without failing the caller.
             let tryPost (label: string) (path: string) (content: HttpContent) =
                 task {
                     try
@@ -311,9 +323,11 @@ type Setup() =
 
         }
 
+/// Captures general values used by the test suite.
 [<Parallelizable(ParallelScope.All)>]
 type General() =
 
+    /// Verifies the root path returns value scenario.
     [<Test>]
     member public _.RootPathReturnsValue() =
         task {
@@ -337,6 +351,7 @@ type General() =
             Assert.That(content, Does.Contain("Grace"))
         }
 
+    /// Verifies the metrics requires authentication scenario.
     [<Test>]
     member public _.MetricsRequiresAuthentication() =
         task {
@@ -347,6 +362,7 @@ type General() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }
 
+    /// Verifies the metrics requires system admin and returns prometheus text scenario.
     [<Test>]
     member public _.MetricsRequiresSystemAdminAndReturnsPrometheusText() =
         task {

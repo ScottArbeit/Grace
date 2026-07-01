@@ -9,10 +9,14 @@ open System.IO
 open System.Text
 open System.Text.Json
 
+/// Contains tests covering protocol vectors behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ProtocolVectorsTests() =
+    /// Verifies that find repo root.
     static member private FindRepoRoot() =
+        /// Tracks directory changes so this scenario can assert the resulting side effect explicitly.
         let mutable directory = DirectoryInfo(TestContext.CurrentContext.TestDirectory)
+        /// Tracks result changes so this scenario can assert the resulting side effect explicitly.
         let mutable result = None
 
         while Option.isNone result && not (isNull directory) do
@@ -27,29 +31,37 @@ type ProtocolVectorsTests() =
         | Some path -> path
         | None -> failwith "Could not find repository root containing test-vectors/protocol."
 
+    /// Verifies that vector path.
     static member private VectorPath(fileName: string) = Path.Combine(ProtocolVectorsTests.FindRepoRoot(), "test-vectors", "protocol", fileName)
 
+    /// Verifies that load json.
     static member private LoadJson(fileName: string) =
         File.ReadAllText(ProtocolVectorsTests.VectorPath fileName)
         |> JsonDocument.Parse
 
+    /// Verifies that required property.
     static member private RequiredProperty (name: string) (element: JsonElement) = element.GetProperty(name)
 
+    /// Verifies that string property.
     static member private StringProperty name element =
         (ProtocolVectorsTests.RequiredProperty name element)
             .GetString()
 
+    /// Verifies that int64 property.
     static member private Int64Property name element =
         (ProtocolVectorsTests.RequiredProperty name element)
             .GetInt64()
 
+    /// Verifies that array property.
     static member private ArrayProperty name element =
         (ProtocolVectorsTests.RequiredProperty name element)
             .EnumerateArray()
         |> Seq.toArray
 
+    /// Verifies that bytes.
     static member private Bytes(value: string) = Encoding.UTF8.GetBytes(value)
 
+    /// Verifies that expect encoded ok.
     static member private ExpectEncodedOk(result: Result<ContentBlockFormat.EncodedContentBlock, ContentBlockFormat.ContentBlockFormatError>) =
         match result with
         | Ok value -> value
@@ -57,10 +69,12 @@ type ProtocolVectorsTests() =
             Assert.Fail($"Expected ContentBlockFormat.encode Ok but got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Verifies that encoded block.
     static member private EncodedBlock physicalOffset utf8 =
         ContentBlockFormat.encode [ ContentBlockFormat.createChunk physicalOffset (ProtocolVectorsTests.Bytes utf8) ]
         |> ProtocolVectorsTests.ExpectEncodedOk
 
+    /// Verifies that build manifest.
     static member private BuildManifest chunkingSuiteId fileBytes (blocks: (ContentBlockFormat.EncodedContentBlock * int64 * int64) array) =
         let contentBlocks =
             blocks
@@ -75,8 +89,10 @@ type ProtocolVectorsTests() =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Verifies that payload reference.
     static member private PayloadReference(block: ContentBlockFormat.EncodedContentBlock) = ManifestValidation.createBlockPayload block.Address block.Payload
 
+    /// Verifies that error kind.
     static member private ErrorKind(error: ManifestValidation.ManifestValidationError) =
         match error with
         | ManifestValidation.NullManifest -> "NullManifest"
@@ -100,6 +116,7 @@ type ProtocolVectorsTests() =
         | ManifestValidation.FileContentHashMismatch _ -> "FileContentHashMismatch"
         | ManifestValidation.ManifestSizeMismatch _ -> "ManifestSizeMismatch"
 
+    /// Verifies that content address vectors match deterministic helpers.
     [<Test>]
     member _.ContentAddressVectorsMatchDeterministicHelpers() =
         use document = ProtocolVectorsTests.LoadJson "content-addresses.v1.json"
@@ -178,6 +195,7 @@ type ProtocolVectorsTests() =
             Is.EqualTo(ManifestAddress(ProtocolVectorsTests.StringProperty "manifestAddress" fileManifest))
         )
 
+    /// Verifies that manifest validation vectors match payload and rejection contract.
     [<Test>]
     member _.ManifestValidationVectorsMatchPayloadAndRejectionContract() =
         use document = ProtocolVectorsTests.LoadJson "manifest-validation.v1.json"
@@ -303,6 +321,7 @@ type ProtocolVectorsTests() =
             | Error error -> Assert.That(ProtocolVectorsTests.ErrorKind error, Is.EqualTo(expectedCases[name]), name)
             | Ok _ -> Assert.Fail($"Expected {name} to be rejected.")
 
+    /// Verifies that eligibility vectors document default boundary.
     [<Test>]
     member _.EligibilityVectorsDocumentDefaultBoundary() =
         use document = ProtocolVectorsTests.LoadJson "eligibility.v1.json"
@@ -312,6 +331,7 @@ type ProtocolVectorsTests() =
         Assert.That(ProtocolVectorsTests.Int64Property "thresholdBytes" policy, Is.EqualTo(ManifestEligibilityPolicy.Default.ThresholdBytes))
         Assert.That(int (ProtocolVectorsTests.Int64Property "binaryScanBytes" policy), Is.EqualTo(ManifestEligibilityPolicy.Default.BinaryScanBytes))
 
+        /// Exercises decide coverage for the types protocol Vectors contract.
         let decide kind uncompressedSize compressedSize =
             let isBinary = String.Equals(kind, "binary", StringComparison.Ordinal)
             let relevantSize = if isBinary then uncompressedSize else compressedSize

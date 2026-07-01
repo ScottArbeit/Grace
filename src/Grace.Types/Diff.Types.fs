@@ -8,13 +8,14 @@ open Orleans
 open System.Collections.Generic
 open System.Runtime.Serialization
 
+/// Contains diff helpers.
 module Diff =
 
     /// The state held in the database when creating a physical deletion reminder for a cached state.
     type DeleteCachedStateReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
 
-    /// Represents a Diff between two DirectoryVersions in a repository.
     //[<GenerateSerializer>]
+    /// Represents diff dto.
     type DiffDto =
         {
             Class: string
@@ -30,6 +31,7 @@ module Diff =
             FileDiffs: List<FileDiff>
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof DiffDto

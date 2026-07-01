@@ -6,6 +6,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.Authorization
 open Grace.Types.Common
 
+/// SDK entry point for authorization roles, scoped role assignments, path permissions, and permission checks.
 type Access() =
 
     /// Grants a role to a principal at a scope.

@@ -3,6 +3,7 @@ namespace Grace.Shared
 open System
 open System.Globalization
 
+/// Contains api contract version helpers.
 [<RequireQualifiedAccess>]
 module ApiContractVersion =
 
@@ -26,20 +27,25 @@ module ApiContractVersion =
 
     let private comparer = StringComparer.OrdinalIgnoreCase
 
+    /// Compares contract version strings case-insensitively after normalization.
     let private equals expected actual = comparer.Equals(expected, actual)
 
+    /// Indicates whether a contract version is released rather than preview-only.
     let isReleased value =
         not (String.IsNullOrWhiteSpace value)
         && ReleasedVersions
            |> Array.exists (fun released -> equals released (value.Trim()))
 
+    /// Recognizes aliases that mean the caller intentionally selected an explicit contract version.
     let isExplicitOverrideAlias value =
         not (String.IsNullOrWhiteSpace value)
         && ExplicitOverrideAliases
            |> Array.exists (fun alias -> equals alias (value.Trim()))
 
+    /// Checks whether a contract version is accepted by the current shared API surface.
     let isSupported value = isReleased value || isExplicitOverrideAlias value
 
+    /// Attempts to parse date.
     let private tryParseDate value =
         let mutable parsed = DateOnly.MinValue
 
@@ -48,6 +54,7 @@ module ApiContractVersion =
         else
             None
 
+    /// Normalizes normalize.
     let normalize value =
         if String.IsNullOrWhiteSpace value then
             Error "API contract version is required."

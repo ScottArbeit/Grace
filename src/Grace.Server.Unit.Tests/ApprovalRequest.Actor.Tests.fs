@@ -8,11 +8,13 @@ open Grace.Types.Webhooks
 open NUnit.Framework
 open System
 
+/// Covers approval Request Actor Decision behavior in no-Aspire server unit tests.
 [<TestFixture>]
 type ApprovalRequestActorDecisionTests() =
 
     let metadata () = EventMetadata.New (generateCorrelationId ()) "test"
 
+    /// Builds request For test data for the server unit approval Request Actor scenarios in this file.
     let requestFor attempt =
         { ApprovalRequest.Default with
             ApprovalRequestId = Guid.NewGuid()
@@ -34,6 +36,7 @@ type ApprovalRequestActorDecisionTests() =
             CreatedAt = getCurrentInstant ()
         }
 
+    /// Builds decision test data for the server unit approval Request Actor scenarios in this file.
     let decision clientDecisionId approvalDecision =
         { ApprovalRequestDecision.Default with
             Decision = approvalDecision
@@ -43,6 +46,7 @@ type ApprovalRequestActorDecisionTests() =
             ClientDecisionId = clientDecisionId
         }
 
+    /// Verifies that create For Same Policy Subject Scope And Attempt Is Idempotent.
     [<Test>]
     member _.CreateForSamePolicySubjectScopeAndAttemptIsIdempotent() =
         let request = requestFor (Some 7)
@@ -60,6 +64,7 @@ type ApprovalRequestActorDecisionTests() =
                 Assert.That(replayed.Events, Is.Empty)
                 Assert.That(replayed.Request.ApprovalRequestId, Is.EqualTo(request.ApprovalRequestId))
 
+    /// Verifies that duplicate Identical Decision Is Idempotent But Conflicting Duplicate Fails.
     [<Test>]
     member _.DuplicateIdenticalDecisionIsIdempotentButConflictingDuplicateFails() =
         let request = requestFor (Some 1)
@@ -87,6 +92,7 @@ type ApprovalRequestActorDecisionTests() =
         | Ok _ -> Assert.Fail "Conflicting duplicate decision should fail."
         | Error error -> Assert.That(error.Error, Does.Contain("different approval decision"))
 
+    /// Verifies that terminal Requests Cannot Be Changed.
     [<Test>]
     member _.TerminalRequestsCannotBeChanged() =
         let request = requestFor None
@@ -103,6 +109,7 @@ type ApprovalRequestActorDecisionTests() =
         | Ok _ -> Assert.Fail "Terminal request should reject later decisions."
         | Error error -> Assert.That(error.Error, Does.Contain("already Expired"))
 
+    /// Verifies that expired Cancelled And Superseded States Are Represented And Auditable.
     [<Test>]
     member _.ExpiredCancelledAndSupersededStatesAreRepresentedAndAuditable() =
         let expireRequest = requestFor None
@@ -142,6 +149,7 @@ type ApprovalRequestActorDecisionTests() =
         Assert.That(cancelled.Events |> List.length, Is.EqualTo(1))
         Assert.That(superseded.Events |> List.length, Is.EqualTo(1))
 
+    /// Verifies that stale Attempt Does Not Match Current Attempt Create Key.
     [<Test>]
     member _.StaleAttemptDoesNotMatchCurrentAttemptCreateKey() =
         let oldAttempt = requestFor (Some 1)
@@ -155,9 +163,11 @@ type ApprovalRequestActorDecisionTests() =
         | Ok _ -> Assert.Fail "A request for a different attempt should not replay as the existing request."
         | Error error -> Assert.That(error.Error, Does.Contain("different payload"))
 
+/// Covers generated Approval Request Id behavior in no-Aspire server unit tests.
 [<TestFixture>]
 type GeneratedApprovalRequestIdTests() =
 
+    /// Builds request For test data for the server unit approval Request Actor scenarios in this file.
     let requestFor attempt =
         { ApprovalRequest.Default with
             ApprovalRequestId = Guid.Empty
@@ -180,6 +190,7 @@ type GeneratedApprovalRequestIdTests() =
             CreatedAt = getCurrentInstant ()
         }
 
+    /// Verifies that generated Request Id Is Stable For Same Logical Key And Distinct Across Attempts.
     [<Test>]
     member _.GeneratedRequestIdIsStableForSameLogicalKeyAndDistinctAcrossAttempts() =
         let first = requestFor (Some 7)

@@ -7,8 +7,10 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains automation helpers.
 module Automation =
 
+    /// Represents automation event type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type AutomationEventType =
         | PromotionSetCreated
@@ -35,8 +37,10 @@ module Automation =
         | AgentSummaryAdded
         | AgentBootstrapped
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<AutomationEventType>()
 
+    /// Represents agent session lifecycle state.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type AgentSessionLifecycleState =
         | Inactive
@@ -44,8 +48,10 @@ module Automation =
         | Stopping
         | Stopped
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<AgentSessionLifecycleState>()
 
+    /// Represents agent session info.
     [<GenerateSerializer>]
     type AgentSessionInfo =
         {
@@ -61,6 +67,7 @@ module Automation =
             StoppedAt: Instant option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 SessionId = String.Empty
@@ -75,6 +82,7 @@ module Automation =
                 StoppedAt = None
             }
 
+    /// Represents agent session operation result.
     [<GenerateSerializer>]
     type AgentSessionOperationResult =
         {
@@ -84,8 +92,10 @@ module Automation =
             WasIdempotentReplay: bool
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { Session = AgentSessionInfo.Default; Message = String.Empty; OperationId = String.Empty; WasIdempotentReplay = false }
 
+    /// Represents agent session list result.
     [<GenerateSerializer>]
     type AgentSessionListResult =
         {
@@ -94,8 +104,10 @@ module Automation =
             Message: string
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { Sessions = []; Count = 0; Message = String.Empty }
 
+    /// Represents automation event envelope.
     [<GenerateSerializer>]
     type AutomationEventEnvelope =
         {
@@ -110,6 +122,7 @@ module Automation =
             DataJson: string
         }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             (eventType: AutomationEventType)
             (eventTime: Instant)

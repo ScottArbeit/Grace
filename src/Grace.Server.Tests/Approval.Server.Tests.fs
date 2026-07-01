@@ -13,8 +13,10 @@ open System.Net
 open System.Net.Http
 open System.Threading.Tasks
 
+/// Groups shared helpers for approval test helpers.
 module private ApprovalTestHelpers =
 
+    /// Restarts grace server to verify durability across process restarts.
     let restartGraceServerAsync () =
         let state =
             match App with
@@ -34,17 +36,20 @@ module private ApprovalTestHelpers =
 
         AspireTestHost.restartGraceServerAsync state
 
+    /// Builds a deterministic authenticated client for integration setup fixture for the server integration approval assertions.
     let createAuthenticatedClient (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Builds a deterministic client with group for integration setup fixture for the server integration approval assertions.
     let createClientWithGroup (userId: string) (groupId: string) =
         let client = createAuthenticatedClient userId
         client.DefaultRequestHeaders.Add("x-grace-groups", groupId)
         client
 
+    /// Builds a deterministic unauthenticated client for integration setup fixture for the server integration approval assertions.
     let createUnauthenticatedClient () =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
@@ -76,6 +81,7 @@ module private ApprovalTestHelpers =
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
+    /// Builds create policy parameters for route calls.
     let createPolicyParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Approval.CreateApprovalPolicyParameters()
         parameters.OwnerId <- ownerId
@@ -88,6 +94,7 @@ module private ApprovalTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds show policy parameters for route calls.
     let showPolicyParameters (repositoryId: string) (branchId: string) (policyId: string) =
         let parameters = Parameters.Approval.ShowApprovalPolicyParameters()
         parameters.OwnerId <- ownerId
@@ -98,12 +105,14 @@ module private ApprovalTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds update policy parameters for route calls.
     let updatePolicyParameters (repositoryId: string) (branchId: string) (policyId: string) =
         let parameters = createPolicyParameters repositoryId branchId
         parameters.ApprovalPolicyId <- policyId
         parameters.Name <- $"updated-{Guid.NewGuid():N}"
         parameters
 
+    /// Builds list policy parameters for route calls.
     let listPolicyParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Approval.ListApprovalPoliciesParameters()
         parameters.OwnerId <- ownerId
@@ -113,6 +122,7 @@ module private ApprovalTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds list request parameters for route calls.
     let listRequestParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Approval.ListApprovalRequestsParameters()
         parameters.OwnerId <- ownerId
@@ -136,6 +146,7 @@ module private ApprovalTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds seed generated parameters for route calls.
     let seedGeneratedParameters (repositoryId: string) (branchId: string) (requestId: Guid option) (policyId: Guid) (selector: string) attempt =
         let parameters = Parameters.Approval.SeedGeneratedApprovalRequestParameters()
         parameters.OwnerId <- ownerId
@@ -160,6 +171,7 @@ module private ApprovalTestHelpers =
 
         parameters
 
+    /// Seeds request with attempt for integration test setup.
     let seedRequestWithAttempt (repositoryId: string) (branchId: string) (selector: string) attempt =
         task {
             let parameters = seedGeneratedParameters repositoryId branchId (Some(Guid.NewGuid())) (Guid.NewGuid()) selector attempt
@@ -172,8 +184,10 @@ module private ApprovalTestHelpers =
             return stored.ApprovalRequestId.ToString()
         }
 
+    /// Seeds request for integration test setup.
     let seedRequest (repositoryId: string) (branchId: string) (selector: string) = seedRequestWithAttempt repositoryId branchId selector None
 
+    /// Builds a deterministic policy for integration setup fixture for the server integration approval assertions.
     let createPolicyAsync (client: HttpClient) repositoryId branchId =
         task {
             let! createResponse = client.PostAsync("/approval/policy/create", createJsonContent (createPolicyParameters repositoryId branchId))
@@ -182,6 +196,7 @@ module private ApprovalTestHelpers =
             return! deserializeContent<ApprovalPolicy> createResponse
         }
 
+    /// Asserts policy matches scope for integration responses.
     let assertPolicyMatchesScope (repositoryId: string) (branchId: string) (policy: ApprovalPolicy) =
         Assert.That(policy.Class, Is.EqualTo(nameof ApprovalPolicy))
         Assert.That(policy.Scope.OwnerId, Is.EqualTo(Guid.Parse(ownerId)))
@@ -191,12 +206,15 @@ module private ApprovalTestHelpers =
         Assert.That(policy.Subject, Is.EqualTo("promotion"))
         Assert.That(policy.RequiredResponder, Is.EqualTo("role:ApprovalResponder"))
 
+/// Covers approval API scenarios.
 [<NonParallelizable>]
 type ApprovalApiIntegrationTests() =
 
+    /// Resets shared test state before each integration test.
     [<SetUp>]
     member _.SetUp() = ApprovalStore.clearForTests ()
 
+    /// Verifies the policy lifecycle happy path scenario.
     [<Test>]
     member _.PolicyLifecycleHappyPath() =
         task {
@@ -274,6 +292,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(deleted.Status, Is.EqualTo(ApprovalPolicyStatus.Deleted))
         }
 
+    /// Verifies the approval policy store is process local while generated requests remain actor backed across restart scenario.
     [<Test>]
     [<NonParallelizable>]
     member _.ApprovalPolicyStoreIsProcessLocalWhileGeneratedRequestsRemainActorBackedAcrossRestart() =
@@ -359,6 +378,7 @@ type ApprovalApiIntegrationTests() =
             )
         }
 
+    /// Verifies the policy create rejects blank required responder scenario.
     [<Test>]
     member _.PolicyCreateRejectsBlankRequiredResponder() =
         task {
@@ -380,6 +400,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(responseText, Does.Contain("RequiredResponder is required."))
         }
 
+    /// Verifies the policy update rejects blank required responder scenario.
     [<Test>]
     member _.PolicyUpdateRejectsBlankRequiredResponder() =
         task {
@@ -403,6 +424,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(responseText, Does.Contain("RequiredResponder is required."))
         }
 
+    /// Verifies the no public approval request create route exists scenario.
     [<Test>]
     member _.NoPublicApprovalRequestCreateRouteExists() =
         task {
@@ -411,6 +433,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
         }
 
+    /// Verifies the policy list returns only requested authorized scope scenario.
     [<Test>]
     member _.PolicyListReturnsOnlyRequestedAuthorizedScope() =
         task {
@@ -446,6 +469,7 @@ type ApprovalApiIntegrationTests() =
             )
         }
 
+    /// Verifies the policy stored scope blocks body scope spoofing for show and update scenario.
     [<Test>]
     member _.PolicyStoredScopeBlocksBodyScopeSpoofingForShowAndUpdate() =
         task {
@@ -478,6 +502,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(updateResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the policy update rejects scope change even for stored scope manager scenario.
     [<Test>]
     member _.PolicyUpdateRejectsScopeChangeEvenForStoredScopeManager() =
         task {
@@ -498,6 +523,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(updateResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the request list returns only requested authorized scope scenario.
     [<Test>]
     member _.RequestListReturnsOnlyRequestedAuthorizedScope() =
         task {
@@ -536,6 +562,7 @@ type ApprovalApiIntegrationTests() =
             )
         }
 
+    /// Verifies the repeated generated create without stable request ID returns existing request for same attempt scenario.
     [<Test>]
     member _.RepeatedGeneratedCreateWithoutStableRequestIdReturnsExistingRequestForSameAttempt() =
         task {
@@ -587,6 +614,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(attemptFiveRequests[0].ApprovalRequestId, Is.EqualTo(first.ApprovalRequestId))
         }
 
+    /// Verifies the concurrent generated create without stable request ID converges on one request for same logical key scenario.
     [<Test>]
     member _.ConcurrentGeneratedCreateWithoutStableRequestIdConvergesOnOneRequestForSameLogicalKey() =
         task {
@@ -597,6 +625,7 @@ type ApprovalApiIntegrationTests() =
             let selector = "role:ApprovalResponder"
             let attempt = Some 12
 
+            /// Builds a deterministic one for integration setup fixture for the server integration approval assertions.
             let createOne _ =
                 task {
                     let parameters = ApprovalTestHelpers.seedGeneratedParameters repositoryId branchId None policyId selector attempt
@@ -646,6 +675,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(matchingRequests[0].ApprovalRequestId, Is.EqualTo(requestIds[0]))
         }
 
+    /// Verifies the response rejects missing respond permission even when selector matches scenario.
     [<Test>]
     member _.ResponseRejectsMissingRespondPermissionEvenWhenSelectorMatches() =
         task {
@@ -664,6 +694,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the response rejects responder role caller when selector does not match scenario.
     [<Test>]
     member _.ResponseRejectsResponderRoleCallerWhenSelectorDoesNotMatch() =
         task {
@@ -682,6 +713,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the response accepts approval responder role selectors scenario.
     [<TestCase("role:BranchApprovalResponder", "branch", "BranchApprovalResponder", true)>]
     [<TestCase("role:RepositoryApprovalResponder", "repo", "RepositoryApprovalResponder", false)>]
     [<TestCase("role:ApprovalResponder", "branch", "BranchApprovalResponder", true)>]
@@ -704,6 +736,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), responseText)
         }
 
+    /// Verifies the response rejects mismatched split approval responder role selectors scenario.
     [<TestCase("role:RepositoryApprovalResponder", "branch", "BranchApprovalResponder")>]
     [<TestCase("role:BranchApprovalResponder", "repo", "RepositoryApprovalResponder")>]
     member _.ResponseRejectsMismatchedSplitApprovalResponderRoleSelectors(selector: string, scopeKind: string, roleId: string) =
@@ -730,6 +763,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseText)
         }
 
+    /// Verifies the body supplied scope escalation does not bypass stored scope scenario.
     [<Test>]
     member _.BodySuppliedScopeEscalationDoesNotBypassStoredScope() =
         task {
@@ -750,6 +784,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), responseText)
         }
 
+    /// Verifies the duplicate response is idempotent after terminal decision scenario.
     [<Test>]
     member _.DuplicateResponseIsIdempotentAfterTerminalDecision() =
         task {
@@ -771,6 +806,7 @@ type ApprovalApiIntegrationTests() =
             Assert.That(duplicate.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the request history returns actor backed events from stored repository partition scenario.
     [<Test>]
     member _.RequestHistoryReturnsActorBackedEventsFromStoredRepositoryPartition() =
         task {

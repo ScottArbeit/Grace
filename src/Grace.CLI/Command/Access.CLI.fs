@@ -24,14 +24,17 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the access command parser, handlers, and output helpers.
 module Access =
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private ExplicitShowScope =
         | Owner
         | Organization
         | Repository
         | Branch
 
+    /// Defines the options parsed by the access command handlers.
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -207,7 +210,9 @@ module Access =
                     |]
                 )
 
+    /// Checks whether a scope option was explicitly supplied instead of inherited from local Grace ids.
     let private isExplicitScopeOption (parseResult: ParseResult) optionName =
+        /// Checks whether the supplied option was explicitly present in the parse result.
         let isExplicit optionName =
             isOptionPresent parseResult optionName
             && not
@@ -215,6 +220,7 @@ module Access =
 
         isExplicit optionName
 
+    /// Reads the explicit owner, organization, repository, or branch scope selected by access-command options.
     let private getExplicitScope (parseResult: ParseResult) =
         let isExplicit = isExplicitScopeOption parseResult
 
@@ -227,27 +233,34 @@ module Access =
 
         explicitScope
 
+    /// Clears inherited branch values so explicitly scoped access commands do not target child resources accidentally.
     let private clearBranch (graceIds: GraceIds) = { graceIds with BranchId = BranchId.Empty; BranchIdString = String.Empty; HasBranch = false }
 
+    /// Clears inherited repository values so explicitly scoped access commands do not target child resources accidentally.
     let private clearRepository (graceIds: GraceIds) =
         { clearBranch graceIds with RepositoryId = RepositoryId.Empty; RepositoryIdString = String.Empty; HasRepository = false }
 
+    /// Clears inherited organization values so explicitly scoped access commands do not target child resources accidentally.
     let private clearOrganization (graceIds: GraceIds) =
         { clearRepository graceIds with OrganizationId = OrganizationId.Empty; OrganizationIdString = String.Empty; HasOrganization = false }
 
+    /// Clears inherited child scope ids so explicitly scoped access commands do not target child resources accidentally.
     let private clearImplicitChildScopeIds (parseResult: ParseResult) (graceIds: GraceIds) =
+        /// Clears inherited branch if implicit values so explicitly scoped access commands do not target child resources accidentally.
         let clearBranchIfImplicit current =
             if isExplicitScopeOption parseResult OptionName.BranchId then
                 current
             else
                 clearBranch current
 
+        /// Clears inherited repository if implicit values so explicitly scoped access commands do not target child resources accidentally.
         let clearRepositoryIfImplicit current =
             if isExplicitScopeOption parseResult OptionName.RepositoryId then
                 current
             else
                 clearRepository current
 
+        /// Clears inherited organization if implicit values so explicitly scoped access commands do not target child resources accidentally.
         let clearOrganizationIfImplicit current =
             if isExplicitScopeOption parseResult OptionName.OrganizationId then
                 current
@@ -270,16 +283,19 @@ module Access =
         | Some Branch
         | None -> graceIds
 
+    /// Normalizes Grace ids for show role assignment ids by keeping explicit scope values and clearing implicit child scopes.
     let internal normalizeShowRoleAssignmentIds (parseResult: ParseResult) =
         parseResult
         |> getNormalizedIdsAndNames
         |> clearImplicitChildScopeIds parseResult
 
+    /// Normalizes Grace ids for can permission ids by keeping explicit scope values and clearing implicit child scopes.
     let internal normalizeCanPermissionIds (parseResult: ParseResult) =
         parseResult
         |> getNormalizedIdsAndNames
         |> clearImplicitChildScopeIds parseResult
 
+    /// Formats scope values into the text shown in Spectre.Console tables or command output.
     let private formatScope (scope: Scope) =
         match scope with
         | Scope.System -> "System"
@@ -288,11 +304,13 @@ module Access =
         | Scope.Repository (ownerId, organizationId, repositoryId) -> $"Repo:{ownerId}/{organizationId}/{repositoryId}"
         | Scope.Branch (ownerId, organizationId, repositoryId, branchId) -> $"Branch:{ownerId}/{organizationId}/{repositoryId}/{branchId}"
 
+    /// Formats claim permissions values into the text shown in Spectre.Console tables or command output.
     let private formatClaimPermissions (permissions: IEnumerable<ClaimPermission>) =
         permissions
         |> Seq.map (fun permission -> $"{permission.Claim}:{permission.DirectoryPermission}")
         |> String.concat ", "
 
+    /// Renders assignments results only when the selected output mode includes human-readable console text.
     let private renderAssignments (parseResult: ParseResult) (assignments: RoleAssignment list) =
         if parseResult |> hasOutput then
             if Seq.isEmpty assignments then
@@ -332,6 +350,7 @@ module Access =
 
                 AnsiConsole.Write(table)
 
+    /// Renders roles results only when the selected output mode includes human-readable console text.
     let private renderRoles (parseResult: ParseResult) (roles: RoleDefinition list) =
         if parseResult |> hasOutput then
             if Seq.isEmpty roles then
@@ -362,6 +381,7 @@ module Access =
 
                 AnsiConsole.Write(table)
 
+    /// Renders path permissions results only when the selected output mode includes human-readable console text.
     let private renderPathPermissions (parseResult: ParseResult) (pathPermissions: PathPermission list) =
         if parseResult |> hasOutput then
             if Seq.isEmpty pathPermissions then
@@ -385,12 +405,14 @@ module Access =
 
                 AnsiConsole.Write(table)
 
+    /// Renders permission check results only when the selected output mode includes human-readable console text.
     let private renderPermissionCheck (parseResult: ParseResult) (result: PermissionCheckResult) =
         if parseResult |> hasOutput then
             match result with
             | Allowed reason -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Allowed[/]: {Markup.Escape(reason)}")
             | Denied reason -> AnsiConsole.MarkupLine($"[{Colors.Error}]Denied[/]: {Markup.Escape(reason)}")
 
+    /// Resolves the single assignment scope supported by a role id before role-grant validation runs.
     let private deriveScopeKindForRole (parseResult: ParseResult) (roleId: string) =
         let correlationId = getCorrelationId parseResult
 
@@ -402,6 +424,7 @@ module Access =
             | Some roleDefinition when roleDefinition.AppliesTo.Count = 1 -> Ok(roleDefinition.AppliesTo |> Seq.exactlyOne)
             | Some _ -> Error(GraceError.Create $"Role '{roleId}' does not map to exactly one assignment scope." correlationId)
 
+    /// Resolves a revoke scope from role metadata, falling back to the explicit scope option for custom roles.
     let internal deriveScopeKindForRevoke (parseResult: ParseResult) (roleId: string) =
         match deriveScopeKindForRole parseResult roleId with
         | Ok scopeKind -> Ok scopeKind
@@ -418,6 +441,7 @@ module Access =
                         (getCorrelationId parseResult)
                 )
 
+    /// Maps capability and returns a GraceError instead of throwing on unsupported input.
     let private tryMapCapability (parseResult: ParseResult) (action: string) (resource: string) (pathValue: string) =
         let correlationId = getCorrelationId parseResult
         let normalizedAction = action.Trim().ToLowerInvariant()
@@ -449,6 +473,7 @@ module Access =
           "path" -> Error(GraceError.Create "Path does not support administer checks; use read or write." correlationId)
         | _ -> Error(GraceError.Create $"Unsupported authorization capability '{action} {resource}'." correlationId)
 
+    /// Validates claim permissions from parsed options and returns a correlated GraceError when input is invalid.
     let private validateClaimPermissions (parseResult: ParseResult) =
         let correlationId = getCorrelationId parseResult
         let claims = parseResult.GetValue(Options.claim)
@@ -471,6 +496,7 @@ module Access =
             | Some value -> Error(GraceError.Create $"Invalid DirectoryPermission '{value}'." correlationId)
             | None -> Ok parseResult
 
+    /// Validates principal filter from parsed options and returns a correlated GraceError when input is invalid.
     let private validatePrincipalFilter (parseResult: ParseResult) (principalType: string option) (principalId: string option) =
         let correlationId = getCorrelationId parseResult
         let principalTypeValue = principalType |> Option.defaultValue String.Empty
@@ -485,6 +511,7 @@ module Access =
         else
             Ok parseResult
 
+    /// Validates path resource from parsed options and returns a correlated GraceError when input is invalid.
     let private validatePathResource (parseResult: ParseResult) (resourceKind: string) (pathValue: string) =
         if
             resourceKind.Equals("path", StringComparison.InvariantCultureIgnoreCase)
@@ -494,9 +521,11 @@ module Access =
         else
             Ok parseResult
 
+    /// Executes the grant role command by binding ParseResult values to the SDK request and CLI output contract.
     type GrantRole() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous grant role action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -557,9 +586,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the revoke role command by binding ParseResult values to the SDK request and CLI output contract.
     type RevokeRole() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous revoke role action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -618,9 +649,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the show role assignments command by binding ParseResult values to the SDK request and CLI output contract.
     type ShowRoleAssignments() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous show role assignments action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -670,9 +703,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the list role assignments command by binding ParseResult values to the SDK request and CLI output contract.
     type ListRoleAssignments() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous list role assignments action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -737,9 +772,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the upsert path permission command by binding ParseResult values to the SDK request and CLI output contract.
     type UpsertPathPermission() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous upsert path permission action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -801,9 +838,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the remove path permission command by binding ParseResult values to the SDK request and CLI output contract.
     type RemovePathPermission() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous remove path permission action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -853,9 +892,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the list path permissions command by binding ParseResult values to the SDK request and CLI output contract.
     type ListPathPermissions() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous list path permissions action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -908,9 +949,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the check permission command by binding ParseResult values to the SDK request and CLI output contract.
     type CheckPermission() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous check permission action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -984,9 +1027,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the can command by binding ParseResult values to the SDK request and CLI output contract.
     type Can() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous can action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -1054,9 +1099,11 @@ module Access =
                             (GraceResult.Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId)))
             }
 
+    /// Executes the list roles command by binding ParseResult values to the SDK request and CLI output contract.
     type ListRoles() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous list roles action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 try
@@ -1094,6 +1141,7 @@ module Access =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addScopeOptions (command: Command) =
             command
             |> addOption Options.ownerId

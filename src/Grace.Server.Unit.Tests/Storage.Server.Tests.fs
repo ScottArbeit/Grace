@@ -14,14 +14,17 @@ open System.Reflection
 open System.Text
 open System.Threading.Tasks
 
+/// Covers storage Content Block Sdk Contract behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type StorageContentBlockSdkContract() =
 
+    /// Extracts storage Parameter Type from the scenario result so assertions stay focused on server unit storage behavior.
     let getStorageParameterType typeName =
         typeof<Parameters.Storage.StorageParameters>.Assembly.GetType ($"Grace.Shared.Parameters.Storage+{typeName}", throwOnError = false)
 
     let bytes (value: string) = Encoding.UTF8.GetBytes value
 
+    /// Builds expect Encoded Ok test data for the server unit storage scenarios in this file.
     let expectEncodedOk (result: Result<ContentBlockFormat.EncodedContentBlock, ContentBlockFormat.ContentBlockFormatError>) =
         match result with
         | Ok value -> value
@@ -29,10 +32,12 @@ type StorageContentBlockSdkContract() =
             Assert.Fail($"Expected ContentBlockFormat.encode Ok but got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Builds content Block Payload test data for the server unit storage scenarios in this file.
     let contentBlockPayload physicalOffset payloadBytes : ContentBlockFormat.EncodedContentBlock =
         ContentBlockFormat.encode [ ContentBlockFormat.createChunk physicalOffset payloadBytes ]
         |> expectEncodedOk
 
+    /// Builds manifest fixtures used by the server unit storage assertions.
     let buildManifest chunkingSuiteId payloadBytes (blockPayloads: ContentBlockFormat.EncodedContentBlock array) =
         let mutable offset = 0L
 
@@ -54,6 +59,7 @@ type StorageContentBlockSdkContract() =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Asserts the content Block Parameter Shape condition so failures identify the violated server unit storage invariant.
     let assertContentBlockParameterShape typeName =
         let parameterType = getStorageParameterType typeName
         Assert.That(parameterType, Is.Not.Null, $"{typeName} should be defined in Grace.Shared.Parameters.Storage.")
@@ -61,6 +67,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("RelativePath"), Is.Null)
         Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Not.Null)
 
+    /// Asserts the sdk Method condition so failures identify the violated server unit storage invariant.
     let assertSdkMethod methodName parameterTypeName =
         let parameterType = getStorageParameterType parameterTypeName
         Assert.That(parameterType, Is.Not.Null)
@@ -75,6 +82,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameters, Has.Length.EqualTo(1))
         Assert.That(parameters[0].ParameterType, Is.EqualTo(parameterType))
 
+    /// Verifies that content Block Sas Parameters Expose Address Without Caller Supplied Path.
     [<Test>]
     member _.ContentBlockSasParametersExposeAddressWithoutCallerSuppliedPath() =
         assertContentBlockParameterShape "GetContentBlockUploadUriParameters"
@@ -116,11 +124,13 @@ type StorageContentBlockSdkContract() =
             Is.Null
         )
 
+    /// Verifies that content Block Sas Sdk Methods Match Shared Parameter Contracts.
     [<Test>]
     member _.ContentBlockSasSdkMethodsMatchSharedParameterContracts() =
         assertSdkMethod "GetContentBlockUploadUri" "GetContentBlockUploadUriParameters"
         assertSdkMethod "GetContentBlockDownloadUri" "GetContentBlockDownloadUriParameters"
 
+    /// Verifies that content Block Discovery Sdk Method Matches Shared Parameter Contract.
     [<Test>]
     member _.ContentBlockDiscoverySdkMethodMatchesSharedParameterContract() =
         let parameterType = getStorageParameterType "DiscoverContentBlocksParameters"
@@ -130,6 +140,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Null)
         assertSdkMethod "DiscoverContentBlocks" "DiscoverContentBlocksParameters"
 
+    /// Verifies that download Placement Resolution Uses Finalized Scoped Metadata Placement.
     [<Test>]
     member _.DownloadPlacementResolutionUsesFinalizedScopedMetadataPlacement() =
         let storagePoolId = StoragePoolId "pool-download-placement"
@@ -252,6 +263,7 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(crossRepositoryRejected, Is.EqualTo(None))
 
+    /// Verifies that confirm Content Block Upload Rejects Blank Operation Id Before Materialization.
     [<Test>]
     member _.ConfirmContentBlockUploadRejectsBlankOperationIdBeforeMaterialization() =
         let parameters = Parameters.Storage.ConfirmContentBlockUploadParameters()
@@ -267,6 +279,7 @@ type StorageContentBlockSdkContract() =
         | Ok () -> ()
         | Error error -> Assert.Fail($"Expected non-empty OperationId to pass pre-materialization validation, got {error.Error}.")
 
+    /// Verifies that download Placement Resolution Keeps Historical Path Manifest Evidence After Replacement.
     [<Test>]
     member _.DownloadPlacementResolutionKeepsHistoricalPathManifestEvidenceAfterReplacement() =
         let repositoryId = Guid.Parse("2cd698a1-8642-4e0d-a963-e76f48afec1e")
@@ -369,6 +382,7 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(mismatchedBlockSelection, Is.EqualTo(None))
 
+    /// Verifies that default Repository Dedupe Pool Resolution Uses Repository Storage Pool.
     [<Test>]
     member _.DefaultRepositoryDedupePoolResolutionUsesRepositoryStoragePool() =
         let repositoryId = Guid.Parse("9fce80dd-b0e5-462c-953d-1cc9e357d515")
@@ -381,6 +395,7 @@ type StorageContentBlockSdkContract() =
             Assert.That(storagePoolId, Is.EqualTo(StoragePoolRouting.defaultStoragePoolId))
             Assert.That(storagePoolId, Is.Not.EqualTo(DedupeIndex.storagePoolIdForRepositoryId repositoryId))
 
+    /// Verifies that storage Session Repository Validation Rejects Missing Or Mismatched Repository Before Routing.
     [<Test>]
     member _.StorageSessionRepositoryValidationRejectsMissingOrMismatchedRepositoryBeforeRouting() =
         let requestRepositoryId = Guid.Parse("5c213e86-a6c5-4961-95d6-c636b0592916")
@@ -406,6 +421,7 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected existing repository to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
 
+    /// Verifies that upload Session Repository Validation Rejects Cross Repository Session.
     [<Test>]
     member _.UploadSessionRepositoryValidationRejectsCrossRepositorySession() =
         let requestRepositoryId = Guid.Parse("89be65f0-fb98-45fb-bbcf-b11683948430")
@@ -426,6 +442,7 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected matching repository session to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
 
+    /// Verifies that start Manifest Upload Session Rejects Broad Authorized Scope.
     [<TestCase("/", "repository root")>]
     [<TestCase("/team/", "directory path")>]
     [<TestCase("/team//", "directory path")>]
@@ -436,6 +453,7 @@ type StorageContentBlockSdkContract() =
             Assert.That(error.Error, Does.Contain(expectedMessage))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-broad-start-scope"))
 
+    /// Verifies that start Manifest Upload Session Accepts Exact File Authorized Scope.
     [<TestCase("/team/file.bin")>]
     [<TestCase("/Dockerfile")>]
     [<TestCase("/LICENSE")>]
@@ -446,6 +464,7 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected exact file AuthorizedScope to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
 
+    /// Verifies that content Block Address Validation Normalizes Uppercase Blake3 Before Route Use.
     [<Test>]
     member _.ContentBlockAddressValidationNormalizesUppercaseBlake3BeforeRouteUse() =
         let uppercaseAddress = ContentBlockAddress "ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789"
@@ -455,6 +474,7 @@ type StorageContentBlockSdkContract() =
         | Ok normalizedAddress ->
             Assert.That(normalizedAddress, Is.EqualTo(ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"))
 
+    /// Verifies that start Manifest Upload Session Rejects Unsupported Chunking Suite Before Finalize Can Persist It.
     [<Test>]
     member _.StartManifestUploadSessionRejectsUnsupportedChunkingSuiteBeforeFinalizeCanPersistIt() =
         match Storage.validateSupportedManifestChunkingSuite "corr-start-suite" (ChunkingSuiteId "other-suite") with
@@ -468,6 +488,7 @@ type StorageContentBlockSdkContract() =
         | Error error -> Assert.Fail($"Expected Rabin suite to be accepted, got {error.Error}.")
         | Ok () -> Assert.Pass()
 
+    /// Verifies that finalize Replay Pre Hydration Validation Accepts Payloadless Durable Manifest.
     [<Test>]
     member _.FinalizeReplayPreHydrationValidationAcceptsPayloadlessDurableManifest() =
         let payloadBytes = bytes "payload-less finalize replay"
@@ -486,6 +507,7 @@ type StorageContentBlockSdkContract() =
         | Ok () -> Assert.Pass()
         | Error error -> Assert.Fail($"Expected payload-less replay manifest shape to validate before hydration, got {error.Error}.")
 
+    /// Verifies that finalize Replay Pre Hydration Validation Rejects Tampered Block List Without Payloads.
     [<Test>]
     member _.FinalizeReplayPreHydrationValidationRejectsTamperedBlockListWithoutPayloads() =
         let payloadBytes = bytes "payload-less finalize replay"
@@ -515,6 +537,7 @@ type StorageContentBlockSdkContract() =
             Assert.That(error.Error, Does.Contain("stable replay manifest address"))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-tampered-replay"))
 
+    /// Verifies that finalize Manifest Hydrates And Validates Replay Evidence Before Actor Side Effects.
     [<Test>]
     member _.FinalizeManifestHydratesAndValidatesReplayEvidenceBeforeActorSideEffects() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -644,6 +667,7 @@ type StorageContentBlockSdkContract() =
             "Finalize hydration must preserve current authoritative metadata versions so mixed-version claimed covers remain valid."
         )
 
+    /// Verifies that finalize Manifest Loads Claimed Reuse Evidence From Authoritative Metadata Actor Key.
     [<Test>]
     member _.FinalizeManifestLoadsClaimedReuseEvidenceFromAuthoritativeMetadataActorKey() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -662,6 +686,7 @@ type StorageContentBlockSdkContract() =
             "Claimed reuse payload hydration must use authoritative metadata placement, not a recomputed route."
         )
 
+    /// Verifies that finalize Claimed Reuse Evidence Allows Equivalent Current State But Fails Closed On Unsafe Drift.
     [<Test>]
     member _.FinalizeClaimedReuseEvidenceAllowsEquivalentCurrentStateButFailsClosedOnUnsafeDrift() =
         let storagePoolId = StoragePoolId "pool-finalize-replay"
@@ -763,12 +788,14 @@ type StorageContentBlockSdkContract() =
             "Replay hydration must fail closed when authoritative placement is missing."
         )
 
+    /// Verifies that finalize Claimed Reuse Cover Uses Logical Ordinal Windows And Rejects Partial Covers.
     [<Test>]
     member _.FinalizeClaimedReuseCoverUsesLogicalOrdinalWindowsAndRejectsPartialCovers() =
         let storagePoolId = StoragePoolId "pool-cover"
         let contentBlockAddress = ContentBlockAddress "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee"
         let claimedAt = NodaTime.Instant.FromUtc(2026, 6, 20, 12, 0)
 
+        /// Builds claimed Range test data for the server unit storage scenarios in this file.
         let claimedRange ordinalStart ordinalCount physicalOffset physicalLength metadataVersion =
             {
                 StoragePoolId = storagePoolId
@@ -831,6 +858,7 @@ type StorageContentBlockSdkContract() =
             "Fresh finalization must reject claimed ranges that run past the manifest block length."
         )
 
+    /// Verifies that finalize Claimed Reuse Fresh Hydration Selects Cover Without Whole Block Length Filter.
     [<Test>]
     member _.FinalizeClaimedReuseFreshHydrationSelectsCoverWithoutWholeBlockLengthFilter() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -851,6 +879,7 @@ type StorageContentBlockSdkContract() =
             "Fresh finalization must not require a single claimed range to equal the whole manifest block length."
         )
 
+    /// Verifies that finalize Replay Hydrates Repair Evidence From Current Manifest Metadata After Session Cleanup.
     [<Test>]
     member _.FinalizeReplayHydratesRepairEvidenceFromCurrentManifestMetadataAfterSessionCleanup() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -894,6 +923,7 @@ type StorageContentBlockSdkContract() =
             "Cleanup removes transient claimed-reuse arrays, so replay repair cannot depend on them."
         )
 
+    /// Verifies that finalize Manifest Hydrates Claimed Metadata Only For Blocks Not Satisfied By Confirmed Uploads.
     [<Test>]
     member _.FinalizeManifestHydratesClaimedMetadataOnlyForBlocksNotSatisfiedByConfirmedUploads() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -908,6 +938,7 @@ type StorageContentBlockSdkContract() =
             "Claimed metadata hydration must skip stale claims for manifest blocks already satisfied by confirmed uploads."
         )
 
+    /// Verifies that download Authorization Uses Targeted Dedupe Index Lookup Instead Of Full Snapshot State.
     [<Test>]
     member _.DownloadAuthorizationUsesTargetedDedupeIndexLookupInsteadOfFullSnapshotState() =
         let methodInfo = typeof<IDedupeIndexActor>.GetMethod ("TryGetFinalizedScopedContentBlockMetadata", BindingFlags.Public ||| BindingFlags.Instance)
@@ -920,6 +951,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Contain("TryGetFinalizedScopedContentBlockMetadata"))
         Assert.That(storageServerSource, Does.Not.Contain("SnapshotState correlationId"))
 
+    /// Verifies that content Block Download Sas Uses Finalized Placement Instead Of Current Route.
     [<Test>]
     member _.ContentBlockDownloadSasUsesFinalizedPlacementInsteadOfCurrentRoute() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -951,6 +983,7 @@ type StorageContentBlockSdkContract() =
             "Download URI generation must not follow upload-session/current route state after finalized placement is recorded."
         )
 
+    /// Verifies that upload Session Backed Sas Uses Recorded Session Pool Route.
     [<Test>]
     member _.UploadSessionBackedSasUsesRecordedSessionPoolRoute() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -969,6 +1002,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(storageServerSource, Does.Contain("validateManifestForContentBlockDownload repositoryId parameters"))
         Assert.That(storageServerSource, Does.Contain("DedupeIndex.discover storagePoolId"))
 
+    /// Verifies that discover Content Blocks Validates Repository Before Resolving Shared Dedupe Pool.
     [<Test>]
     member _.DiscoverContentBlocksValidatesRepositoryBeforeResolvingSharedDedupePool() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))
@@ -991,6 +1025,7 @@ type StorageContentBlockSdkContract() =
         Assert.That(poolResolution, Is.GreaterThan(repositoryValidation))
         Assert.That(dedupeLookup, Is.GreaterThan(poolResolution))
 
+    /// Verifies that upload Session Staging Cleanup Uses Recorded Session Pool Route.
     [<Test>]
     member _.UploadSessionStagingCleanupUsesRecordedSessionPoolRoute() =
         let servicesPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Services.Actor.fs"))
@@ -1016,6 +1051,7 @@ type StorageContentBlockSdkContract() =
             "Cleanup must not reload the repository and follow mutable route state after SAS issuance."
         )
 
+    /// Verifies that confirm Actor Rejection Keeps Final Cas Placement.
     [<Test>]
     member _.ConfirmActorRejectionKeepsFinalCasPlacement() =
         let storageServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Storage.Server.fs"))

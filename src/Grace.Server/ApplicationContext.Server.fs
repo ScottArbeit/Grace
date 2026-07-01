@@ -40,6 +40,7 @@ open Orleans.Serialization
 open System.Net.Security
 open Microsoft.AspNetCore.SignalR
 
+/// Contains Grace Server application context behavior and supporting helpers.
 module ApplicationContext =
 
     let mutable private configuration: IConfiguration = null
@@ -98,6 +99,7 @@ module ApplicationContext =
         log <- loggerFactory.CreateLogger("ApplicationContext.Server")
         setLoggerFactory loggerFactory
 
+    /// Writes pub sub settings onto the current response or server state.
     let setPubSubSettings settings =
         pubSubSettings <- settings
         setPubSubSettings settings
@@ -120,6 +122,7 @@ module ApplicationContext =
     let cosmosClientOptions =
         CosmosClientOptions(ApplicationName = "Grace.Server", LimitToEndpoint = false, UseSystemTextJsonSerializerWithOptions = Constants.JsonSerializerOptions)
 
+    /// Gets try get config value data needed by the server flow.
     let private tryGetConfigValue (config: IConfiguration) (name: string) =
         if isNull config then
             None
@@ -127,6 +130,7 @@ module ApplicationContext =
             let value = config[getConfigKey name]
             if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
+    /// Gets try get cosmos connection string data needed by the server flow.
     let private tryGetCosmosConnectionString (config: IConfiguration) = tryGetConfigValue config EnvironmentVariables.AzureCosmosDBConnectionString
 
     let isGraceTesting =
@@ -141,6 +145,7 @@ module ApplicationContext =
         | null -> false
         | value -> value.Equals("Local", StringComparison.OrdinalIgnoreCase)
 
+    /// Determines whether local endpoint.
     let private isLocalEndpoint (config: IConfiguration) =
         match tryGetCosmosConnectionString config with
         | Some value ->
@@ -148,6 +153,7 @@ module ApplicationContext =
             || value.Contains("127.0.0.1", StringComparison.OrdinalIgnoreCase)
         | None -> false
 
+    /// Implements apply local emulator settings for the server request pipeline.
     let private applyLocalEmulatorSettings (config: IConfiguration) =
         let useLocalEmulatorSettings =
             not useManagedIdentity
@@ -174,6 +180,7 @@ module ApplicationContext =
             cosmosClientOptions.LimitToEndpoint <- true
             cosmosClientOptions.ConnectionMode <- ConnectionMode.Gateway
 
+    /// Resolves resolve setting data from request or repository state.
     let private resolveSetting (config: IConfiguration) (name: string) =
         match tryGetConfigValue config name with
         | Some value -> value
@@ -249,6 +256,7 @@ module ApplicationContext =
 
         { System = system; AzureServiceBus = azureServiceBusSettings }
 
+    /// Handles the Grace Server set request.
     let Set () =
         task {
             try

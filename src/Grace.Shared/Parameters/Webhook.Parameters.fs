@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.Webhooks
 open System
 
+/// Contains webhook helpers.
 module Webhook =
 
     /// Base parameters for webhook rule endpoints.

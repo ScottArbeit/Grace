@@ -15,9 +15,12 @@ open System.Net
 open System.Net.Http
 open System.Text.RegularExpressions
 
+/// Groups shared helpers for reminder server test helpers.
 module ReminderServerTestHelpers =
+    /// Formats instant for diagnostics.
     let formatInstant (instant: Instant) = InstantPattern.ExtendedIso.Format instant
 
+    /// Builds create parameters for route calls.
     let createParameters (actorName: string) (actorId: string) (reminderType: string) (fireAt: Instant) =
         let parameters = Parameters.Reminder.CreateReminderParameters()
         parameters.OwnerId <- ownerId
@@ -30,6 +33,7 @@ module ReminderServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds list parameters for route calls.
     let listParameters (actorName: string) (reminderType: string) =
         let parameters = Parameters.Reminder.ListRemindersParameters()
         parameters.OwnerId <- ownerId
@@ -41,6 +45,7 @@ module ReminderServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds get parameters for route calls.
     let getParameters (reminderId: string) =
         let parameters = Parameters.Reminder.GetReminderParameters()
         parameters.OwnerId <- ownerId
@@ -50,6 +55,7 @@ module ReminderServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds update time parameters for route calls.
     let updateTimeParameters (reminderId: ReminderId) (fireAt: Instant) =
         let parameters = Parameters.Reminder.UpdateReminderTimeParameters()
         parameters.OwnerId <- ownerId
@@ -60,6 +66,7 @@ module ReminderServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds reschedule parameters for route calls.
     let rescheduleParameters (reminderId: ReminderId) (after: string) =
         let parameters = Parameters.Reminder.RescheduleReminderParameters()
         parameters.OwnerId <- ownerId
@@ -70,6 +77,7 @@ module ReminderServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds delete parameters for route calls.
     let deleteParameters (reminderId: ReminderId) =
         let parameters = Parameters.Reminder.DeleteReminderParameters()
         parameters.OwnerId <- ownerId
@@ -79,6 +87,7 @@ module ReminderServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Asserts ok for integration responses.
     let assertOk (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -86,6 +95,7 @@ module ReminderServerTestHelpers =
             Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("application/json"))
         }
 
+    /// Defines extract reminder ID behavior for the surrounding tests used by the server integration reminder scenario.
     let extractReminderId (message: string) : ReminderId =
         let matchResult = Regex.Match(message, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}")
 
@@ -95,6 +105,7 @@ module ReminderServerTestHelpers =
             Assert.Fail($"Could not find a reminder id in message: {message}")
             Guid.Empty
 
+    /// Builds a deterministic reminder for integration setup fixture for the server integration reminder assertions.
     let createReminderAsync (actorName: string) (actorId: string) (reminderType: string) (fireAt: Instant) =
         task {
             let! response = Client.PostAsync("/reminder/create", createJsonContent (createParameters actorName actorId reminderType fireAt))
@@ -103,6 +114,7 @@ module ReminderServerTestHelpers =
             return extractReminderId returnValue.ReturnValue
         }
 
+    /// Gets reminder from the running test server.
     let getReminderAsync (reminderId: ReminderId) =
         task {
             let! response = Client.PostAsync("/reminder/get", createJsonContent (getParameters $"{reminderId}"))
@@ -129,9 +141,11 @@ module ReminderServerTestHelpers =
         Assert.That(reminder.ReminderTime, Is.EqualTo(expectedTime))
         Assert.That(reminder.State, Is.EqualTo(ReminderState.EmptyReminderState))
 
+/// Covers reminder server scenarios.
 [<NonParallelizable>]
 type ReminderServer() =
 
+    /// Verifies the create list get update reschedule and delete preserve explicit scheduling state scenario.
     [<Test>]
     member _.CreateListGetUpdateRescheduleAndDeletePreserveExplicitSchedulingState() =
         task {
@@ -197,6 +211,7 @@ type ReminderServer() =
             Assert.That(deletedReminder.ReminderId, Is.EqualTo(Guid.Empty))
         }
 
+    /// Verifies the reminder routes reject invalid create and missing get inputs as grace errors scenario.
     [<Test>]
     member _.ReminderRoutesRejectInvalidCreateAndMissingGetInputsAsGraceErrors() =
         task {

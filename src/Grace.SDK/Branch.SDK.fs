@@ -13,10 +13,10 @@ open System.Collections.Generic
 open System.Threading.Tasks
 open Grace.Types.DirectoryVersion
 
-/// The Branch module provides a set of functions for interacting with branches in the Grace API.
+/// SDK entry point for branch lifecycle, reference creation, feature flags, and branch projections.
 type Branch() =
 
-    /// Creates a new branch.
+    /// Adds a branch under the requested repository and parent branch context.
     static member public Create(parameters: CreateBranchParameters) =
         postServer<CreateBranchParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Create)}")
 
@@ -32,27 +32,27 @@ type Branch() =
     static member public Annotate(parameters: AnnotateParameters) =
         postServer<AnnotateParameters, BranchAnnotationDto> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Annotate)}")
 
-    /// Creates a promotion reference in the parent branch of this branch.
+    /// Records a promotion reference in the branch's parent branch.
     static member public Promote(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Promote)}")
 
-    /// Creates a commit reference in this branch.
+    /// Records a commit reference in this branch.
     static member public Commit(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Commit)}")
 
-    /// Creates a checkpoint reference in this branch.
+    /// Records a checkpoint reference in this branch.
     static member public Checkpoint(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Checkpoint)}")
 
-    /// Creates a save reference in this branch.
+    /// Records a save reference in this branch.
     static member public Save(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Save)}")
 
-    /// Creates a tag reference in this branch.
+    /// Records a tag reference in this branch.
     static member public Tag(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.Tag)}")
 
-    /// Creates an external reference in this branch.
+    /// Records an externally sourced reference in this branch.
     static member public CreateExternal(parameters: CreateReferenceParameters) =
         postServer<CreateReferenceParameters, string> (parameters |> ensureCorrelationIdIsSet, $"branch/{nameof (Branch.CreateExternal)}")
 

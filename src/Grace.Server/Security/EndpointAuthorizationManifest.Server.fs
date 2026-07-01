@@ -2,8 +2,10 @@ namespace Grace.Server.Security
 
 open Grace.Types.Authorization
 
+/// Contains Grace Server endpoint authorization manifest behavior and supporting helpers.
 module EndpointAuthorizationManifest =
 
+    /// Represents resource kind used by Grace Server APIs and background services.
     type ResourceKind =
         | System
         | Owner
@@ -12,6 +14,7 @@ module EndpointAuthorizationManifest =
         | Branch
         | Path
 
+    /// Represents endpoint security used by Grace Server APIs and background services.
     type EndpointSecurity =
         | AllowAnonymous
         | Authenticated
@@ -19,8 +22,10 @@ module EndpointAuthorizationManifest =
         | AnyOf of EndpointSecurity list
         | AllOf of EndpointSecurity list
 
+    /// Represents endpoint security definition used by Grace Server APIs and background services.
     type EndpointSecurityDefinition = { Method: string; Path: string; Security: EndpointSecurity }
 
+    /// Describes an HTTP endpoint and the Grace permission it requires.
     let endpoint method_ path security = { Method = method_; Path = path; Security = security }
 
     let definitions: EndpointSecurityDefinition list =

@@ -10,6 +10,7 @@ open System.IO
 module LocalPlanner =
     let DefaultBlockFormat = ContentBlockFormat.FormatName
 
+    /// Manifest-planning knobs that choose eligibility, chunking, and block payload format.
     type Options =
         {
             EligibilityPolicy: ManifestEligibilityPolicy
@@ -17,6 +18,7 @@ module LocalPlanner =
             BlockFormat: string
         }
 
+        /// Default manifest planning settings used by the SDK upload path.
         static member Default =
             {
                 EligibilityPolicy = ManifestEligibilityPolicy.Default
@@ -24,12 +26,16 @@ module LocalPlanner =
                 BlockFormat = DefaultBlockFormat
             }
 
+    /// Whole-file payload retained when a file is not eligible for manifest-backed upload.
     type FallbackUploadPlan = { Bytes: byte array }
 
+    /// Local Rabin chunk with its file offset, length, content address, and key-chunk status.
     type LocalChunkPlan = { ChunkIndex: int; Offset: int64; Length: int; Address: ChunkAddress; IsKeyChunk: bool }
 
+    /// Distinct chunk address advertised to the server for dedupe discovery.
     type KeyChunkPlan = { ChunkIndex: int; Offset: int64; Length: int; Address: ChunkAddress }
 
+    /// Logical manifest block built from chunk addresses and tied back to file byte ranges.
     type ContentBlockPlan =
         {
             BlockIndex: int
@@ -42,8 +48,10 @@ module LocalPlanner =
             DuplicateOfBlockIndex: int option
         }
 
+    /// Encodable block payload the SDK may upload when the server cannot reuse the block.
     type ContentBlockUploadPlan = { BlockIndex: int; BlockAddress: ContentBlockAddress; Bytes: byte array }
 
+    /// Complete local upload plan including manifest metadata, dedupe keys, block layout, and fallback bytes.
     type LocalFilePlan =
         {
             ReferenceType: FileContentReferenceType
@@ -58,11 +66,13 @@ module LocalPlanner =
             FallbackUpload: FallbackUploadPlan option
         }
 
+    /// Copies a byte range into an isolated payload buffer for a planned ContentBlock upload.
     let private copyRange (bytes: byte array) offset length =
         let copied = Array.zeroCreate<byte> length
         Array.Copy(bytes, offset, copied, 0, length)
         copied
 
+    /// Builds the whole-file upload plan used when manifest eligibility or chunking is unavailable.
     let private fallbackPlan (options: Options) (fileContentHash: FileContentHash) expectedSize bytes =
         {
             ReferenceType = FileContentReferenceType.WholeFileContent
@@ -77,11 +87,13 @@ module LocalPlanner =
             FallbackUpload = Some { Bytes = Array.copy bytes }
         }
 
+    /// Rejects planner options that request a chunking suite the SDK cannot reproduce locally.
     let private ensureSupportedChunkingSuite (options: Options) =
         if options.ChunkingSuiteId
            <> ChunkingSuiteId RabinChunking.SuiteName then
             invalidArg "ChunkingSuiteId" $"Only {RabinChunking.SuiteName} is supported by the local planner."
 
+    /// Chunks the file bytes, identifies key chunks, groups upload blocks, and computes the manifest address.
     let private planManifest (options: Options) (fileContentHash: FileContentHash) expectedSize (bytes: byte array) =
         ensureSupportedChunkingSuite options
 

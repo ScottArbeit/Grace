@@ -9,10 +9,13 @@ open System.IO
 open System.Text.Json
 open System.Text.RegularExpressions
 
+/// Contains tests covering route behavior.
 type Route = { Method: string; Path: string }
 
+/// Contains tests covering classification group behavior.
 type ClassificationGroup = { Classification: string; Reason: string; TraceIds: string list; Routes: Route list }
 
+/// Contains tests covering OpenAPI route coverage behavior.
 [<Parallelizable(ParallelScope.All)>]
 type OpenApiRouteCoverageTests() =
 
@@ -28,18 +31,23 @@ type OpenApiRouteCoverageTests() =
     let startupRouteTokenRegex =
         Regex("(?<method>\\bGET\\b|\\bPOST\\b|\\bPUT\\b)\\s*\\[|(?<kind>subRoute|routef|route)\\s+\"(?<path>[^\"]+)\"", RegexOptions.Multiline)
 
+    /// Exercises route coverage for the authorization OpenAPI route coverage contract.
     let route method_ path = { Method = method_; Path = path }
 
+    /// Formats route.
     let formatRoute route = $"{route.Method} {route.Path}"
 
+    /// Formats routes.
     let formatRoutes routes =
         routes
         |> Seq.sortBy (fun route -> route.Method, route.Path)
         |> Seq.map formatRoute
         |> String.concat Environment.NewLine
 
+    /// Exercises fail with routes coverage for the authorization OpenAPI route coverage contract.
     let failWithRoutes message routes = Assert.Fail($"{message}:{Environment.NewLine}{formatRoutes routes}")
 
+    /// Exercises OpenAPI version coverage for the authorization OpenAPI route coverage contract.
     let openApiVersion () =
         File.ReadAllLines(openApiMainPath)
         |> Array.pick (fun line ->
@@ -47,6 +55,7 @@ type OpenApiRouteCoverageTests() =
 
             if matchItem.Success then Some matchItem.Groups["version"].Value else None)
 
+    /// Exercises OpenAPI paths coverage for the authorization OpenAPI route coverage contract.
     let openApiPaths () =
         File.ReadAllLines(openApiMainPath)
         |> Array.choose (fun line ->
@@ -55,6 +64,7 @@ type OpenApiRouteCoverageTests() =
             if matchItem.Success then Some matchItem.Groups["path"].Value else None)
         |> Set.ofArray
 
+    /// Asserts bundled schema is unique.
     let assertBundledSchemaIsUnique artifactPath schemaName =
         let lines = File.ReadAllLines(artifactPath)
         let schemaLine = $"    {schemaName}:"
@@ -71,6 +81,7 @@ type OpenApiRouteCoverageTests() =
 
         match schemaIndexes with
         | [| schemaIndex |] ->
+            /// Exercises preceding index coverage for the authorization OpenAPI route coverage contract.
             let precedingIndex expectedLine =
                 lines[..schemaIndex]
                 |> Array.mapi (fun index line -> index, line)
@@ -89,10 +100,13 @@ type OpenApiRouteCoverageTests() =
         | [||] -> Assert.Fail($"{Path.GetFileName artifactPath} must define {schemaName} under components.schemas.")
         | _ -> Assert.Fail($"{Path.GetFileName artifactPath} must define {schemaName} only once under components.schemas.")
 
+    /// Parses startup routes.
     let parseStartupRoutes () =
         let text = File.ReadAllText(startupPath)
         let matches = startupRouteTokenRegex.Matches(text)
+        /// Tracks current Prefix changes so this scenario can assert the resulting side effect explicitly.
         let mutable currentPrefix = String.Empty
+        /// Tracks current Method changes so this scenario can assert the resulting side effect explicitly.
         let mutable currentMethod = String.Empty
         let routes = ResizeArray<Route>()
 
@@ -121,6 +135,7 @@ type OpenApiRouteCoverageTests() =
         |> List.append [ route "GET" "/metrics"
                          route "GET" "/notifications" ]
 
+    /// Gets required string.
     let getRequiredString (parent: JsonElement) (propertyName: string) =
         let value = parent.GetProperty(propertyName).GetString()
 
@@ -129,6 +144,7 @@ type OpenApiRouteCoverageTests() =
 
         value
 
+    /// Exercises route classification groups coverage for the authorization OpenAPI route coverage contract.
     let routeClassificationGroups () =
         use document = JsonDocument.Parse(File.ReadAllText(routeClassificationRegistryPath))
 
@@ -165,6 +181,7 @@ type OpenApiRouteCoverageTests() =
             })
         |> Seq.toList
 
+    /// Asserts route security.
     let assertRouteSecurity method_ path (expectedSecurity: EndpointSecurity) =
         let matchingDefinitions =
             definitions
@@ -182,6 +199,7 @@ type OpenApiRouteCoverageTests() =
         | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
         | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
 
+    /// Verifies that OpenAPI covers adr storage routes.
     [<Test>]
     member _.OpenApiCoversAdrStorageRoutes() =
         let expectedStorageRoutes =
@@ -211,6 +229,7 @@ type OpenApiRouteCoverageTests() =
 
             Assert.Fail($"OpenAPI is missing ADR-0001 storage routes:{Environment.NewLine}{missingText}")
 
+    /// Verifies that bundled OpenAPI branch request schemas remain unique under components schemas.
     [<Test>]
     member _.BundledOpenApiBranchRequestSchemasRemainUniqueUnderComponentsSchemas() =
         for artifactPath in
@@ -221,9 +240,11 @@ type OpenApiRouteCoverageTests() =
             assertBundledSchemaIsUnique artifactPath "GetReferencesParameters"
             assertBundledSchemaIsUnique artifactPath "AnnotateParameters"
 
+    /// Verifies that OpenAPI info version matches current api contract version.
     [<Test>]
     member _.OpenApiInfoVersionMatchesCurrentApiContractVersion() = Assert.That(openApiVersion (), Is.EqualTo(ApiContractVersion.CurrentReleased))
 
+    /// Verifies that route classification registry uses known classifications and has no duplicate routes.
     [<Test>]
     member _.RouteClassificationRegistryUsesKnownClassificationsAndHasNoDuplicateRoutes() =
         let knownClassifications =
@@ -258,6 +279,7 @@ type OpenApiRouteCoverageTests() =
         if not duplicates.IsEmpty then
             failWithRoutes "RouteClassification.json classifies routes more than once" duplicates
 
+    /// Verifies that route classification registry covers implemented manifest and OpenAPI surfaces.
     [<Test>]
     member _.RouteClassificationRegistryCoversImplementedManifestAndOpenApiSurfaces() =
         let startupRoutes = parseStartupRoutes () |> Set.ofList
@@ -312,6 +334,7 @@ type OpenApiRouteCoverageTests() =
         if publicRoutesAlsoClassifiedNonPublic.Count > 0 then
             failWithRoutes "Implemented routes present in OpenAPI must not also be classified as non-public" publicRoutesAlsoClassifiedNonPublic
 
+    /// Verifies that OpenAPI stale paths are explicitly classified.
     [<Test>]
     member _.OpenApiStalePathsAreExplicitlyClassified() =
         let implementedPaths =
@@ -340,6 +363,7 @@ type OpenApiRouteCoverageTests() =
 
         Assert.That(staleRegistryPaths.Contains "/openApi", Is.True, "The legacy /openApi OpenAPI path must remain explicitly classified as stale.")
 
+    /// Verifies that non OpenAPI routes have explicit exclusion reasons.
     [<Test>]
     member _.NonOpenApiRoutesHaveExplicitExclusionReasons() =
         let groups =
@@ -354,6 +378,7 @@ type OpenApiRouteCoverageTests() =
         if not routesWithoutExplanatoryReasons.IsEmpty then
             failWithRoutes "Non-OpenAPI routes need machine-readable exclusion reasons" routesWithoutExplanatoryReasons
 
+    /// Verifies that debug admin routes require system admin and stay out of OpenAPI.
     [<Test>]
     member _.DebugAdminRoutesRequireSystemAdminAndStayOutOfOpenApi() =
         let openApiPaths = openApiPaths ()

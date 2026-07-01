@@ -26,10 +26,13 @@ open System.Linq
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the admin command parser, handlers, and output helpers.
 module Admin =
 
+    /// Groups the admin command parser, handlers, and output helpers.
     module Reminder =
 
+        /// Defines the options parsed by the admin command handlers.
         module private Options =
             let ownerId =
                 new Option<OwnerId>(
@@ -155,6 +158,7 @@ module Admin =
                     Arity = ArgumentArity.ZeroOrOne
                 )
 
+        /// Lists reminders with progress data through the CLI service call and output pipeline.
         let private listRemindersWithProgress (parameters: ListRemindersParameters) =
             progress
                 .Columns(progressColumns)
@@ -167,9 +171,11 @@ module Admin =
                     })
 
         // List subcommand
+        /// Executes the list command by binding ParseResult values to the SDK request and CLI output contract.
         type List() =
             inherit AsynchronousCommandLineAction()
 
+            /// Routes the list reminders command from parsed options through validation, the SDK call, and result rendering.
             let listRemindersImpl (parseResult: ParseResult) : Tasks.Task<int> =
                 if parseResult |> verbose then printParseResult parseResult
 
@@ -265,6 +271,7 @@ module Admin =
                         return result |> renderOutput parseResult
                     }
 
+            /// Runs the asynchronous list action when System.CommandLine dispatches the parsed command.
             override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
                 task {
                     try
@@ -278,9 +285,11 @@ module Admin =
                 }
 
         // Get subcommand
+        /// Executes the get command by binding ParseResult values to the SDK request and CLI output contract.
         type Get() =
             inherit AsynchronousCommandLineAction()
 
+            /// Runs the asynchronous get action when System.CommandLine dispatches the parsed command.
             override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
                 task {
                     try
@@ -340,9 +349,11 @@ module Admin =
                 }
 
         // Delete subcommand
+        /// Executes the delete command by binding ParseResult values to the SDK request and CLI output contract.
         type Delete() =
             inherit AsynchronousCommandLineAction()
 
+            /// Runs the asynchronous delete action when System.CommandLine dispatches the parsed command.
             override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
                 task {
                     try
@@ -394,9 +405,11 @@ module Admin =
                 }
 
         // UpdateTime subcommand
+        /// Executes the update time command by binding ParseResult values to the SDK request and CLI output contract.
         type UpdateTime() =
             inherit AsynchronousCommandLineAction()
 
+            /// Runs the asynchronous update time action when System.CommandLine dispatches the parsed command.
             override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
                 task {
                     try
@@ -449,9 +462,11 @@ module Admin =
                 }
 
         // Reschedule subcommand
+        /// Executes the reschedule command by binding ParseResult values to the SDK request and CLI output contract.
         type Reschedule() =
             inherit AsynchronousCommandLineAction()
 
+            /// Runs the asynchronous reschedule action when System.CommandLine dispatches the parsed command.
             override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
                 task {
                     try
@@ -504,9 +519,11 @@ module Admin =
                 }
 
         // Create subcommand
+        /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
         type Create() =
             inherit AsynchronousCommandLineAction()
 
+            /// Runs the asynchronous create action when System.CommandLine dispatches the parsed command.
             override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
                 task {
                     try
@@ -566,6 +583,7 @@ module Admin =
 
         /// Builds the Reminder subcommand.
         let Build =
+            /// Adds shared reminder scope options to a subcommand.
             let addCommonOptions (command: Command) =
                 command
                 |> addOption Options.ownerName

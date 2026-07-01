@@ -7,6 +7,7 @@ open System
 open System.IO
 open System.Text.RegularExpressions
 
+/// Contains tests covering endpoint authorization manifest behavior.
 [<Parallelizable(ParallelScope.All)>]
 type EndpointAuthorizationManifestTests() =
 
@@ -14,10 +15,13 @@ type EndpointAuthorizationManifestTests() =
 
     let tokenRegex = Regex("(?<method>\\bGET\\b|\\bPOST\\b|\\bPUT\\b)\\s*\\[|(?<kind>subRoute|routef|route)\\s+\"(?<path>[^\"]+)\"", RegexOptions.Multiline)
 
+    /// Parses startup routes.
     let parseStartupRoutes () =
         let text = File.ReadAllText(startupPath)
         let matches = tokenRegex.Matches(text)
+        /// Tracks current Prefix changes so this scenario can assert the resulting side effect explicitly.
         let mutable currentPrefix = String.Empty
+        /// Tracks current Method changes so this scenario can assert the resulting side effect explicitly.
         let mutable currentMethod = String.Empty
         let routes = ResizeArray<string * string>()
 
@@ -46,6 +50,7 @@ type EndpointAuthorizationManifestTests() =
         |> List.append [ ("GET", "/metrics")
                          ("GET", "/notifications") ]
 
+    /// Asserts route security.
     let assertRouteSecurity method_ path (expectedSecurity: EndpointSecurity) =
         let matchingDefinitions =
             definitions
@@ -63,10 +68,12 @@ type EndpointAuthorizationManifestTests() =
         | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
         | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
 
+    /// Asserts routes use security.
     let assertRoutesUseSecurity expectedSecurity routes =
         for method_, path in routes do
             assertRouteSecurity method_ path expectedSecurity
 
+    /// Exercises includes security coverage for the authorization endpoint Authorization Manifest contract.
     let rec includesSecurity expectedSecurity actualSecurity =
         actualSecurity = expectedSecurity
         || match actualSecurity with
@@ -76,6 +83,7 @@ type EndpointAuthorizationManifestTests() =
                |> List.exists (includesSecurity expectedSecurity)
            | _ -> false
 
+    /// Asserts route requires security.
     let assertRouteRequiresSecurity method_ path (expectedSecurity: EndpointSecurity) =
         let matchingDefinitions =
             definitions
@@ -93,6 +101,7 @@ type EndpointAuthorizationManifestTests() =
         | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
         | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
 
+    /// Asserts route does not require security.
     let assertRouteDoesNotRequireSecurity method_ path (unexpectedSecurity: EndpointSecurity) =
         let matchingDefinitions =
             definitions
@@ -110,10 +119,12 @@ type EndpointAuthorizationManifestTests() =
         | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
         | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
 
+    /// Exercises write or admin coverage for the authorization endpoint Authorization Manifest contract.
     let writeOrAdmin adminOperation writeOperation resourceKind =
         AnyOf [ Authorized(adminOperation, resourceKind)
                 Authorized(writeOperation, resourceKind) ]
 
+    /// Exercises operations in security coverage for the authorization endpoint Authorization Manifest contract.
     let rec operationsInSecurity security =
         match security with
         | Authorized (operation, _) -> [ operation ]
@@ -122,6 +133,7 @@ type EndpointAuthorizationManifestTests() =
         | AllowAnonymous
         | Authenticated -> []
 
+    /// Asserts route uses canonical operation names.
     let assertRouteUsesCanonicalOperationNames method_ path (expectedOperationNames: string list) =
         let matchingDefinitions =
             definitions
@@ -154,6 +166,7 @@ type EndpointAuthorizationManifestTests() =
         | [] -> Assert.Fail($"Expected EndpointAuthorizationManifest to include {method_} {path}.")
         | _ -> Assert.Fail($"Expected EndpointAuthorizationManifest to include one entry for {method_} {path}.")
 
+    /// Verifies that manifest covers all routes.
     [<Test>]
     member _.ManifestCoversAllRoutes() =
         let startupRoutes = parseStartupRoutes () |> Set.ofList
@@ -185,6 +198,7 @@ type EndpointAuthorizationManifestTests() =
 
             Assert.Fail($"EndpointAuthorizationManifest includes routes not in Startup.Server.fs:{Environment.NewLine}{extraText}")
 
+    /// Verifies that manifest does not contain duplicates.
     [<Test>]
     member _.ManifestDoesNotContainDuplicates() =
         let duplicates =
@@ -200,6 +214,7 @@ type EndpointAuthorizationManifestTests() =
 
             Assert.Fail($"EndpointAuthorizationManifest contains duplicate entries:{Environment.NewLine}{message}")
 
+    /// Verifies that approval policy routes require repository policy manage.
     [<Test>]
     member _.ApprovalPolicyRoutesRequireRepositoryPolicyManage() =
         [
@@ -214,6 +229,7 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.ApprovalPolicyManage, ResourceKind.Repository))
 
+    /// Verifies that approval request routes use expected repository policies.
     [<Test>]
     member _.ApprovalRequestRoutesUseExpectedRepositoryPolicies() =
         [
@@ -231,6 +247,7 @@ type EndpointAuthorizationManifestTests() =
 
         assertRouteSecurity "POST" "/approval/request/_seedGenerated" Authenticated
 
+    /// Verifies that policy and queue routes use authenticated access.
     [<Test>]
     member _.PolicyAndQueueRoutesUseAuthenticatedAccess() =
         [
@@ -245,6 +262,7 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity Authenticated
 
+    /// Verifies that webhook routes use expected repository policies.
     [<Test>]
     member _.WebhookRoutesUseExpectedRepositoryPolicies() =
         [
@@ -265,6 +283,7 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.WebhookDeliveryRead, ResourceKind.Repository))
 
+    /// Verifies that authorization routes use expected authenticated and admin policies.
     [<Test>]
     member _.AuthorizationRoutesUseExpectedAuthenticatedAndAdminPolicies() =
         [
@@ -288,6 +307,7 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.RepositoryAdmin, ResourceKind.Repository))
 
+    /// Verifies that auth routes use expected anonymous and authenticated policies.
     [<Test>]
     member _.AuthRoutesUseExpectedAnonymousAndAuthenticatedPolicies() =
         [
@@ -306,6 +326,7 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity Authenticated
 
+    /// Verifies that authentication and authorization routes do not keep legacy prefixes.
     [<Test>]
     member _.AuthenticationAndAuthorizationRoutesDoNotKeepLegacyPrefixes() =
         let legacyRoutes =
@@ -320,11 +341,13 @@ type EndpointAuthorizationManifestTests() =
             |> String.concat Environment.NewLine
             |> fun routes -> Assert.Fail($"Legacy auth/access routes must not remain in EndpointAuthorizationManifest:{Environment.NewLine}{routes}")
 
+    /// Verifies that metrics and manual routes use expected policies.
     [<Test>]
     member _.MetricsAndManualRoutesUseExpectedPolicies() =
         assertRouteSecurity "GET" "/metrics" (Authorized(Operation.SystemAdmin, ResourceKind.System))
         assertRouteSecurity "GET" "/notifications" Authenticated
 
+    /// Verifies that storage routes use expected path and repository policies.
     [<Test>]
     member _.StorageRoutesUseExpectedPathAndRepositoryPolicies() =
         [
@@ -351,6 +374,7 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.PathWrite, ResourceKind.Path))
 
+    /// Verifies that scope creation routes require parent write or admin operations.
     [<Test>]
     member _.ScopeCreationRoutesRequireParentWriteOrAdminOperations() =
         [
@@ -363,6 +387,7 @@ type EndpointAuthorizationManifestTests() =
 
         assertRouteDoesNotRequireSecurity "POST" "/branch/create" (Authorized(Operation.BranchWrite, ResourceKind.Branch))
 
+    /// Verifies that creation route operations use canonical full names.
     [<Test>]
     member _.CreationRouteOperationsUseCanonicalFullNames() =
         [
@@ -380,6 +405,7 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> List.iter (fun (method_, path, expectedOperationNames) -> assertRouteUsesCanonicalOperationNames method_ path expectedOperationNames)
 
+    /// Verifies that branch reference creation routes use branch write or admin not repository scope creation.
     [<Test>]
     member _.BranchReferenceCreationRoutesUseBranchWriteOrAdminNotRepositoryScopeCreation() =
         [
@@ -395,6 +421,7 @@ type EndpointAuthorizationManifestTests() =
 
         assertRouteDoesNotRequireSecurity "POST" "/branch/save" (Authorized(Operation.RepositoryWrite, ResourceKind.Repository))
 
+    /// Verifies that repository contained creation routes require repository write or admin operations.
     [<Test>]
     member _.RepositoryContainedCreationRoutesRequireRepositoryWriteOrAdminOperations() =
         [
@@ -409,11 +436,13 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity (writeOrAdmin Operation.RepositoryAdmin Operation.RepositoryWrite ResourceKind.Repository)
 
+    /// Verifies that branch annotate requires branch read and path read.
     [<Test>]
     member _.BranchAnnotateRequiresBranchReadAndPathRead() =
         assertRouteRequiresSecurity "POST" "/branch/annotate" (Authorized(Operation.BranchRead, ResourceKind.Branch))
         assertRouteRequiresSecurity "POST" "/branch/annotate" (Authorized(Operation.PathRead, ResourceKind.Path))
 
+    /// Verifies that selected work item routes use expected policies.
     [<Test>]
     member _.SelectedWorkItemRoutesUseExpectedPolicies() =
         [

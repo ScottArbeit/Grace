@@ -13,6 +13,7 @@ type LogAuthorizationFailureMiddleware(next: RequestDelegate) =
 
     let log = loggerFactory.CreateLogger($"{nameof LogAuthorizationFailureMiddleware}.Server")
 
+    /// Gets try get correlation id data needed by the server flow.
     let tryGetCorrelationId (context: HttpContext) =
         match context.Items.TryGetValue(Constants.CorrelationId) with
         | true, value ->
@@ -21,6 +22,7 @@ type LogAuthorizationFailureMiddleware(next: RequestDelegate) =
             | _ -> String.Empty
         | _ -> String.Empty
 
+    /// Logs authorization failure details after downstream authorization has produced the response.
     member _.Invoke(context: HttpContext) =
 #if DEBUG
         let middlewareTraceHeader = context.Request.Headers["X-MiddlewareTraceIn"]

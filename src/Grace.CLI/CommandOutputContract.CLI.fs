@@ -4,22 +4,29 @@ open System
 open System.Collections.Generic
 open System.CommandLine
 
+/// Groups the command output contract command parser, handlers, and output helpers.
 module CommandOutputContract =
 
+    /// Models command identity values passed between the parser and command output contract handlers.
     type CommandIdentity =
         {
             GroupPath: string list
             CommandName: string
         }
 
+        /// Gets the full command path including its group segments and command name.
         member this.CommandPath = this.GroupPath @ [ this.CommandName ]
+        /// Gets the stable dotted identifier for this command.
         member this.CommandId = String.Join(".", this.CommandPath)
+        /// Runs the asynchronous command identity action when System.CommandLine dispatches the parsed command.
         override this.ToString() = String.Join(" ", this.CommandPath)
 
+    /// Models route disposition values passed between the parser and command output contract handlers.
     type RouteDisposition =
         | Routed
         | SourceOnlyUnrouted of disposition: string
 
+    /// Models current json behavior values passed between the parser and command output contract handlers.
     type CurrentJsonBehavior =
         | CommonRenderOutputEnvelope
         | ImmediateJsonErrorOnly
@@ -30,6 +37,7 @@ module CommandOutputContract =
         | HumanOnly
         | UnroutedSourceOnly
 
+    /// Models command category values passed between the parser and command output contract handlers.
     type CommandCategory =
         | ProgressLocalWorkflow
         | MutatingStateTransition
@@ -40,6 +48,7 @@ module CommandOutputContract =
         | WorkflowAcceptedOperation
         | HelpIntrospection
 
+    /// Models execution scope values passed between the parser and command output contract handlers.
     type ExecutionScope =
         | CompositeLocalAndServer
         | LocalClient
@@ -47,17 +56,20 @@ module CommandOutputContract =
         | Verify
         | ServerViaSdkDefinedButNotRootRouted
 
+    /// Models output dto disposition values passed between the parser and command output contract handlers.
     type OutputDtoDisposition =
         | ReuseExistingApiOrSdkDto
         | RequiresCliDto
         | NoServerDto
 
+    /// Models envelope contract values passed between the parser and command output contract handlers.
     type EnvelopeContract =
         | ExistingGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
         | MigrationRequiredToGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
         | JsonModeErrorOnly of reason: string
         | SourceOnlyUnsupported of disposition: string
 
+    /// Models feature state values passed between the parser and command output contract handlers.
     type FeatureState =
         | ExistingBehavior
         | FutureInertIntrospection
@@ -65,15 +77,19 @@ module CommandOutputContract =
         | UnsupportedUntilRouted
         | RequiresMigration
 
+    /// Defines structured data exchanged by CLI helpers.
     type MachineReadableFeatures = { JsonMode: FeatureState; Schema: FeatureState; Examples: FeatureState; Select: FeatureState }
 
+    /// Models return value metadata status values passed between the parser and command output contract handlers.
     type ReturnValueMetadataStatus =
         | SchemaReady
         | MetadataIncomplete
         | ContractUnsupported
 
+    /// Defines structured data exchanged by CLI helpers.
     type ReturnValueContract = { Name: string; Provenance: string; Status: ReturnValueMetadataStatus; Schema: obj; Example: obj; Notes: string list }
 
+    /// Models command contract entry values passed between the parser and command output contract handlers.
     type CommandContractEntry =
         {
             Identity: CommandIdentity
@@ -87,12 +103,15 @@ module CommandOutputContract =
             ReturnValueContract: ReturnValueContract
         }
 
+    /// Models introspection kind values passed between the parser and command output contract handlers.
     type IntrospectionKind =
         | Schema
         | Examples
 
+    /// Defines structured data exchanged by CLI helpers.
     type CommandIdentityDocument = { Id: string; Path: string list; GroupPath: string list; Name: string }
 
+    /// Models command registry document values passed between the parser and command output contract handlers.
     type CommandRegistryDocument =
         {
             RouteDisposition: string
@@ -107,6 +126,7 @@ module CommandOutputContract =
             Select: string
         }
 
+    /// Models command schema document values passed between the parser and command output contract handlers.
     type CommandSchemaDocument =
         {
             Status: string
@@ -119,8 +139,10 @@ module CommandOutputContract =
             Notes: string list
         }
 
+    /// Defines structured data exchanged by CLI helpers.
     type CommandExampleDocument = { Name: string; Description: string; Document: obj }
 
+    /// Models command introspection document values passed between the parser and command output contract handlers.
     type CommandIntrospectionDocument =
         {
             Kind: string
@@ -131,8 +153,10 @@ module CommandOutputContract =
             Examples: CommandExampleDocument list
         }
 
+    /// Converts a union-case value into the stable case name emitted in command-output metadata.
     let private unionName value = $"{value}"
 
+    /// Constructs a draft 2020-12 object schema with the supplied title, properties, and required field list.
     let private schemaObject (title: string) (properties: (string * obj) list) (required: string array) =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["$schema"] <- "https://json-schema.org/draft/2020-12/schema"
@@ -142,28 +166,33 @@ module CommandOutputContract =
         schema["properties"] <- Dictionary<string, obj>(properties |> Seq.map KeyValuePair)
         box schema
 
+    /// Constructs a JSON schema for scalar command-output fields such as strings, booleans, or numbers.
     let private scalarSchema (typeName: string) =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["type"] <- typeName
         box schema
 
+    /// Builds command-output contract metadata for any schema so automation can rely on stable JSON shapes.
     let private anySchema description =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["description"] <- description
         box schema
 
+    /// Constructs the nullable nullable object schema used in generated command-output metadata.
     let private nullableObjectSchema description =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["type"] <- [| "object"; "null" |]
         schema["description"] <- description
         box schema
 
+    /// Constructs the nullable nullable string schema used in generated command-output metadata.
     let private nullableStringSchema description =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["type"] <- [| "string"; "null" |]
         schema["description"] <- description
         box schema
 
+    /// Constructs an array schema and attaches the item schema used by repeated command-output fields.
     let private arraySchema itemSchema description =
         let schema = Dictionary<string, obj>(StringComparer.Ordinal)
         schema["type"] <- "array"
@@ -193,6 +222,7 @@ module CommandOutputContract =
         schema["description"] <- "CLI stdout representation of Grace Properties metadata."
         box schema
 
+    /// Builds command-output contract metadata for cli properties so automation can rely on stable JSON shapes.
     let private cliProperties commandId provenance =
         [|
             {| Key = "cli.contractVersion"; Value = "cli-json-v1" |}
@@ -200,6 +230,7 @@ module CommandOutputContract =
             {| Key = "cli.introspectionSource"; Value = provenance |}
         |]
 
+    /// Builds command-output contract metadata for unsupported return value schema so automation can rely on stable JSON shapes.
     let private unsupportedReturnValueSchema reason =
         schemaObject
             "Unsupported command output contract"
@@ -209,6 +240,7 @@ module CommandOutputContract =
             ]
             [| "Status"; "Reason" |]
 
+    /// Builds command-output contract metadata for unsupported return value example so automation can rely on stable JSON shapes.
     let private unsupportedReturnValueExample reason = box {| Status = "metadata-incomplete"; Reason = reason |}
 
     let private stringReturnValueSchema = scalarSchema "string"
@@ -514,9 +546,11 @@ module CommandOutputContract =
                 Summary = {| Total = 1; Ok = 1; Warning = 0; Failed = 0; Skipped = 0 |}
             |}
 
+    /// Builds command-output contract metadata for supported return value contract so automation can rely on stable JSON shapes.
     let private supportedReturnValueContract name provenance schema example notes =
         { Name = name; Provenance = provenance; Status = SchemaReady; Schema = schema; Example = example; Notes = notes }
 
+    /// Builds command-output contract metadata for incomplete return value contract so automation can rely on stable JSON shapes.
     let private incompleteReturnValueContract name reason =
         {
             Name = name
@@ -527,6 +561,7 @@ module CommandOutputContract =
             Notes = [ reason ]
         }
 
+    /// Builds command-output contract metadata for unsupported return value contract so automation can rely on stable JSON shapes.
     let private unsupportedReturnValueContract name reason =
         {
             Name = name
@@ -537,17 +572,20 @@ module CommandOutputContract =
             Notes = [ reason ]
         }
 
+    /// Builds command-output contract metadata for route disposition text so automation can rely on stable JSON shapes.
     let private routeDispositionText (disposition: RouteDisposition) =
         match disposition with
         | Routed -> "Routed"
         | SourceOnlyUnrouted reason -> $"SourceOnlyUnrouted: {reason}"
 
+    /// Builds command-output contract metadata for output dto disposition text so automation can rely on stable JSON shapes.
     let private outputDtoDispositionText (disposition: OutputDtoDisposition) =
         match disposition with
         | ReuseExistingApiOrSdkDto -> "ReuseExistingApiOrSdkDto"
         | RequiresCliDto -> "RequiresCliDto"
         | NoServerDto -> "NoServerDto"
 
+    /// Builds command-output contract metadata for envelope contract text so automation can rely on stable JSON shapes.
     let private envelopeContractText (contract: EnvelopeContract) =
         match contract with
         | ExistingGraceResultEnvelope disposition -> $"ExistingGraceResultEnvelope: {outputDtoDispositionText disposition}"
@@ -555,6 +593,7 @@ module CommandOutputContract =
         | JsonModeErrorOnly reason -> $"JsonModeErrorOnly: {reason}"
         | SourceOnlyUnsupported reason -> $"SourceOnlyUnsupported: {reason}"
 
+    /// Builds command-output contract metadata for return value disposition text so automation can rely on stable JSON shapes.
     let private returnValueDispositionText (contract: EnvelopeContract) =
         match contract with
         | ExistingGraceResultEnvelope disposition
@@ -562,6 +601,7 @@ module CommandOutputContract =
         | JsonModeErrorOnly reason -> $"Unsupported: {reason}"
         | SourceOnlyUnsupported reason -> $"Unsupported: {reason}"
 
+    /// Builds command-output contract metadata for return value contract for so automation can rely on stable JSON shapes.
     let private returnValueContractFor (identity: CommandIdentity) (envelopeContract: EnvelopeContract) =
         match identity.CommandId, envelopeContract with
         | "maintenance.check-ignore-entries", ExistingGraceResultEnvelope RequiresCliDto ->
@@ -654,9 +694,11 @@ module CommandOutputContract =
                 (outputDtoDispositionText disposition)
                 "The registry has envelope metadata for this command, but command-specific ReturnValue schema/example metadata has not been declared yet."
 
+    /// Builds the command document section of the machine-readable command-output contract.
     let private commandDocument (identity: CommandIdentity) =
         { Id = identity.CommandId; Path = identity.CommandPath; GroupPath = identity.GroupPath; Name = identity.CommandName }
 
+    /// Builds the registry document section of the machine-readable command-output contract.
     let private registryDocument (entry: CommandContractEntry) =
         {
             RouteDisposition = routeDispositionText entry.RouteDisposition
@@ -671,6 +713,7 @@ module CommandOutputContract =
             Select = unionName entry.Features.Select
         }
 
+    /// Builds command-output contract metadata for success envelope schema so automation can rely on stable JSON shapes.
     let private successEnvelopeSchema (entry: CommandContractEntry) =
         schemaObject
             $"GraceReturnValue<{entry.ReturnValueContract.Name}>"
@@ -705,6 +748,7 @@ module CommandOutputContract =
                 "Properties"
             |]
 
+    /// Builds the schema document section of the machine-readable command-output contract.
     let private schemaDocument (entry: CommandContractEntry) =
         let status =
             match entry.ReturnValueContract.Status with
@@ -731,6 +775,7 @@ module CommandOutputContract =
                 ]
         }
 
+    /// Builds command-output contract metadata for success example so automation can rely on stable JSON shapes.
     let private successExample (entry: CommandContractEntry) =
         {
             Name = "success-envelope-shape"
@@ -745,6 +790,7 @@ module CommandOutputContract =
                     |}
         }
 
+    /// Builds command-output contract metadata for incomplete metadata example so automation can rely on stable JSON shapes.
     let private incompleteMetadataExample (entry: CommandContractEntry) =
         {
             Name = "metadata-incomplete"
@@ -765,6 +811,7 @@ module CommandOutputContract =
                     |}
         }
 
+    /// Builds command-output contract metadata for error example so automation can rely on stable JSON shapes.
     let private errorExample (entry: CommandContractEntry) =
         {
             Name = "error-envelope-shape"
@@ -780,6 +827,7 @@ module CommandOutputContract =
                     |}
         }
 
+    /// Builds the introspection document section of the machine-readable command-output contract.
     let introspectionDocument (kind: IntrospectionKind) (entry: CommandContractEntry) =
         {
             Kind =
@@ -811,6 +859,7 @@ module CommandOutputContract =
                         ]
         }
 
+    /// Builds command-output contract metadata for features for so automation can rely on stable JSON shapes.
     let private featuresFor behavior =
         match behavior with
         | UnroutedSourceOnly ->
@@ -821,6 +870,7 @@ module CommandOutputContract =
             { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = ExistingBehavior }
         | _ -> { JsonMode = RequiresMigration; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = FutureReturnValueProjection }
 
+    /// Builds command-output contract metadata for envelope for so automation can rely on stable JSON shapes.
     let private envelopeFor routed behavior dtoDisposition =
         match routed, behavior with
         | false, _ -> SourceOnlyUnsupported "Defined in source but not root-routed for V1."
@@ -830,9 +880,12 @@ module CommandOutputContract =
                 "The command is routed, but --output Json is intentionally short-circuited before command execution because watch is a continuous foreground workflow."
         | true, _ -> MigrationRequiredToGraceResultEnvelope dtoDisposition
 
+    /// Builds command-output contract metadata for command identity so automation can rely on stable JSON shapes.
     let internal commandIdentity groupPath commandName = { GroupPath = groupPath; CommandName = commandName }
 
+    /// Builds command-output contract metadata for discover leaf commands so automation can rely on stable JSON shapes.
     let discoverLeafCommands (rootCommand: Command) =
+        /// Builds command-output contract metadata for rec so automation can rely on stable JSON shapes.
         let rec loop path (command: Command) =
             let subcommands =
                 command.Subcommands
@@ -852,6 +905,7 @@ module CommandOutputContract =
         |> Seq.toList
         |> List.collect (loop [])
 
+    /// Builds command-output contract metadata for row so automation can rely on stable JSON shapes.
     let private row groupPath commandName routed mutating behavior category executionScope dtoDisposition =
         let identity = commandIdentity groupPath commandName
 
@@ -1233,6 +1287,7 @@ module CommandOutputContract =
             row [ "workitem" ] "status" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto
         ]
 
+    /// Tries to map find and returns a GraceError instead of throwing on unsupported input.
     let tryFind identity =
         entries
         |> List.tryFind (fun entry -> entry.Identity = identity)

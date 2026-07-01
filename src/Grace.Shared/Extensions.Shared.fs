@@ -8,8 +8,10 @@ open System.Runtime.CompilerServices
 [<assembly: InternalsVisibleTo("Host")>]
 do ()
 
+/// Contains extensions helpers.
 module Extensions =
 
+    /// Represents dictionary.
     type Dictionary<'T, 'U> with
         /// Adds a range of key-value pairs to the dictionary.
         member this.AddRange(items: seq<KeyValuePair<'T, 'U>>) =

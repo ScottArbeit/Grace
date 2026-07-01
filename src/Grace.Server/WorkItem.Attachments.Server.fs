@@ -7,13 +7,17 @@ open Grace.Types.WorkItem
 open System
 open System.Collections.Generic
 
+/// Contains Grace Server work item attachments behavior and supporting helpers.
 module WorkItemAttachments =
+    /// Represents work item attachment used by Grace Server APIs and background services.
     type internal WorkItemAttachment = { ArtifactId: ArtifactId; Metadata: ArtifactMetadata; AttachmentType: string }
 
+    /// Implements equals ignore case for the server request pipeline.
     let private equalsIgnoreCase (expected: string) (actual: string) =
         not (isNull actual)
         && actual.Equals(expected, StringComparison.OrdinalIgnoreCase)
 
+    /// Attempts to classify artifact type and returns an option or result instead of throwing.
     let private tryClassifyArtifactType (artifactType: ArtifactType) =
         if isNull (box artifactType) then
             Some "summary"
@@ -35,13 +39,16 @@ module WorkItemAttachments =
                 Some "notes"
             | _ -> None
 
+    /// Converts an artifact type into the attachment bucket name exposed by work-item link DTOs.
     let internal getAttachmentTypeName (artifactType: ArtifactType) =
         match tryClassifyArtifactType artifactType with
         | Some attachmentType -> attachmentType
         | None -> "other"
 
+    /// Gets try get reviewer attachment type name data needed by the server flow.
     let internal tryGetReviewerAttachmentTypeName (artifactType: ArtifactType) = tryClassifyArtifactType artifactType
 
+    /// Implements select attachment deterministically for the server request pipeline.
     let internal selectAttachmentDeterministically (attachments: WorkItemAttachment list) (latest: bool) =
         if List.isEmpty attachments then
             None
@@ -55,6 +62,7 @@ module WorkItemAttachments =
             else
                 ordered |> List.head |> Some
 
+    /// Groups a work item's artifact ids into attachment-link buckets using the already-loaded artifact metadata.
     let internal buildLinksDto (workItemDto: WorkItemDto) (artifactMetadataById: IReadOnlyDictionary<ArtifactId, ArtifactMetadata option>) =
         let agentSummaryArtifactIds = ResizeArray<ArtifactId>()
         let promptArtifactIds = ResizeArray<ArtifactId>()
@@ -84,6 +92,7 @@ module WorkItemAttachments =
             OtherArtifactIds = otherArtifactIds |> Seq.toList
         }
 
+    /// Determines whether text mime type.
     let internal isTextMimeType (mimeType: string) =
         if String.IsNullOrWhiteSpace(mimeType) then
             false
@@ -101,6 +110,7 @@ module WorkItemAttachments =
             || normalized.Equals("application/javascript", StringComparison.OrdinalIgnoreCase)
             || normalized.Equals("application/x-javascript", StringComparison.OrdinalIgnoreCase)
 
+    /// Converts server authentication data into attachment descriptor.
     let internal toAttachmentDescriptor (attachment: WorkItemAttachment) =
         WorkItemAttachmentDescriptor(
             ArtifactId = attachment.ArtifactId.ToString(),

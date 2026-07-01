@@ -29,9 +29,12 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Contains Grace Server work item behavior and supporting helpers.
 module WorkItem =
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> WorkItemParameters> = 'T -> ValueTask<Result<unit, WorkItemError>> array
 
+    /// Represents work item identifier used by Grace Server APIs and background services.
     type WorkItemIdentifier =
         | Id of WorkItemId
         | Number of WorkItemNumber
@@ -40,6 +43,7 @@ module WorkItem =
 
     let activitySource = new ActivitySource("WorkItem")
 
+    /// Parses try parse work item identifier input into the server model.
     let private tryParseWorkItemIdentifier (value: string) =
         let mutable parsedGuid = Guid.Empty
 
@@ -61,11 +65,13 @@ module WorkItem =
             else
                 Error WorkItemError.InvalidWorkItemId
 
+    /// Validates validate work item identifier inputs before server processing continues.
     let internal validateWorkItemIdentifier (value: string) =
         match tryParseWorkItemIdentifier value with
         | Ok _ -> Ok() |> returnValueTask
         | Error error -> Error error |> returnValueTask
 
+    /// Resolves resolve work item id data from request or repository state.
     let private resolveWorkItemId (repositoryId: RepositoryId) (workItemIdentifier: string) (correlationId: CorrelationId) =
         task {
             match tryParseWorkItemIdentifier workItemIdentifier with
@@ -89,12 +95,14 @@ module WorkItem =
                         | None -> return Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist) correlationId)
         }
 
+    /// Coordinates cache work item number processing for Grace Server.
     let private cacheWorkItemNumber (repositoryId: RepositoryId) (workItemNumber: WorkItemNumber) (workItemId: WorkItemId) (correlationId: CorrelationId) =
         task {
             let workItemNumberActorProxy = WorkItemNumber.CreateActorProxy repositoryId correlationId
             do! workItemNumberActorProxy.SetWorkItemId workItemNumber workItemId correlationId
         }
 
+    /// Adds work item number lock to the server request model.
     let private withWorkItemNumberLock (repositoryId: RepositoryId) (correlationId: CorrelationId) (work: unit -> Task<GraceResult<string>>) =
         task {
             let lockName = $"workitem-number|{repositoryId}"
@@ -139,6 +147,7 @@ module WorkItem =
                 return result
         }
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> WorkItemParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<WorkItemCommand>) =
         task {
             let commandName = context.Items["Command"] :?> string
@@ -236,6 +245,7 @@ module WorkItem =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> WorkItemParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -304,6 +314,7 @@ module WorkItem =
                 return! context |> result500ServerError graceError
         }
 
+    /// Converts non-empty update parameters into the ordered work-item actor commands for a PATCH request.
     let internal buildUpdateCommands (parameters: UpdateWorkItemParameters) =
         [
             if not <| String.IsNullOrEmpty(parameters.Title) then
@@ -338,24 +349,28 @@ module WorkItem =
                 WorkItemCommand.SetMigrationNotes parameters.MigrationNotes
         ]
 
+    /// Validates validate link reference parameters inputs before server processing continues.
     let internal validateLinkReferenceParameters (parameters: LinkReferenceParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
             Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId
         |]
 
+    /// Validates validate link artifact parameters inputs before server processing continues.
     let internal validateLinkArtifactParameters (parameters: LinkArtifactParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
             Guid.isValidAndNotEmptyGuid parameters.ArtifactId WorkItemError.InvalidArtifactId
         |]
 
+    /// Validates validate link promotion set parameters inputs before server processing continues.
     let internal validateLinkPromotionSetParameters (parameters: LinkPromotionSetParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
             Guid.isValidAndNotEmptyGuid parameters.PromotionSetId WorkItemError.InvalidPromotionSetId
         |]
 
+    /// Maps artifact-type filters that are allowed when removing work-item artifacts.
     let internal parseRemovableArtifactType (artifactType: string) =
         if String.IsNullOrWhiteSpace(artifactType) then
             Error WorkItemError.InvalidArtifactType
@@ -374,19 +389,23 @@ module WorkItem =
         else
             Error WorkItemError.InvalidArtifactType
 
+    /// Maps attachment-type filters that classify work-item artifact links.
     let internal parseAttachmentType (artifactType: string) = parseRemovableArtifactType artifactType
 
+    /// Validates validate list work item attachments parameters inputs before server processing continues.
     let internal validateListWorkItemAttachmentsParameters (parameters: ListWorkItemAttachmentsParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
         |]
 
+    /// Validates validate show work item attachment parameters inputs before server processing continues.
     let internal validateShowWorkItemAttachmentParameters (parameters: ShowWorkItemAttachmentParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
             String.isNotEmpty parameters.AttachmentType WorkItemError.InvalidArtifactType
         |]
 
+    /// Validates validate download work item attachment parameters inputs before server processing continues.
     let internal validateDownloadWorkItemAttachmentParameters (parameters: DownloadWorkItemAttachmentParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
@@ -394,6 +413,7 @@ module WorkItem =
             Guid.isValidAndNotEmptyGuid parameters.ArtifactId WorkItemError.InvalidArtifactId
         |]
 
+    /// Validates validate remove artifact type links parameters inputs before server processing continues.
     let internal validateRemoveArtifactTypeLinksParameters (parameters: RemoveArtifactTypeLinksParameters) =
         [|
             validateWorkItemIdentifier parameters.WorkItemId
@@ -403,6 +423,7 @@ module WorkItem =
     let internal canonicalAddSummaryContractMessage =
         "Canonical add-summary requests must provide SummaryContent (required), PromptContent (optional), PromptOrigin (optional with PromptContent), and PromotionSetId (optional). Caller-supplied SummaryArtifactId/PromptArtifactId values are not supported."
 
+    /// Parses try parse non empty guid input into the server model.
     let private tryParseNonEmptyGuid (value: string) =
         let mutable parsed = Guid.Empty
 
@@ -413,6 +434,7 @@ module WorkItem =
         else
             None
 
+    /// Resolves resolve scope id data from request or repository state.
     let private resolveScopeId (resolvedId: Guid) (rawValue: string) =
         if resolvedId <> Guid.Empty then
             resolvedId
@@ -420,12 +442,14 @@ module WorkItem =
             tryParseNonEmptyGuid rawValue
             |> Option.defaultValue Guid.Empty
 
+    /// Resolves resolve work item scope ids data from request or repository state.
     let private resolveWorkItemScopeIds (graceIds: GraceIds) (parameters: WorkItemParameters) =
         let ownerId = resolveScopeId graceIds.OwnerId parameters.OwnerId
         let organizationId = resolveScopeId graceIds.OrganizationId parameters.OrganizationId
         let repositoryId = resolveScopeId graceIds.RepositoryId parameters.RepositoryId
         ownerId, organizationId, repositoryId
 
+    /// Validates validate add summary parameters inputs before server processing continues.
     let internal validateAddSummaryParameters (parameters: AddSummaryParameters) =
         match tryParseWorkItemIdentifier parameters.WorkItemId with
         | Error workItemError -> Error(WorkItemError.getErrorMessage workItemError)
@@ -451,8 +475,10 @@ module WorkItem =
             else
                 Ok()
 
+    /// Normalizes normalize add summary mime type data for stable server comparisons.
     let internal normalizeAddSummaryMimeType (mimeType: string) = if String.IsNullOrWhiteSpace(mimeType) then "text/markdown" else mimeType.Trim()
 
+    /// Combines repository, work item, and correlation identifiers into the seed for idempotent summary artifacts.
     let internal buildAddSummaryArtifactSeed (repositoryId: RepositoryId) (workItemId: WorkItemId) (artifactCorrelationId: CorrelationId) =
         let normalizedCorrelationId =
             if String.IsNullOrWhiteSpace(artifactCorrelationId) then
@@ -465,6 +491,7 @@ module WorkItem =
 
         $"{repositorySegment}|{workItemSegment}|{normalizedCorrelationId}"
 
+    /// Hashes a normalized artifact seed into the deterministic identifier used by summary artifact creation.
     let private createDeterministicArtifactId (seed: string) =
         let normalizedSeed =
             if String.IsNullOrWhiteSpace(seed) then
@@ -481,17 +508,21 @@ module WorkItem =
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 
+    /// Derives the repeatable summary artifact id for a work item and request correlation id.
     let internal buildDeterministicAddSummaryArtifactId (repositoryId: RepositoryId) (workItemId: WorkItemId) (artifactCorrelationId: CorrelationId) =
         buildAddSummaryArtifactSeed repositoryId workItemId artifactCorrelationId
         |> createDeterministicArtifactId
 
+    /// Uses the deterministic summary artifact id as the stable blob key for replay-safe summary uploads.
     let internal buildDeterministicAddSummaryBlobPath (artifactId: ArtifactId) = $"grace-artifacts/by-id/{artifactId}"
 
+    /// Implements compute sha256 for the server request pipeline.
     let internal computeSha256 (contentBytes: byte array) =
         use hasher = SHA256.Create()
         let hash = hasher.ComputeHash(contentBytes)
         Convert.ToHexString(hash).ToLowerInvariant()
 
+    /// Determines whether grace testing enabled.
     let private isGraceTestingEnabled () =
         match Environment.GetEnvironmentVariable("GRACE_TESTING") with
         | null -> false
@@ -500,6 +531,7 @@ module WorkItem =
             || value.Equals("true", StringComparison.OrdinalIgnoreCase)
             || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
 
+    /// Implements upload artifact content for the server request pipeline.
     let private uploadArtifactContent repositoryDto (blobPath: string) (contentBytes: byte array) (correlationId: CorrelationId) =
         task {
             try
@@ -523,23 +555,30 @@ module WorkItem =
             | ex -> return Error(GraceError.Create $"Failed to upload artifact content: {ex.Message}" correlationId)
         }
 
+    /// Adds correlation id to the server request model.
     let private withCorrelationId (metadata: EventMetadata) (correlationId: CorrelationId) = { metadata with CorrelationId = correlationId }
 
+    /// Coordinates add summary correlation id processing for Grace Server.
     let private addSummaryCorrelationId (baseCorrelationId: CorrelationId) (segment: string) = $"{baseCorrelationId}:add-summary:{segment}"
 
+    /// Determines whether duplicate correlation id error.
     let private isDuplicateCorrelationIdError (graceError: GraceError) =
         String.Equals(graceError.Error, WorkItemError.getErrorMessage WorkItemError.DuplicateCorrelationId, StringComparison.OrdinalIgnoreCase)
 
+    /// Determines whether artifact duplicate correlation id error.
     let private isArtifactDuplicateCorrelationIdError (graceError: GraceError) =
         String.Equals(graceError.Error, "Duplicate correlation ID for Artifact command.", StringComparison.OrdinalIgnoreCase)
 
+    /// Determines whether artifact already exists error.
     let private isArtifactAlreadyExistsError (graceError: GraceError) =
         String.Equals(graceError.Error, "Artifact already exists.", StringComparison.OrdinalIgnoreCase)
 
+    /// Determines whether recoverable artifact create error.
     let internal isRecoverableArtifactCreateError (graceError: GraceError) =
         isArtifactDuplicateCorrelationIdError graceError
         || isArtifactAlreadyExistsError graceError
 
+    /// Coordinates handle work item command allow replay processing for Grace Server.
     let private handleWorkItemCommandAllowReplay (workItemActorProxy: IWorkItemActor) (command: WorkItemCommand) (metadata: EventMetadata) =
         task {
             match! workItemActorProxy.Handle command metadata with
@@ -548,6 +587,7 @@ module WorkItem =
             | Error graceError -> return Error graceError
         }
 
+    /// Uploads generated work-item content as a deterministic artifact and links its metadata to the work item.
     let private createArtifactFromContent
         repositoryDto
         (graceIds: GraceIds)
@@ -628,6 +668,7 @@ module WorkItem =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Adds context to the server request model.
                 let withContext (graceError: GraceError) =
                     graceError
                         .enhance(parameterDictionary)
@@ -894,11 +935,13 @@ module WorkItem =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: GetWorkItemParameters) =
                     [|
                         validateWorkItemIdentifier parameters.WorkItemId
                     |]
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) _ (actorProxy: IWorkItemActor) = actorProxy.Get(getCorrelationId context)
 
                 let! parameters = context |> parse<GetWorkItemParameters>
@@ -909,6 +952,7 @@ module WorkItem =
                 return! processQuery context parameters validations query
             }
 
+    /// Implements fetch linked reviewer attachments for the server request pipeline.
     let private fetchLinkedReviewerAttachments (repositoryId: RepositoryId) (correlationId: CorrelationId) (workItemDto: WorkItemDto) =
         task {
             let attachments = ResizeArray<WorkItemAttachment>()
@@ -935,6 +979,7 @@ module WorkItem =
                 |> Seq.toList
         }
 
+    /// Implements download artifact content bytes for the server request pipeline.
     let private downloadArtifactContentBytes repositoryDto (blobPath: string) (correlationId: CorrelationId) =
         task {
             try
@@ -960,6 +1005,7 @@ module WorkItem =
             | ex -> return Error(GraceError.Create $"Failed to download artifact content: {ex.Message}" correlationId)
         }
 
+    /// Attempts to read attachment content and returns an option or result instead of throwing.
     let private tryReadAttachmentContent
         (organizationId: OrganizationId)
         (repositoryId: RepositoryId)
@@ -979,6 +1025,7 @@ module WorkItem =
                 return Ok String.Empty
         }
 
+    /// Implements complete show attachment request for the server request pipeline.
     let private completeShowAttachmentRequest
         (context: HttpContext)
         (ownerId: OwnerId)
@@ -1111,6 +1158,7 @@ module WorkItem =
                 parameters.OrganizationId <- $"{organizationId}"
                 parameters.RepositoryId <- $"{repositoryId}"
 
+                /// Adds context to the server request model.
                 let withContext (graceError: GraceError) =
                     graceError
                         .enhance(parameterDictionary)
@@ -1192,6 +1240,7 @@ module WorkItem =
                 parameters.OrganizationId <- $"{organizationId}"
                 parameters.RepositoryId <- $"{repositoryId}"
 
+                /// Adds context to the server request model.
                 let withContext (graceError: GraceError) =
                     graceError
                         .enhance(parameterDictionary)
@@ -1290,6 +1339,7 @@ module WorkItem =
                 parameters.OrganizationId <- $"{organizationId}"
                 parameters.RepositoryId <- $"{repositoryId}"
 
+                /// Adds context to the server request model.
                 let withContext (graceError: GraceError) =
                     graceError
                         .enhance(parameterDictionary)
@@ -1398,6 +1448,7 @@ module WorkItem =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: UpdateWorkItemParameters) =
                     [|
                         validateWorkItemIdentifier parameters.WorkItemId
@@ -1494,8 +1545,10 @@ module WorkItem =
     let LinkReference: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: LinkReferenceParameters) = validateLinkReferenceParameters parameters
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: LinkReferenceParameters) =
                     WorkItemCommand.LinkReference(Guid.Parse(parameters.ReferenceId))
                     |> returnValueTask
@@ -1508,12 +1561,14 @@ module WorkItem =
     let RemoveReferenceLink: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: RemoveReferenceLinkParameters) =
                     [|
                         validateWorkItemIdentifier parameters.WorkItemId
                         Guid.isValidAndNotEmptyGuid parameters.ReferenceId WorkItemError.InvalidReferenceId
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: RemoveReferenceLinkParameters) =
                     WorkItemCommand.UnlinkReference(Guid.Parse(parameters.ReferenceId))
                     |> returnValueTask
@@ -1526,8 +1581,10 @@ module WorkItem =
     let LinkPromotionSet: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: LinkPromotionSetParameters) = validateLinkPromotionSetParameters parameters
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: LinkPromotionSetParameters) =
                     WorkItemCommand.LinkPromotionSet(Guid.Parse(parameters.PromotionSetId))
                     |> returnValueTask
@@ -1540,12 +1597,14 @@ module WorkItem =
     let RemovePromotionSetLink: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: RemovePromotionSetLinkParameters) =
                     [|
                         validateWorkItemIdentifier parameters.WorkItemId
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId WorkItemError.InvalidPromotionSetId
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: RemovePromotionSetLinkParameters) =
                     WorkItemCommand.UnlinkPromotionSet(Guid.Parse(parameters.PromotionSetId))
                     |> returnValueTask
@@ -1558,8 +1617,10 @@ module WorkItem =
     let LinkArtifact: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: LinkArtifactParameters) = validateLinkArtifactParameters parameters
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: LinkArtifactParameters) =
                     WorkItemCommand.LinkArtifact(Guid.Parse(parameters.ArtifactId))
                     |> returnValueTask
@@ -1572,12 +1633,14 @@ module WorkItem =
     let RemoveArtifactLink: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: RemoveArtifactLinkParameters) =
                     [|
                         validateWorkItemIdentifier parameters.WorkItemId
                         Guid.isValidAndNotEmptyGuid parameters.ArtifactId WorkItemError.InvalidArtifactId
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: RemoveArtifactLinkParameters) =
                     WorkItemCommand.UnlinkArtifact(Guid.Parse(parameters.ArtifactId))
                     |> returnValueTask

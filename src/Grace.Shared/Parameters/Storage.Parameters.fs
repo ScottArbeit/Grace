@@ -7,6 +7,7 @@ open Grace.Types.UploadSession
 open NodaTime
 open System
 
+/// Contains storage helpers.
 module Storage =
 
     /// Maximum number of key chunks accepted by the ContentBlock discovery endpoint in a single request.
@@ -56,16 +57,19 @@ module Storage =
         inherit StorageParameters()
         member val public FileVersions = Array.empty<FileVersion> with get, set
 
+    /// Represents get download uri parameters.
     type GetDownloadUriParameters() =
         inherit StorageParameters()
         member val public FileVersion = FileVersion.Default with get, set
 
+    /// Represents get content block upload uri parameters.
     type GetContentBlockUploadUriParameters() =
         inherit StorageParameters()
         member val public UploadSessionId: UploadSessionId = Guid.Empty with get, set
         member val public ContentBlockAddress: ContentBlockAddress = String.Empty with get, set
         member val public AuthorizedScope: RelativePath = String.Empty with get, set
 
+    /// Represents get content block download uri parameters.
     type GetContentBlockDownloadUriParameters() =
         inherit StorageParameters()
         member val public AuthorizedScope: RelativePath = String.Empty with get, set
@@ -81,11 +85,13 @@ module Storage =
         inherit StorageParameters()
         member val public KeyChunkAddresses = Array.empty<ChunkAddress> with get, set
 
+    /// Represents upload session storage parameters.
     type UploadSessionStorageParameters() =
         inherit StorageParameters()
         member val public UploadSessionId: UploadSessionId = Guid.Empty with get, set
         member val public AuthorizedScope: RelativePath = String.Empty with get, set
 
+    /// Represents start manifest upload session parameters.
     type StartManifestUploadSessionParameters() =
         inherit UploadSessionStorageParameters()
         member val public FileContentHash: FileContentHash = String.Empty with get, set
@@ -94,6 +100,7 @@ module Storage =
         member val public SamplingPolicySnapshot: string = String.Empty with get, set
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
 
+    /// Represents issue dedupe discovery parameters.
     type IssueDedupeDiscoveryParameters() =
         inherit UploadSessionStorageParameters()
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
@@ -102,12 +109,14 @@ module Storage =
         member val public KeyChunkAddresses = Array.empty<ChunkAddress> with get, set
         member val public Hints = Array.empty<ContentBlockReuseRangeHint> with get, set
 
+    /// Represents claim reuse ranges parameters.
     type ClaimReuseRangesParameters() =
         inherit UploadSessionStorageParameters()
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
         member val public DiscoveryOperationId: UploadSessionOperationId = String.Empty with get, set
         member val public Hints = Array.empty<ContentBlockReuseRangeHint> with get, set
 
+    /// Represents register content block upload parameters.
     type RegisterContentBlockUploadParameters() =
         inherit UploadSessionStorageParameters()
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
@@ -116,6 +125,7 @@ module Storage =
         member val public LogicalLength: int64 = 0L with get, set
         member val public ExpectedPayloadLength: int64 = 0L with get, set
 
+    /// Represents confirm content block upload parameters.
     type ConfirmContentBlockUploadParameters() =
         inherit UploadSessionStorageParameters()
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
@@ -123,6 +133,7 @@ module Storage =
         member val public Payload: byte array = Array.empty with get, set
         member val public StoragePlacement: ContentBlockStoragePlacement = Unchecked.defaultof<ContentBlockStoragePlacement> with get, set
 
+    /// Represents finalize manifest upload parameters.
     type FinalizeManifestUploadParameters() =
         inherit UploadSessionStorageParameters()
         member val public OperationId: UploadSessionOperationId = String.Empty with get, set
@@ -173,6 +184,7 @@ module Storage =
             Message: string
         }
 
+    /// Represents upload metadata.
     type UploadMetadata =
         {
             RelativePath: RelativePath
@@ -182,6 +194,7 @@ module Storage =
             ContentReference: FileContentReference
         }
 
+    /// Represents get upload metadata for files parameters.
     type GetUploadMetadataForFilesParameters() =
         inherit StorageParameters()
         member val public FileVersions = Array.empty<FileVersion> with get, set

@@ -19,8 +19,10 @@ open System.IO
 open System.Linq
 open System.Threading.Tasks
 
+/// Groups the history command parser, handlers, and output helpers.
 module History =
 
+    /// Defines the options parsed by the history command handlers.
     module private Options =
         let limit =
             new Option<int>(
@@ -129,6 +131,7 @@ module History =
                 Arity = ArgumentArity.OneOrMore
             )
 
+    /// Coordinates warn on corrupt config behavior for this CLI command path.
     let private warnOnCorruptConfig (parseResult: ParseResult) (loadResult: UserConfiguration.UserConfigurationLoadResult) =
         if
             loadResult.WasCorrupt && not (parseResult |> json)
@@ -141,13 +144,16 @@ module History =
 
             AnsiConsole.MarkupLine($"[yellow]{Markup.Escape(message)}[/]")
 
+    /// Formats duration values into the text shown in Spectre.Console tables or command output.
     let private formatDuration (durationMs: int64) = $"{(float durationMs) / 1000.0:F3}s"
 
+    /// Coordinates abbreviate path behavior for this CLI command path.
     let private abbreviatePath (value: string) =
         if String.IsNullOrWhiteSpace(value) then String.Empty
         elif value.Length <= 40 then value
         else "..." + value.Substring(value.Length - 37)
 
+    /// Formats repo name values into the text shown in Spectre.Console tables or command output.
     let private formatRepoName (entry: HistoryStorage.HistoryEntry) =
         match entry.repoName with
         | Some name -> name
@@ -161,10 +167,12 @@ module History =
                 | _ -> String.Empty
             | None -> String.Empty
 
+    /// Formats repo branch values into the text shown in Spectre.Console tables or command output.
     let private formatRepoBranch (entry: HistoryStorage.HistoryEntry) =
         entry.repoBranch
         |> Option.defaultValue String.Empty
 
+    /// Coordinates filter entries behavior for this CLI command path.
     let internal filterEntries
         (entries: HistoryStorage.HistoryEntry list)
         (limit: int)
@@ -249,6 +257,7 @@ module History =
         else
             ordered
 
+    /// Renders table results only when the selected output mode includes human-readable console text.
     let private renderTable (entries: HistoryStorage.HistoryEntry list) (showId: bool) =
         let table = Table(Border = TableBorder.DoubleEdge, ShowHeaders = true)
 
@@ -310,6 +319,7 @@ module History =
 
         AnsiConsole.Write(table)
 
+    /// Converts command data into the required shape.
     let private toHistoryEntryDto (entry: HistoryStorage.HistoryEntry) : LocalOutputDto.HistoryEntryDto =
         {
             Id = entry.id
@@ -327,6 +337,7 @@ module History =
             RedactionCount = entry.redactions.Length
         }
 
+    /// Coordinates output entries behavior for this CLI command path.
     let private outputEntries (parseResult: ParseResult) (entries: HistoryStorage.HistoryEntry list) (showId: bool) (corruptCount: int) =
         if parseResult |> json then
             let dto: LocalOutputDto.HistoryEntriesDto =
@@ -352,9 +363,11 @@ module History =
             AnsiConsole.WriteLine()
             0
 
+    /// Executes the history on command by binding ParseResult values to the SDK request and CLI output contract.
     type HistoryOn() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous history on action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: Threading.CancellationToken) : Task<int> =
             task {
                 let loadResult = UserConfiguration.loadUserConfiguration ()
@@ -389,9 +402,11 @@ module History =
                         |> renderOutput parseResult
             }
 
+    /// Executes the history off command by binding ParseResult values to the SDK request and CLI output contract.
     type HistoryOff() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous history off action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: Threading.CancellationToken) : Task<int> =
             task {
                 let loadResult = UserConfiguration.loadUserConfiguration ()
@@ -426,9 +441,11 @@ module History =
                         |> renderOutput parseResult
             }
 
+    /// Executes the history show command by binding ParseResult values to the SDK request and CLI output contract.
     type HistoryShow() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous history show action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: Threading.CancellationToken) : Task<int> =
             task {
                 let limit = parseResult.GetValue(Options.limit)
@@ -477,9 +494,11 @@ module History =
                         return outputEntries parseResult filtered showId readResult.CorruptCount
             }
 
+    /// Executes the history search command by binding ParseResult values to the SDK request and CLI output contract.
     type HistorySearch() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous history search action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: Threading.CancellationToken) : Task<int> =
             task {
                 let searchText = parseResult.GetValue<string>("text")
@@ -528,6 +547,7 @@ module History =
                         return outputEntries parseResult filtered showId readResult.CorruptCount
             }
 
+    /// Parses command input into typed values.
     let private parseReplacements (values: string array) =
         let replacements = Dictionary<string, string>(StringComparer.InvariantCultureIgnoreCase)
         let errors = ResizeArray<string>()
@@ -555,6 +575,7 @@ module History =
             else
                 Ok replacements
 
+    /// Coordinates replace first behavior for this CLI command path.
     let private replaceFirst (text: string) (replacement: string) =
         let index = text.IndexOf(HistoryStorage.Placeholder, StringComparison.Ordinal)
 
@@ -565,6 +586,7 @@ module History =
             + replacement
             + text.Substring(index + HistoryStorage.Placeholder.Length)
 
+    /// Updates CLI authentication state for apply replacements while keeping token handling centralized.
     let private applyReplacements (argv: string array) (redactions: HistoryStorage.Redaction list) (replacements: IDictionary<string, string>) =
         let updated = Array.copy argv
         let missing = ResizeArray<HistoryStorage.Redaction>()
@@ -588,6 +610,7 @@ module History =
 
         updated, missing |> Seq.toList
 
+    /// Coordinates prompt for replacements behavior for this CLI command path.
     let private promptForReplacements (missing: HistoryStorage.Redaction list) (replacements: IDictionary<string, string>) =
         for redaction in missing do
             let key = $"{redaction.argIndex}"
@@ -600,6 +623,7 @@ module History =
                 let value = AnsiConsole.Prompt(prompt)
                 replacements[key] <- value
 
+    /// Resolves working directory from command options, configuration, or local state.
     let private resolveWorkingDirectory (entryCwd: string) (useCurrentCwd: bool) (canPrompt: bool) (yes: bool) =
         if useCurrentCwd then
             Ok(Environment.CurrentDirectory, false)
@@ -619,9 +643,11 @@ module History =
         else
             Error $"Recorded working directory not found: {entryCwd}. Use --use-current-cwd to run from the current directory."
 
+    /// Executes the history run command by binding ParseResult values to the SDK request and CLI output contract.
     type HistoryRun() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous history run action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: Threading.CancellationToken) : Task<int> =
             let number = parseResult.GetValue(Options.runNumber)
             let byId = parseResult.GetValue(Options.runId)
@@ -754,9 +780,11 @@ module History =
 
             Task.FromResult(exitCode)
 
+    /// Executes the history delete command by binding ParseResult values to the SDK request and CLI output contract.
     type HistoryDelete() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous history delete action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: Threading.CancellationToken) : Task<int> =
             task {
                 match HistoryStorage.clearHistory () with

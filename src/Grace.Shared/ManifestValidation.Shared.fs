@@ -12,8 +12,10 @@ open System.IO
 /// size-covering; it also checks the pinned chunking suite, each ContentBlock payload address, the reconstructed file
 /// content hash, and the stable ManifestAddress.
 module ManifestValidation =
+    /// Represents the manifest block payload contract.
     type ManifestBlockPayload = { Address: ContentBlockAddress; Payload: byte array }
 
+    /// Represents manifest validation error.
     type ManifestValidationError =
         | NullManifest
         | NullBlockPayloadSequence
@@ -36,13 +38,16 @@ module ManifestValidation =
         | FileContentHashMismatch of expected: FileContentHash * actual: FileContentHash
         | ManifestSizeMismatch of expected: int64 * actual: int64
 
+    /// Copies a manifest block payload so validation can reconstruct bytes without aliasing caller buffers.
     let createBlockPayload address payload = { Address = address; Payload = payload }
 
+    /// Copies payload bytes so manifest validation never mutates caller-owned buffers.
     let private copyBytes (bytes: byte array) =
         let copy = Array.zeroCreate<byte> bytes.Length
         Array.Copy(bytes, copy, bytes.Length)
         copy
 
+    /// Decodes all supplied block payloads and indexes valid content blocks by address.
     let private decodePayloads (payloads: ManifestBlockPayload seq) =
         if isNull (box payloads) then
             Error NullBlockPayloadSequence
@@ -73,6 +78,7 @@ module ManifestValidation =
             | Some error -> Error error
             | None -> Ok decoded
 
+    /// Validates manifest shape.
     let private validateManifestShape expectedChunkingSuiteId (manifest: FileManifest) =
         if isNull (box manifest) then
             Error NullManifest
@@ -95,6 +101,7 @@ module ManifestValidation =
         else
             Ok()
 
+    /// Validates ranges.
     let private validateRanges (manifest: FileManifest) =
         let mutable expectedOffset = 0L
         let mutable error = None
@@ -122,6 +129,7 @@ module ManifestValidation =
         | None when expectedOffset <> manifest.Size -> Error(ManifestSizeMismatch(manifest.Size, expectedOffset))
         | None -> Ok()
 
+    /// Validates manifest address.
     let private validateManifestAddress (manifest: FileManifest) =
         let expectedAddress = ContentAddress.computeManifestAddressForManifest manifest
 
@@ -130,6 +138,7 @@ module ManifestValidation =
         else
             Ok()
 
+    /// Reassembles file bytes from manifest block order and decoded block payloads.
     let private reconstructBytes (manifest: FileManifest) (payloads: Dictionary<ContentBlockAddress, ContentBlockFormat.DecodedContentBlock>) =
         use stream = new MemoryStream()
         let mutable error = None

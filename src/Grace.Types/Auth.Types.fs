@@ -2,7 +2,9 @@ namespace Grace.Types
 
 open Orleans
 
+/// Contains auth helpers.
 module Auth =
+    /// Represents oidc client config.
     [<GenerateSerializer>]
     type OidcClientConfig =
         {

@@ -26,8 +26,10 @@ open Grace.Shared.Utilities
 open Grace.CLI
 open Grace.CLI.Services
 
+/// Groups the owner command parser, handlers, and output helpers.
 module Owner =
 
+    /// Defines the options parsed by the owner command handlers.
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -90,9 +92,11 @@ module Owner =
         >=> ``Either OwnerId or OwnerName must be provided``
 
     // Create subcommand.
+    /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous create action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -173,9 +177,11 @@ module Owner =
             }
 
     // Get subcommand
+    /// Executes the get command by binding ParseResult values to the SDK request and CLI output contract.
     type Get() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -234,9 +240,11 @@ module Owner =
             }
 
     // SetName subcommand
+    /// Executes the set name command by binding ParseResult values to the SDK request and CLI output contract.
     type SetName() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set name action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -300,9 +308,11 @@ module Owner =
             }
 
     // SetType subcommand
+    /// Executes the set type command by binding ParseResult values to the SDK request and CLI output contract.
     type SetType() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set type action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -348,9 +358,11 @@ module Owner =
             }
 
     // SetSearchVisibility subcommand
+    /// Executes the set search visibility command by binding ParseResult values to the SDK request and CLI output contract.
     type SetSearchVisibility() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set search visibility action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -396,9 +408,11 @@ module Owner =
             }
 
     // SetDescription subcommand
+    /// Executes the set description command by binding ParseResult values to the SDK request and CLI output contract.
     type SetDescription() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set description action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -444,9 +458,11 @@ module Owner =
             }
 
     // Delete subcommand
+    /// Executes the delete command by binding ParseResult values to the SDK request and CLI output contract.
     type Delete() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous delete action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -493,9 +509,11 @@ module Owner =
             }
 
     // Undelete subcommand
+    /// Executes the undelete command by binding ParseResult values to the SDK request and CLI output contract.
     type Undelete() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous undelete action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -540,6 +558,7 @@ module Owner =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

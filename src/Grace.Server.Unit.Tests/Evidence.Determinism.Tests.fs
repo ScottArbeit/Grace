@@ -10,21 +10,25 @@ open NodaTime
 open System
 open System.Collections.Generic
 
+/// Covers evidence Determinism behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type EvidenceDeterminism() =
     let instant = Instant.FromUtc(2025, 1, 1, 0, 0)
 
+    /// Builds section fixtures used by the server unit evidence Determinism assertions.
     let buildSection (line: string) (position: int) =
         [|
             DiffPiece(line, ChangeType.Modified, Nullable<int>(position))
         |]
 
+    /// Builds section From Lines fixtures used by the server unit evidence Determinism assertions.
     let buildSectionFromLines (lines: string list) =
         lines
         |> List.mapi (fun index line -> DiffPiece(line, ChangeType.Modified, Nullable<int>(index + 1)))
         |> List.toArray
 
 
+    /// Builds file Diff fixtures used by the server unit evidence Determinism assertions.
     let buildFileDiff (relativePath: string) (lines: (string * int) list) =
         let inlineDiff = List<DiffPiece []>()
 
@@ -35,6 +39,7 @@ type EvidenceDeterminism() =
 
     let buildDiff (fileDiffs: FileDiff list) = { DiffDto.Default with HasDifferences = true; FileDiffs = List<FileDiff>(fileDiffs) }
 
+    /// Verifies that evidence Redaction Flags When Pattern Matches.
     [<Test>]
     member _.EvidenceRedactionFlagsWhenPatternMatches() =
         let file = buildFileDiff "secrets.txt" [ "password=secret", 1 ]
@@ -47,6 +52,7 @@ type EvidenceDeterminism() =
         Assert.That(slice.IsRedacted, Is.True)
         Assert.That(slice.Content, Does.Contain("***REDACTED***"))
 
+    /// Verifies that evidence Budgets Respect Hunks And Lines.
     [<Test>]
     member _.EvidenceBudgetsRespectHunksAndLines() =
         let sections = List<DiffPiece []>()
@@ -75,6 +81,7 @@ type EvidenceDeterminism() =
         Assert.That(slice.EndLine, Is.EqualTo(1))
         Assert.That(slice.Content, Is.EqualTo("one"))
 
+    /// Verifies that evidence Budget Caps Total Bytes.
     [<Test>]
     member _.EvidenceBudgetCapsTotalBytes() =
         let file = buildFileDiff "tiny.txt" [ "a", 1; "b", 2 ]
@@ -84,6 +91,7 @@ type EvidenceDeterminism() =
         let evidence, _ = Evidence.buildEvidenceSet EvidenceStage.Triage budget None [] diff
         Assert.That(evidence.Slices.Length, Is.EqualTo(1))
 
+    /// Verifies that evidence Selection Is Deterministic Across File Ordering.
     [<Test>]
     member _.EvidenceSelectionIsDeterministicAcrossFileOrdering() =
         let fileA = buildFileDiff "a.txt" [ "alpha", 1; "beta", 2 ]
@@ -105,6 +113,7 @@ type EvidenceDeterminism() =
         Assert.That(summariesMatch, Is.True)
         Assert.That(slicesMatch, Is.True)
 
+    /// Verifies that evidence Selection Respects Sorted Budget Ordering.
     [<Test>]
     member _.EvidenceSelectionRespectsSortedBudgetOrdering() =
         let fileA = buildFileDiff "a.txt" [ "alpha", 1 ]

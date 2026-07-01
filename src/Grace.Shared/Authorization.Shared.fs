@@ -5,8 +5,10 @@ open Grace.Types.Authorization
 open Grace.Types.Common
 open System
 
+/// Contains authorization helpers.
 module Authorization =
 
+    /// Contains role catalog helpers.
     module RoleCatalog =
 
         let private scopeSystem = "system"
@@ -190,6 +192,7 @@ module Authorization =
 
         let private legacyApprovalResponderRoleId = "ApprovalResponder"
 
+        /// Returns role assignments that are effective for the requested organization, repository, or global scope.
         let private roles: RoleDefinition list =
             [
                 { RoleId = "SystemAdmin"; AllowedOperations = systemAdminOperations; AppliesTo = Set.ofList [ scopeSystem ] }
@@ -211,12 +214,15 @@ module Authorization =
                 { RoleId = "BranchApprovalResponder"; AllowedOperations = approvalResponderOperations; AppliesTo = Set.ofList [ scopeBranch ] }
             ]
 
+        /// Gets all.
         let getAll () = roles
 
+        /// Attempts to get.
         let tryGet (roleId: RoleId) =
             roles
             |> List.tryFind (fun role -> role.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
 
+        /// Attempts to get single scope kind.
         let tryGetSingleScopeKind (roleId: RoleId) =
             tryGet roleId
             |> Option.bind (fun role ->
@@ -225,6 +231,7 @@ module Authorization =
                 else
                     None)
 
+        /// Attempts to get legacy assignment role.
         let tryGetLegacyAssignmentRole (roleId: RoleId) (assignmentScopeKind: string) =
             if
                 legacyApprovalResponderRoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase)
@@ -235,6 +242,7 @@ module Authorization =
             else
                 None
 
+    /// Builds the resource scopes that can satisfy an authorization check for the requested resource.
     let scopesForResource (resource: Resource) =
         match resource with
         | Resource.System -> [ Scope.System ]
@@ -268,6 +276,7 @@ module Authorization =
                 Scope.System
             ]
 
+    /// Classifies a scope string as global, organization, repository, or unsupported.
     let private scopeKind (scope: Scope) =
         match scope with
         | Scope.System -> "system"
@@ -276,6 +285,7 @@ module Authorization =
         | Scope.Repository _ -> "repository"
         | Scope.Branch _ -> "branch"
 
+    /// Combines matching role grants into the operation set available to the principal.
     let effectiveOperations (roleCatalog: RoleDefinition list) (assignments: RoleAssignment list) (principalSet: Principal list) (resource: Resource) =
         let scopeSet = scopesForResource resource |> Set.ofList
         let principalLookup = principalSet |> Set.ofList
@@ -296,6 +306,7 @@ module Authorization =
         |> List.collect (fun role -> role.AllowedOperations |> Set.toList)
         |> Set.ofList
 
+    /// Checks path permission.
     let checkPathPermission (pathPermissions: PathPermission list) (effectiveClaims: Set<string>) (targetPath: RelativePath) (operation: Operation) =
         match operation with
         | PathRead

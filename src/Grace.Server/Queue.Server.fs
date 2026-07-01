@@ -26,17 +26,21 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Contains Grace Server queue behavior and supporting helpers.
 module Queue =
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> QueueParameters> = 'T -> ValueTask<Result<unit, QueueError>> array
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Queue.Server")
 
     let activitySource = new ActivitySource("Queue")
 
+    /// Implements requires policy snapshot for initialization for the server request pipeline.
     let internal requiresPolicySnapshotForInitialization (queueExists: bool) (policySnapshotId: string) =
         not queueExists
         && String.IsNullOrEmpty(policySnapshotId)
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> QueueParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<PromotionQueueCommand>) =
         task {
             let commandName = context.Items["Command"] :?> string
@@ -53,6 +57,7 @@ module Queue =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand targetBranchId cmd =
                     task {
                         let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
@@ -126,6 +131,7 @@ module Queue =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process command with parameters processing for Grace Server.
     let processCommandWithParameters<'T when 'T :> QueueParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -146,6 +152,7 @@ module Queue =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand targetBranchId cmd =
                     task {
                         let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
@@ -219,6 +226,7 @@ module Queue =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> QueueParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -282,6 +290,7 @@ module Queue =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: QueueStatusParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
@@ -292,6 +301,7 @@ module Queue =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) _ (actorProxy: IPromotionQueueActor) =
                     task {
                         let! queueJson = actorProxy.GetForRoute(getCorrelationId context)
@@ -321,6 +331,7 @@ module Queue =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: QueueActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
@@ -353,6 +364,7 @@ module Queue =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: QueueActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
@@ -385,6 +397,7 @@ module Queue =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnqueueParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
@@ -411,6 +424,7 @@ module Queue =
                     let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
 
+                    /// Implements run enqueue for the server request pipeline.
                     let runEnqueue () =
                         task {
                             context.Items[ "Command" ] <- nameof Enqueue
@@ -420,6 +434,7 @@ module Queue =
                             | Error graceError -> return! context |> result400BadRequest graceError
                         }
 
+                    /// Implements continue enqueue for the server request pipeline.
                     let continueEnqueue () =
                         task {
                             let! exists = actorProxy.Exists correlationId
@@ -488,6 +503,7 @@ module Queue =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: PromotionSetActionParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId

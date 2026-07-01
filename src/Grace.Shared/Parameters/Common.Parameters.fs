@@ -3,8 +3,10 @@ namespace Grace.Shared.Parameters
 open Orleans
 open System
 
+/// Contains common helpers.
 module Common =
 
+    /// Represents common parameters.
     [<GenerateSerializer>]
     type CommonParameters() =
         member val public CorrelationId: string = String.Empty with get, set

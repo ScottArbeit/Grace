@@ -11,9 +11,11 @@ open System
 open System.IO
 open System.Text.Json
 
+/// Groups history storage coverage for the CLI test project.
 [<NonParallelizable>]
 module HistoryStorageTests =
 
+    /// Runs the supplied action with file backup applied.
     let private withFileBackup (path: string) (action: unit -> unit) =
         let backupPath = path + ".testbackup"
         let hadExisting = File.Exists(path)
@@ -29,6 +31,7 @@ module HistoryStorageTests =
             elif File.Exists(path) then
                 File.Delete(path)
 
+    /// Builds random string test data used to exercise CLI history Storage behavior.
     let private randomString (random: Random) =
         let length = random.Next(8, 32)
         let chars = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789"
@@ -39,6 +42,7 @@ module HistoryStorageTests =
 
         String(buffer)
 
+    /// Verifies that redacts token values.
     [<Test>]
     let ``redacts --token values`` () =
         let config = UserConfiguration.UserConfiguration()
@@ -47,12 +51,14 @@ module HistoryStorageTests =
         for _ in 0..49 do
             let value = randomString random
             let args = [| "--token"; value |]
+            /// Builds redacted test data used to exercise CLI history Storage behavior.
             let redacted, _ = HistoryStorage.redactArguments args config.History
 
             redacted
             |> Array.exists (fun arg -> arg = value)
             |> should equal false
 
+    /// Verifies that redacts token=value values.
     [<Test>]
     let ``redacts --token=value values`` () =
         let config = UserConfiguration.UserConfiguration()
@@ -61,12 +67,14 @@ module HistoryStorageTests =
         for _ in 0..49 do
             let value = randomString random
             let args = [| $"--token={value}" |]
+            /// Builds redacted test data used to exercise CLI history Storage behavior.
             let redacted, _ = HistoryStorage.redactArguments args config.History
 
             redacted
             |> Array.exists (fun arg -> arg.Contains(value, StringComparison.Ordinal))
             |> should equal false
 
+    /// Verifies that parses valid durations.
     [<TestCase("30s", 30.0)>]
     [<TestCase("10m", 600.0)>]
     [<TestCase("24h", 86400.0)>]
@@ -78,6 +86,7 @@ module HistoryStorageTests =
             |> should equal expectedSeconds
         | Error error -> Assert.Fail($"Expected Ok, got Error: {error}")
 
+    /// Verifies that rejects invalid durations.
     [<TestCase("")>]
     [<TestCase("10x")>]
     [<TestCase("abc")>]
@@ -87,6 +96,7 @@ module HistoryStorageTests =
         | Ok _ -> Assert.Fail("Expected Error, got Ok.")
         | Error _ -> Assert.Pass()
 
+    /// Verifies that read history entries skips corrupt lines.
     [<Test>]
     let ``readHistoryEntries skips corrupt lines`` () =
         let historyPath = HistoryStorage.getHistoryFilePath ()
@@ -123,6 +133,7 @@ module HistoryStorageTests =
             result.Entries.Length |> should equal 1
             result.CorruptCount |> should equal 1)
 
+    /// Verifies that prunes history to max entries.
     [<Test>]
     let ``prunes history to max entries`` () =
         let historyPath = HistoryStorage.getHistoryFilePath ()
@@ -164,6 +175,7 @@ module HistoryStorageTests =
                 let result = HistoryStorage.readHistoryEntries ()
                 result.Entries.Length |> should equal 2))
 
+    /// Verifies that record invocation trims source metadata.
     [<Test>]
     let ``recordInvocation trims source metadata`` () =
         let configPath = UserConfiguration.getUserConfigurationPath ()
@@ -195,6 +207,7 @@ module HistoryStorageTests =
                 |> should equal (Some "codex-session")
             | None -> Assert.Fail("Expected recordInvocation to return a history entry."))
 
+    /// Verifies that record invocation stores informational build identity.
     [<Test>]
     let ``recordInvocation stores informational build identity`` () =
         let configPath = UserConfiguration.getUserConfigurationPath ()
@@ -228,6 +241,7 @@ module HistoryStorageTests =
                 |> should not' (equal "0.2.0.0")
             | None -> Assert.Fail("Expected recordInvocation to return a history entry."))
 
+    /// Verifies that should record treats history command with leading source option as history.
     [<Test>]
     let ``shouldRecord treats history command with leading source option as history`` () =
         let configuration = UserConfiguration.UserConfiguration()

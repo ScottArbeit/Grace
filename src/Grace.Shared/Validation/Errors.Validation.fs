@@ -4,13 +4,16 @@ open Grace.Shared.Resources.Text
 open Grace.Shared.Resources.Utilities
 open System
 
+/// Contains errors helpers.
 module Errors =
 
     // Marker interface + compile-time constraint
+    /// Represents i error discriminated union.
     type IErrorDiscriminatedUnion =
         interface
         end
 
+    /// Represents branch error.
     type BranchError =
         | AssignIsDisabled
         | BranchAlreadyExists
@@ -68,6 +71,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(branchError: BranchError) : string =
             match branchError with
             | AssignIsDisabled -> getLocalizedString StringResourceName.AssignIsDisabled
@@ -127,25 +131,30 @@ module Errors =
             | TagIsDisabled -> getLocalizedString StringResourceName.TagIsDisabled
             | ValueMustBePositive -> getLocalizedString StringResourceName.ValueMustBePositive
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(branchError: BranchError option) : string =
             match branchError with
             | Some error -> BranchError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents config error.
     type ConfigError =
         | InvalidDirectoryPath
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(configError: ConfigError) : string =
             match configError with
             | InvalidDirectoryPath -> getLocalizedString StringResourceName.InvalidDirectoryPath
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(configError: ConfigError option) : string =
             match configError with
             | Some error -> ConfigError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents version hash error.
     type VersionHashError =
         | Blake3HashIsRequired
         | InvalidBlake3Hash
@@ -154,6 +163,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(versionHashError: VersionHashError) : string =
             match versionHashError with
             | Blake3HashIsRequired -> getLocalizedString StringResourceName.Blake3HashIsRequired
@@ -161,11 +171,13 @@ module Errors =
             | InvalidSha256VersionHash -> getLocalizedString StringResourceName.InvalidSha256VersionHash
             | Sha256VersionHashIsRequired -> getLocalizedString StringResourceName.Sha256VersionHashIsRequired
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(versionHashError: VersionHashError option) : string =
             match versionHashError with
             | Some error -> VersionHashError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents connect error.
     type ConnectError =
         | RepositoryDoesNotExist
         | InvalidRepositoryId
@@ -175,6 +187,7 @@ module Errors =
         | InvalidOrganizationId
         | InvalidOrganizationName
 
+    /// Represents diff error.
     type DiffError =
         | DirectoryDoesNotExist
         | InvalidDirectoryVersionId
@@ -191,6 +204,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(diffError: DiffError) : string =
             match diffError with
             | DirectoryDoesNotExist -> getLocalizedString StringResourceName.DirectoryDoesNotExist
@@ -206,11 +220,13 @@ module Errors =
             | InvalidSha256Hash -> getLocalizedString StringResourceName.InvalidSha256Hash
             | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(diffError: DiffError option) : string =
             match diffError with
             | Some error -> DiffError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents directory version error.
     type DirectoryVersionError =
         | DirectoryAlreadyExists
         | DirectoryDoesNotExist
@@ -238,6 +254,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(directoryError: DirectoryVersionError) : string =
             match directoryError with
             | DirectoryAlreadyExists -> getLocalizedString StringResourceName.DirectoryAlreadyExists
@@ -264,11 +281,13 @@ module Errors =
             | Sha256HashIsRequired -> getLocalizedString StringResourceName.Sha256HashIsRequired
             | Sha256HashDoesNotMatch -> getLocalizedString StringResourceName.Sha256HashDoesNotMatch
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(directoryError: DirectoryVersionError option) : string =
             match directoryError with
             | Some error -> DirectoryVersionError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents owner error.
     type OwnerError =
         | DeleteReasonIsRequired
         | DescriptionIsRequired
@@ -295,6 +314,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(ownerError: OwnerError) : string =
             match ownerError with
             | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
@@ -320,11 +340,13 @@ module Errors =
             | OwnerTypeIsRequired -> getLocalizedString StringResourceName.OwnerTypeIsRequired
             | SearchVisibilityIsRequired -> getLocalizedString StringResourceName.SearchVisibilityIsRequired
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(ownerError: OwnerError option) : string =
             match ownerError with
             | Some error -> OwnerError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents organization error.
     type OrganizationError =
         | DeleteReasonIsRequired
         | DescriptionIsRequired
@@ -360,6 +382,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(organizationError: OrganizationError) : string =
             match organizationError with
             | DeleteReasonIsRequired -> getLocalizedString StringResourceName.DeleteReasonIsRequired
@@ -394,11 +417,13 @@ module Errors =
             | RepositoryNameIsRequired -> getLocalizedString StringResourceName.RepositoryNameIsRequired
             | SearchVisibilityIsRequired -> getLocalizedString StringResourceName.SearchVisibilityIsRequired
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(organizationError: OrganizationError option) : string =
             match organizationError with
             | Some error -> OrganizationError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents reference error.
     type ReferenceError =
         | AssignIsDisabled
         | BranchDoesNotExist
@@ -447,6 +472,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(referenceError: ReferenceError) : string =
             match referenceError with
             | AssignIsDisabled -> getLocalizedString StringResourceName.AssignIsDisabled
@@ -495,11 +521,13 @@ module Errors =
             | TagIsDisabled -> getLocalizedString StringResourceName.TagIsDisabled
             | ValueMustBePositive -> getLocalizedString StringResourceName.ValueMustBePositive
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(branchError: ReferenceError option) : string =
             match branchError with
             | Some error -> ReferenceError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents repository error.
     type RepositoryError =
         | BranchIdsAreRequired
         | DeleteReasonIsRequired
@@ -552,6 +580,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(repositoryError: RepositoryError) : string =
             match repositoryError with
             | BranchIdsAreRequired -> getLocalizedString StringResourceName.BranchIdsAreRequired
@@ -604,11 +633,13 @@ module Errors =
             | RepositoryNameAlreadyExists -> getLocalizedString StringResourceName.RepositoryNameAlreadyExists
 
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(repositoryError: RepositoryError option) : string =
             match repositoryError with
             | Some error -> RepositoryError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents storage error.
     type StorageError =
         | FailedCommunicatingWithObjectStorage
         | FailedToGetUploadUrls
@@ -620,6 +651,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(storageError: StorageError) : string =
             match storageError with
             | FailedCommunicatingWithObjectStorage -> getLocalizedString StringResourceName.FailedCommunicatingWithObjectStorage
@@ -630,11 +662,13 @@ module Errors =
             | ObjectStorageException -> getLocalizedString StringResourceName.ObjectStorageException
             | UnknownObjectStorageProvider -> getLocalizedString StringResourceName.UnknownObjectStorageProvider
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(storageError: StorageError option) : string =
             match storageError with
             | Some error -> StorageError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents work item error.
     type WorkItemError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -650,6 +684,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(workItemError: WorkItemError) : string =
             match workItemError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
@@ -664,11 +699,13 @@ module Errors =
             | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidStatus -> "The work item status is invalid."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(workItemError: WorkItemError option) : string =
             match workItemError with
             | Some error -> WorkItemError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents policy error.
     type PolicyError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -679,6 +716,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(policyError: PolicyError) : string =
             match policyError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
@@ -688,11 +726,13 @@ module Errors =
             | InvalidTargetBranchId -> "The target branch ID is invalid."
             | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(policyError: PolicyError option) : string =
             match policyError with
             | Some error -> PolicyError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents review error.
     type ReviewError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -707,6 +747,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(reviewError: ReviewError) : string =
             match reviewError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
@@ -720,11 +761,13 @@ module Errors =
             | InvalidResolutionState -> "The resolution state is invalid."
             | InvalidChapterId -> "The chapter ID is invalid."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(reviewError: ReviewError option) : string =
             match reviewError with
             | Some error -> ReviewError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents queue error.
     type QueueError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -737,6 +780,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(queueError: QueueError) : string =
             match queueError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
@@ -748,11 +792,13 @@ module Errors =
             | InvalidPromotionSetId -> "The promotion set ID is invalid."
             | InvalidPolicySnapshotId -> "The policy snapshot ID is invalid."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(queueError: QueueError option) : string =
             match queueError with
             | Some error -> QueueError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents validation set error.
     type ValidationSetError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -765,6 +811,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(validationSetError: ValidationSetError) : string =
             match validationSetError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
@@ -776,11 +823,13 @@ module Errors =
             | ValidationSetRulesRequired -> "A validation set must include at least one rule."
             | ValidationDefinitionsRequired -> "A validation set must include at least one validation definition."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(validationSetError: ValidationSetError option) : string =
             match validationSetError with
             | Some error -> ValidationSetError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents validation result error.
     type ValidationResultError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -797,6 +846,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(validationResultError: ValidationResultError) : string =
             match validationResultError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
@@ -812,11 +862,13 @@ module Errors =
             | StepsComputationAttemptRequired -> "StepsComputationAttempt is required when PromotionSetId is provided."
             | InvalidStepsComputationAttempt -> "StepsComputationAttempt must be greater than zero."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(validationResultError: ValidationResultError option) : string =
             match validationResultError with
             | Some error -> ValidationResultError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents artifact error.
     type ArtifactError =
         | DuplicateCorrelationId
         | FailedWhileApplyingEvent
@@ -829,6 +881,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(artifactError: ArtifactError) : string =
             match artifactError with
             | DuplicateCorrelationId -> "A command with this correlation ID has already been processed."
@@ -840,25 +893,30 @@ module Errors =
             | InvalidMimeType -> "The mime type is invalid."
             | InvalidSize -> "Artifact size must be zero or greater."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(artifactError: ArtifactError option) : string =
             match artifactError with
             | Some error -> ArtifactError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents test error.
     type TestError =
         | TestFailed
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(testError: TestError) : string =
             match testError with
             | TestFailed -> getLocalizedString StringResourceName.TestFailed
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(testError: TestError option) : string =
             match testError with
             | Some error -> TestError.getErrorMessage error
             | None -> String.Empty
 
+    /// Represents reminder error.
     type ReminderError =
         | InvalidReminderDuration
         | InvalidReminderTime
@@ -870,6 +928,7 @@ module Errors =
 
         interface IErrorDiscriminatedUnion
 
+        /// Maps each validation error case to the localized or literal message shown to callers.
         static member getErrorMessage(reminderError: ReminderError) : string =
             match reminderError with
             | InvalidReminderDuration -> "Invalid reminder duration. Use formats like '+15m', '+1h', '+1d'."
@@ -880,6 +939,7 @@ module Errors =
             | ReminderDoesNotExist -> "The specified reminder does not exist."
             | ReminderIdIsRequired -> "Reminder ID is required."
 
+        /// Maps an optional validation error to a user-facing message, returning an empty string when no error is present.
         static member getErrorMessage(reminderError: ReminderError option) : string =
             match reminderError with
             | Some error -> ReminderError.getErrorMessage error

@@ -9,23 +9,29 @@ open System
 open System.Collections.Generic
 open System.Runtime.Serialization
 
+/// Contains manifest contribution workflow helpers.
 module ManifestContributionWorkflow =
 
+    /// Represents manifest contribution direction.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionDirection =
         | Increment
         | Decrement
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionDirection>()
 
+    /// Represents manifest contribution workflow lifecycle state.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionWorkflowLifecycleState =
         | NotStarted
         | InProgress
         | Completed
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowLifecycleState>()
 
+    /// Represents manifest contribution workflow range.
     [<CLIMutable; GenerateSerializer; CustomComparison; CustomEquality>]
     type ManifestContributionWorkflowRange =
         {
@@ -43,6 +49,7 @@ module ManifestContributionWorkflow =
         }
 
         interface IComparable with
+            /// Orders values by their stable identity string so sorted collections remain deterministic.
             member this.CompareTo other =
                 match other with
                 | :? ManifestContributionWorkflowRange as otherRange ->
@@ -51,6 +58,7 @@ module ManifestContributionWorkflow =
                         (otherRange.StoragePoolId, otherRange.ContentBlockAddress, otherRange.OrdinalStart, otherRange.OrdinalCount)
                 | _ -> invalidArg (nameof other) "Cannot compare ManifestContributionWorkflowRange with a different type."
 
+        /// Compares the domain identity fields that define whether two values refer to the same Grace object.
         override this.Equals(other: obj) =
             match other with
             | :? ManifestContributionWorkflowRange as otherRange ->
@@ -60,8 +68,10 @@ module ManifestContributionWorkflow =
                 && this.OrdinalCount = otherRange.OrdinalCount
             | _ -> false
 
+        /// Computes a hash code from the same domain identity fields used by equality.
         override this.GetHashCode() = HashCode.Combine(this.StoragePoolId, this.ContentBlockAddress, this.OrdinalStart, this.OrdinalCount)
 
+    /// Represents start manifest contribution workflow.
     [<GenerateSerializer>]
     type StartManifestContributionWorkflow =
         {
@@ -84,6 +94,7 @@ module ManifestContributionWorkflow =
             Ranges: ManifestContributionWorkflowRange array
         }
 
+    /// Represents manifest contribution workflow range progress.
     [<GenerateSerializer>]
     type ManifestContributionWorkflowRangeProgress =
         {
@@ -103,6 +114,7 @@ module ManifestContributionWorkflow =
             Range: ManifestContributionWorkflowRange
         }
 
+    /// Represents manifest contribution workflow range failure.
     [<GenerateSerializer>]
     type ManifestContributionWorkflowRangeFailure =
         {
@@ -125,6 +137,7 @@ module ManifestContributionWorkflow =
             Message: string
         }
 
+    /// Represents manifest contribution workflow command.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionWorkflowCommand =
         | Start of
@@ -148,25 +161,32 @@ module ManifestContributionWorkflow =
             range: ManifestContributionWorkflowRange *
             message: string
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowCommand>()
 
+    /// Represents manifest contribution workflow event type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionWorkflowEventType =
         | WorkflowStarted of start: StartManifestContributionWorkflow
         | RangeSucceeded of ManifestContributionWorkflowRangeProgress
         | RangeFailed of ManifestContributionWorkflowRangeFailure
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowEventType>()
 
+    /// Represents manifest contribution workflow intent.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ManifestContributionWorkflowIntent =
         | AdjustRangeActiveManifestCount of range: ManifestContributionWorkflowRange * delta: int
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ManifestContributionWorkflowIntent>()
 
+    /// Represents the manifest contribution workflow event contract.
     [<GenerateSerializer>]
     type ManifestContributionWorkflowEvent = { Event: ManifestContributionWorkflowEventType; Metadata: EventMetadata }
 
+    /// Represents manifest contribution workflow dto.
     [<GenerateSerializer>]
     type ManifestContributionWorkflowDto =
         {
@@ -182,6 +202,7 @@ module ManifestContributionWorkflow =
             LastOperationId: ManifestContributionWorkflowOperationId option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof ManifestContributionWorkflowDto
@@ -196,6 +217,7 @@ module ManifestContributionWorkflow =
                 LastOperationId = None
             }
 
+        /// Summarizes the workflow timestamps that describe clone and promotion progress.
         static member private Lifecycle ranges completedRanges =
             if Array.isEmpty ranges then
                 ManifestContributionWorkflowLifecycleState.NotStarted
@@ -204,12 +226,15 @@ module ManifestContributionWorkflow =
             else
                 ManifestContributionWorkflowLifecycleState.InProgress
 
+        /// Marks the workflow clone phase as completed with its completion timestamp.
         static member private CloneCompleted(completedRanges: Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>) =
             Dictionary<ManifestContributionWorkflowRange, ManifestContributionWorkflowOperationId>(completedRanges)
 
+        /// Marks the workflow clone phase as failed while retaining the failure reason.
         static member private CloneFailed(failedRanges: Dictionary<ManifestContributionWorkflowRange, string>) =
             Dictionary<ManifestContributionWorkflowRange, string>(failedRanges)
 
+        /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto workflowEvent current =
             match workflowEvent.Event with
             | ManifestContributionWorkflowEventType.WorkflowStarted start ->
@@ -253,6 +278,7 @@ module ManifestContributionWorkflow =
                     LastOperationId = Some failure.OperationId
                 }
 
+    /// Represents manifest contribution workflow decision.
     [<GenerateSerializer>]
     type ManifestContributionWorkflowDecision =
         {

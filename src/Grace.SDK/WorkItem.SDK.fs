@@ -5,9 +5,9 @@ open Grace.Shared.Parameters.WorkItem
 open Grace.Types.WorkItem
 open System.Threading.Tasks
 
-/// The WorkItem module provides a set of functions for interacting with work items in the Grace API.
+/// SDK entry point for work-item lifecycle, summaries, links, and reviewer attachments.
 type WorkItem() =
-    /// Creates a new work item.
+    /// Registers a work item that can later collect references, artifacts, summaries, and promotion sets.
     static member public Create(parameters: CreateWorkItemParameters) =
         postServer<CreateWorkItemParameters, string> (parameters |> ensureCorrelationIdIsSet, "work/create")
 

@@ -10,6 +10,7 @@ open System
 open System.Reflection
 open Microsoft.FSharp.Reflection
 
+/// Contains tests covering authorization semantics behavior.
 [<Parallelizable(ParallelScope.All)>]
 type AuthorizationSemanticsTests() =
 
@@ -39,9 +40,11 @@ type AuthorizationSemanticsTests() =
         |> Array.map (fun caseInfo -> FSharpValue.MakeUnion(caseInfo, [||]) :?> Operation)
         |> Array.toList
 
+    /// Builds a deterministic assignment fixture for the authorization authorization Semantics assertions.
     let createAssignment scope roleId =
         { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
+    /// Exercises scope kind coverage for the authorization authorization Semantics contract.
     let scopeKind scope =
         match scope with
         | Scope.System -> "system"
@@ -50,26 +53,31 @@ type AuthorizationSemanticsTests() =
         | Scope.Repository _ -> "repository"
         | Scope.Branch _ -> "branch"
 
+    /// Asserts allowed.
     let assertAllowed result =
         match result with
         | Allowed _ -> ()
         | Denied reason -> Assert.Fail($"Expected Allowed but got Denied: {reason}")
 
+    /// Asserts denied.
     let assertDenied result =
         match result with
         | Denied _ -> ()
         | Allowed reason -> Assert.Fail($"Expected Denied but got Allowed: {reason}")
 
+    /// Asserts operation allowed.
     let assertOperationAllowed roleId scope operation resource =
         let result = checkPermission roleCatalog [ createAssignment scope roleId ] [] [ principal ] Set.empty operation resource
 
         assertAllowed result
 
+    /// Asserts operation denied.
     let assertOperationDenied roleId scope operation resource =
         let result = checkPermission roleCatalog [ createAssignment scope roleId ] [] [ principal ] Set.empty operation resource
 
         assertDenied result
 
+    /// Verifies that role catalog contains only canonical roles.
     [<Test>]
     member _.RoleCatalogContainsOnlyCanonicalRoles() =
         let expectedRoleIds =
@@ -98,6 +106,7 @@ type AuthorizationSemanticsTests() =
         Assert.That(actualRoleIds, Is.EquivalentTo expectedRoleIds)
         Assert.That(actualRoleIds |> List.length, Is.EqualTo(expectedRoleIds.Length))
 
+    /// Verifies that old abbreviated role ids are unknown.
     [<Test>]
     member _.OldAbbreviatedRoleIdsAreUnknown() =
         let oldRoleIds =
@@ -115,6 +124,7 @@ type AuthorizationSemanticsTests() =
         for roleId in oldRoleIds do
             Assert.That(RoleCatalog.tryGet roleId |> Option.isNone, Is.True, $"Old role ID '{roleId}' should not be accepted.")
 
+    /// Verifies that legacy approval responder assignments grant only approval response operations.
     [<Test>]
     member _.LegacyApprovalResponderAssignmentsGrantOnlyApprovalResponseOperations() =
         let repositoryScope = Scope.Repository(ownerId, organizationId, repositoryId)
@@ -148,6 +158,7 @@ type AuthorizationSemanticsTests() =
         assertAllowed branchRespond
         assertDenied ownerRespond
 
+    /// Verifies that role catalog matrix matches permission checks.
     [<Test>]
     member _.RoleCatalogMatrixMatchesPermissionChecks() =
         for role in roleCatalog do
@@ -166,6 +177,7 @@ type AuthorizationSemanticsTests() =
 
                         if expectedAllowed then assertAllowed result else assertDenied result
 
+    /// Verifies that repository admin includes branch admin.
     [<Test>]
     member _.RepositoryAdminIncludesBranchAdmin() =
         let repositoryAdmin =
@@ -174,6 +186,7 @@ type AuthorizationSemanticsTests() =
 
         Assert.That(repositoryAdmin.AllowedOperations.Contains BranchAdmin, Is.True)
 
+    /// Verifies that every role maps to exactly one assignment scope.
     [<Test>]
     member _.EveryRoleMapsToExactlyOneAssignmentScope() =
         for role in roleCatalog do
@@ -183,6 +196,7 @@ type AuthorizationSemanticsTests() =
             |> Option.isSome
             |> fun hasScope -> Assert.That(hasScope, Is.True, $"Role '{role.RoleId}' should expose a derived assignment scope.")
 
+    /// Verifies that self assignment queries use only effective caller principals across scope ladder.
     [<Test>]
     member _.SelfAssignmentQueriesUseOnlyEffectiveCallerPrincipalsAcrossScopeLadder() =
         let resource = Resource.Repository(ownerId, organizationId, repositoryId)
@@ -202,6 +216,7 @@ type AuthorizationSemanticsTests() =
 
         Assert.That(queries.Length, Is.EqualTo(expectedScopes.Length * 2))
 
+    /// Verifies that approval operations use conservative role grants.
     [<Test>]
     member _.ApprovalOperationsUseConservativeRoleGrants() =
         let repositoryAdmin =
@@ -244,6 +259,7 @@ type AuthorizationSemanticsTests() =
         Assert.That(branchResponder.AllowedOperations.Contains ApprovalRequestRead, Is.True)
         Assert.That(branchResponder.AllowedOperations.Contains ApprovalRequestRespond, Is.True)
 
+    /// Verifies that system operator has descendant admin write read but no system admin.
     [<Test>]
     member _.SystemOperatorHasDescendantAdminWriteReadButNoSystemAdmin() =
         let systemScope = Scope.System
@@ -272,6 +288,7 @@ type AuthorizationSemanticsTests() =
         assertOperationAllowed "SystemOperator" systemScope PathWrite pathResource
         assertOperationAllowed "SystemOperator" systemScope PathRead pathResource
 
+    /// Verifies that system reader has only system wide read coverage.
     [<Test>]
     member _.SystemReaderHasOnlySystemWideReadCoverage() =
         let systemScope = Scope.System
@@ -299,6 +316,7 @@ type AuthorizationSemanticsTests() =
         assertOperationDenied "SystemReader" systemScope RepositoryAdmin repositoryResource
         assertOperationDenied "SystemReader" systemScope BranchAdmin branchResource
 
+    /// Verifies that contributor roles write descendants without admin authority.
     [<Test>]
     member _.ContributorRolesWriteDescendantsWithoutAdminAuthority() =
         let ownerScope = Scope.Owner ownerId
@@ -334,8 +352,10 @@ type AuthorizationSemanticsTests() =
         assertOperationDenied "RepositoryContributor" repositoryScope RepositoryAdmin repositoryResource
         assertOperationDenied "RepositoryContributor" repositoryScope BranchAdmin branchResource
 
+    /// Verifies that irrelevant assignments do not affect decision.
     [<Test>]
     member _.IrrelevantAssignmentsDoNotAffectDecision() =
+        /// Defines the property assertion used to explore generated inputs for the authorization authorization Semantics invariant.
         let property (operation: Operation) =
             let scope = Scope.Repository(ownerId, organizationId, repositoryId)
             let resource = Resource.Repository(ownerId, organizationId, repositoryId)
@@ -350,8 +370,10 @@ type AuthorizationSemanticsTests() =
 
         Check.QuickThrowOnFailure property
 
+    /// Verifies that scope irrelevance does not affect decision.
     [<Test>]
     member _.ScopeIrrelevanceDoesNotAffectDecision() =
+        /// Defines the property assertion used to explore generated inputs for the authorization authorization Semantics invariant.
         let property (operation: Operation) =
             let scope = Scope.Repository(ownerId, organizationId, repositoryId)
             let resource = Resource.Repository(ownerId, organizationId, repositoryId)
@@ -366,8 +388,10 @@ type AuthorizationSemanticsTests() =
 
         Check.QuickThrowOnFailure property
 
+    /// Verifies that role id case insensitive.
     [<Test>]
     member _.RoleIdCaseInsensitive() =
+        /// Defines the property assertion used to explore generated inputs for the authorization authorization Semantics invariant.
         let property (operation: Operation) =
             let scope = Scope.Repository(ownerId, organizationId, repositoryId)
             let resource = Resource.Repository(ownerId, organizationId, repositoryId)
@@ -382,8 +406,10 @@ type AuthorizationSemanticsTests() =
 
         Check.QuickThrowOnFailure property
 
+    /// Verifies that rbac monotonicity for non path ops.
     [<Test>]
     member _.RbacMonotonicityForNonPathOps() =
+        /// Defines the property assertion used to explore generated inputs for the authorization authorization Semantics invariant.
         let property (operation: Operation) =
             match operation with
             | PathRead

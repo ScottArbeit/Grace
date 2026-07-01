@@ -34,14 +34,17 @@ open System.Threading.Tasks
 open System.Text
 open System.Text.Json
 
+/// Contains Grace Server reminder behavior and supporting helpers.
 module Reminder =
 
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> ReminderParameters> = 'T -> ValueTask<Result<unit, ReminderError>> array
 
     let activitySource = new ActivitySource("Reminder")
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Reminder.Server")
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> ReminderParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -103,6 +106,7 @@ module Reminder =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> ReminderParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -184,8 +188,10 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: ListRemindersParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (parameters: ListRemindersParameters) =
                         task {
                             let correlationId = getCorrelationId context
@@ -268,11 +274,13 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReminderParameters) =
                         [|
                             String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (parameters: GetReminderParameters) =
                         task {
                             let correlationId = getCorrelationId context
@@ -328,11 +336,13 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: DeleteReminderParameters) =
                         [|
                             String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
                         |]
 
+                    /// Implements command for the server request pipeline.
                     let command (context: HttpContext) (parameters: DeleteReminderParameters) =
                         task {
                             let correlationId = getCorrelationId context
@@ -388,12 +398,14 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: UpdateReminderTimeParameters) =
                         [|
                             String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
                             String.isNotEmpty parameters.FireAt InvalidReminderTime
                         |]
 
+                    /// Implements command for the server request pipeline.
                     let command (context: HttpContext) (parameters: UpdateReminderTimeParameters) =
                         task {
                             let correlationId = getCorrelationId context
@@ -491,12 +503,14 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: RescheduleReminderParameters) =
                         [|
                             String.isNotEmpty parameters.ReminderId ReminderIdIsRequired
                             String.isNotEmpty parameters.After InvalidReminderDuration
                         |]
 
+                    /// Implements command for the server request pipeline.
                     let command (context: HttpContext) (parameters: RescheduleReminderParameters) =
                         task {
                             let correlationId = getCorrelationId context
@@ -564,6 +578,7 @@ module Reminder =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: CreateReminderParameters) =
                         [|
                             String.isNotEmpty parameters.ActorName ReminderActorNameIsRequired
@@ -572,6 +587,7 @@ module Reminder =
                             String.isNotEmpty parameters.FireAt InvalidReminderTime
                         |]
 
+                    /// Implements command for the server request pipeline.
                     let command (context: HttpContext) (parameters: CreateReminderParameters) =
                         task {
                             let correlationId = getCorrelationId context

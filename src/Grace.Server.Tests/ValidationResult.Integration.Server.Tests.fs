@@ -13,9 +13,12 @@ open System.Net.Http
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups shared helpers for validation result integration helpers.
 module private ValidationResultIntegrationHelpers =
+    /// Captures recorded validation result values used by the test suite.
     type RecordedValidationResult = { OutputKind: JsonValueKind; PropertiesRaw: string }
 
+    /// Builds record parameters for route calls.
     let recordParameters repositoryId validationResultId validationSetId promotionSetId promotionSetStepId stepsComputationAttempt artifactIds =
         let parameters = RecordValidationResultParameters()
         parameters.OwnerId <- ownerId
@@ -34,12 +37,14 @@ module private ValidationResultIntegrationHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Posts with correlation to the running test server.
     let postWithCorrelationAsync (route: string) (correlationId: string) parameters =
         let request = new HttpRequestMessage(HttpMethod.Post, route)
         request.Headers.Add(Constants.CorrelationIdHeaderKey, correlationId)
         request.Content <- createJsonContent parameters
         Client.SendAsync(request)
 
+    /// Tries to resolve get property without failing the caller.
     let private tryGetProperty (name: string) (element: JsonElement) =
         let mutable property = Unchecked.defaultof<JsonElement>
 
@@ -51,6 +56,7 @@ module private ValidationResultIntegrationHelpers =
             Assert.Fail($"Expected JSON property '{name}' in {element.GetRawText()}.")
             Unchecked.defaultof<JsonElement>
 
+    /// Parses recorded validation result from response content.
     let parseRecordedValidationResult (body: string) =
         use document = JsonDocument.Parse(body)
 
@@ -75,6 +81,7 @@ module private ValidationResultIntegrationHelpers =
 
         { OutputKind = output.ValueKind; PropertiesRaw = properties.GetRawText() }
 
+    /// Defines record body behavior for the surrounding tests used by the server integration validation Result Integration scenario.
     let recordBodyAsync correlationId parameters =
         task {
             let! response = postWithCorrelationAsync "/validation-result/record" correlationId parameters
@@ -83,6 +90,7 @@ module private ValidationResultIntegrationHelpers =
             return body
         }
 
+    /// Defines record bad request contains behavior for the surrounding tests used by the server integration validation Result Integration scenario.
     let recordBadRequestContainsAsync correlationId parameters expectedText =
         task {
             let! response = postWithCorrelationAsync "/validation-result/record" correlationId parameters
@@ -91,9 +99,11 @@ module private ValidationResultIntegrationHelpers =
             Assert.That(body, Does.Contain(expectedText))
         }
 
+/// Covers validation result route scenarios.
 [<NonParallelizable>]
 type ValidationResultRouteIntegrationTests() =
 
+    /// Verifies the validation result record pins current null output drift and rejects duplicate correlation replay scenario.
     [<Test>]
     member _.ValidationResultRecordPinsCurrentNullOutputDriftAndRejectsDuplicateCorrelationReplay() =
         task {

@@ -20,7 +20,9 @@ open System.Text
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the review command parser, handlers, and output helpers.
 module ReviewCommand =
+    /// Defines the options parsed by the review command handlers.
     module private Options =
         let promotionSetId =
             new Option<string>(
@@ -151,6 +153,7 @@ module ReviewCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Tries to map parse guid and returns a GraceError instead of throwing on unsupported input.
     let private tryParseGuid (value: string) (error: ReviewError) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
@@ -161,6 +164,7 @@ module ReviewCommand =
         else
             Ok parsed
 
+    /// Runs the resolve policy snapshot id flow with an injected service function so tests can exercise the command without the real SDK call.
     let internal resolvePolicySnapshotIdWith
         (getPromotionSet: Parameters.PromotionSet.GetPromotionSetParameters -> Task<GraceResult<Grace.Types.PromotionSet.PromotionSetDto>>)
         (getPolicy: Parameters.Policy.GetPolicyParameters -> Task<GraceResult<PolicySnapshot option>>)
@@ -214,19 +218,23 @@ module ReviewCommand =
                         | _ -> return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.InvalidPolicySnapshotId) (getCorrelationId parseResult))
         }
 
+    /// Resolves policy snapshot id from command options, configuration, or local state.
     let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (promotionSetId: Guid) =
         resolvePolicySnapshotIdWith PromotionSet.Get Policy.GetCurrent parseResult graceIds promotionSetId
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private ReportExportFormat =
         | Markdown
         | Json
 
+    /// Parses command input into typed values.
     let private parseReportExportFormat (rawValue: string) (parseResult: ParseResult) =
         match rawValue.Trim().ToLowerInvariant() with
         | "markdown" -> Ok Markdown
         | "json" -> Ok Json
         | _ -> Error(GraceError.Create "Format must be either 'markdown' or 'json'." (getCorrelationId parseResult))
 
+    /// Resolves candidate id from command options, configuration, or local state.
     let private resolveCandidateId (parseResult: ParseResult) =
         let candidateIdRaw =
             parseResult.GetValue(Options.candidateId)
@@ -242,6 +250,7 @@ module ReviewCommand =
         else
             Ok(parsed.ToString())
 
+    /// Builds command objects or parameters for execution.
     let private buildCandidateProjectionParameters (graceIds: GraceIds) (candidateId: string) =
         Parameters.Review.CandidateProjectionParameters(
             CandidateId = candidateId,
@@ -254,6 +263,7 @@ module ReviewCommand =
             CorrelationId = graceIds.CorrelationId
         )
 
+    /// Normalizes Grace ids for review report for output by keeping explicit scope values and clearing implicit child scopes.
     let internal normalizeReviewReportForOutput (report: ReviewReportResult) =
         let normalized = ReviewReportResult()
         normalized.ReviewReportSchemaVersion <- report.ReviewReportSchemaVersion
@@ -297,6 +307,7 @@ module ReviewCommand =
         normalized.Sections <- normalizedSections
         normalized
 
+    /// Renders review report markdown results only when the selected output mode includes human-readable console text.
     let internal renderReviewReportMarkdown (report: ReviewReportResult) =
         let normalized = normalizeReviewReportForOutput report
         let markdown = StringBuilder()
@@ -344,10 +355,12 @@ module ReviewCommand =
 
         markdown.ToString().TrimEnd()
 
+    /// Coordinates serialize review report json behavior for this CLI command path.
     let internal serializeReviewReportJson (report: ReviewReportResult) =
         let normalized = normalizeReviewReportForOutput report
         serialize normalized
 
+    /// Writes notes summary data through the CLI output contract.
     let private writeNotesSummary (parseResult: ParseResult) (notes: ReviewNotes) =
         if
             not (parseResult |> json)
@@ -360,6 +373,7 @@ module ReviewCommand =
 
             AnsiConsole.MarkupLine($"[bold]Chapters:[/] {notes.Chapters.Length}  [bold]Findings:[/] {notes.Findings.Length}")
 
+    /// Routes the inbox command from parsed options through validation, the SDK call, and result rendering.
     let private inboxHandler (parseResult: ParseResult) =
         task {
             let graceError = GraceError.Create "Review inbox is not implemented yet." (getCorrelationId parseResult)
@@ -367,15 +381,18 @@ module ReviewCommand =
             return Error graceError
         }
 
+    /// Executes the inbox command by binding ParseResult values to the SDK request and CLI output contract.
     type Inbox() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous inbox action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = inboxHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the open command from parsed options through validation, the SDK call, and result rendering.
     let private openHandler (parseResult: ParseResult) =
         task {
             try
@@ -424,15 +441,18 @@ module ReviewCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the open command by binding ParseResult values to the SDK request and CLI output contract.
     type Open() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous open action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = openHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the checkpoint command from parsed options through validation, the SDK call, and result rendering.
     let private checkpointHandler (parseResult: ParseResult) =
         task {
             try
@@ -476,15 +496,18 @@ module ReviewCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the checkpoint command by binding ParseResult values to the SDK request and CLI output contract.
     type Checkpoint() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous checkpoint action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = checkpointHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the resolve handler command from parsed options through validation, the SDK call, and result rendering.
     let private resolveHandlerImpl (parseResult: ParseResult) =
         if parseResult |> verbose then printParseResult parseResult
         let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -536,6 +559,7 @@ module ReviewCommand =
 
                     Review.ResolveFinding(parameters)
 
+    /// Routes the resolve command from parsed options through validation, the SDK call, and result rendering.
     let private resolveHandler (parseResult: ParseResult) =
         task {
             try
@@ -544,15 +568,18 @@ module ReviewCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the resolve command by binding ParseResult values to the SDK request and CLI output contract.
     type Resolve() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous resolve action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = resolveHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the deepen command from parsed options through validation, the SDK call, and result rendering.
     let private deepenHandler (parseResult: ParseResult) =
         task {
             try
@@ -590,15 +617,18 @@ module ReviewCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the deepen command by binding ParseResult values to the SDK request and CLI output contract.
     type Deepen() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous deepen action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = deepenHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the report show command from parsed options through validation, the SDK call, and result rendering.
     let private reportShowHandler (parseResult: ParseResult) =
         task {
             try
@@ -626,15 +656,18 @@ module ReviewCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the report show command by binding ParseResult values to the SDK request and CLI output contract.
     type ReportShow() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous report show action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = reportShowHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the report export command from parsed options through validation, the SDK call, and result rendering.
     let private reportExportHandler (parseResult: ParseResult) =
         task {
             try
@@ -710,9 +743,11 @@ module ReviewCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the report export command by binding ParseResult values to the SDK request and CLI output contract.
     type ReportExport() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous report export action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = reportExportHandler parseResult
@@ -720,6 +755,7 @@ module ReviewCommand =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

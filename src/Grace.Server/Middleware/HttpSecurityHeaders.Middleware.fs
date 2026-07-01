@@ -5,6 +5,7 @@ open Microsoft.Extensions.Primitives
 open System.Collections.Generic
 open Microsoft.Extensions.DependencyInjection
 
+/// Represents http security headers middleware used by Grace Server APIs and background services.
 type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
 
     let Access_Control_Allow_Credentials = new KeyValuePair<string, StringValues>("Access-Control-Allow-Credentials", new StringValues("true"))
@@ -31,6 +32,7 @@ type HttpSecurityHeadersMiddleware(next: RequestDelegate) =
             )
         )
 
+    /// Adds the configured HTTP security headers before the downstream pipeline writes the response.
     member this.Invoke(context: HttpContext) =
 
         // -----------------------------------------------------------------------------------------------------

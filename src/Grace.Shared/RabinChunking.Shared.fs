@@ -46,6 +46,7 @@ module RabinChunking =
     let private cutValue = cutMask
     let private topFingerprintBit = 0x8000000000000000UL
 
+    /// Feeds one byte into the rolling Rabin window used for content-defined chunking.
     let private appendByte (fingerprint: uint64) (value: byte) =
         let mutable candidate = fingerprint
         let input = uint64 value
@@ -67,10 +68,12 @@ module RabinChunking =
 
             fingerprint)
 
+    /// Checks whether the rolling hash and chunk size allow a natural chunk boundary.
     let private isNaturalBoundary fingerprint =
         fingerprint <> 0UL
         && (fingerprint &&& cutMask) = cutValue
 
+    /// Finds the next content-defined chunk boundary within the configured size limits.
     let private findChunkEnd (bytes: byte array) start =
         let limit =
             start
@@ -106,6 +109,7 @@ module RabinChunking =
 
         chunkEnd
 
+    /// Copies a selected chunk range into a new byte array.
     let private copyRange (bytes: byte array) offset length =
         let chunkBytes = Array.zeroCreate<byte> length
         Array.Copy(bytes, offset, chunkBytes, 0, length)

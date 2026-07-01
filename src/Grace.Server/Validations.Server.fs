@@ -24,6 +24,7 @@ open System.Threading.Tasks
 open Services
 open Microsoft.Extensions.Caching.Memory
 
+/// Contains Grace Server validations behavior and supporting helpers.
 module Validations =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Validations.Server")
@@ -36,9 +37,10 @@ module Validations =
             | None -> return Error error
         }
 
+    /// Contains Grace Server owner behavior and supporting helpers.
     module Owner =
 
-        /// Validates that the given ownerId exists in the database.
+        /// Implements owner id exists for the server request pipeline.
         let ownerIdExists<'T> (ownerId: string) correlationId (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
@@ -65,7 +67,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given ownerId does not already exist in the database.
+        /// Implements owner id does not exist for the server request pipeline.
         let ownerIdDoesNotExist<'T> (ownerId: string) correlationId (error: 'T) =
             task {
                 let mutable ownerGuid = Guid.Empty
@@ -83,7 +85,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the owner exists in the database.
+        /// Implements owner exists for the server request pipeline.
         let ownerExists<'T> ownerId ownerName (context: HttpContext) (error: 'T) =
             let result =
                 let graceIds = getGraceIds context
@@ -91,7 +93,7 @@ module Validations =
 
             ValueTask.FromResult(result)
 
-        /// Validates that the given ownerName does not already exist in the database.
+        /// Implements owner name does not exist for the server request pipeline.
         let ownerNameDoesNotExist<'T> (ownerName: string) correlationId (error: 'T) =
             task {
                 let! ownerNameExists = ownerNameExists ownerName false correlationId
@@ -99,7 +101,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the owner is deleted.
+        /// Implements owner is deleted for the server request pipeline.
         let ownerIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
@@ -121,7 +123,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the owner is not deleted.
+        /// Implements owner is not deleted for the server request pipeline.
         let ownerIsNotDeleted<'T> context correlationId (error: 'T) =
             task {
                 match! ownerIsDeleted context correlationId error with
@@ -130,7 +132,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given ownerId does not already exist in the database.
+        /// Implements owner does not exist for the server request pipeline.
         let ownerDoesNotExist<'T> ownerId ownerName correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(ownerId)
@@ -143,9 +145,10 @@ module Validations =
             }
             |> ValidationResult
 
+    /// Contains Grace Server organization behavior and supporting helpers.
     module Organization =
 
-        /// Validates that the given organizationId exists in the database.
+        /// Implements organization id exists for the server request pipeline.
         let organizationIdExists<'T> (organizationId: string) correlationId (error: 'T) =
             task {
                 let mutable organizationGuid = Guid.Empty
@@ -172,7 +175,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given organizationId does not already exist in the database.
+        /// Implements organization id does not exist for the server request pipeline.
         let organizationIdDoesNotExist<'T> (organizationId: string) correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(organizationId) then
@@ -184,7 +187,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given organizationName does not already exist for this owner.
+        /// Implements organization name is unique within owner for the server request pipeline.
         let organizationNameIsUniqueWithinOwner<'T>
             (ownerId: string)
             (ownerName: string)
@@ -211,7 +214,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the organization exists.
+        /// Implements organization exists for the server request pipeline.
         let organizationExists<'T> ownerId ownerName organizationId organizationName correlationId (error: 'T) =
             task {
                 try
@@ -244,7 +247,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the organization does not exist.
+        /// Implements organization does not exist for the server request pipeline.
         let organizationDoesNotExist<'T> ownerId ownerName organizationId organizationName correlationId (error: 'T) =
             task {
                 match! organizationExists ownerId ownerName organizationId organizationName correlationId error with
@@ -253,7 +256,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the organization is deleted.
+        /// Implements organization is deleted for the server request pipeline.
         let organizationIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
@@ -275,7 +278,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the organization is not deleted.
+        /// Implements organization is not deleted for the server request pipeline.
         let organizationIsNotDeleted<'T> context correlationId (error: 'T) =
             task {
                 match! organizationIsDeleted context correlationId error with
@@ -284,9 +287,10 @@ module Validations =
             }
             |> ValidationResult
 
+    /// Contains Grace Server repository behavior and supporting helpers.
     module Repository =
 
-        /// Validates that the given RepositoryId exists in the database.
+        /// Implements repository id exists for the server request pipeline.
         let repositoryIdExists<'T> (organizationId: OrganizationId) (repositoryId: string) correlationId (error: 'T) =
             task {
                 let mutable repositoryGuid = Guid.Empty
@@ -313,7 +317,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given repositoryId does not already exist in the database.
+        /// Implements repository id does not exist for the server request pipeline.
         let repositoryIdDoesNotExist<'T> (organizationId: OrganizationId) (repositoryId: string) correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(repositoryId) then
@@ -325,7 +329,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the repository exists.
+        /// Implements repository exists for the server request pipeline.
         let repositoryExists<'T> ownerId ownerName organizationId organizationName repositoryId repositoryName correlationId (error: 'T) =
             task {
                 match! resolveRepositoryId ownerId organizationId repositoryId repositoryName correlationId with
@@ -355,7 +359,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the repository is deleted.
+        /// Implements repository is deleted for the server request pipeline.
         let repositoryIsDeleted<'T> context correlationId (error: 'T) =
             task {
                 let graceIds = getGraceIds context
@@ -377,7 +381,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the repository is not deleted.
+        /// Implements repository is not deleted for the server request pipeline.
         let repositoryIsNotDeleted<'T> context correlationId (error: 'T) =
             task {
                 match! repositoryIsDeleted context correlationId error with
@@ -386,6 +390,7 @@ module Validations =
             }
             |> ValidationResult
 
+        /// Implements repository name is unique for the server request pipeline.
         let repositoryNameIsUnique<'T> ownerId organizationId repositoryName correlationId (error: 'T) =
             task {
                 if not <| String.IsNullOrEmpty(repositoryName) then
@@ -399,9 +404,10 @@ module Validations =
             }
             |> ValidationResult
 
+    /// Contains Grace Server branch behavior and supporting helpers.
     module Branch =
 
-        /// Validates that the given branchId exists in the database.
+        /// Implements branch id exists for the server request pipeline.
         let branchIdExists<'T> (branchId: string) repositoryId correlationId (error: 'T) =
             task {
                 let mutable branchGuid = Guid.Empty
@@ -428,7 +434,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given branchId does not exist in the database.
+        /// Implements branch id does not exist for the server request pipeline.
         let branchIdDoesNotExist<'T> (branchId: string) repositoryId correlationId (error: 'T) =
             task {
                 let mutable branchGuid = Guid.Empty
@@ -446,7 +452,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the branch exists in the database.
+        /// Implements branch exists for the server request pipeline.
         let branchExists<'T> ownerId organizationId repositoryId branchId branchName correlationId (error: 'T) =
             task {
                 match! resolveBranchId ownerId organizationId repositoryId branchId branchName correlationId with
@@ -476,7 +482,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that a branch allows a specific reference type.
+        /// Implements branch allows reference type for the server request pipeline.
         let branchAllowsReferenceType<'T> ownerId organizationId repositoryId branchId branchName (referenceType: ReferenceType) correlationId (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
@@ -516,7 +522,7 @@ module Validations =
             |> ValidationResult
 
 
-        /// Validates that a branch allows assign to create promotion references.
+        /// Implements branch allows assign for the server request pipeline.
         let branchAllowsAssign<'T> ownerId organizationId repositoryId branchId branchName correlationId (error: 'T) =
             task {
                 let mutable guid = Guid.Empty
@@ -546,7 +552,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that a parent branch allows promotions.
+        /// Implements parent branch allows promotions for the server request pipeline.
         let parentBranchAllowsPromotions<'T> ownerId organizationId repositoryId parentBranchId parentBranchName correlationId (error: 'T) =
             task {
                 match! resolveBranchId ownerId organizationId repositoryId parentBranchId parentBranchName correlationId with
@@ -574,7 +580,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given branchName does not exist in the database.
+        /// Implements branch name does not exist for the server request pipeline.
         let branchNameDoesNotExist<'T> ownerId organizationId repositoryId branchName correlationId (error: 'T) =
             task {
                 match! resolveBranchId ownerId organizationId repositoryId String.Empty branchName correlationId with
@@ -583,7 +589,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that the given ReferenceId exists in the database.
+        /// Implements reference id exists for the server request pipeline.
         let referenceIdExists<'T> (referenceId: ReferenceId) repositoryId correlationId (error: 'T) =
             task {
                 if not <| (referenceId = Guid.Empty) then
@@ -596,8 +602,9 @@ module Validations =
             }
             |> ValidationResult
 
+    /// Contains Grace Server directory version behavior and supporting helpers.
     module DirectoryVersion =
-        /// Validates that the given DirectoryId exists in the database.
+        /// Implements directory id exists for the server request pipeline.
         let directoryIdExists<'T> (directoryId: DirectoryVersionId) repositoryId correlationId (error: 'T) =
             task {
                 let exists = memoryCache.Get<string>(directoryId)
@@ -624,7 +631,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that all of the given DirectoryIds exist in the database.
+        /// Implements directory ids exist for the server request pipeline.
         let directoryIdsExist<'T> (directoryIds: List<DirectoryVersionId>) repositoryId correlationId (error: 'T) =
             task {
                 let mutable allExist = true
@@ -641,7 +648,7 @@ module Validations =
             }
             |> ValidationResult
 
-        /// Validates that a directory version with the provided Sha256Hash exists in a repository.
+        /// Computes sha256 hash exists data used by Grace Server.
         let sha256HashExists<'T> repositoryId sha256Hash correlationId (error: 'T) =
             task {
                 let repositoryActorProxy = Repository.CreateActorProxy repositoryId correlationId

@@ -5,10 +5,13 @@ open Grace.Shared
 open NUnit.Framework
 open System
 
+/// Contains tests covering rabin chunking shared behavior.
 [<Parallelizable(ParallelScope.All)>]
 type RabinChunkingSharedTests() =
+    /// Verifies that pseudo random bytes.
     static member private PseudoRandomBytes length =
         let bytes = Array.zeroCreate<byte> length
+        /// Tracks state changes so this scenario can assert the resulting side effect explicitly.
         let mutable state = 0x12345678u
 
         for index in 0 .. length - 1 do
@@ -19,6 +22,7 @@ type RabinChunkingSharedTests() =
 
         bytes
 
+    /// Verifies that pinned suite exposes constants for client implementations.
     [<Test>]
     member _.PinnedSuiteExposesConstantsForClientImplementations() =
         Assert.That(RabinChunking.SuiteName, Is.EqualTo("grace-rabin-blake3-64k-v1"))
@@ -28,9 +32,11 @@ type RabinChunkingSharedTests() =
         Assert.That(RabinChunking.WindowSize, Is.EqualTo(64))
         Assert.That(RabinChunking.Polynomial, Is.EqualTo(0x3DA3358B4DC173UL))
 
+    /// Verifies that empty payload has no chunks.
     [<Test>]
     member _.EmptyPayloadHasNoChunks() = Assert.That(RabinChunking.chunkBytes Array.empty, Is.Empty)
 
+    /// Verifies that payload below minimum emits one chunk with its blake3 address.
     [<Test>]
     member _.PayloadBelowMinimumEmitsOneChunkWithItsBlake3Address() =
         let payload = RabinChunkingSharedTests.PseudoRandomBytes 4096
@@ -41,6 +47,7 @@ type RabinChunkingSharedTests() =
         Assert.That(chunks[0].Length, Is.EqualTo(payload.Length))
         Assert.That(chunks[0].Address, Is.EqualTo(ContentAddress.computeChunkAddress payload))
 
+    /// Verifies that forced maximum cuts when no natural boundary appears.
     [<Test>]
     member _.ForcedMaximumCutsWhenNoNaturalBoundaryAppears() =
         let payload = Array.zeroCreate<byte> ((128 * 1024) + 17)
@@ -49,6 +56,7 @@ type RabinChunkingSharedTests() =
         Assert.That((chunks |> Array.map (fun chunk -> chunk.Length)) = [| 128 * 1024; 17 |], Is.True)
         Assert.That((chunks |> Array.map (fun chunk -> chunk.Offset)) = [| 0L; 128L * 1024L |], Is.True)
 
+    /// Verifies that seeded payload has pinned chunk boundaries.
     [<Test>]
     member _.SeededPayloadHasPinnedChunkBoundaries() =
         let payload = RabinChunkingSharedTests.PseudoRandomBytes 220000
@@ -67,14 +75,17 @@ type RabinChunkingSharedTests() =
 
         Assert.That((chunks |> Array.map (fun chunk -> chunk.Address)) = expectedAddresses, Is.True)
 
+    /// Verifies that chunking is deterministic.
     [<Test>]
     member _.ChunkingIsDeterministic() =
         let payload = RabinChunkingSharedTests.PseudoRandomBytes 220000
 
         Assert.That(RabinChunking.chunkBytes payload = RabinChunking.chunkBytes payload, Is.True)
 
+    /// Verifies that fs check properties hold for chunk coverage and sizing.
     [<Test>]
     member _.FsCheckPropertiesHoldForChunkCoverageAndSizing() =
+        /// Defines the property assertion used to explore generated inputs for the types rabin Chunking invariant.
         let property (NonNegativeInt requestedLength) =
             let length = Math.Min(requestedLength, 512 * 1024)
             let payload = RabinChunkingSharedTests.PseudoRandomBytes length

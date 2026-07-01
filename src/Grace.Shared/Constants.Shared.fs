@@ -19,6 +19,7 @@ open System.Text.RegularExpressions
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Contains constants helpers.
 module Constants =
 
     /// The universal serialization options for F#-specific data types in Grace.
@@ -86,6 +87,7 @@ module Constants =
     /// Attempts to locate the union type from a runtime instance, even when the
     /// value is represented by the compiler-generated nested case type.
     let private tryGetUnionType (runtimeType: Type) =
+        /// Repeats a text fragment to build fixed-width console separators.
         let rec loop currentType =
             if isNull currentType then None
             elif FSharpType.IsUnion currentType then Some currentType
@@ -626,9 +628,9 @@ module Constants =
         let DefaultExpirationTime = TimeSpan.FromMinutes(2.0)
 #endif
 
-/// A MemoryCacheEntryOptions object that uses Grace's default expiration time.
 //let DefaultMemoryCacheEntryOptions = MemoryCacheEntryOptions().SetAbsoluteExpiration(DefaultExpirationTime)
 
+/// Contains results helpers.
 module Results =
     let Ok = 0
     let Exception = -1

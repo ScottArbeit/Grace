@@ -4,9 +4,11 @@ open Grace.SDK
 open NUnit.Framework
 open System
 
+/// Exercises storage sdk behavior.
 [<Parallelizable(ParallelScope.All)>]
 type StorageSdkTests() =
 
+    /// Verifies that content block placement from uri uses configured account for custom blob endpoint.
     [<Test>]
     member _.ContentBlockPlacementFromUriUsesConfiguredAccountForCustomBlobEndpoint() =
         let placement =
@@ -21,6 +23,7 @@ type StorageSdkTests() =
         Assert.That(placement.ObjectKey, Is.EqualTo("cas/content/aaaaaaaa"))
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-custom"))
 
+    /// Verifies that content block placement from production upload uri uses shard evidence fragment for custom blob endpoint.
     [<Test>]
     member _.ContentBlockPlacementFromProductionUploadUriUsesShardEvidenceFragmentForCustomBlobEndpoint() =
         let placement =
@@ -33,6 +36,7 @@ type StorageSdkTests() =
         Assert.That(placement.ObjectKey, Is.EqualTo("staging/upload-sessions/session/content-blocks/aaaaaaaa"))
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-staged"))
 
+    /// Verifies that content block placement from cname endpoint uses shard evidence fragment.
     [<Test>]
     member _.ContentBlockPlacementFromCnameEndpointUsesShardEvidenceFragment() =
         let placement =
@@ -47,6 +51,7 @@ type StorageSdkTests() =
         Assert.That(placement.ObjectKey, Is.EqualTo("cas/content/bbbbbbbb"))
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-cname"))
 
+    /// Verifies that content block placement from private link endpoint keeps private host and shard evidence.
     [<Test>]
     member _.ContentBlockPlacementFromPrivateLinkEndpointKeepsPrivateHostAndShardEvidence() =
         let placement =
@@ -60,6 +65,7 @@ type StorageSdkTests() =
         Assert.That(string placement.StorageContainerName, Is.EqualTo("cas-container"))
         Assert.That(placement.ObjectKey, Is.EqualTo("cas/content/cccccccc"))
 
+    /// Verifies that content block placement from ip custom endpoint prefers shard fragment before path style parsing.
     [<Test>]
     member _.ContentBlockPlacementFromIpCustomEndpointPrefersShardFragmentBeforePathStyleParsing() =
         let placement =
@@ -74,6 +80,7 @@ type StorageSdkTests() =
         Assert.That(placement.ObjectKey, Is.EqualTo("staging/upload-sessions/session/content-blocks/aaaaaaaa"))
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-ip"))
 
+    /// Verifies that content block placement from azurite upload uri keeps path style parsing with shard fragment.
     [<Test>]
     member _.ContentBlockPlacementFromAzuriteUploadUriKeepsPathStyleParsingWithShardFragment() =
         let placement =
@@ -88,6 +95,7 @@ type StorageSdkTests() =
         Assert.That(string placement.StorageContainerName, Is.EqualTo("cas-container"))
         Assert.That(placement.ObjectKey, Is.EqualTo("staging/upload-sessions/session/content-blocks/aaaaaaaa"))
 
+    /// Verifies that content block placement from uri does not infer account from arbitrary custom host.
     [<Test>]
     member _.ContentBlockPlacementFromUriDoesNotInferAccountFromArbitraryCustomHost() =
         let placement =
@@ -102,6 +110,7 @@ type StorageSdkTests() =
         Assert.That(placement.ObjectKey, Is.EqualTo("cas/content/dddddddd"))
         Assert.That(placement.ETag, Is.EqualTo(None))
 
+    /// Verifies that content block placement from uri keeps azure and azurite account evidence.
     [<Test>]
     member _.ContentBlockPlacementFromUriKeepsAzureAndAzuriteAccountEvidence() =
         let azurePlacement =
@@ -125,6 +134,7 @@ type StorageSdkTests() =
         Assert.That(string azuritePlacement.StorageContainerName, Is.EqualTo("cas-container"))
         Assert.That(azuritePlacement.ObjectKey, Is.EqualTo("cas/content/ffffffff"))
 
+    /// Verifies that content block placement from uri keeps standard account evidence without configured endpoint.
     [<Test>]
     member _.ContentBlockPlacementFromUriKeepsStandardAccountEvidenceWithoutConfiguredEndpoint() =
         let placement =

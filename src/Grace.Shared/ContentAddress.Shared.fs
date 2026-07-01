@@ -6,6 +6,7 @@ open System
 open System.Text
 open System.Text.RegularExpressions
 
+/// Contains content address helpers.
 module ContentAddress =
     [<Literal>]
     let AddressHexLength = 64
@@ -30,18 +31,22 @@ module ContentAddress =
             ||| RegexOptions.CultureInvariant
         )
 
+    /// Adds one named field to the canonical content-address preimage.
     let private appendLine (builder: StringBuilder) (value: string) = builder.Append(value).Append('\n') |> ignore
 
+    /// Rejects negative numeric fields before they enter a content-address preimage.
     let private ensureNonNegative name value =
         if value < 0L then
             invalidArg name "Content address preimage values cannot be negative."
 
+    /// Requires a non-empty lowercase 64-hex address for content-address inputs.
     let private requireValidAddress name (address: string) =
         if lowercaseAddressRegex.IsMatch(address) then
             address
         else
             invalidArg name "Content addresses must be lowercase 64-character hexadecimal BLAKE3 values."
 
+    /// Requires a sequence field to contain at least one canonicalized item.
     let private requireNonEmptySequence name values =
         if isNull (box values) then nullArg name
 

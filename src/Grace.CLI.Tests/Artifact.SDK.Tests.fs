@@ -4,9 +4,11 @@ open Grace.SDK
 open Grace.Shared.Parameters.Artifact
 open NUnit.Framework
 
+/// Exercises artifact sdk behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ArtifactSdkTests() =
 
+    /// Verifies that build download uri route includes owner scope.
     [<Test>]
     member _.BuildDownloadUriRouteIncludesOwnerScope() =
         let parameters =

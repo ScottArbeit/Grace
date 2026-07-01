@@ -34,10 +34,12 @@ open System.Linq
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Contains Grace Server branch behavior and supporting helpers.
 module Branch =
 
     let private branchHashLookupErrorItemKey = "BranchHashLookupError"
 
+    /// Implements branch hash lookup description for the server request pipeline.
     let private branchHashLookupDescription (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
         let sha256HashText = string sha256Hash
         let blake3HashText = string blake3Hash
@@ -52,12 +54,14 @@ module Branch =
         else
             $"SHA-256 prefix '{sha256HashText}'"
 
+    /// Writes ambiguous branch hash lookup error onto the current response or server state.
     let private setAmbiguousBranchHashLookupError (context: HttpContext) sha256Hash blake3Hash correlationId =
         let graceError = GraceError.Create $"The supplied {branchHashLookupDescription sha256Hash blake3Hash} is ambiguous in repository scope." correlationId
 
         graceError.Properties.Add("Path", context.Request.Path.Value)
         context.Items[ branchHashLookupErrorItemKey ] <- graceError
 
+    /// Gets try get branch hash lookup error data needed by the server flow.
     let private tryGetBranchHashLookupError (context: HttpContext) =
         let mutable item = null
 
@@ -66,26 +70,34 @@ module Branch =
         else
             None
 
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> BranchParameters> = 'T -> ValueTask<Result<unit, BranchError>> array
 
     let activitySource = new ActivitySource("Branch")
 
+    /// Implements branch logger for the server request pipeline.
     let private branchLogger () = ApplicationContext.loggerFactory.CreateLogger("Branch.Server")
 
     let log =
         { new ILogger with
+            /// Delegates logging scope creation to the wrapped logger only when branch route logging is enabled.
             member _.BeginScope<'TState>(state: 'TState) = (branchLogger ()).BeginScope(state)
+            /// Reports whether the wrapped logger will emit branch route diagnostics for the requested level.
             member _.IsEnabled(logLevel) = (branchLogger ()).IsEnabled(logLevel)
 
+            /// Writes branch route diagnostics through the wrapped logger when the level is enabled.
             member _.Log(logLevel, eventId, state, ex, formatter) =
                 (branchLogger ())
                     .Log(logLevel, eventId, state, ex, formatter)
         }
 
+    /// Implements annotation error for the server request pipeline.
     let private annotationError correlationId message = GraceError.Create message correlationId
 
+    /// Normalizes normalize annotation path data for stable server comparisons.
     let private normalizeAnnotationPath (path: string) = normalizeFilePath path
 
+    /// Determines whether malformed annotation path.
     let private isMalformedAnnotationPath (path: string) =
         let normalized = normalizeAnnotationPath path
 
@@ -95,6 +107,7 @@ module Branch =
         || (normalized.Split('/', StringSplitOptions.RemoveEmptyEntries)
             |> Array.exists (fun segment -> segment = "." || segment = ".."))
 
+    /// Converts server authentication data into annotation source reference.
     let private toAnnotationSourceReference (referenceDto: Reference.ReferenceDto) =
         { AnnotationSourceReference.Default with
             SourceReferenceId = $"{referenceDto.ReferenceId}"
@@ -106,6 +119,7 @@ module Branch =
             CreatedBy = referenceDto.CreatedBy
         }
 
+    /// Attempts to find file version and returns an option or result instead of throwing.
     let private tryFindFileVersion (path: RelativePath) (contents: DirectoryVersion.DirectoryVersionDto array) =
         let normalizedPath = normalizeAnnotationPath path
 
@@ -113,12 +127,14 @@ module Branch =
         |> Seq.collect (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.Files :> seq<FileVersion>)
         |> Seq.tryFind (fun fileVersion -> String.Equals(normalizeAnnotationPath fileVersion.RelativePath, normalizedPath, StringComparison.Ordinal))
 
+    /// Reads reference metadata and directory contents needed to render branch history.
     let private getReferenceContents repositoryId correlationId (referenceDto: Reference.ReferenceDto) =
         task {
             let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
             return! directoryActorProxy.GetRecursiveDirectoryVersions false correlationId
         }
 
+    /// Checks authorization needed for can read reference branch server behavior.
     let private canReadReferenceBranch (context: HttpContext) (referenceDto: Reference.ReferenceDto) =
         task {
             let principals = PrincipalMapper.getPrincipals context.User
@@ -132,12 +148,14 @@ module Branch =
             | Denied _ -> return false
         }
 
+    /// Gets try get based on reference id data needed by the server flow.
     let tryGetBasedOnReferenceId (referenceDto: Reference.ReferenceDto) =
         referenceDto.Links
         |> Seq.tryPick (function
             | ReferenceLinkType.BasedOn referenceId when referenceId <> ReferenceId.Empty -> Some referenceId
             | _ -> None)
 
+    /// Gets try get stored based on reference id data needed by the server flow.
     let private tryGetStoredBasedOnReferenceId (syntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId>) (referenceDto: Reference.ReferenceDto) =
         match tryGetBasedOnReferenceId referenceDto with
         | Some basedOnReferenceId ->
@@ -146,6 +164,7 @@ module Branch =
             | _ -> Some basedOnReferenceId
         | None -> None
 
+    /// Implements materialize annotation document for the server request pipeline.
     let private materializeAnnotationDocument
         (context: HttpContext)
         (repositoryDto: Repository.RepositoryDto)
@@ -175,6 +194,7 @@ module Branch =
     [<Literal>]
     let internal MaxRetainedAnnotationMaterializationBytes = 64L * 1024L * 1024L
 
+    /// Attempts to reserve retained annotation bytes and returns an option or result instead of throwing.
     let internal tryReserveRetainedAnnotationBytes retainedBytes (document: AnnotationHistoryDocument) =
         let contentLength = if isNull document.Content then 0L else int64 document.Content.LongLength
 
@@ -184,12 +204,15 @@ module Branch =
         else
             Ok(retainedBytes + contentLength)
 
+    /// Implements effective history document for the server request pipeline.
     let private effectiveHistoryDocument document basedOnReferenceId isAuthorized boundaryKind =
         { Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = isAuthorized; BoundaryKind = boundaryKind }
 
+    /// Implements empty annotation document for the server request pipeline.
     let private emptyAnnotationDocument path referenceDto =
         { SourceReference = toAnnotationSourceReference referenceDto; Path = normalizeAnnotationPath path; Content = Array.empty }
 
+    /// Implements effective history from materialization result for the server request pipeline.
     let internal effectiveHistoryFromMaterializationResult path targetReferenceId referenceDto basedOnReferenceId materializationResult =
         match materializationResult with
         | Ok (Some document) -> Ok(effectiveHistoryDocument document basedOnReferenceId true None)
@@ -197,6 +220,7 @@ module Branch =
         | Error materializationError when referenceDto.ReferenceId = targetReferenceId -> Error materializationError
         | Error _ -> Ok(effectiveHistoryDocument (emptyAnnotationDocument path referenceDto) basedOnReferenceId true (Some unreadableAncestorBoundaryKind))
 
+    /// Materializes annotation history across references while preserving unreadable ancestor boundaries for the caller.
     let internal buildEffectiveHistory
         (context: HttpContext)
         (repositoryDto: Repository.RepositoryDto)
@@ -294,6 +318,7 @@ module Branch =
                     )
         }
 
+    /// Adds based on link to the server request model.
     let private withBasedOnLink basedOnReferenceId (referenceDto: Reference.ReferenceDto) =
         match tryGetBasedOnReferenceId referenceDto with
         | Some _ -> referenceDto
@@ -305,8 +330,10 @@ module Branch =
                     |> Array.ofSeq
             }
 
+    /// Represents history window used by Grace Server APIs and background services.
     type internal HistoryWindow = { References: Reference.ReferenceDto array; SyntheticBasedOnByReferenceId: Dictionary<ReferenceId, ReferenceId> }
 
+    /// Implements ordered history window with synthetic boundaries for the server request pipeline.
     let internal orderedHistoryWindowWithSyntheticBoundaries targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
         let ordered =
             references
@@ -332,10 +359,12 @@ module Branch =
 
             { References = window; SyntheticBasedOnByReferenceId = syntheticBasedOnByReferenceId }
 
+    /// Implements ordered history window for the server request pipeline.
     let internal orderedHistoryWindow targetReferenceId maxReferences (references: Reference.ReferenceDto array) =
         (orderedHistoryWindowWithSyntheticBoundaries targetReferenceId maxReferences references)
             .References
 
+    /// Implements include stored based on references for the server request pipeline.
     let private includeStoredBasedOnReferences
         repositoryId
         correlationId
@@ -401,6 +430,7 @@ module Branch =
             return effectiveReferences.ToArray()
         }
 
+    /// Validates an annotation request and prepares the repository, branch, reference, and file-path inputs for storage.
     let private buildAnnotationForRequest (context: HttpContext) (parameters: AnnotateParameters) =
         task {
             let graceIds = getGraceIds context
@@ -478,6 +508,7 @@ module Branch =
                                 | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
         }
 
+    /// Coordinates process command with post success processing for Grace Server.
     let processCommandWithPostSuccess<'T when 'T :> BranchParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -502,6 +533,7 @@ module Branch =
                 parameters.RepositoryId <- graceIds.RepositoryIdString
                 parameters.BranchId <- graceIds.BranchIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand cmd =
                     task {
                         let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
@@ -620,9 +652,11 @@ module Branch =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> BranchParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<BranchCommand>) =
         processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
+    /// Resolves resolve root directory version for reference command data from request or repository state.
     let private resolveRootDirectoryVersionForReferenceCommand repositoryId directoryVersionId sha256Hash blake3Hash correlationId =
         task {
             if directoryVersionId <> DirectoryVersionId.Empty then
@@ -669,12 +703,15 @@ module Branch =
                 return Services.NoMatches
         }
 
+    /// Resolves try resolve root directory version for hash query data from request or repository state.
     let private tryResolveRootDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
         task { return! getRootDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
 
+    /// Resolves try resolve directory version for hash query data from request or repository state.
     let private tryResolveDirectoryVersionForHashQuery repositoryId sha256Hash blake3Hash correlationId =
         task { return! Services.getDirectoryVersionByHashQuery repositoryId sha256Hash blake3Hash correlationId }
 
+    /// Implements reference command from root for the server request pipeline.
     let private referenceCommandFromRoot
         (context: HttpContext)
         (createCommand: DirectoryVersionId * Sha256Hash * Blake3Hash * ReferenceText -> BranchCommand)
@@ -695,6 +732,7 @@ module Branch =
                 return createCommand (directoryVersionId, sha256Hash, blake3Hash, referenceText)
         }
 
+    /// Validates validate reference root locator inputs before server processing continues.
     let validateReferenceRootLocator (parameters: CreateReferenceParameters) =
         Input.oneOfTheseValuesMustBeProvided
             [|
@@ -704,6 +742,7 @@ module Branch =
             |]
             BranchError.EitherDirectoryVersionIdOrSha256HashRequired
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> BranchParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -778,6 +817,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateBranchParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.ParentBranchId BranchError.InvalidBranchId
@@ -807,6 +847,7 @@ module Branch =
                             BranchError.BranchNameAlreadyExists
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateBranchParameters) =
                     task {
                         match! (resolveBranchId
@@ -849,6 +890,7 @@ module Branch =
                     }
                     |> ValueTask<BranchCommand>
 
+                /// Ensures creator admin before the handler returns success.
                 let ensureCreatorAdmin () =
                     task {
                         let graceIds = getGraceIds context
@@ -872,6 +914,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: RebaseParameters) =
                     [|
                         Branch.referenceIdExists parameters.BasedOn graceIds.RepositoryId parameters.CorrelationId BranchError.ReferenceIdDoesNotExist
@@ -886,6 +929,7 @@ module Branch =
                             BranchError.CommitIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: RebaseParameters) =
                     BranchCommand.Rebase parameters.BasedOn
                     |> returnValueTask
@@ -901,6 +945,7 @@ module Branch =
                 let graceIds = getGraceIds context
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: AssignParameters) =
                     [|
                         String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -922,6 +967,7 @@ module Branch =
                             BranchError.AssignIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: AssignParameters) =
                     task {
                         match!
@@ -986,6 +1032,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
@@ -1004,6 +1051,7 @@ module Branch =
                             BranchError.PromotionIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
                     referenceCommandFromRoot
                         context
@@ -1026,6 +1074,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.isNotEmpty parameters.Message BranchError.MessageIsRequired
@@ -1044,6 +1093,7 @@ module Branch =
                             BranchError.CommitIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
                     referenceCommandFromRoot
                         context
@@ -1066,6 +1116,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
@@ -1083,6 +1134,7 @@ module Branch =
                             BranchError.CheckpointIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
                     referenceCommandFromRoot
                         context
@@ -1107,6 +1159,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 4096 BranchError.StringIsTooLong
@@ -1124,6 +1177,7 @@ module Branch =
                             BranchError.SaveIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
                     referenceCommandFromRoot
                         context
@@ -1146,6 +1200,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
@@ -1163,6 +1218,7 @@ module Branch =
                             BranchError.TagIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
                     referenceCommandFromRoot
                         context
@@ -1185,6 +1241,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateReferenceParameters) =
                     [|
                         String.maxLength parameters.Message 2048 BranchError.StringIsTooLong
@@ -1202,6 +1259,7 @@ module Branch =
                             BranchError.ExternalIsDisabled
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateReferenceParameters) =
                     referenceCommandFromRoot
                         context
@@ -1223,8 +1281,10 @@ module Branch =
     let EnableAssign: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) =
                     EnableAssign(parameters.Enabled)
                     |> returnValueTask
@@ -1237,8 +1297,10 @@ module Branch =
     let EnablePromotion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) =
                     EnablePromotion(parameters.Enabled)
                     |> returnValueTask
@@ -1251,8 +1313,10 @@ module Branch =
     let EnableCommit: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) =
                     EnableCommit(parameters.Enabled)
                     |> returnValueTask
@@ -1265,8 +1329,10 @@ module Branch =
     let EnableCheckpoint: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) =
                     EnableCheckpoint(parameters.Enabled)
                     |> returnValueTask
@@ -1279,8 +1345,10 @@ module Branch =
     let EnableSave: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) = EnableSave(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof EnableSave)
@@ -1291,8 +1359,10 @@ module Branch =
     let EnableTag: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) = EnableTag(parameters.Enabled) |> returnValueTask
 
                 context.Items.Add("Command", nameof EnableTag)
@@ -1303,8 +1373,10 @@ module Branch =
     let EnableExternal: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) =
                     EnableExternal(parameters.Enabled)
                     |> returnValueTask
@@ -1317,8 +1389,10 @@ module Branch =
     let EnableAutoRebase: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: EnableFeatureParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: EnableFeatureParameters) =
                     EnableAutoRebase(parameters.Enabled)
                     |> returnValueTask
@@ -1331,8 +1405,10 @@ module Branch =
     let SetPromotionMode: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetPromotionModeParameters) = [||]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetPromotionModeParameters) =
                     let promotionMode =
                         match parameters.PromotionMode.ToLowerInvariant() with
@@ -1353,11 +1429,13 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: DeleteBranchParameters) =
                     [| // If reassigning child branches, validate that at least one parent is provided OR let it default to the deleted branch's parent
                     // No validation needed here since None is valid (uses deleted branch's parent)
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: DeleteBranchParameters) =
                     task {
                         let! newParentBranchIdOption =
@@ -1398,6 +1476,7 @@ module Branch =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: UpdateParentBranchParameters) =
                     [|
                         Input.eitherIdOrNameMustBeProvided
@@ -1424,6 +1503,7 @@ module Branch =
                             BranchError.ParentBranchDoesNotAllowPromotions
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: UpdateParentBranchParameters) =
                     task {
                         match!
@@ -1461,8 +1541,10 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetBranchParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) = actorProxy.Get(getCorrelationId context)
 
                     let! parameters = context |> parse<GetBranchParameters>
@@ -1509,8 +1591,10 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetBranchParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchEvents = actorProxy.GetEvents(getCorrelationId context)
@@ -1562,8 +1646,10 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: BranchParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! parentBranchDto = actorProxy.GetParentBranch(getCorrelationId context)
@@ -1615,8 +1701,10 @@ module Branch =
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferenceParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let referenceGuid = Guid.Parse(context.Items["ReferenceId"] :?> string)
@@ -1672,11 +1760,13 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
@@ -1799,11 +1889,13 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetLatestReferencesByReferenceTypeParameters) =
                         [|
                             Input.listIsNonEmpty parameters.ReferenceTypes BranchError.ReferenceTypeMustBeProvided
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
                             let referenceTypes = context.Items["ReferenceTypes"] :?> ReferenceType array
@@ -1865,6 +1957,7 @@ module Branch =
                 let correlationId = getCorrelationId context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetDiffsForReferenceTypeParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
@@ -1872,6 +1965,7 @@ module Branch =
                             DiscriminatedUnion.isMemberOf<ReferenceType, BranchError> parameters.ReferenceType BranchError.InvalidReferenceType
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
                             let diffDtos = ConcurrentBag<DiffDto>()
@@ -1968,11 +2062,13 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
@@ -2024,11 +2120,13 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
@@ -2080,11 +2178,13 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
@@ -2136,12 +2236,14 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
                         |]
 
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
@@ -2193,11 +2295,13 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
@@ -2249,11 +2353,13 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesParameters) =
                         [|
                             Number.isPositiveOrZero parameters.MaxCount BranchError.ValueMustBePositive
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
@@ -2297,6 +2403,7 @@ module Branch =
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
             }
 
+    /// Handles the Grace Server get recursive size request.
     let GetRecursiveSize: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -2306,6 +2413,7 @@ module Branch =
                 let repositoryId = graceIds.RepositoryId
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: ListContentsParameters) =
                         [|
                             String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -2313,6 +2421,7 @@ module Branch =
                             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
@@ -2404,6 +2513,7 @@ module Branch =
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
+    /// Handles the Grace Server list contents request.
     let ListContents: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -2413,6 +2523,7 @@ module Branch =
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: ListContentsParameters) =
                         [|
                             String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -2420,6 +2531,7 @@ module Branch =
                             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let listContentsParameters = context.Items["ListContentsParameters"] :?> ListContentsParameters
@@ -2515,6 +2627,7 @@ module Branch =
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
+    /// Builds the validation checks for a version query based on the requested target type.
     let private getVersionValidations (parameters: GetBranchVersionParameters) =
         [|
             String.isEmptyOrValidSha256HashPrefix parameters.Sha256Hash BranchError.InvalidSha256Hash
@@ -2522,6 +2635,7 @@ module Branch =
             Guid.isValidAndNotEmptyGuid parameters.ReferenceId BranchError.InvalidReferenceId
         |]
 
+    /// Resolves try resolve root directory version data from request or repository state.
     let private tryResolveRootDirectoryVersion
         (context: HttpContext)
         (parameters: GetBranchVersionParameters)
@@ -2554,6 +2668,7 @@ module Branch =
                 | None -> return None
         }
 
+    /// Converts version query parameters into the actor query and directory-version lookup inputs.
     let private getVersionQuery (context: HttpContext) _maxCount (actorProxy: IBranchActor) =
         task {
             let parameters = context.Items["GetVersionParameters"] :?> GetBranchVersionParameters
@@ -2577,6 +2692,7 @@ module Branch =
             | None -> return List<DirectoryVersionId>()
         }
 
+    /// Implements update parameters from branch for the server request pipeline.
     let private updateParametersFromBranch (parameters: GetBranchVersionParameters) (repositoryIdResolved: Guid) =
         task {
             logToConsole $"In Branch.GetVersion: parameters.BranchId: {parameters.BranchId}; parameters.BranchName: {parameters.BranchName}"
@@ -2595,6 +2711,7 @@ module Branch =
             | None -> () // This should never happen because it would get caught in validations.
         }
 
+    /// Implements update parameters from reference for the server request pipeline.
     let private updateParametersFromReference
         (context: HttpContext)
         (parameters: GetBranchVersionParameters)
@@ -2611,6 +2728,7 @@ module Branch =
             parameters.BranchId <- $"{referenceDto.BranchId}"
         }
 
+    /// Implements update parameters from sha for the server request pipeline.
     let private updateParametersFromSha (parameters: GetBranchVersionParameters) (repositoryIdFromRoute: Guid) (graceIds: GraceIds) =
         task {
             logToConsole $"In Branch.GetVersion: parameters.Sha256Hash: {parameters.Sha256Hash}"
@@ -2626,6 +2744,7 @@ module Branch =
                 ()
         }
 
+    /// Implements update parameters for repository id option for the server request pipeline.
     let private updateParametersForRepositoryIdOption
         (context: HttpContext)
         (graceIds: GraceIds)
@@ -2653,6 +2772,7 @@ module Branch =
             else
                 Task.FromResult(())
 
+    /// Executes version lookup by validating inputs, querying the branch actor, and returning the materialized DTO.
     let private getVersionImpl (next: HttpFunc) (context: HttpContext) =
         task {
             let graceIds = getGraceIds context
@@ -2671,6 +2791,7 @@ module Branch =
             return! processQuery context parameters getVersionValidations 1 getVersionQuery
         }
 
+    /// Handles the Grace Server get version request.
     let GetVersion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {

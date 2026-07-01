@@ -28,8 +28,10 @@ open System.Diagnostics
 open System.Linq
 open System.Threading.Tasks
 
+/// Contains Grace Server owner behavior and supporting helpers.
 module Owner =
 
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> OwnerParameters> = 'T -> ValueTask<Result<unit, OwnerError>> array
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Owner.Server")
@@ -57,6 +59,7 @@ module Owner =
                 // We know these Id's from ValidateIds.Middleware, so let's set them so we never have to resolve them again.
                 parameters.OwnerId <- graceIds.OwnerIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand (ownerId: string) cmd =
                     task {
                         let t = cmd.GetType()
@@ -179,6 +182,7 @@ module Owner =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> OwnerParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<OwnerCommand>) =
         processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
@@ -240,18 +244,21 @@ module Owner =
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateOwnerParameters) =
                     [|
                         Owner.ownerIdDoesNotExist parameters.OwnerId parameters.CorrelationId OwnerIdAlreadyExists
                         Owner.ownerNameDoesNotExist parameters.OwnerName parameters.CorrelationId OwnerNameAlreadyExists
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateOwnerParameters) =
                     let ownerIdGuid = Guid.Parse(parameters.OwnerId)
 
                     Create(ownerIdGuid, OwnerName parameters.OwnerName)
                     |> returnValueTask
 
+                /// Ensures creator admin before the handler returns success.
                 let ensureCreatorAdmin () =
                     task {
                         let graceIds = getGraceIds context
@@ -269,6 +276,7 @@ module Owner =
     let SetName: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOwnerNameParameters) =
                     [|
                         String.isNotEmpty parameters.NewName OwnerError.OwnerNameIsRequired
@@ -277,6 +285,7 @@ module Owner =
                         Owner.ownerNameDoesNotExist parameters.NewName parameters.CorrelationId OwnerError.OwnerNameAlreadyExists
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOwnerNameParameters) =
                     SetName(OwnerName parameters.NewName)
                     |> returnValueTask
@@ -289,6 +298,7 @@ module Owner =
     let SetType: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOwnerTypeParameters) =
                     [|
                         String.isNotEmpty parameters.OwnerType OwnerError.OwnerTypeIsRequired
@@ -296,6 +306,7 @@ module Owner =
                         Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOwnerTypeParameters) =
                     OwnerCommand.SetType(
                         discriminatedUnionFromString<OwnerType>(
@@ -313,6 +324,7 @@ module Owner =
     let SetSearchVisibility: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOwnerSearchVisibilityParameters) =
                     [|
                         String.isNotEmpty parameters.SearchVisibility OwnerError.SearchVisibilityIsRequired
@@ -320,6 +332,7 @@ module Owner =
                         Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOwnerSearchVisibilityParameters) =
                     OwnerCommand.SetSearchVisibility(
                         Utilities
@@ -338,6 +351,7 @@ module Owner =
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOwnerDescriptionParameters) =
                     [|
                         String.isNotEmpty parameters.Description OwnerError.DescriptionIsRequired
@@ -345,6 +359,7 @@ module Owner =
                         Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOwnerDescriptionParameters) =
                     OwnerCommand.SetDescription(parameters.Description)
                     |> returnValueTask
@@ -358,11 +373,13 @@ module Owner =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: ListOrganizationsParameters) =
                         [|
                             Guid.isValidAndNotEmptyGuid parameters.OwnerId OwnerError.InvalidOwnerId
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) =
                         task {
                             let! organizations = actorProxy.ListOrganizations(getCorrelationId context)
@@ -382,12 +399,14 @@ module Owner =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: DeleteOwnerParameters) =
                     [|
                         String.isNotEmpty parameters.DeleteReason OwnerError.DeleteReasonIsRequired
                         Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: DeleteOwnerParameters) =
                     OwnerCommand.DeleteLogical(parameters.Force, parameters.DeleteReason)
                     |> returnValueTask
@@ -400,11 +419,13 @@ module Owner =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: OwnerParameters) =
                     [|
                         Owner.ownerIsDeleted context parameters.CorrelationId OwnerError.OwnerIsNotDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: OwnerParameters) = OwnerCommand.Undelete |> returnValueTask
 
                 context.Items.Add("Command", nameof Undelete)
@@ -419,11 +440,13 @@ module Owner =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetOwnerParameters) =
                         [|
                             Owner.ownerIsNotDeleted context parameters.CorrelationId OwnerError.OwnerIsDeleted
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOwnerActor) = actorProxy.Get(getCorrelationId context)
 
                     let! parameters = context |> parse<GetOwnerParameters>

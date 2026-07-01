@@ -6,10 +6,12 @@ open NUnit.Framework
 open System
 open System.Text.Json
 
+/// Covers slop Unit behavior in no-Aspire server unit tests.
 [<TestFixture>]
 type SlopUnit() =
 
     // Slop guard: if JSON serialization options change, round-tripping breaks.
+    /// Verifies that owner Dto Json Round Trip.
     [<Test; Category("Slop")>]
     member _.OwnerDtoJsonRoundTrip() =
         let original = { OwnerDto.Default with OwnerId = Guid.NewGuid(); OwnerName = "SlopOwner" }

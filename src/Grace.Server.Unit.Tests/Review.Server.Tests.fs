@@ -10,8 +10,10 @@ open NUnit.Framework
 open System
 open System.Threading.Tasks
 
+/// Covers review Projection behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ReviewProjectionTests() =
+    /// Constructs parameters fixtures used by the server unit review assertions.
     let createParameters (candidateId: string) =
         let parameters = ResolveCandidateIdentityParameters(CandidateId = candidateId)
         parameters.OwnerId <- Guid.NewGuid().ToString()
@@ -20,11 +22,13 @@ type ReviewProjectionTests() =
         parameters.CorrelationId <- Guid.NewGuid().ToString()
         parameters
 
+    /// Verifies that resolve Candidate Identity Projection With Uses Direct Promotion Set Projection.
     [<Test>]
     member _.ResolveCandidateIdentityProjectionWithUsesDirectPromotionSetProjection() =
         let candidateId = Guid.NewGuid()
         let parameters = createParameters $"  {candidateId.ToString().ToUpperInvariant()}  "
 
+        /// Resolves promotion Set through the same path exercised by the server unit review scenario.
         let resolvePromotionSet (promotionSetId: Guid) : Task<Grace.Types.PromotionSet.PromotionSetDto option> =
             task {
                 let promotionSet = { PromotionSetDto.Default with PromotionSetId = promotionSetId }
@@ -47,11 +51,13 @@ type ReviewProjectionTests() =
             Assert.That(projection.SourceStates[0].Section, Is.EqualTo("identity"))
             Assert.That(projection.SourceStates[0].SourceState, Is.EqualTo(ProjectionSourceStates.Authoritative))
 
+    /// Verifies that resolve Candidate Identity Projection With Returns Deterministic Projection For Same Input.
     [<Test>]
     member _.ResolveCandidateIdentityProjectionWithReturnsDeterministicProjectionForSameInput() =
         let candidateId = Guid.NewGuid()
         let parameters = createParameters (candidateId.ToString())
 
+        /// Resolves promotion Set through the same path exercised by the server unit review scenario.
         let resolvePromotionSet (promotionSetId: Guid) : Task<Grace.Types.PromotionSet.PromotionSetDto option> =
             task {
                 let promotionSet = { PromotionSetDto.Default with PromotionSetId = promotionSetId }
@@ -64,6 +70,7 @@ type ReviewProjectionTests() =
         let secondResultTask = Review.resolveCandidateIdentityProjectionWith resolvePromotionSet parameters
         let secondResult = secondResultTask.GetAwaiter().GetResult()
 
+        /// Extracts deterministic Shape from the scenario result so assertions stay focused on server unit review behavior.
         let getDeterministicShape (result: Result<CandidateIdentityProjectionResult, Grace.Types.Common.GraceError>) =
             match result with
             | Error error -> $"error:{error.Error}:{error.CorrelationId}:{error.Properties.Count}"
@@ -85,11 +92,13 @@ type ReviewProjectionTests() =
 
         Assert.That(getDeterministicShape firstResult, Is.EqualTo(getDeterministicShape secondResult))
 
+    /// Verifies that resolve Candidate Identity Projection With Rejects Invalid Candidate Id Without Lookup.
     [<Test>]
     member _.ResolveCandidateIdentityProjectionWithRejectsInvalidCandidateIdWithoutLookup() =
         let parameters = createParameters "  not-a-guid  "
         let mutable resolveCalls = 0
 
+        /// Resolves promotion Set through the same path exercised by the server unit review scenario.
         let resolvePromotionSet (_: Guid) : Task<Grace.Types.PromotionSet.PromotionSetDto option> =
             task {
                 resolveCalls <- resolveCalls + 1
@@ -108,6 +117,7 @@ type ReviewProjectionTests() =
             Assert.That(error.Properties.ContainsKey("NormalizedCandidateId"), Is.True)
             Assert.That(error.Properties["NormalizedCandidateId"], Is.EqualTo("not-a-guid"))
 
+    /// Verifies that resolve Candidate Identity Projection With Returns Deterministic Not Found Error.
     [<Test>]
     member _.ResolveCandidateIdentityProjectionWithReturnsDeterministicNotFoundError() =
         let candidateId = Guid.NewGuid()
@@ -127,6 +137,7 @@ type ReviewProjectionTests() =
             Assert.That(error.Properties["RepositoryId"], Is.EqualTo(parameters.RepositoryId))
             Assert.That(error.Properties["NormalizedCandidateId"], Is.EqualTo(candidateId.ToString()))
 
+    /// Verifies that derive Candidate Required Actions Returns Ordered Deterministic Actions.
     [<Test>]
     member _.DeriveCandidateRequiredActionsReturnsOrderedDeterministicActions() =
         let actions, diagnostics =
@@ -145,6 +156,7 @@ type ReviewProjectionTests() =
 
         Assert.That(diagnostics, Is.Empty)
 
+    /// Verifies that build Candidate Projection Snapshot Includes Not Available Diagnostics.
     [<Test>]
     member _.BuildCandidateProjectionSnapshotIncludesNotAvailableDiagnostics() =
         let promotionSet =
@@ -190,6 +202,7 @@ type ReviewProjectionTests() =
                 "review"
             ]
 
+    /// Verifies that build Candidate Attestation Entries Marks Missing Sources As Not Available.
     [<Test>]
     member _.BuildCandidateAttestationEntriesMarksMissingSourcesAsNotAvailable() =
         let attestations, diagnostics, sourceStates = Review.buildCandidateAttestationEntries Option.None Option.None

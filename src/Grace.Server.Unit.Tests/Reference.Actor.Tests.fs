@@ -11,6 +11,7 @@ open System.Collections.Generic
 open System.IO
 open System.Threading.Tasks
 
+/// Covers reference Actor Hash Validation behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ReferenceActorHashValidationTests() =
 
@@ -26,6 +27,7 @@ type ReferenceActorHashValidationTests() =
     let referenceId = Guid.Parse("66666666-bbbb-4444-8888-666666666666")
     let referenceText = ReferenceText "matching replay"
 
+    /// Builds directory Version With Hashes test data for the server unit reference Actor scenarios in this file.
     let directoryVersionWithHashes sha blake3 =
         DirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -39,6 +41,7 @@ type ReferenceActorHashValidationTests() =
             (List<FileVersion>())
             0L
 
+    /// Builds child Directory Version With Hashes test data for the server unit reference Actor scenarios in this file.
     let childDirectoryVersionWithHashes sha blake3 =
         DirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -52,6 +55,7 @@ type ReferenceActorHashValidationTests() =
             (List<FileVersion>())
             0L
 
+    /// Verifies that missing Root Blake3 Fails Before Reference Creation.
     [<Test>]
     member _.MissingRootBlake3FailsBeforeReferenceCreation() =
         let directoryVersion = directoryVersionWithHashes sha256Hash (Blake3Hash String.Empty)
@@ -64,6 +68,7 @@ type ReferenceActorHashValidationTests() =
             Assert.That(error.Error, Does.Contain("must include Blake3Hash"))
             Assert.That(error.Properties[nameof DirectoryVersionId], Is.EqualTo(string directoryVersionId))
 
+    /// Verifies that empty Command Blake3 Fails Before Reference Creation.
     [<Test>]
     member _.EmptyCommandBlake3FailsBeforeReferenceCreation() =
         let directoryVersion = directoryVersionWithHashes sha256Hash blake3Hash
@@ -75,6 +80,7 @@ type ReferenceActorHashValidationTests() =
         | Ok _ -> Assert.Fail("Expected empty command Blake3Hash to fail.")
         | Error error -> Assert.That(error.Error, Does.Contain("command must include"))
 
+    /// Verifies that legacy Root Directory Version With Empty Blake3 Allows Empty Command Blake3.
     [<Test>]
     member _.LegacyRootDirectoryVersionWithEmptyBlake3AllowsEmptyCommandBlake3() =
         let directoryVersion = directoryVersionWithHashes sha256Hash (Blake3Hash String.Empty)
@@ -86,6 +92,7 @@ type ReferenceActorHashValidationTests() =
         | Ok _ -> ()
         | Error error -> Assert.Fail($"Expected legacy empty Blake3Hash root to be tolerated, but got {error.Error}.")
 
+    /// Verifies that non Root Directory Version Fails Before Reference Creation.
     [<Test>]
     member _.NonRootDirectoryVersionFailsBeforeReferenceCreation() =
         let directoryVersion = childDirectoryVersionWithHashes sha256Hash blake3Hash
@@ -96,6 +103,7 @@ type ReferenceActorHashValidationTests() =
         | Ok _ -> Assert.Fail("Expected non-root DirectoryVersion to fail.")
         | Error error -> Assert.That(error.Error, Does.Contain("repository root path"))
 
+    /// Verifies that mismatched Root Hashes Fail Before Reference Creation.
     [<Test>]
     member _.MismatchedRootHashesFailBeforeReferenceCreation() =
         let directoryVersion = directoryVersionWithHashes sha256Hash blake3Hash
@@ -112,6 +120,7 @@ type ReferenceActorHashValidationTests() =
             Assert.That(blakeError.Error, Does.Contain("Blake3Hash does not match"))
         | _ -> Assert.Fail("Expected both mismatched hash validations to fail.")
 
+    /// Verifies that create Command Replay Matches Durable Created Reference.
     [<Test>]
     member _.CreateCommandReplayMatchesDurableCreatedReference() =
         let links =
@@ -169,6 +178,7 @@ type ReferenceActorHashValidationTests() =
         Assert.That(createCommandMatchesReference referenceDto mismatchedCommand, Is.False)
         Assert.That(createCommandMatchesReference ReferenceDto.Default matchingCommand, Is.False)
 
+    /// Verifies that legacy Created Event With Empty Blake3 Hydrates From Matching Root Directory Version.
     [<Test>]
     member _.LegacyCreatedEventWithEmptyBlake3HydratesFromMatchingRootDirectoryVersion() =
         task {
@@ -200,6 +210,7 @@ type ReferenceActorHashValidationTests() =
                         }
                 }
 
+            /// Extracts directory Version from the scenario result so assertions stay focused on server unit reference Actor behavior.
             let getDirectoryVersion (requestedRepositoryId: RepositoryId) (requestedDirectoryId: DirectoryVersionId) (requestedCorrelationId: CorrelationId) =
                 Assert.That(requestedRepositoryId, Is.EqualTo(repositoryId))
                 Assert.That(requestedDirectoryId, Is.EqualTo(directoryVersionId))
@@ -214,6 +225,7 @@ type ReferenceActorHashValidationTests() =
             Assert.That(repairedDto.Blake3Hash, Is.EqualTo(blake3Hash))
         }
 
+    /// Verifies that legacy Created Event With Empty Blake3 Hydrates From Root Sha Prefix.
     [<Test>]
     member _.LegacyCreatedEventWithEmptyBlake3HydratesFromRootShaPrefix() =
         task {
@@ -259,6 +271,7 @@ type ReferenceActorHashValidationTests() =
             Assert.That(repairedDto.Blake3Hash, Is.EqualTo(blake3Hash))
         }
 
+    /// Verifies that legacy Created Event With Empty Blake3 Does Not Hydrate From Non Root Or Wrong Sha Prefix.
     [<Test>]
     member _.LegacyCreatedEventWithEmptyBlake3DoesNotHydrateFromNonRootOrWrongShaPrefix() =
         task {
@@ -266,6 +279,7 @@ type ReferenceActorHashValidationTests() =
             let branchId = Guid.Parse("aaaaaaaa-bbbb-4444-8888-aaaaaaaaaaaa")
             let fullSha256Hash = Sha256Hash "abcdef0123456789"
 
+            /// Constructs event fixtures used by the server unit reference Actor assertions.
             let createEvent storedSha256Hash =
                 {
                     Event =
@@ -304,6 +318,7 @@ type ReferenceActorHashValidationTests() =
             Assert.That(wrongPrefixWasRepaired, Is.False)
         }
 
+    /// Verifies that save Create Applies Manifest Contribution Boundary Before Created Event Persists.
     [<Test>]
     member _.SaveCreateAppliesManifestContributionBoundaryBeforeCreatedEventPersists() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
@@ -372,6 +387,7 @@ type ReferenceActorHashValidationTests() =
             "Save manifest contribution boundary failures must not occur after ApplyEvent persists Created."
         )
 
+    /// Verifies that manifest Expiry Boundary Only Applies To Save References Until Commit Checkpoint Fanout Is Wired.
     [<Test>]
     member _.ManifestExpiryBoundaryOnlyAppliesToSaveReferencesUntilCommitCheckpointFanoutIsWired() =
         let referenceOfType referenceType = { ReferenceDto.Default with ReferenceId = Guid.NewGuid(); ReferenceType = referenceType }
@@ -381,6 +397,7 @@ type ReferenceActorHashValidationTests() =
         Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Checkpoint), Is.False)
         Assert.That(shouldApplyManifestExpiryBoundary ReferenceDto.Default, Is.False)
 
+    /// Verifies that manifest Contribution Boundary Predicate Keeps Commit Checkpoint Out Of Unwired Workflow.
     [<Test>]
     member _.ManifestContributionBoundaryPredicateKeepsCommitCheckpointOutOfUnwiredWorkflow() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
@@ -397,11 +414,13 @@ type ReferenceActorHashValidationTests() =
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
 
+    /// Verifies that manifest Contribution Boundary Traversals Force Regeneration Instead Of Cached Recursive Results.
     [<Test>]
     member _.ManifestContributionBoundaryTraversalsForceRegenerationInsteadOfCachedRecursiveResults() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
 
+        /// Asserts the boundary Forces Regeneration condition so failures identify the violated server unit reference Actor invariant.
         let assertBoundaryForcesRegeneration (boundaryStartText: string) (boundaryEndText: string) =
             let boundaryStart = actorSource.IndexOf(boundaryStartText, StringComparison.Ordinal)
 

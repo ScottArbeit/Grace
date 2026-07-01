@@ -27,6 +27,7 @@ open MessagePack.Resolvers
 
 open Grace.Shared.AzureEnvironment
 
+/// Groups Orleans actor helpers for context keys, proxies, state, or workflow transitions.
 module Context =
 
     /// Actor state storage provider instance
@@ -69,9 +70,11 @@ module Context =
 
     /// Pub-sub settings for Grace.
     let mutable internal pubSubSettings: GracePubSubSettings = GracePubSubSettings.Empty
+    /// Replaces the process-wide pub/sub settings used by actor helpers.
     let setPubSubSettings (settings: GracePubSubSettings) = pubSubSettings <- settings
 
     let mutable internal timings = ConcurrentDictionary<CorrelationId, List<Timing>>()
+    /// Replaces the process-wide timing dictionary used to aggregate actor timings.
     let setTimings (timing: ConcurrentDictionary<CorrelationId, List<Timing>>) = timings <- timing
 
     let private defaultAzureCredential = lazy (DefaultAzureCredential())

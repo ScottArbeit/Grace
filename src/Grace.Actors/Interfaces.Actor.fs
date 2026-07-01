@@ -34,20 +34,25 @@ open System.Threading.Tasks
 open System.Reflection.Metadata
 open Orleans.Runtime
 
+/// Groups Orleans actor helpers for interfaces keys, proxies, state, or workflow transitions.
 module Interfaces =
 
+    /// Wraps action records exchanged by actor queries or projections.
     type PersistAction =
         | Save
         | DoNotSave
 
+    /// Wraps export error records exchanged by actor queries or projections.
     type ExportError =
         | EventListIsEmpty
         | Exception of ExceptionResponse
 
+    /// Defines the contract for import error.
     type ImportError =
         | EventListIsEmpty
         | Exception of ExceptionResponse
 
+    /// Wraps revert error records exchanged by actor queries or projections.
     type RevertError =
         | EmptyEventList
         | OutOfRange
@@ -72,14 +77,19 @@ module Interfaces =
     /// This is an experimental interface to explore how to back up and rehydrate actor instances.
     [<Interface>]
     type IExportable<'T> =
+        /// Coordinates export logic for the Interfaces actor.
         abstract member Export: unit -> Task<Result<List<'T>, ExportError>>
+        /// Coordinates import logic for the Interfaces actor.
         abstract member Import: IReadOnlyList<'T> -> Task<Result<int, ImportError>>
 
     /// This is an experimental interface to explore how to implement important management functions for actors that we'll need in production.
     [<Interface>]
     type IRevertable<'T> =
+        /// Coordinates event count logic for the Interfaces actor.
         abstract member EventCount: unit -> Task<int>
+        /// Coordinates revert to instant logic for the Interfaces actor.
         abstract member RevertToInstant: Instant -> PersistAction -> Task<Result<'T, RevertError>>
+        /// Coordinates revert back logic for the Interfaces actor.
         abstract member RevertBack: int -> PersistAction -> Task<Result<'T, RevertError>>
 
     /// Defines the operations that an actor must implement to handle Grace reminders.
@@ -333,6 +343,7 @@ module Interfaces =
         /// Returns true if the reference has been deleted.
         abstract member IsDeleted: correlationId: CorrelationId -> Task<bool>
 
+    /// Defines the Orleans grain contract for reminder actor.
     [<Interface>]
     type IReminderActor =
         inherit IGrainWithGuidKey
@@ -813,6 +824,7 @@ module Interfaces =
     type IPersonalAccessTokenActor =
         inherit IGrainWithStringKey
 
+        /// Builds token data needed by the Interfaces actor.
         abstract member CreateToken:
             name: string ->
             claims: string list ->
@@ -822,12 +834,15 @@ module Interfaces =
             correlationId: CorrelationId ->
                 Task<Result<PersonalAccessTokenCreated, GraceError>>
 
+        /// Returns list tokens data from the Interfaces actor state or related storage.
         abstract member ListTokens:
             includeRevoked: bool -> includeExpired: bool -> now: Instant -> correlationId: CorrelationId -> Task<PersonalAccessTokenSummary list>
 
+        /// Removes or invalidates revoke token data from the Interfaces actor state.
         abstract member RevokeToken:
             tokenId: PersonalAccessTokenId -> now: Instant -> correlationId: CorrelationId -> Task<Result<PersonalAccessTokenSummary, GraceError>>
 
+        /// Validates token before the operation continues.
         abstract member ValidateToken:
             tokenId: PersonalAccessTokenId ->
             secret: byte [] ->

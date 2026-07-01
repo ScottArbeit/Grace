@@ -27,13 +27,16 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Contains Grace Server review behavior and supporting helpers.
 module Review =
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> ReviewParameters> = 'T -> ValueTask<Result<unit, ReviewError>> array
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Review.Server")
 
     let activitySource = new ActivitySource("Review")
 
+    /// Resolves resolve candidate promotion set with data from request or repository state.
     let private resolveCandidatePromotionSetWith
         (resolvePromotionSet: Guid -> Task<Grace.Types.PromotionSet.PromotionSetDto option>)
         (parameters: CandidateProjectionParameters)
@@ -65,6 +68,7 @@ module Review =
                     return Error graceError
         }
 
+    /// Resolves resolve promotion set by id data from request or repository state.
     let private resolvePromotionSetById (context: HttpContext) (promotionSetId: Guid) =
         task {
             let graceIds = getGraceIds context
@@ -79,6 +83,7 @@ module Review =
                 return Option.None
         }
 
+    /// Resolves resolve candidate projection context data from request or repository state.
     let private resolveCandidateProjectionContext (context: HttpContext) (parameters: CandidateProjectionParameters) =
         task {
             match! resolveCandidatePromotionSetWith (resolvePromotionSetById context) parameters with
@@ -95,6 +100,7 @@ module Review =
                 return Ok(identity, promotionSet)
         }
 
+    /// Gets try get queue for promotion set data needed by the server flow.
     let private tryGetQueueForPromotionSet (context: HttpContext) (promotionSet: PromotionSetDto) =
         task {
             let graceIds = getGraceIds context
@@ -109,6 +115,7 @@ module Review =
                 return Option.None
         }
 
+    /// Loads review notes and checkpoints associated with a candidate promotion set.
     let private getReviewStateForPromotionSet (context: HttpContext) (promotionSetId: PromotionSetId) =
         task {
             let graceIds = getGraceIds context
@@ -119,6 +126,7 @@ module Review =
             return notes, (checkpoints |> Seq.toList)
         }
 
+    /// Implements derive candidate required actions for the server request pipeline.
     let internal deriveCandidateRequiredActions
         (promotionSetStatus: PromotionSetStatus)
         (stepsComputationStatus: StepsComputationStatus)
@@ -151,6 +159,7 @@ module Review =
 
         requiredActions |> Seq.distinct |> Seq.toList, diagnostics |> Seq.toList
 
+    /// Records which candidate projection inputs were authoritative and which optional queue or review sources were absent.
     let private buildCandidateProjectionSourceStates (queueExists: bool) (reviewNotesExists: bool) =
         [
             ReviewModels.createProjectionSourceStateMetadata "identity" ProjectionSourceStates.Authoritative "Resolved from candidate identity projection."
@@ -171,6 +180,7 @@ module Review =
                     "Review notes are not available for this candidate."
         ]
 
+    /// Projects promotion-set, queue, review-note, and identity state into the candidate snapshot returned by review APIs.
     let internal buildCandidateProjectionSnapshot
         (identity: CandidateIdentityProjection)
         (promotionSet: PromotionSetDto)
@@ -232,6 +242,7 @@ module Review =
         result.SourceStates <- buildCandidateProjectionSourceStates queue.IsSome reviewNotes.IsSome
         result
 
+    /// Produces report attestation rows that show whether policy snapshot and checkpoint context were available.
     let internal buildCandidateAttestationEntries (policySnapshotId: string option) (latestCheckpoint: ReviewCheckpoint option) =
         let policyAttestation = CandidateAttestation(Name = "PolicySnapshot")
 
@@ -288,6 +299,7 @@ module Review =
         diagnostics,
         sourceStates
 
+    /// Implements finding severity rank for the server request pipeline.
     let private findingSeverityRank (severity: FindingSeverity) =
         match severity with
         | FindingSeverity.Critical -> 0
@@ -296,6 +308,7 @@ module Review =
         | FindingSeverity.Low -> 3
         | FindingSeverity.Info -> 4
 
+    /// Implements required action rank for the server request pipeline.
     let private requiredActionRank (action: string) =
         match action with
         | "ResolveConflicts" -> 0
@@ -307,6 +320,7 @@ module Review =
         | "NoActionRequired" -> 6
         | _ -> 99
 
+    /// Implements blocker severity rank for the server request pipeline.
     let private blockerSeverityRank (severity: string) =
         match severity with
         | "Critical" -> 0
@@ -316,6 +330,7 @@ module Review =
         | "Info" -> 4
         | _ -> 99
 
+    /// Implements report section rank for the server request pipeline.
     let private reportSectionRank (section: string) =
         match section with
         | value when value = ReviewModels.ReviewReportSections.CandidateAndPromotionSet -> 0
@@ -326,6 +341,7 @@ module Review =
         | value when value = ReviewModels.ReviewReportSections.BlockingReasonsAndNextActions -> 5
         | _ -> 99
 
+    /// Implements action category rank for the server request pipeline.
     let private actionCategoryRank (category: string) =
         match category with
         | "candidate" -> 0
@@ -334,10 +350,12 @@ module Review =
         | "review" -> 3
         | _ -> 99
 
+    /// Implements sort source states for the server request pipeline.
     let private sortSourceStates (sourceStates: ProjectionSourceStateMetadata list) =
         sourceStates
         |> List.sortBy (fun sourceState -> sourceState.Section, sourceState.SourceState, sourceState.Detail)
 
+    /// Computes map required action to blocker and suggestion data used by Grace Server.
     let private mapRequiredActionToBlockerAndSuggestion (candidateId: string) (promotionSetId: string) (targetBranchId: string) (action: string) =
         match action with
         | "ResolveConflicts" ->
@@ -398,6 +416,7 @@ module Review =
                 $"grace review report show --candidate {candidateId}"
             )
 
+    /// Assembles the candidate review report sections, diagnostics, and suggested commands from projection state.
     let internal buildReviewReport
         (identity: CandidateIdentityProjection)
         (promotionSet: PromotionSetDto)
@@ -729,6 +748,7 @@ module Review =
 
         report
 
+    /// Gets try get current policy snapshot id data needed by the server flow.
     let private tryGetCurrentPolicySnapshotId (context: HttpContext) (targetBranchId: BranchId) =
         task {
             let graceIds = getGraceIds context
@@ -747,6 +767,7 @@ module Review =
                         Option.Some snapshotId)
         }
 
+    /// Implements enrich candidate return value for the server request pipeline.
     let private enrichCandidateReturnValue (context: HttpContext) (parameters: #ReviewParameters) (returnValue: GraceReturnValue<'T>) =
         let graceIds = getGraceIds context
 
@@ -761,6 +782,7 @@ module Review =
 
         returnValue
 
+    /// Implements enrich candidate error for the server request pipeline.
     let private enrichCandidateError (context: HttpContext) (parameters: #ReviewParameters) (error: GraceError) =
         let graceIds = getGraceIds context
 
@@ -775,6 +797,7 @@ module Review =
 
         error
 
+    /// Resolves resolve candidate identity projection with data from request or repository state.
     let internal resolveCandidateIdentityProjectionWith
         (resolvePromotionSet: Guid -> Task<Grace.Types.PromotionSet.PromotionSetDto option>)
         (parameters: ResolveCandidateIdentityParameters)
@@ -794,9 +817,11 @@ module Review =
                 return Ok projectionResult
         }
 
+    /// Resolves resolve candidate identity projection data from request or repository state.
     let internal resolveCandidateIdentityProjection (context: HttpContext) (parameters: ResolveCandidateIdentityParameters) =
         resolveCandidateIdentityProjectionWith (resolvePromotionSetById context) parameters
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> ReviewParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<ReviewCommand>) =
         task {
             let commandName = context.Items["Command"] :?> string
@@ -813,6 +838,7 @@ module Review =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand promotionSetId cmd =
                     task {
                         let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
@@ -886,6 +912,7 @@ module Review =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> ReviewParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -943,6 +970,7 @@ module Review =
                 return! context |> result500ServerError graceError
         }
 
+    /// Packages the outcome of a candidate action with its projection identity, applied operations, and diagnostics.
     let private createCandidateActionResult
         (identity: CandidateIdentityProjection)
         (actionName: string)
@@ -966,6 +994,7 @@ module Review =
 
         result
 
+    /// Implements execute candidate retry for the server request pipeline.
     let private executeCandidateRetry (context: HttpContext) (identity: CandidateIdentityProjection) (promotionSet: PromotionSetDto) =
         task {
             let graceIds = getGraceIds context
@@ -1020,6 +1049,7 @@ module Review =
                     | Error error -> return Error error
         }
 
+    /// Implements execute candidate cancel for the server request pipeline.
     let private executeCandidateCancel (context: HttpContext) (identity: CandidateIdentityProjection) (promotionSet: PromotionSetDto) =
         task {
             let graceIds = getGraceIds context
@@ -1038,6 +1068,7 @@ module Review =
                 | Error error -> return Error error
         }
 
+    /// Implements execute candidate gate rerun for the server request pipeline.
     let private executeCandidateGateRerun (context: HttpContext) (identity: CandidateIdentityProjection) (promotionSet: PromotionSetDto) (gateName: string) =
         task {
             let graceIds = getGraceIds context
@@ -1402,11 +1433,13 @@ module Review =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: GetReviewNotesParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId ReviewError.InvalidPromotionSetId
                     |]
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) _ (actorProxy: IReviewActor) = actorProxy.GetNotes(getCorrelationId context)
 
                 let! parameters = context |> parse<GetReviewNotesParameters>
@@ -1424,6 +1457,7 @@ module Review =
                 let graceIds = getGraceIds context
                 let correlationId = getCorrelationId context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: ReviewCheckpointParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId ReviewError.InvalidPromotionSetId
@@ -1431,6 +1465,7 @@ module Review =
                         String.isNotEmpty parameters.PolicySnapshotId ReviewError.InvalidPolicySnapshotId
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: ReviewCheckpointParameters) =
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
 
@@ -1467,6 +1502,7 @@ module Review =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: ResolveFindingParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId ReviewError.InvalidPromotionSetId
@@ -1474,6 +1510,7 @@ module Review =
                         DiscriminatedUnion.isMemberOf<FindingResolutionState, ReviewError> parameters.ResolutionState ReviewError.InvalidResolutionState
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: ResolveFindingParameters) =
                     let principal =
                         if

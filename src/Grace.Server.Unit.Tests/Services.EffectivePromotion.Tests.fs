@@ -11,9 +11,11 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Covers services Effective Promotion behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ServicesEffectivePromotionTests() =
 
+    /// Constructs promotion Reference fixtures used by the server unit services Effective Promotion assertions.
     let createPromotionReference createdAt isDeleted hasTerminalLink =
         let links: ReferenceLinkType seq =
             if hasTerminalLink then
@@ -46,6 +48,7 @@ type ServicesEffectivePromotionTests() =
     let blake3Hash = Blake3Hash "root-blake3"
     let correlationId = "services-reference-projection-tests"
 
+    /// Builds root Directory Version With Hashes test data for the server unit services Effective Promotion scenarios in this file.
     let rootDirectoryVersionWithHashes sha256Hash blake3Hash =
         DirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -59,6 +62,7 @@ type ServicesEffectivePromotionTests() =
             (List<FileVersion>())
             0L
 
+    /// Builds child Directory Version With Hashes test data for the server unit services Effective Promotion scenarios in this file.
     let childDirectoryVersionWithHashes sha256Hash blake3Hash =
         DirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -72,6 +76,7 @@ type ServicesEffectivePromotionTests() =
             (List<FileVersion>())
             0L
 
+    /// Builds legacy Created Reference Event test data for the server unit services Effective Promotion scenarios in this file.
     let legacyCreatedReferenceEvent storedSha256Hash =
         {
             Event =
@@ -98,6 +103,7 @@ type ServicesEffectivePromotionTests() =
                 }
         }
 
+    /// Verifies that latest Effective Promotion Ignores Deleted Terminal References.
     [<Test>]
     member _.LatestEffectivePromotionIgnoresDeletedTerminalReferences() =
         let createdAt = Instant.FromUtc(2026, 2, 21, 10, 0)
@@ -117,6 +123,7 @@ type ServicesEffectivePromotionTests() =
 
         Assert.That(selected, Is.EqualTo(Some previousTerminal))
 
+    /// Verifies that latest Effective Promotion Requires Terminal Link.
     [<Test>]
     member _.LatestEffectivePromotionRequiresTerminalLink() =
         let createdAt = Instant.FromUtc(2026, 2, 21, 12, 0)
@@ -126,6 +133,7 @@ type ServicesEffectivePromotionTests() =
 
         Assert.That(selected, Is.EqualTo(None))
 
+    /// Verifies that latest Reference Selection Ignores Deleted References.
     [<Test>]
     member _.LatestReferenceSelectionIgnoresDeletedReferences() =
         let createdAt = Instant.FromUtc(2026, 2, 21, 14, 0)
@@ -136,6 +144,7 @@ type ServicesEffectivePromotionTests() =
 
         Assert.That(selected, Is.EqualTo(Some previousActive))
 
+    /// Verifies that direct Reference Projection Hydrates Legacy Empty Blake3 From Root Sha Prefix.
     [<Test>]
     member _.DirectReferenceProjectionHydratesLegacyEmptyBlake3FromRootShaPrefix() =
         task {
@@ -163,6 +172,7 @@ type ServicesEffectivePromotionTests() =
             Assert.That(referenceDto.Blake3Hash, Is.EqualTo(blake3Hash))
         }
 
+    /// Verifies that direct Reference Projection Leaves Legacy Empty Blake3 For Non Root Or Wrong Sha Prefix.
     [<Test>]
     member _.DirectReferenceProjectionLeavesLegacyEmptyBlake3ForNonRootOrWrongShaPrefix() =
         task {

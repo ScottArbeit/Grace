@@ -5,9 +5,11 @@ open Grace.Shared
 open NUnit.Framework
 open System
 
+/// Covers aspire test host diagnostics scenarios.
 [<TestFixture>]
 type AspireTestHostDiagnosticsTests() =
 
+    /// Verifies the redacts connection string secrets but keeps actionable endpoints scenario.
     [<Test>]
     member _.RedactsConnectionStringSecretsButKeepsActionableEndpoints() =
         let cosmos =
@@ -34,6 +36,7 @@ type AspireTestHostDiagnosticsTests() =
                 Assert.That(serviceBus, Does.Not.Contain("service-bus-secret")))
         )
 
+    /// Verifies the format env diagnostics uses selected redacted values only scenario.
     [<Test>]
     member _.FormatEnvDiagnosticsUsesSelectedRedactedValuesOnly() =
         let env =
@@ -76,6 +79,7 @@ type AspireTestHostDiagnosticsTests() =
                 Assert.That(diagnostics, Does.Not.Contain("must-not-appear")))
         )
 
+    /// Verifies the missing startup keys name required cosmos storage and service bus sources scenario.
     [<Test>]
     member _.MissingStartupKeysNameRequiredCosmosStorageAndServiceBusSources() =
         let env =
@@ -105,6 +109,7 @@ type AspireTestHostDiagnosticsTests() =
                 Assert.That(diagnostics, Does.Not.Contain("storage-secret")))
         )
 
+    /// Verifies the service bus skip mode is classified unsupported for shared server setup scenario.
     [<Test>]
     member _.ServiceBusSkipModeIsClassifiedUnsupportedForSharedServerSetup() =
         let message = AspireTestHost.FixtureDiagnostics.serviceBusSkipModeMessage

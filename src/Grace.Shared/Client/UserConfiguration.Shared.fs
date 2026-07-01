@@ -6,6 +6,7 @@ open System
 open System.IO
 open System.Text.Json
 
+/// Contains user configuration helpers.
 module UserConfiguration =
 
     [<Literal>]
@@ -17,6 +18,7 @@ module UserConfiguration =
     [<Literal>]
     let private DefaultRetentionDays = 90
 
+    /// Lists option names whose values should be redacted in command history and diagnostics.
     let defaultRedactOptionNames () =
         [|
             "token"
@@ -27,6 +29,7 @@ module UserConfiguration =
             "connectionstring"
         |]
 
+    /// Lists regexes used to redact common secret values from persisted user data.
     let defaultRedactRegexes () =
         [|
             "(?i)(sig=)[^&]+"
@@ -34,11 +37,13 @@ module UserConfiguration =
             "(?i)(password=)[^&]+"
         |]
 
+    /// Lists regexes used to flag destructive command tokens for safer history handling.
     let defaultDestructiveTokenRegexes () =
         [|
             "(?i)\\b(delete|remove|purge|destroy|reset|drop)\\b"
         |]
 
+    /// Represents history configuration.
     type HistoryConfiguration() =
         member val Enabled = false with get, set
         member val MaxEntries = DefaultMaxEntries with get, set
@@ -49,21 +54,27 @@ module UserConfiguration =
         member val RedactRegexes = defaultRedactRegexes () with get, set
         member val DestructiveTokenRegexes = defaultDestructiveTokenRegexes () with get, set
 
+    /// Represents auth configuration.
     type AuthConfiguration() =
         member val ActiveAccountId = String.Empty with get, set
         member val ActiveTenantId = String.Empty with get, set
         member val ActiveUsername = String.Empty with get, set
 
+    /// Represents user configuration.
     type UserConfiguration() =
         member val History = HistoryConfiguration() with get, set
         member val Auth = AuthConfiguration() with get, set
 
+        /// Returns the display representation for this value.
         override this.ToString() = serialize this
 
+    /// Represents the user configuration load result contract.
     type UserConfigurationLoadResult = { Configuration: UserConfiguration; WasCorrupt: bool; ErrorMessage: string option; CreatedNew: bool }
 
+    /// Represents the user configuration inspection contract.
     type UserConfigurationInspection = { Path: string; Exists: bool; Configuration: UserConfiguration option; ErrorMessage: string option }
 
+    /// Normalizes history.
     let private normalizeHistory (history: HistoryConfiguration) =
         let normalized = if obj.ReferenceEquals(history, null) then HistoryConfiguration() else history
 
@@ -78,6 +89,7 @@ module UserConfiguration =
 
         normalized
 
+    /// Normalizes configuration.
     let private normalizeConfiguration (configuration: UserConfiguration) =
         let normalized =
             if obj.ReferenceEquals(configuration, null) then
@@ -95,6 +107,7 @@ module UserConfiguration =
 
         normalized
 
+    /// Gets user profile directory.
     let private getUserProfileDirectory () =
         let userProfile = Environment.GetFolderPath(Environment.SpecialFolder.UserProfile)
 
@@ -108,19 +121,23 @@ module UserConfiguration =
             else
                 Environment.CurrentDirectory
 
+    /// Gets user grace directory.
     let getUserGraceDirectory () =
         let userProfile = getUserProfileDirectory ()
         Path.Combine(userProfile, ".grace")
 
+    /// Gets user configuration path.
     let getUserConfigurationPath () =
         let userGraceDir = getUserGraceDirectory ()
         Path.Combine(userGraceDir, "userconfig.json")
 
+    /// Creates the per-user .grace directory when it is missing and returns its path.
     let ensureUserGraceDirectory () =
         let userGraceDir = getUserGraceDirectory ()
         Directory.CreateDirectory(userGraceDir) |> ignore
         userGraceDir
 
+    /// Normalizes and writes the per-user Grace configuration JSON file.
     let saveUserConfiguration (configuration: UserConfiguration) =
         try
             let path = getUserConfigurationPath ()
@@ -131,6 +148,7 @@ module UserConfiguration =
         with
         | ex -> Error $"Failed to write user configuration: {ex.Message}"
 
+    /// Loads per-user Grace configuration, creating the default file when none exists.
     let loadUserConfiguration () =
         let defaultConfiguration = UserConfiguration()
 
@@ -166,6 +184,7 @@ module UserConfiguration =
                 CreatedNew = false
             }
 
+    /// Attempts to inspect user configuration.
     let tryInspectUserConfiguration () =
         let path = getUserConfigurationPath ()
 

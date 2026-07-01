@@ -22,15 +22,23 @@ open Microsoft.Azure.Cosmos
 open Grace.Shared.Constants
 open System.Net
 
+/// Contains Grace Server reminder service behavior and supporting helpers.
 module ReminderService =
 
+    /// Represents reminder value used by Grace Server APIs and background services.
     type ReminderValue() =
+        /// Cosmos document id for the persisted reminder record.
         member val Id = String.Empty with get, set
+        /// Cosmos partition key used when querying reminder records.
         member val PartitionKey = String.Empty with get, set
+        /// Grace reminder id that the background service will execute.
         member val ReminderId = ReminderId.Empty with get, set
+        /// Correlation id recorded when the reminder was scheduled.
         member val CorrelationId: CorrelationId = String.Empty with get, set
+        /// Serializes the reminder value for diagnostic logging.
         override this.ToString() = serialize this
 
+    /// Represents reminder service used by Grace Server APIs and background services.
     type ReminderService() =
         inherit BackgroundService()
 
@@ -169,6 +177,7 @@ module ReminderService =
             }
             :> Task
 
+        /// Logs startup configuration before the background reminder loop begins.
         override this.StartAsync(cancellationToken: CancellationToken) =
             log.LogInformation("{CurrentInstant}: Node: {HostName}; ReminderService is starting.", getCurrentInstantExtended (), getMachineName)
 
@@ -181,6 +190,7 @@ module ReminderService =
 
             ``base``.StartAsync(cancellationToken)
 
+        /// Delays initial processing, then polls due reminders until the host stops.
         override this.ExecuteAsync(stoppingToken: CancellationToken) =
             task {
                 try
@@ -238,6 +248,7 @@ module ReminderService =
             }
             :> Task
 
+        /// Logs reminder-service shutdown before delegating to the background service base class.
         override this.StopAsync(cancellationToken: CancellationToken) =
             log.LogInformation("{CurrentInstant}: Node: {HostName}; ReminderService is stopping.", getCurrentInstantExtended (), getMachineName)
             ``base``.StopAsync(cancellationToken)

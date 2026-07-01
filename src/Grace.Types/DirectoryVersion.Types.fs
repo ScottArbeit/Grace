@@ -11,11 +11,13 @@ open System
 open System.Collections.Generic
 open System.Runtime.Serialization
 
+/// Contains directory version helpers.
 module DirectoryVersion =
 
     /// The state held in the database when creating a physical deletion reminder for a DirectoryVersion.
     type PhysicalDeletionReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
 
+    /// Represents directory version command.
     [<KnownType("GetKnownTypes")>]
     type DirectoryVersionCommand =
         | Create of directoryVersion: DirectoryVersion * repositoryDto: RepositoryDto
@@ -24,6 +26,7 @@ module DirectoryVersion =
         | DeletePhysical
         | Undelete
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersionCommand>()
 
     /// Defines the events for the DirectoryVersion actor.
@@ -60,6 +63,7 @@ module DirectoryVersion =
             HashesValidated: bool
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 DirectoryVersion = DirectoryVersion.Default
@@ -69,6 +73,7 @@ module DirectoryVersion =
                 HashesValidated = false
             }
 
+        /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto directoryVersionEvent currentDirectoryVersionDto =
             let directoryVersionEventType = directoryVersionEvent.Event
 

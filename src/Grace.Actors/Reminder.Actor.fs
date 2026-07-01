@@ -21,6 +21,7 @@ open System
 open System.Collections.Concurrent
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for reminder keys, proxies, state, or workflow transitions.
 module Reminder =
 
     /// Orleans implementation of the ReminderActor.
@@ -29,6 +30,7 @@ module Reminder =
 
         let log = loggerFactory.CreateLogger("Reminder.Actor")
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -39,6 +41,7 @@ module Reminder =
             Task.CompletedTask
 
         interface IReminderActor with
+            /// Builds the stable Orleans grain key used to address a Reminder actor.
             member this.Create (reminder: ReminderDto) (correlationId: CorrelationId) =
                 task {
                     try
@@ -73,6 +76,7 @@ module Reminder =
                 }
                 :> Task
 
+            /// Removes or invalidates delete data from the Reminder actor state.
             member this.Delete(correlationId: CorrelationId) =
                 task {
                     let reminderDto = reminderState.State.Reminder
@@ -120,6 +124,7 @@ module Reminder =
                 }
                 :> Task
 
+            /// Reports whether this Reminder actor has persisted state.
             member this.Exists(correlationId: CorrelationId) : Task<bool> =
                 this.correlationId <- correlationId
 
@@ -128,10 +133,12 @@ module Reminder =
                 else
                     true |> returnTask
 
+            /// Returns the current Reminder actor state snapshot.
             member this.Get(correlationId: CorrelationId) =
                 this.correlationId <- correlationId
                 reminderState.State.Reminder |> returnTask
 
+            /// Coordinates remind logic for the Reminder actor.
             member this.Remind(correlationId: CorrelationId) : Task<Result<unit, GraceError>> =
                 task {
                     let reminderDto = reminderState.State.Reminder

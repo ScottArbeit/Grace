@@ -5,12 +5,14 @@ open Grace.Shared.Parameters.Approval
 open Grace.Types.Webhooks
 open System.Collections.Generic
 
+/// Server approval-policy contract returned by approval policy endpoints.
 type ApprovalPolicyDto = Grace.Types.Webhooks.ApprovalPolicy
+/// Server approval-request contract returned by workflow approval endpoints.
 type ApprovalRequestDto = Grace.Types.Webhooks.ApprovalRequest
 
-/// The ApprovalPolicy module provides approval policy lifecycle helpers.
+/// SDK entry point for configuring approval rules that gate repository or branch workflows.
 type ApprovalPolicy() =
-    /// Creates an approval policy.
+    /// Adds a repository or branch-scoped approval rule and returns the stored policy.
     static member public Create(parameters: CreateApprovalPolicyParameters) =
         postServer<CreateApprovalPolicyParameters, ApprovalPolicyDto> (parameters |> ensureCorrelationIdIsSet, "approval/policy/create")
 
@@ -42,7 +44,7 @@ type ApprovalPolicy() =
     static member public Evaluate(parameters: EvaluateApprovalPolicyParameters) =
         postServer<EvaluateApprovalPolicyParameters, IReadOnlyList<ApprovalPolicyDto>> (parameters |> ensureCorrelationIdIsSet, "approval/policy/evaluate")
 
-/// The ApprovalRequest module provides read and response helpers for workflow-generated approval requests.
+/// SDK entry point for viewing and responding to workflow-generated approval requests.
 type ApprovalRequest() =
     /// Lists approval requests for a repository or branch scope.
     static member public List(parameters: ListApprovalRequestsParameters) =

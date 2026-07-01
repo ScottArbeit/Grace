@@ -3,6 +3,7 @@ namespace Grace.Shared.Parameters
 open Grace.Shared.Parameters.Common
 open System
 
+/// Contains artifact helpers.
 module Artifact =
 
     /// Base parameters for artifact endpoints.

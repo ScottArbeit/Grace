@@ -14,6 +14,7 @@ open System.Security.Claims
 open System.Text.Encodings.Web
 open System.Threading.Tasks
 
+/// Contains Grace Server personal access token auth behavior and supporting helpers.
 module PersonalAccessTokenAuth =
     [<Literal>]
     let SchemeName = "GracePat"
@@ -21,12 +22,14 @@ module PersonalAccessTokenAuth =
     [<Literal>]
     let InvalidTokenFailure = "Invalid token."
 
+    /// Represents parsed authorization used by Grace Server APIs and background services.
     type ParsedAuthorization =
         | NoToken
         | NotGracePersonalAccessToken
         | MalformedGracePersonalAccessToken
         | ParsedGracePersonalAccessToken of userId: string * tokenId: PersonalAccessTokenId * secret: byte array
 
+    /// Extracts a bearer token from the Authorization header when the value is present and non-empty.
     let parseAuthorizationHeader (authorization: string) =
         if String.IsNullOrWhiteSpace authorization then
             NoToken
@@ -44,6 +47,7 @@ module PersonalAccessTokenAuth =
                 | None -> MalformedGracePersonalAccessToken
                 | Some (userId, tokenId, secret) -> ParsedGracePersonalAccessToken(userId, tokenId, secret)
 
+    /// Converts server authentication data into authentication claims.
     let toAuthenticationClaims (result: PersonalAccessTokenValidationResult) =
         let claims = ResizeArray<Claim>()
         claims.Add(Claim(PrincipalMapper.GraceUserIdClaim, result.UserId))
@@ -56,9 +60,11 @@ module PersonalAccessTokenAuth =
 
         claims |> Seq.toList
 
+    /// Represents personal access token auth handler used by Grace Server APIs and background services.
     type PersonalAccessTokenAuthHandler(options: IOptionsMonitor<AuthenticationSchemeOptions>, loggerFactory: ILoggerFactory, encoder: UrlEncoder) =
         inherit AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
 
+        /// Gets try get correlation id data needed by the server flow.
         let tryGetCorrelationId (context: HttpContext) =
             match context.Items.TryGetValue(Constants.CorrelationId) with
             | true, value ->
@@ -67,6 +73,7 @@ module PersonalAccessTokenAuth =
                 | _ -> String.Empty
             | _ -> String.Empty
 
+        /// Authenticates Grace PAT bearer tokens and maps valid token records into ASP.NET Core claims.
         override this.HandleAuthenticateAsync() =
             let request = this.Request
             let httpContext = this.Context

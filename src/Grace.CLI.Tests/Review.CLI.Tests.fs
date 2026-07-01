@@ -13,6 +13,7 @@ open System
 open System.IO
 open System.Threading.Tasks
 
+/// Groups review command coverage for the CLI test project.
 [<NonParallelizable>]
 module ReviewCommandTests =
     let private ownerId = Guid.NewGuid()
@@ -30,6 +31,7 @@ module ReviewCommandTests =
             CorrelationId = "corr-review"
         }
 
+    /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
             args
@@ -42,11 +44,13 @@ module ReviewCommandTests =
                 repositoryId.ToString()
             |]
 
+    /// Runs the supplied action with ids and silent applied.
     let private withIdsAndSilent (args: string array) =
         args
         |> Array.append [| "--output"; "Silent" |]
         |> withIds
 
+    /// Invokes the parsed CLI command for test scenarios.
     let private invokeWithCapturedConsole (parseResult: System.CommandLine.ParseResult) =
         use standardOutWriter = new StringWriter()
         use standardErrorWriter = new StringWriter()
@@ -62,6 +66,7 @@ module ReviewCommandTests =
             Console.SetOut(originalOut)
             Console.SetError(originalError)
 
+    /// Parses checkpoint for test assertions.
     let private parseCheckpoint (promotionSetId: Guid) (extraArgs: string array) =
         let baseArgs =
             [|
@@ -75,6 +80,7 @@ module ReviewCommandTests =
 
         GraceCommand.rootCommand.Parse(withIdsAndSilent (Array.append baseArgs extraArgs))
 
+    /// Verifies that review open rejects invalid promotion set id.
     [<Test>]
     let ``review open rejects invalid promotion set id`` () =
         let parseResult =
@@ -88,6 +94,7 @@ module ReviewCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that review checkpoint rejects invalid reference id.
     [<Test>]
     let ``review checkpoint rejects invalid reference id`` () =
         let parseResult =
@@ -105,6 +112,7 @@ module ReviewCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that review resolve requires resolution state.
     [<Test>]
     let ``review resolve requires resolution state`` () =
         let parseResult =
@@ -120,6 +128,7 @@ module ReviewCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that review resolve rejects approve and request changes together.
     [<Test>]
     let ``review resolve rejects approve and request changes together`` () =
         let parseResult =
@@ -137,6 +146,7 @@ module ReviewCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that review delta command is unavailable.
     [<Test>]
     let ``review delta command is unavailable`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "review"; "delta" |])
@@ -149,6 +159,7 @@ module ReviewCommandTests =
 
         Assert.That(hasDeltaError, Is.True)
 
+    /// Verifies that review checkpoint uses explicit policy snapshot when provided.
     [<Test>]
     let ``review checkpoint uses explicit policy snapshot when provided`` () =
         let promotionSetId = Guid.NewGuid()
@@ -163,13 +174,17 @@ module ReviewCommandTests =
 
         let promotionSet = { PromotionSetDto.Default with PromotionSetId = promotionSetId; TargetBranchId = Guid.NewGuid() }
 
+        /// Tracks get Promotion Set Called changes so this scenario can assert the resulting side effect explicitly.
         let mutable getPromotionSetCalled = false
+        /// Tracks policy Called changes so this scenario can assert the resulting side effect explicitly.
         let mutable policyCalled = false
 
+        /// Gets promotion set needed by the test scenario.
         let getPromotionSet (_: Parameters.PromotionSet.GetPromotionSetParameters) =
             getPromotionSetCalled <- true
             Task.FromResult(Ok(GraceReturnValue.Create promotionSet graceIds.CorrelationId))
 
+        /// Gets policy needed by the test scenario.
         let getPolicy (_: Parameters.Policy.GetPolicyParameters) =
             policyCalled <- true
 
@@ -189,6 +204,7 @@ module ReviewCommandTests =
         Assert.That(getPromotionSetCalled, Is.False)
         Assert.That(policyCalled, Is.False)
 
+    /// Verifies that review checkpoint falls back to policy snapshot when promotion set snapshot is missing.
     [<Test>]
     let ``review checkpoint falls back to policy snapshot when promotion set snapshot is missing`` () =
         let promotionSetId = Guid.NewGuid()
@@ -197,11 +213,13 @@ module ReviewCommandTests =
 
         let promotionSet = { PromotionSetDto.Default with PromotionSetId = promotionSetId; TargetBranchId = targetBranchId }
 
+        /// Gets promotion set needed by the test scenario.
         let getPromotionSet (_: Parameters.PromotionSet.GetPromotionSetParameters) =
             Task.FromResult(Ok(GraceReturnValue.Create promotionSet graceIds.CorrelationId))
 
         let policySnapshot = { PolicySnapshot.Default with PolicySnapshotId = PolicySnapshotId "snapshot-policy"; TargetBranchId = targetBranchId }
 
+        /// Gets policy needed by the test scenario.
         let getPolicy (_: Parameters.Policy.GetPolicyParameters) = Task.FromResult(Ok(GraceReturnValue.Create (Some policySnapshot) graceIds.CorrelationId))
 
         let result =
@@ -213,6 +231,7 @@ module ReviewCommandTests =
         | Ok snapshotId -> snapshotId |> should equal "snapshot-policy"
         | Error error -> Assert.Fail error.Error
 
+    /// Verifies that candidate get rejects invalid candidate id.
     [<Test>]
     let ``candidate get rejects invalid candidate id`` () =
         let parseResult =
@@ -226,6 +245,7 @@ module ReviewCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that candidate required actions rejects invalid candidate id.
     [<Test>]
     let ``candidate required actions rejects invalid candidate id`` () =
         let parseResult =
@@ -239,6 +259,7 @@ module ReviewCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that candidate gate rerun requires gate option.
     [<Test>]
     let ``candidate gate rerun requires gate option`` () =
         let parseResult =
@@ -251,12 +272,14 @@ module ReviewCommandTests =
             )
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+        /// Verifies that the CLI review scenario exits with the expected process status.
         let exitCode, _, standardError = invokeWithCapturedConsole parseResult
         exitCode |> should equal 1
 
         standardError
         |> should contain "Option '--gate' is required."
 
+    /// Verifies that candidate parser normalizes guid candidate id.
     [<Test>]
     let ``candidate parser normalizes guid candidate id`` () =
         let candidateId = Guid.NewGuid()
@@ -275,6 +298,7 @@ module ReviewCommandTests =
         | Ok canonical -> canonical |> should equal (candidateId.ToString())
         | Error error -> Assert.Fail error.Error
 
+    /// Builds a deterministic report section for test scenarios fixture for the CLI review assertions.
     let private createReportSection (section: string) (title: string) (sourceState: string) (entries: (string * string list) list) =
         let reportSection = ReviewReportSection()
         reportSection.Section <- section
@@ -291,6 +315,7 @@ module ReviewCommandTests =
 
         reportSection
 
+    /// Builds a deterministic sample review report for test scenarios fixture for the CLI review assertions.
     let private createSampleReviewReport () =
         let report = ReviewReportResult()
         report.ReviewReportSchemaVersion <- ReviewReportSchema.Version
@@ -342,6 +367,7 @@ module ReviewCommandTests =
 
         report
 
+    /// Verifies that review report show rejects invalid candidate id.
     [<Test>]
     let ``review report show rejects invalid candidate id`` () =
         let parseResult =
@@ -356,6 +382,7 @@ module ReviewCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that review report export requires format and output file.
     [<Test>]
     let ``review report export requires format and output file`` () =
         let parseResult =
@@ -368,6 +395,7 @@ module ReviewCommandTests =
             )
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
+        /// Verifies that the CLI review scenario exits with the expected process status.
         let exitCode, _, standardError = invokeWithCapturedConsole parseResult
         exitCode |> should equal 1
 
@@ -377,12 +405,14 @@ module ReviewCommandTests =
         standardError
         |> should contain "Option '--output-file' is required."
 
+    /// Verifies that review report json serialization includes schema version.
     [<Test>]
     let ``review report json serialization includes schema version`` () =
         let report = createSampleReviewReport ()
         let json = ReviewCommand.serializeReviewReportJson report
         Assert.That(json, Does.Contain("\"ReviewReportSchemaVersion\": \"1.0\""))
 
+    /// Verifies that review report normalization enforces section order.
     [<Test>]
     let ``review report normalization enforces section order`` () =
         let report = createSampleReviewReport ()
@@ -398,6 +428,7 @@ module ReviewCommandTests =
                 ReviewReportSections.BlockingReasonsAndNextActions
             ]
 
+    /// Verifies that review report markdown rendering is deterministic.
     [<Test>]
     let ``review report markdown rendering is deterministic`` () =
         let report = createSampleReviewReport ()

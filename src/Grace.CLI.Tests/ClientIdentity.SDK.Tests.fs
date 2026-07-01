@@ -12,14 +12,17 @@ open System.IO
 open System.Net
 open System.Net.Http
 
+/// Exercises api contract version shared behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ApiContractVersionSharedTests() =
 
+    /// Verifies that current released version uses date only contract format.
     [<Test>]
     member _.CurrentReleasedVersionUsesDateOnlyContractFormat() =
         Assert.That(ApiContractVersion.CurrentReleased, Is.EqualTo("2023-10-01"))
         Assert.That(ApiContractVersion.CurrentReleasedDate, Is.EqualTo(System.DateOnly(2023, 10, 1)))
 
+    /// Verifies that normalize pins released version and aliases.
     [<Test>]
     member _.NormalizePinsReleasedVersionAndAliases() =
         match ApiContractVersion.normalize "2023-10-01" with
@@ -34,6 +37,7 @@ type ApiContractVersionSharedTests() =
         | Ok value -> Assert.That(value, Is.EqualTo(ApiContractVersion.Latest))
         | Error message -> Assert.Fail($"Expected the latest alias to normalize, but got: {message}.")
 
+    /// Verifies that normalize rejects stale dates and invalid preview suffixes.
     [<Test>]
     member _.NormalizeRejectsStaleDatesAndInvalidPreviewSuffixes() =
         match ApiContractVersion.normalize "2022-01-01" with
@@ -44,14 +48,17 @@ type ApiContractVersionSharedTests() =
         | Error message -> Assert.That(message, Does.Contain("Invalid API contract version"))
         | Ok value -> Assert.Fail($"Expected a preview suffix to be rejected, but got {value}.")
 
+/// Exercises client identity sdk behavior.
 [<NonParallelizable>]
 type ClientIdentitySdkTests() =
 
+    /// Sets ansi console output needed by the test scenario.
     let setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Captures output produced by the action.
     let captureOutput (action: unit -> unit) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -65,12 +72,16 @@ type ClientIdentitySdkTests() =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Parses output for test assertions.
     let parseOutput outputFormat = GraceCommand.rootCommand.Parse([| "--output"; outputFormat |])
 
+    /// Parses normal output for test assertions.
     let parseNormalOutput () = parseOutput "Normal"
 
+    /// Parses verbose output for test assertions.
     let parseVerboseOutput () = parseOutput "Verbose"
 
+    /// Adds lifecycle headers to the test fixture.
     let addLifecycleHeaders
         (response: HttpResponseMessage)
         (status: string)
@@ -97,6 +108,7 @@ type ClientIdentitySdkTests() =
         response.Headers.TryAddWithoutValidation(Constants.SdkLifecycleUpdateUrlHeaderKey, updateUrl)
         |> ignore
 
+    /// Builds lifecycle properties test data used to exercise CLI client Identity behavior.
     let lifecycleProperties status unsupportedAfter minimumVersion recommendedVersion updateUrl =
         let response = new HttpResponseMessage(HttpStatusCode.OK)
 
@@ -106,16 +118,19 @@ type ClientIdentitySdkTests() =
         | Some diagnostics -> ClientIdentity.lifecycleDiagnosticsToProperties diagnostics
         | None -> Dictionary<string, obj>()
 
+    /// Prepares shared CLI test state before each test.
     [<SetUp>]
     member _.SetUp() =
         ClientIdentity.clear ()
         Common.resetLifecycleWarningSuppression ()
 
+    /// Restores shared CLI test state after each test.
     [<TearDown>]
     member _.TearDown() =
         ClientIdentity.clear ()
         Common.resetLifecycleWarningSuppression ()
 
+    /// Verifies that get http client pins released api contract version by default.
     [<Test>]
     member _.GetHttpClientPinsReleasedApiContractVersionByDefault() =
         use httpClient = ClientIdentity.getHttpClient "corr-sdk-default"
@@ -124,6 +139,7 @@ type ClientIdentitySdkTests() =
 
         Assert.That(values, Is.EquivalentTo([ ApiContractVersion.CurrentReleased ]))
 
+    /// Verifies that get http client uses explicit edge and latest overrides.
     [<Test>]
     member _.GetHttpClientUsesExplicitEdgeAndLatestOverrides() =
         ClientIdentity.configureApiContractVersion ApiContractVersion.Edge
@@ -138,6 +154,7 @@ type ClientIdentitySdkTests() =
 
         Assert.That(latestClient.DefaultRequestHeaders.GetValues(Constants.ServerApiVersionHeaderKey), Is.EquivalentTo([ ApiContractVersion.Latest ]))
 
+    /// Verifies that configure api contract version rejects invalid and stale versions.
     [<Test>]
     member _.ConfigureApiContractVersionRejectsInvalidAndStaleVersions() =
         Assert.Throws<System.ArgumentException>(System.Action(fun () -> ClientIdentity.configureApiContractVersion "2022-01-01"))
@@ -146,6 +163,7 @@ type ClientIdentitySdkTests() =
         Assert.Throws<System.ArgumentException>(System.Action(fun () -> ClientIdentity.configureApiContractVersion "2023-10-01-preview"))
         |> ignore
 
+    /// Verifies that client identity headers remain separate from api contract version.
     [<Test>]
     member _.ClientIdentityHeadersRemainSeparateFromApiContractVersion() =
         ClientIdentity.configure (ClientType.CLI "1.2.3")
@@ -156,6 +174,7 @@ type ClientIdentitySdkTests() =
         Assert.That(httpClient.DefaultRequestHeaders.GetValues(Constants.ClientTypeHeaderKey), Is.EquivalentTo([ "CLI" ]))
         Assert.That(httpClient.DefaultRequestHeaders.GetValues(Constants.ClientVersionHeaderKey), Is.EquivalentTo([ "1.2.3" ]))
 
+    /// Verifies that get http client sends client identity by default.
     [<Test>]
     member _.GetHttpClientSendsClientIdentityByDefault() =
         use httpClient = ClientIdentity.getHttpClient "corr-sdk-default-identity"
@@ -163,6 +182,7 @@ type ClientIdentitySdkTests() =
         Assert.That(httpClient.DefaultRequestHeaders.GetValues(Constants.ClientTypeHeaderKey), Is.EquivalentTo([ "CLI" ]))
         Assert.That(httpClient.DefaultRequestHeaders.GetValues(Constants.ClientVersionHeaderKey), Is.Not.Empty)
 
+    /// Verifies that lifecycle diagnostics are added to success and error results.
     [<Test>]
     member _.LifecycleDiagnosticsAreAddedToSuccessAndErrorResults() =
         use response = new HttpResponseMessage(HttpStatusCode.UpgradeRequired)
@@ -184,6 +204,7 @@ type ClientIdentitySdkTests() =
             Assert.That(error.Properties[ClientIdentity.LifecycleRecommendedVersionPropertyKey], Is.EqualTo("0.2.0"))
         | Ok _ -> Assert.Fail("Expected error diagnostics.")
 
+    /// Verifies that direct sdk string response path preserves lifecycle diagnostics on success and error.
     [<Test>]
     member _.DirectSdkStringResponsePathPreservesLifecycleDiagnosticsOnSuccessAndError() =
         task {
@@ -214,6 +235,7 @@ type ClientIdentitySdkTests() =
             | Ok _ -> Assert.Fail("Expected direct SDK error diagnostics.")
         }
 
+    /// Verifies that lifecycle diagnostics handle missing recommended version malformed date and non https url.
     [<Test>]
     member _.LifecycleDiagnosticsHandleMissingRecommendedVersionMalformedDateAndNonHttpsUrl() =
         use response = new HttpResponseMessage(HttpStatusCode.OK)
@@ -227,6 +249,7 @@ type ClientIdentitySdkTests() =
             Assert.That(diagnostics.UpdateUrlIsHttps, Is.EqualTo(Some false))
         | None -> Assert.Fail("Expected lifecycle diagnostics.")
 
+    /// Verifies that cli lifecycle warning is rendered once per command.
     [<Test>]
     member _.CliLifecycleWarningIsRenderedOncePerCommand() =
         let parseResult = parseNormalOutput ()
@@ -253,6 +276,7 @@ type ClientIdentitySdkTests() =
         Assert.That(lastIndex, Is.EqualTo(firstIndex))
         Assert.That(output, Does.Contain("Update to Grace CLI/SDK version 0.2.0 or newer."))
 
+    /// Verifies that cli unsupported client guidance uses lifecycle metadata.
     [<Test>]
     member _.CliUnsupportedClientGuidanceUsesLifecycleMetadata() =
         let parseResult = parseNormalOutput ()
@@ -272,6 +296,7 @@ type ClientIdentitySdkTests() =
         Assert.That(output, Does.Contain("Update URL from server was not HTTPS and was not displayed."))
         Assert.That(output, Does.Not.Contain("http://example.test/update"))
 
+    /// Verifies that cli verbose success output redacts non https lifecycle update url.
     [<Test>]
     member _.CliVerboseSuccessOutputRedactsNonHttpsLifecycleUpdateUrl() =
         let parseResult = parseVerboseOutput ()
@@ -288,6 +313,7 @@ type ClientIdentitySdkTests() =
         Assert.That(output, Does.Contain(ClientIdentity.LifecycleStatusPropertyKey))
         Assert.That(output, Does.Not.Contain("http://example.test/update"))
 
+    /// Verifies that cli verbose error output redacts non https lifecycle update url.
     [<Test>]
     member _.CliVerboseErrorOutputRedactsNonHttpsLifecycleUpdateUrl() =
         let parseResult = parseVerboseOutput ()

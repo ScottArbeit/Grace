@@ -12,13 +12,16 @@ open System.Collections.Generic
 open System.IO
 
 module UploadSessionActor = Grace.Actors.UploadSession
+
 module ContentBlockMetadataActor = Grace.Actors.ContentBlockMetadata
 
+/// Covers upload Session Actor behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type UploadSessionActorTests() =
 
     let timestamp = Instant.FromUtc(2026, 5, 24, 12, 0)
 
+    /// Constructs metadata fixtures used by the server unit upload Session Actor assertions.
     let metadata correlationId =
         {
             Timestamp = timestamp
@@ -34,6 +37,7 @@ type UploadSessionActorTests() =
     let repositoryId = Guid.Parse("75ce5e36-25f6-4da0-afdd-ad4ad56540d5")
     let sessionStoragePoolId = StoragePoolId "pool-session-recorded"
 
+    /// Builds start test data for the server unit upload Session Actor scenarios in this file.
     let start operationId =
         {
             UploadSessionId = sessionId
@@ -49,9 +53,11 @@ type UploadSessionActorTests() =
             OperationId = operationId
         }
 
+    /// Builds start For Manifest test data for the server unit upload Session Actor scenarios in this file.
     let startForManifest operationId (fileBytes: byte array) =
         { start operationId with FileContentHash = FileContentHash(ContentAddress.computeBlake3Hex fileBytes); ExpectedSize = int64 fileBytes.Length }
 
+    /// Builds encoded Block test data for the server unit upload Session Actor scenarios in this file.
     let encodedBlock bytes =
         match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
         | Ok block -> block
@@ -59,6 +65,7 @@ type UploadSessionActorTests() =
             Assert.Fail($"Expected test content block to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Builds encoded Block From Chunks test data for the server unit upload Session Actor scenarios in this file.
     let encodedBlockFromChunks chunks =
         match ContentBlockFormat.encode chunks with
         | Ok block -> block
@@ -66,6 +73,7 @@ type UploadSessionActorTests() =
             Assert.Fail($"Expected test content block to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Builds intent At With Length test data for the server unit upload Session Actor scenarios in this file.
     let intentAtWithLength operationId blockAddress payloadLength logicalOffset logicalLength : RegisterBlockUploadIntent =
         {
             OperationId = operationId
@@ -79,6 +87,7 @@ type UploadSessionActorTests() =
 
     let intent operationId blockAddress payloadLength = intentAt operationId blockAddress payloadLength 0L
 
+    /// Builds intent For Block test data for the server unit upload Session Actor scenarios in this file.
     let intentForBlock operationId (block: ContentBlockFormat.EncodedContentBlock) logicalOffset =
         let logicalLength =
             block.Chunks
@@ -86,6 +95,7 @@ type UploadSessionActorTests() =
 
         intentAtWithLength operationId block.Address block.Payload.LongLength logicalOffset logicalLength
 
+    /// Builds placement For test data for the server unit upload Session Actor scenarios in this file.
     let placementFor blockAddress eTag =
         {
             StorageAccountName = "cas-account"
@@ -94,6 +104,7 @@ type UploadSessionActorTests() =
             ETag = eTag
         }
 
+    /// Builds confirm test data for the server unit upload Session Actor scenarios in this file.
     let confirm operationId blockAddress payload : ConfirmBlockUploaded =
         {
             OperationId = operationId
@@ -102,9 +113,11 @@ type UploadSessionActorTests() =
             StoragePlacement = placementFor blockAddress (Some "etag-confirmed")
         }
 
+    /// Builds confirm With Placement test data for the server unit upload Session Actor scenarios in this file.
     let confirmWithPlacement operationId blockAddress payload placement : ConfirmBlockUploaded =
         { OperationId = operationId; ContentBlockAddress = blockAddress; Payload = payload; StoragePlacement = placement }
 
+    /// Builds manifest For test data for the server unit upload Session Actor scenarios in this file.
     let manifestFor (fileBytes: byte array) (blocks: ContentBlockFormat.EncodedContentBlock array) =
         let contentBlocks = ResizeArray<ContentBlock>()
         let mutable offset = 0L
@@ -133,9 +146,11 @@ type UploadSessionActorTests() =
 
     let payloadFor (block: ContentBlockFormat.EncodedContentBlock) : FinalizeManifestBlockPayload = { Address = block.Address; Payload = block.Payload }
 
+    /// Builds finalize test data for the server unit upload Session Actor scenarios in this file.
     let finalize operationId manifest payloads =
         UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads; ClaimedMetadata = Array.empty }
 
+    /// Builds finalize With Claimed Metadata test data for the server unit upload Session Actor scenarios in this file.
     let finalizeWithClaimedMetadata operationId manifest payloads claimedMetadata =
         UploadSessionCommand.FinalizeManifest { OperationId = operationId; Manifest = manifest; BlockPayloads = payloads; ClaimedMetadata = claimedMetadata }
 
@@ -146,6 +161,7 @@ type UploadSessionActorTests() =
 
     let reusableMetadataRange = { OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = 4096L }
 
+    /// Builds reuse Metadata test data for the server unit upload Session Actor scenarios in this file.
     let reuseMetadata metadataVersion ranges : ContentBlockMetadata =
         {
             Class = nameof ContentBlockMetadata
@@ -160,6 +176,7 @@ type UploadSessionActorTests() =
             UpdatedAt = timestamp
         }
 
+    /// Builds reuse Metadata For test data for the server unit upload Session Actor scenarios in this file.
     let reuseMetadataFor contentBlockAddress metadataVersion ranges : ContentBlockMetadata =
         { reuseMetadata metadataVersion ranges with
             ContentBlockAddress = contentBlockAddress
@@ -175,10 +192,12 @@ type UploadSessionActorTests() =
             MetadataVersion = 7L
         }
 
+    /// Builds discovery test data for the server unit upload Session Actor scenarios in this file.
     let discovery operationId hints =
         UploadSessionCommand.IssueDedupeDiscovery
             { OperationId = operationId; ExpiresAt = discoveryExpiresAt; MinimumReuseRunLength = minimumReuseRunLength; Hints = hints }
 
+    /// Builds claim test data for the server unit upload Session Actor scenarios in this file.
     let claim operationId hint metadata =
         UploadSessionCommand.ClaimReuseRanges
             {
@@ -192,10 +211,12 @@ type UploadSessionActorTests() =
 
     let apply event dto = UploadSessionDto.UpdateDto event dto
 
+    /// Applies all inputs to drive the server unit upload Session Actor state transition under test.
     let applyAll events dto =
         events
         |> List.fold (fun current event -> apply event current) dto
 
+    /// Builds started Session test data for the server unit upload Session Actor scenarios in this file.
     let startedSession () =
         let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
 
@@ -205,6 +226,7 @@ type UploadSessionActorTests() =
             Assert.Fail($"Expected start to succeed, got {error.Error}.")
             UploadSessionDto.Default, []
 
+    /// Builds decision Or Fail test data for the server unit upload Session Actor scenarios in this file.
     let decisionOrFail message result =
         match result with
         | Ok decision -> decision
@@ -212,6 +234,7 @@ type UploadSessionActorTests() =
             Assert.Fail($"{message}, got {error.Error}.")
             Unchecked.defaultof<_>
 
+    /// Verifies that finalize Prevalidates All Metadata Merge Plans Before Side Effecting Merge Calls.
     [<Test>]
     member _.FinalizePrevalidatesAllMetadataMergePlansBeforeSideEffectingMergeCalls() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
@@ -250,6 +273,7 @@ type UploadSessionActorTests() =
             "The side-effecting metadata merge must remain isolated behind prevalidation."
         )
 
+    /// Verifies that start With Same Operation Id Is Idempotent Replay.
     [<Test>]
     member _.StartWithSameOperationIdIsIdempotentReplay() =
         let command = UploadSessionCommand.Start(start "op-start")
@@ -275,6 +299,7 @@ type UploadSessionActorTests() =
             | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected start to succeed, got {error.Error}.")
 
+    /// Verifies that abandon Moves Started Session To Retention Pending And Schedules Cleanup.
     [<Test>]
     member _.AbandonMovesStartedSessionToRetentionPendingAndSchedulesCleanup() =
         let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
@@ -296,6 +321,7 @@ type UploadSessionActorTests() =
             Assert.That(decision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-abandon:cleanup"))
         | Error error -> Assert.Fail($"Expected abandon to succeed, got {error.Error}.")
 
+    /// Verifies that abandon With Same Operation Id Is Idempotent Replay Without Cleanup Event.
     [<Test>]
     member _.AbandonWithSameOperationIdIsIdempotentReplayWithoutCleanupEvent() =
         let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
@@ -325,6 +351,7 @@ type UploadSessionActorTests() =
             Assert.That(replayDecision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-abandon:cleanup"))
         | Error error -> Assert.Fail($"Expected abandon replay to succeed, got {error.Error}.")
 
+    /// Verifies that finalize Replay Reschedules Cleanup When Only Cleanup Event Was Persisted.
     [<Test>]
     member _.FinalizeReplayReschedulesCleanupWhenOnlyCleanupEventWasPersisted() =
         let finalize = { OperationId = "op-finalize"; Manifest = FileManifest.Default; BlockPayloads = Array.empty; ClaimedMetadata = Array.empty }
@@ -349,6 +376,7 @@ type UploadSessionActorTests() =
 
         Assert.That(UploadSessionActor.shouldScheduleFinalizeCleanupReminder wrongCleanupOperation finalize, Is.False)
 
+    /// Verifies that expire Moves Started Session To Retention Pending And Schedules Cleanup.
     [<Test>]
     member _.ExpireMovesStartedSessionToRetentionPendingAndSchedulesCleanup() =
         let startDecision = UploadSessionActor.decideCommand [] UploadSessionDto.Default (UploadSessionCommand.Start(start "op-start")) (metadata "corr-start")
@@ -370,6 +398,7 @@ type UploadSessionActorTests() =
             Assert.That(decision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-expire:cleanup"))
         | Error error -> Assert.Fail($"Expected expire to succeed, got {error.Error}.")
 
+    /// Verifies that finalized Session Rejects Lifecycle Mutation.
     [<Test>]
     member _.FinalizedSessionRejectsLifecycleMutation() =
         let finalized =
@@ -388,6 +417,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected finalized session to reject abandon.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("UploadSession is finalized and cannot be changed by Abandon."))
 
+    /// Verifies that finalized Session Retains Live Manifest For Gc Safety.
     [<Test>]
     member _.FinalizedSessionRetainsLiveManifestForGcSafety() =
         let manifestAddress = ManifestAddress "manifest-blake3-final"
@@ -406,6 +436,7 @@ type UploadSessionActorTests() =
         Assert.That(retainsFinalizedManifest manifestAddress abandoned, Is.False)
         Assert.That(retainsFinalizedManifest (ManifestAddress String.Empty) finalized, Is.False)
 
+    /// Verifies that block Upload Intent Moves Started Session To Uploading Blocks.
     [<Test>]
     member _.BlockUploadIntentMovesStartedSessionToUploadingBlocks() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -432,6 +463,7 @@ type UploadSessionActorTests() =
             )
         | Error error -> Assert.Fail($"Expected block upload intent to succeed, got {error.Error}.")
 
+    /// Verifies that block Upload Intent Preserves Repeated Block Address At Different Logical Offsets.
     [<Test>]
     member _.BlockUploadIntentPreservesRepeatedBlockAddressAtDifferentLogicalOffsets() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -475,6 +507,7 @@ type UploadSessionActorTests() =
             )
         | Error error -> Assert.Fail($"Expected repeated block address intent to succeed, got {error.Error}.")
 
+    /// Verifies that confirm Block Uploaded Validates Payload And Records Physical Ranges.
     [<Test>]
     member _.ConfirmBlockUploadedValidatesPayloadAndRecordsPhysicalRanges() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -526,6 +559,7 @@ type UploadSessionActorTests() =
             )
         | Error error -> Assert.Fail($"Expected block upload confirmation to succeed, got {error.Error}.")
 
+    /// Verifies that confirm Block Uploaded Rejects Null Storage Placement As Grace Error.
     [<Test>]
     member _.ConfirmBlockUploadedRejectsNullStoragePlacementAsGraceError() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -557,6 +591,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected null storage placement to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
 
+    /// Verifies that confirm Block Uploaded Matches Any Compatible Duplicate Intent.
     [<Test>]
     member _.ConfirmBlockUploadedMatchesAnyCompatibleDuplicateIntent() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -601,6 +636,7 @@ type UploadSessionActorTests() =
         | Ok decision -> Assert.That(decision.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))
         | Error error -> Assert.Fail($"Expected confirmation to match compatible duplicate intent, got {error.Error}.")
 
+    /// Verifies that confirm Block Uploaded Rejects Intent Logical Length Mismatch.
     [<Test>]
     member _.ConfirmBlockUploadedRejectsIntentLogicalLengthMismatch() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -631,6 +667,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected logical length mismatch to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ContentBlock logical length mismatch. Expected one of [10], actual 11."))
 
+    /// Verifies that confirm Block Uploaded Rejects Corrupt Payload Without Consuming Operation Id.
     [<Test>]
     member _.ConfirmBlockUploadedRejectsCorruptPayloadWithoutConsumingOperationId() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -673,6 +710,7 @@ type UploadSessionActorTests() =
         | Ok decision -> Assert.That(decision.Session.ConfirmedBlockUploads.Length, Is.EqualTo(1))
         | Error error -> Assert.Fail($"Expected retry after corrupt payload to succeed, got {error.Error}.")
 
+    /// Verifies that confirm Block Uploaded With Same Operation Id Is Idempotent Replay.
     [<Test>]
     member _.ConfirmBlockUploadedWithSameOperationIdIsIdempotentReplay() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -715,6 +753,7 @@ type UploadSessionActorTests() =
             | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected first confirmation to succeed, got {error.Error}.")
 
+    /// Verifies that confirm Block Uploaded Rejects Operation Id Reused From Different Upload Session Command.
     [<Test>]
     member _.ConfirmBlockUploadedRejectsOperationIdReusedFromDifferentUploadSessionCommand() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -747,6 +786,7 @@ type UploadSessionActorTests() =
             Assert.That(error.Error, Does.Contain("already applied to a non-confirm event"))
             Assert.That(intentDto.ConfirmedBlockUploads, Is.Empty)
 
+    /// Verifies that finalize Manifest From Uploaded Block Validates Reconstruction And Finalizes.
     [<Test>]
     member _.FinalizeManifestFromUploadedBlockValidatesReconstructionAndFinalizes() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
@@ -807,6 +847,7 @@ type UploadSessionActorTests() =
             Assert.That(decision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-finalize:cleanup"))
         | Error error -> Assert.Fail($"Expected finalize to succeed, got {error.Error}.")
 
+    /// Verifies that finalize Manifest Creates Repository Pool Metadata For Uploaded Blocks.
     [<Test>]
     member _.FinalizeManifestCreatesRepositoryPoolMetadataForUploadedBlocks() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("hello first")
@@ -862,6 +903,7 @@ type UploadSessionActorTests() =
 
         Assert.That(commands, Has.Length.EqualTo(2))
 
+        /// Asserts the merge condition so failures identify the violated server unit upload Session Actor invariant.
         let assertMerge command (expectedAddress: ContentBlockAddress) (expectedObjectKey: string) =
             match command with
             | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
@@ -886,6 +928,7 @@ type UploadSessionActorTests() =
         assertMerge commands[0] firstBlock.Address (StorageKeys.contentBlockObjectKey firstBlock.Address)
         assertMerge commands[1] secondBlock.Address (StorageKeys.contentBlockObjectKey secondBlock.Address)
 
+    /// Verifies that finalize Manifest Creates Session Pool Metadata For Claimed Reuse Ranges Without Confirmed Upload.
     [<Test>]
     member _.FinalizeManifestCreatesSessionPoolMetadataForClaimedReuseRangesWithoutConfirmedUpload() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("claimed authoritative metadata")
@@ -966,6 +1009,7 @@ type UploadSessionActorTests() =
             )
         | _ -> Assert.Fail("Expected claimed reuse finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
+    /// Verifies that finalize Manifest Accepts Covering Evidence For Claimed Reuse Subwindow.
     [<Test>]
     member _.FinalizeManifestAcceptsCoveringEvidenceForClaimedReuseSubwindow() =
         let fileBytes = Array.init 512 (fun index -> byte (index % 251))
@@ -1057,6 +1101,7 @@ type UploadSessionActorTests() =
             Assert.That(subwindowRange.ActiveManifestCount, Is.EqualTo(coveringRange.ActiveManifestCount + 1))
         | _ -> Assert.Fail("Expected claimed reuse subwindow finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
+    /// Verifies that finalize Manifest Accepts Claimed Reuse Range Cover For Multi Chunk Block.
     [<Test>]
     member _.FinalizeManifestAcceptsClaimedReuseRangeCoverForMultiChunkBlock() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first claimed chunk")
@@ -1074,6 +1119,7 @@ type UploadSessionActorTests() =
         let secondRange =
             { OrdinalStart = 1; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = int64 firstBytes.Length; PhysicalLength = int64 secondBytes.Length }
 
+        /// Builds claimed Range test data for the server unit upload Session Actor scenarios in this file.
         let claimedRange (range: ContentBlockMetadataRange) : ClaimedReuseRange =
             {
                 StoragePoolId = sessionStoragePoolId
@@ -1148,6 +1194,7 @@ type UploadSessionActorTests() =
             Assert.That(merge.ExpectedRanges, Is.EquivalentTo([| firstRange; secondRange |]))
         | _ -> Assert.Fail("Expected multi-range claimed reuse finalization to create one MergePhysicalRanges command.")
 
+    /// Verifies that finalize Manifest Rejects Mixed Version Claimed Reuse Range Cover.
     [<Test>]
     member _.FinalizeManifestRejectsMixedVersionClaimedReuseRangeCover() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first mixed claimed chunk")
@@ -1164,6 +1211,7 @@ type UploadSessionActorTests() =
 
         let secondRange = { OrdinalStart = 1; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 16384L; PhysicalLength = int64 secondBytes.Length }
 
+        /// Builds claimed Range test data for the server unit upload Session Actor scenarios in this file.
         let claimedRange metadataVersion (range: ContentBlockMetadataRange) : ClaimedReuseRange =
             {
                 StoragePoolId = sessionStoragePoolId
@@ -1212,6 +1260,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected mixed-version claimed reuse cover command creation to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("must come from one authoritative metadata version"))
 
+    /// Verifies that finalize Manifest Rejects Split Claimed Metadata Evidence Instead Of Dropping Merge.
     [<Test>]
     member _.FinalizeManifestRejectsSplitClaimedMetadataEvidenceInsteadOfDroppingMerge() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first split claimed chunk")
@@ -1228,6 +1277,7 @@ type UploadSessionActorTests() =
 
         let secondRange = { OrdinalStart = 1; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = 16384L; PhysicalLength = int64 secondBytes.Length }
 
+        /// Builds claimed Range test data for the server unit upload Session Actor scenarios in this file.
         let claimedRange (range: ContentBlockMetadataRange) : ClaimedReuseRange =
             {
                 StoragePoolId = sessionStoragePoolId
@@ -1271,6 +1321,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected split claimed metadata evidence to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("range cover is split or changed"))
 
+    /// Verifies that finalize Manifest Rejects Gapped Claimed Reuse Range Cover For Multi Chunk Block.
     [<Test>]
     member _.FinalizeManifestRejectsGappedClaimedReuseRangeCoverForMultiChunkBlock() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first claimed chunk")
@@ -1288,6 +1339,7 @@ type UploadSessionActorTests() =
         let gappedSecondRange =
             { OrdinalStart = 2; OrdinalCount = 1; ActiveManifestCount = 2; PhysicalOffset = int64 firstBytes.Length; PhysicalLength = int64 secondBytes.Length }
 
+        /// Builds claimed Range test data for the server unit upload Session Actor scenarios in this file.
         let claimedRange (range: ContentBlockMetadataRange) : ClaimedReuseRange =
             {
                 StoragePoolId = sessionStoragePoolId
@@ -1338,6 +1390,7 @@ type UploadSessionActorTests() =
 
         Assert.That(commands, Is.Empty)
 
+    /// Verifies that finalize Manifest Skips Stale Claimed Metadata When Confirmed Upload Satisfies Block.
     [<Test>]
     member _.FinalizeManifestSkipsStaleClaimedMetadataWhenConfirmedUploadSatisfiesBlock() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("uploaded block supersedes stale reuse claim")
@@ -1441,6 +1494,7 @@ type UploadSessionActorTests() =
             | _ -> Assert.Fail("Expected confirmed upload to provide the metadata merge command.")
         | Error error -> Assert.Fail($"Expected confirmed upload to supersede stale claimed metadata, got {error.Error}.")
 
+    /// Verifies that finalize Manifest Selects Fresh Claim When Stale Duplicate Claim For Same Block Exists.
     [<Test>]
     member _.FinalizeManifestSelectsFreshClaimWhenStaleDuplicateClaimForSameBlockExists() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("fresh claim supersedes stale duplicate")
@@ -1514,6 +1568,7 @@ type UploadSessionActorTests() =
             | _ -> Assert.Fail("Expected the fresh claimed range to provide the metadata merge command.")
         | Error error -> Assert.Fail($"Expected fresh duplicate claim to supersede stale claim, got {error.Error}.")
 
+    /// Verifies that finalize Manifest Selects Matching Exact Physical Range When Historical Copy Also Exists.
     [<Test>]
     member _.FinalizeManifestSelectsMatchingExactPhysicalRangeWhenHistoricalCopyAlsoExists() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("matching active exact physical range wins")
@@ -1585,6 +1640,7 @@ type UploadSessionActorTests() =
             | _ -> Assert.Fail("Expected the matching active exact claimed range to provide the metadata merge command.")
         | Error error -> Assert.Fail($"Expected matching active exact range to finalize, got {error.Error}.")
 
+    /// Verifies that finalize Manifest Backtracks Duplicate Active Range Starts To Select Contiguous Physical Chain.
     [<Test>]
     member _.FinalizeManifestBacktracksDuplicateActiveRangeStartsToSelectContiguousPhysicalChain() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first duplicate active range")
@@ -1677,6 +1733,7 @@ type UploadSessionActorTests() =
             )
         | _ -> Assert.Fail("Expected duplicate active range chain finalization to create one MergePhysicalRanges command.")
 
+    /// Verifies that finalize Manifest Rejects Newer Partial Claim When Only Stale Full Claim Covers Block.
     [<Test>]
     member _.FinalizeManifestRejectsNewerPartialClaimWhenOnlyStaleFullClaimCoversBlock() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("full claimed block coverage")
@@ -1732,6 +1789,7 @@ type UploadSessionActorTests() =
 
         Assert.That(commands, Is.Empty)
 
+    /// Verifies that claimed Reuse Metadata Merge Operation Ids Are Scoped By Upload Session.
     [<Test>]
     member _.ClaimedReuseMetadataMergeOperationIdsAreScopedByUploadSession() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("shared claimed block")
@@ -1844,6 +1902,7 @@ type UploadSessionActorTests() =
             Is.EqualTo(2)
         )
 
+    /// Verifies that finalize Metadata Merge Operation Ids Include Repository Scope For Shared Pool Sessions.
     [<Test>]
     member _.FinalizeMetadataMergeOperationIdsIncludeRepositoryScopeForSharedPoolSessions() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("same upload session id across repositories")
@@ -1852,6 +1911,7 @@ type UploadSessionActorTests() =
         let confirmedRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 fileBytes.Length }
         let alternateRepositoryId = Guid.Parse("a50fe532-42fa-4a50-9894-53fdad0374f2")
 
+        /// Builds session For test data for the server unit upload Session Actor scenarios in this file.
         let sessionFor repositoryId =
             { UploadSessionDto.Default with
                 UploadSessionId = sessionId
@@ -1879,6 +1939,7 @@ type UploadSessionActorTests() =
                 (sessionFor alternateRepositoryId)
                 manifest
 
+        /// Builds operation Id test data for the server unit upload Session Actor scenarios in this file.
         let operationId command =
             match command with
             | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge.OperationId
@@ -1895,6 +1956,7 @@ type UploadSessionActorTests() =
         Assert.That(firstOperationId, Does.Contain(sessionId.ToString("N")))
         Assert.That(secondOperationId, Does.Contain(sessionId.ToString("N")))
 
+    /// Verifies that reminder Dispatch Uses Persisted Upload Session Primary Key Without Rehashing.
     [<Test>]
     member _.ReminderDispatchUsesPersistedUploadSessionPrimaryKeyWithoutRehashing() =
         let reminderPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reminder.Actor.fs"))
@@ -1906,6 +1968,7 @@ type UploadSessionActorTests() =
         Assert.That(reminderSource, Does.Contain("UploadSession.CreateActorProxyForPrimaryKey actorId reminderDto.RepositoryId correlationId"))
         Assert.That(reminderSource, Does.Not.Contain("UploadSession.CreateActorProxy actorId reminderDto.RepositoryId correlationId"))
 
+    /// Verifies that finalize Metadata Retry After Partial Post Finalized Failure Does Not Double Increment Earlier Block.
     [<Test>]
     member _.FinalizeMetadataRetryAfterPartialPostFinalizedFailureDoesNotDoubleIncrementEarlierBlock() =
         let firstBytes = Text.Encoding.UTF8.GetBytes("first finalized block")
@@ -1915,11 +1978,13 @@ type UploadSessionActorTests() =
         let secondBlock = encodedBlock secondBytes
         let manifest = manifestFor fileBytes [| firstBlock; secondBlock |]
 
+        /// Builds confirmed Range test data for the server unit upload Session Actor scenarios in this file.
         let confirmedRange (bytes: byte array) =
             { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = 0L; PhysicalLength = int64 (Array.length bytes) }
 
         let secondRange = confirmedRange secondBytes
 
+        /// Builds confirmed Block test data for the server unit upload Session Actor scenarios in this file.
         let confirmedBlock (block: ContentBlockFormat.EncodedContentBlock) (bytes: byte array) eTag =
             {
                 ContentBlockAddress = block.Address
@@ -1948,6 +2013,7 @@ type UploadSessionActorTests() =
 
         Assert.That(commands, Has.Length.EqualTo(2))
 
+        /// Builds merge At test data for the server unit upload Session Actor scenarios in this file.
         let mergeAt index =
             match commands[index] with
             | ContentBlockMetadataCommand.MergePhysicalRanges merge -> merge
@@ -2020,6 +2086,7 @@ type UploadSessionActorTests() =
         Assert.That(secondRetry.Metadata.Ranges, Has.Length.EqualTo(1))
         Assert.That(secondRetry.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
 
+    /// Verifies that finalized Manifest Ranges Emit Single Reference Contribution Delta.
     [<Test>]
     member _.FinalizedManifestRangesEmitSingleReferenceContributionDelta() =
         let ranges =
@@ -2032,6 +2099,7 @@ type UploadSessionActorTests() =
         Assert.That(activeRanges[0].ActiveManifestCount, Is.EqualTo(1))
         Assert.That(ranges[0].ActiveManifestCount, Is.EqualTo(2))
 
+    /// Verifies that finalize Manifest Replay Repairs Metadata Before Dedupe Registration.
     [<Test>]
     member _.FinalizeManifestReplayRepairsMetadataBeforeDedupeRegistration() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
@@ -2156,6 +2224,7 @@ type UploadSessionActorTests() =
             "Replay repair must not use mismatched replay command body claimed metadata for metadata side effects."
         )
 
+    /// Verifies that finalize Manifest Replay Validation Allows Payloadless Sdk Style Retry.
     [<Test>]
     member _.FinalizeManifestReplayValidationAllowsPayloadlessSdkStyleRetry() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
@@ -2178,6 +2247,7 @@ type UploadSessionActorTests() =
             "Finalize replay must validate durable manifest identity without requiring replay payload bytes."
         )
 
+    /// Verifies that finalize Manifest Prevalidates Claimed Metadata Before Applying Any Metadata Merge.
     [<Test>]
     member _.FinalizeManifestPrevalidatesClaimedMetadataBeforeApplyingAnyMetadataMerge() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "UploadSession.Actor.fs"))
@@ -2205,6 +2275,7 @@ type UploadSessionActorTests() =
 
         Assert.That(mergePrevalidatedIndex, Is.GreaterThan(revalidateIndex), "Finalize must apply metadata merges only after all revalidation succeeds.")
 
+    /// Verifies that finalize Uploaded Merge Preconditions Do Not Freeze Current Snapshot At Merge Time.
     [<Test>]
     member _.FinalizeUploadedMergePreconditionsDoNotFreezeCurrentSnapshotAtMergeTime() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("uploaded merge preconditions")
@@ -2244,6 +2315,7 @@ type UploadSessionActorTests() =
             Assert.That(currentPrecondition.ExpectedMetadataVersion, Is.EqualTo(None))
         | _ -> Assert.Fail("Expected uploaded block finalization to create a ContentBlockMetadata MergePhysicalRanges command.")
 
+    /// Verifies that finalize Uploaded Merge Rebase Does Not Reactivate Historical Duplicate Ranges.
     [<Test>]
     member _.FinalizeUploadedMergeRebaseDoesNotReactivateHistoricalDuplicateRanges() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("uploaded duplicate authoritative metadata")
@@ -2315,6 +2387,7 @@ type UploadSessionActorTests() =
         Assert.That(rebasedMerge.ExpectedRanges, Is.Empty)
         Assert.That(rebasedMerge.IsFinalizeContribution, Is.True)
 
+    /// Verifies that revalidated Claimed Metadata Merge Rejects Removed Range Before Side Effect.
     [<Test>]
     member _.RevalidatedClaimedMetadataMergeRejectsRemovedRangeBeforeSideEffect() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("reuse range bytes")
@@ -2400,6 +2473,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected stale claimed range revalidation to fail closed before metadata merge side effects.")
         | Error error -> Assert.That(error.Error, Does.Contain("range is absent or changed"))
 
+    /// Verifies that finalize Manifest From Claimed Reuse Range Validates Reconstruction And Finalizes.
     [<Test>]
     member _.FinalizeManifestFromClaimedReuseRangeValidatesReconstructionAndFinalizes() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("reuse range bytes")
@@ -2464,6 +2538,7 @@ type UploadSessionActorTests() =
             Assert.That(decision.Session.CleanupReminderOperationId, Is.EqualTo(Some "op-finalize:cleanup"))
         | Error error -> Assert.Fail($"Expected finalize from claimed range to succeed, got {error.Error}.")
 
+    /// Verifies that finalize Manifest Rejects Claimed Reuse Metadata From Wrong Pool.
     [<Test>]
     member _.FinalizeManifestRejectsClaimedReuseMetadataFromWrongPool() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("wrong pool claimed metadata")
@@ -2507,6 +2582,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected wrong-pool claimed metadata to fail closed before finalization.")
         | Error error -> Assert.That(error.Error, Does.Contain("StoragePoolId must match the upload session StoragePoolId"))
 
+    /// Verifies that finalize Manifest Rejects Missing Confirmed Or Claimed Block Without Consuming Operation Id.
     [<Test>]
     member _.FinalizeManifestRejectsMissingConfirmedOrClaimedBlockWithoutConsumingOperationId() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
@@ -2573,6 +2649,7 @@ type UploadSessionActorTests() =
         | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
         | Error error -> Assert.Fail($"Expected retry after failed finalize to succeed, got {error.Error}.")
 
+    /// Verifies that finalize Manifest Rejects File Hash Mismatch Without Consuming Operation Id.
     [<Test>]
     member _.FinalizeManifestRejectsFileHashMismatchWithoutConsumingOperationId() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
@@ -2642,6 +2719,7 @@ type UploadSessionActorTests() =
         | Ok decision -> Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
         | Error error -> Assert.Fail($"Expected retry after failed hash validation to succeed, got {error.Error}.")
 
+    /// Verifies that finalize Manifest Rejects Total Size Mismatch.
     [<Test>]
     member _.FinalizeManifestRejectsTotalSizeMismatch() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
@@ -2656,6 +2734,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected total size mismatch to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("ExpectedSize"))
 
+    /// Verifies that finalize Manifest With Same Operation Id Is Idempotent Replay.
     [<Test>]
     member _.FinalizeManifestWithSameOperationIdIsIdempotentReplay() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
@@ -2722,6 +2801,7 @@ type UploadSessionActorTests() =
             | Error error -> Assert.Fail($"Expected idempotent finalize replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected first finalize to succeed, got {error.Error}.")
 
+    /// Verifies that cleanup Reminder State Carries Delete Physical State Operation Id.
     [<Test>]
     member _.CleanupReminderStateCarriesDeletePhysicalStateOperationId() =
         let reminderState = UploadSessionActor.createCleanupReminderState sessionId repositoryId "op-abandon" "corr-abandon"
@@ -2737,6 +2817,7 @@ type UploadSessionActorTests() =
         | ReminderState.UploadSessionPhysicalDeletion uploadSessionState -> Assert.That(uploadSessionState.OperationId, Is.EqualTo("op-abandon:cleanup"))
         | _ -> Assert.Fail("Expected UploadSessionPhysicalDeletion reminder state.")
 
+    /// Verifies that delete Physical State After Finalize Preserves Manifest Evidence And Clears Upload Coordination.
     [<Test>]
     member _.DeletePhysicalStateAfterFinalizePreservesManifestEvidenceAndClearsUploadCoordination() =
         let fileBytes = Text.Encoding.UTF8.GetBytes("hello world")
@@ -2806,6 +2887,7 @@ type UploadSessionActorTests() =
         Assert.That(cleanupDecision.Session.CleanupReminderScheduledAt, Is.EqualTo(None))
         Assert.That(cleanupDecision.Session.CleanupReminderOperationId, Is.EqualTo(None))
 
+    /// Verifies that delete Physical State After Abandon Releases Temporary Reuse Claims.
     [<Test>]
     member _.DeletePhysicalStateAfterAbandonReleasesTemporaryReuseClaims() =
         let startedDto, startEvents = startedSession ()
@@ -2854,6 +2936,7 @@ type UploadSessionActorTests() =
         Assert.That(cleanupDecision.Session.CleanupReminderScheduledAt, Is.EqualTo(None))
         Assert.That(cleanupDecision.Session.CleanupReminderOperationId, Is.EqualTo(None))
 
+    /// Verifies that physical Cleanup Compacts Persisted Events To Tombstone And Drops Coordination Payloads.
     [<Test>]
     member _.PhysicalCleanupCompactsPersistedEventsToTombstoneAndDropsCoordinationPayloads() =
         let block = encodedBlock (Text.Encoding.UTF8.GetBytes("hello world"))
@@ -2933,6 +3016,7 @@ type UploadSessionActorTests() =
         Assert.That(rehydrated.DedupeDiscovery, Is.EqualTo(None))
         Assert.That(rehydrated.ClaimedReuseRanges, Is.Empty)
 
+    /// Verifies that delete Physical State Retry After State Cleared Drains As Idempotent Replay.
     [<Test>]
     member _.DeletePhysicalStateRetryAfterStateClearedDrainsAsIdempotentReplay() =
         let result =
@@ -2949,6 +3033,7 @@ type UploadSessionActorTests() =
             Assert.That(decision.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.NotStarted))
         | Error error -> Assert.Fail($"Expected cleanup retry to drain, got {error.Error}.")
 
+    /// Verifies that claim Reuse Ranges Rejects Stale Discovery Hint Version.
     [<Test>]
     member _.ClaimReuseRangesRejectsStaleDiscoveryHintVersion() =
         let startedDto, startEvents = startedSession ()
@@ -2970,6 +3055,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected stale discovery hint to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("stale"))
 
+    /// Verifies that claim Reuse Ranges Rejects Expired Discovery.
     [<Test>]
     member _.ClaimReuseRangesRejectsExpiredDiscovery() =
         let startedDto, startEvents = startedSession ()
@@ -2994,6 +3080,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected expired discovery to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("expired"))
 
+    /// Verifies that claim Reuse Ranges Rejects Missing Authoritative Physical Range.
     [<Test>]
     member _.ClaimReuseRangesRejectsMissingAuthoritativePhysicalRange() =
         let startedDto, startEvents = startedSession ()
@@ -3020,6 +3107,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected absent authoritative physical range to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("absent"))
 
+    /// Verifies that claim Reuse Ranges Accepts Later Subwindow With Exact Active Authoritative Range.
     [<Test>]
     member _.ClaimReuseRangesAcceptsLaterSubwindowWithExactActiveAuthoritativeRange() =
         let activeCoveringRange = { reusableMetadataRange with OrdinalCount = 8; ActiveManifestCount = 1; PhysicalLength = 8192L }
@@ -3083,6 +3171,7 @@ type UploadSessionActorTests() =
             )
         | Error error -> Assert.Fail($"Expected covered subwindow claim to succeed, got {error.Error}.")
 
+    /// Verifies that claim Reuse Ranges Rejects Runs Below Minimum Reuse Length.
     [<Test>]
     member _.ClaimReuseRangesRejectsRunsBelowMinimumReuseLength() =
         let shortHint = { reuseHint with OrdinalCount = minimumReuseRunLength - 1 }
@@ -3109,6 +3198,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected too-short reuse run to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("minimum reuse run"))
 
+    /// Verifies that claim Reuse Ranges With Same Operation Id Is Stable Idempotent Replay.
     [<Test>]
     member _.ClaimReuseRangesWithSameOperationIdIsStableIdempotentReplay() =
         let startedDto, startEvents = startedSession ()
@@ -3142,6 +3232,7 @@ type UploadSessionActorTests() =
             | Error error -> Assert.Fail($"Expected idempotent claim replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected claim to succeed, got {error.Error}.")
 
+    /// Verifies that claim Reuse Ranges Rejects Duplicate Hints In Same Command.
     [<Test>]
     member _.ClaimReuseRangesRejectsDuplicateHintsInSameCommand() =
         let startedDto, startEvents = startedSession ()
@@ -3175,6 +3266,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected duplicate reuse hint claims to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("already been claimed"))
 
+    /// Verifies that claim Reuse Ranges Rejects Already Claimed Hint With New Operation Id.
     [<Test>]
     member _.ClaimReuseRangesRejectsAlreadyClaimedHintWithNewOperationId() =
         let startedDto, startEvents = startedSession ()
@@ -3209,6 +3301,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected already claimed reuse hint to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("already been claimed"))
 
+    /// Verifies that issue Dedupe Discovery Null Payload Returns Grace Error.
     [<Test>]
     member _.IssueDedupeDiscoveryNullPayloadReturnsGraceError() =
         let startedDto, startEvents = startedSession ()
@@ -3224,6 +3317,7 @@ type UploadSessionActorTests() =
         | Ok _ -> Assert.Fail("Expected null discovery payload to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("requires a non-empty operation id"))
 
+    /// Verifies that claim Reuse Ranges Null Payload Returns Grace Error.
     [<Test>]
     member _.ClaimReuseRangesNullPayloadReturnsGraceError() =
         let startedDto, startEvents = startedSession ()

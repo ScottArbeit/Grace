@@ -24,13 +24,17 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Contains Grace Server approval store behavior and supporting helpers.
 module ApprovalStore =
 
+    /// Represents approval policy dto used by Grace Server APIs and background services.
     type ApprovalPolicyDto = Grace.Types.Webhooks.ApprovalPolicy
+    /// Represents approval request dto used by Grace Server APIs and background services.
     type ApprovalRequestDto = Grace.Types.Webhooks.ApprovalRequest
 
     let private policies = ConcurrentDictionary<ApprovalPolicyId, ApprovalPolicyDto>()
 
+    /// Computes scope matches data used by Grace Server.
     let private scopeMatches (expected: ApprovalScope) (actual: ApprovalScope) =
         isNull (box actual) |> not
         && actual.OwnerId = expected.OwnerId
@@ -38,6 +42,7 @@ module ApprovalStore =
         && actual.RepositoryId = expected.RepositoryId
         && actual.TargetBranchId = expected.TargetBranchId
 
+    /// Implements generated request matches for the server request pipeline.
     let private generatedRequestMatches (candidate: ApprovalRequestDto) (existing: ApprovalRequestDto) =
         existing.ApprovalPolicyId = candidate.ApprovalPolicyId
         && existing.ApprovalPolicyVersion = candidate.ApprovalPolicyVersion
@@ -45,6 +50,7 @@ module ApprovalStore =
         && existing.Scope = candidate.Scope
         && existing.RequiredResponder = candidate.RequiredResponder
 
+    /// Implements request is complete for the server request pipeline.
     let private requestIsComplete (request: ApprovalRequestDto) =
         request.ApprovalRequestId
         <> ApprovalRequestId.Empty
@@ -53,11 +59,13 @@ module ApprovalStore =
         && (String.IsNullOrWhiteSpace request.RequiredResponder
             |> not)
 
+    /// Implements usable events for the server request pipeline.
     let private usableEvents (events: IReadOnlyList<ApprovalRequestEvent>) =
         events
         |> Seq.filter (fun event -> isNull (box event) |> not)
         |> Seq.filter (fun event -> isNull (box event.Event) |> not)
 
+    /// Implements request from events for the server request pipeline.
     let private requestFromEvents (events: IReadOnlyList<ApprovalRequestEvent>) =
         let request =
             events
@@ -69,17 +77,21 @@ module ApprovalStore =
         else
             Some request
 
+    /// Coordinates clear for tests processing for Grace Server.
     let clearForTests () = policies.Clear()
 
+    /// Coordinates upsert policy processing for Grace Server.
     let upsertPolicy (policy: ApprovalPolicyDto) =
         policies[policy.ApprovalPolicyId] <- policy
         policy
 
+    /// Gets try get policy data needed by the server flow.
     let tryGetPolicy approvalPolicyId =
         match policies.TryGetValue approvalPolicyId with
         | true, policy -> Some policy
         | _ -> None
 
+    /// Lists list policies data for the server response.
     let listPolicies scope includeDeleted =
         policies.Values
         |> Seq.filter (fun policy ->
@@ -89,27 +101,33 @@ module ApprovalStore =
         |> Seq.toArray
         :> IReadOnlyList<ApprovalPolicyDto>
 
+    /// Computes metadata data used by Grace Server.
     let private metadata correlationId principal =
         let eventMetadata = EventMetadata.New correlationId principal
         eventMetadata
 
+    /// Prefixes a text segment with its length so generated approval identifiers cannot collide across adjacent fields.
     let private canonicalSegment (value: string) =
         let segment = if isNull value then String.Empty else value
 
         $"{segment.Length}:{segment}"
 
+    /// Formats a GUID in lower-case D form before it is fed into an approval identifier seed.
     let private canonicalGuid (value: Guid) = value.ToString("D").ToLowerInvariant()
 
+    /// Converts optional GUID segments into stable seed text for deterministic approval identifiers.
     let private canonicalOptionalGuid (value: Guid option) =
         match value with
         | Some guid -> canonicalGuid guid
         | None -> String.Empty
 
+    /// Converts optional integer segments into culture-invariant seed text for deterministic approval identifiers.
     let private canonicalOptionalInt (value: int option) =
         match value with
         | Some attempt -> attempt.ToString(CultureInfo.InvariantCulture)
         | None -> String.Empty
 
+    /// Derives a version-marked deterministic GUID from the approval-request seed hash.
     let private createDeterministicGuid (seed: string) =
         let seedBytes = Encoding.UTF8.GetBytes(seed)
 
@@ -120,6 +138,7 @@ module ApprovalStore =
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 
+    /// Combines approval policy, scope, subject, and operation details into the deterministic request-id seed.
     let buildGeneratedApprovalRequestId (request: ApprovalRequestDto) =
         let scope = if isNull (box request.Scope) then ApprovalScope.Default else request.Scope
 
@@ -140,6 +159,7 @@ module ApprovalStore =
         |> String.concat "|"
         |> createDeterministicGuid
 
+    /// Normalizes normalize request data for stable server comparisons.
     let private normalizeRequest approvalRequestId fallbackScope (approvalRequest: ApprovalRequestDto) =
         { approvalRequest with
             ApprovalRequestId =
@@ -159,6 +179,7 @@ module ApprovalStore =
                     approvalRequest.Status
         }
 
+    /// Implements request from json for the server request pipeline.
     let private requestFromJson (requestJson: string option) =
         requestJson
         |> Option.bind (fun json ->
@@ -167,6 +188,7 @@ module ApprovalStore =
             else
                 Some(deserialize<ApprovalRequestDto> json))
 
+    /// Gets try get request from actor async data needed by the server flow.
     let private tryGetRequestFromActorAsync approvalRequestId fallbackScope correlationId =
         task {
             let actor = ActorProxy.ApprovalRequest.CreateActorProxy approvalRequestId fallbackScope.RepositoryId correlationId
@@ -183,8 +205,10 @@ module ApprovalStore =
             | None -> return None
         }
 
+    /// Gets try get request async data needed by the server flow.
     let tryGetRequestAsync approvalRequestId fallbackScope correlationId = tryGetRequestFromActorAsync approvalRequestId fallbackScope correlationId
 
+    /// Implements register generated index request async for the server request pipeline.
     let private registerGeneratedIndexRequestAsync (indexActor: IApprovalRequestIndexActor) (request: ApprovalRequestDto) correlationId =
         indexActor.RegisterGeneratedRequest(
             request.ApprovalRequestId,
@@ -202,6 +226,7 @@ module ApprovalStore =
             metadata correlationId "system"
         )
 
+    /// Attempts to find generated request async and returns an option or result instead of throwing.
     let private tryFindGeneratedRequestAsync (candidate: ApprovalRequestDto) correlationId =
         task {
             let indexActor = ActorProxy.ApprovalRequest.CreateIndexActorProxy candidate.Scope correlationId
@@ -226,6 +251,7 @@ module ApprovalStore =
             return matchedRequest
         }
 
+    /// Coordinates seed generated request async processing for Grace Server.
     let seedGeneratedRequestAsync (request: ApprovalRequestDto) correlationId =
         task {
             let approvalRequestId =
@@ -276,6 +302,7 @@ module ApprovalStore =
                     | Ok _ -> return Ok storedRequest
         }
 
+    /// Coordinates handle request command async processing for Grace Server.
     let handleRequestCommandAsync approvalRequestId repositoryId command correlationId principal =
         task {
             let actor = ActorProxy.ApprovalRequest.CreateActorProxy approvalRequestId repositoryId correlationId
@@ -297,6 +324,7 @@ module ApprovalStore =
                 return result
         }
 
+    /// Lists list requests async data for the server response.
     let listRequestsAsync scope includeTerminal correlationId =
         task {
             let indexActor = ActorProxy.ApprovalRequest.CreateIndexActorProxy scope correlationId
@@ -321,6 +349,7 @@ module ApprovalStore =
             return requests.ToArray() :> IReadOnlyList<ApprovalRequestDto>
         }
 
+    /// Implements request history async for the server request pipeline.
     let requestHistoryAsync approvalRequestId fallbackScope correlationId =
         task {
             match! tryGetRequestAsync approvalRequestId fallbackScope correlationId with
@@ -331,8 +360,10 @@ module ApprovalStore =
                 return deserialize<ApprovalRequestDto array> historyJson :> IReadOnlyList<ApprovalRequestDto>
         }
 
+/// Contains Grace Server approval common behavior and supporting helpers.
 module ApprovalCommon =
 
+    /// Parses try parse guid input into the server model.
     let tryParseGuid value =
         let mutable parsed = Guid.Empty
 
@@ -343,6 +374,7 @@ module ApprovalCommon =
         else
             None
 
+    /// Computes scope from policy parameters data used by Grace Server.
     let scopeFromPolicyParameters (parameters: ApprovalPolicyParameters) =
         let ownerId =
             tryParseGuid parameters.OwnerId
@@ -362,6 +394,7 @@ module ApprovalCommon =
 
         { ApprovalScope.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetBranchId = targetBranchId }
 
+    /// Computes scope from request parameters data used by Grace Server.
     let scopeFromRequestParameters (parameters: ApprovalRequestParameters) =
         let ownerId =
             tryParseGuid parameters.OwnerId
@@ -381,29 +414,35 @@ module ApprovalCommon =
 
         { ApprovalScope.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetBranchId = targetBranchId }
 
+    /// Computes resource from approval scope data used by Grace Server.
     let resourceFromApprovalScope (scope: ApprovalScope) =
         if scope.TargetBranchId <> BranchId.Empty then
             Resource.Branch(scope.OwnerId, scope.OrganizationId, scope.RepositoryId, scope.TargetBranchId)
         else
             Resource.Repository(scope.OwnerId, scope.OrganizationId, scope.RepositoryId)
 
+    /// Computes scope equals data used by Grace Server.
     let scopeEquals left right =
         left.OwnerId = right.OwnerId
         && left.OrganizationId = right.OrganizationId
         && left.RepositoryId = right.RepositoryId
         && left.TargetBranchId = right.TargetBranchId
 
+    /// Implements current user id for the server request pipeline.
     let currentUserId (context: HttpContext) =
         PrincipalMapper.tryGetUserId context.User
         |> Option.defaultValue "unknown"
         |> UserId
 
+    /// Computes error data used by Grace Server.
     let error context message = GraceError.Create message (Services.getCorrelationId context)
 
+/// Contains Grace Server approval policy behavior and supporting helpers.
 module ApprovalPolicy =
 
     open ApprovalCommon
 
+    /// Validates validate notification url inputs before server processing continues.
     let private validateNotificationUrl (context: HttpContext) (parameters: CreateApprovalPolicyParameters) =
         if String.IsNullOrWhiteSpace parameters.NotificationUrl then
             Ok None
@@ -422,6 +461,7 @@ module ApprovalPolicy =
             | Ok validated -> Ok(Some validated.ScopedUrl)
             | Error failure -> Error $"NotificationUrl is not allowed: {failure}."
 
+    /// Validates creation parameters and materializes the approval policy record that will be sent to the actor.
     let private buildPolicy context approvalPolicyId version status (parameters: CreateApprovalPolicyParameters) =
         task {
             if String.IsNullOrWhiteSpace parameters.RequiredResponder then
@@ -456,6 +496,7 @@ module ApprovalPolicy =
                             }
         }
 
+    /// Implements policy id from context for the server request pipeline.
     let private policyIdFromContext<'T when 'T :> ApprovalPolicyParameters> (context: HttpContext) =
         task {
             context.Request.EnableBuffering()
@@ -469,6 +510,7 @@ module ApprovalPolicy =
                 |> Option.bind ApprovalStore.tryGetPolicy
         }
 
+    /// Resolves resolve stored policy for manage data from request or repository state.
     let resolveStoredPolicyForManage<'T when 'T :> ApprovalPolicyParameters> (context: HttpContext) =
         task {
             let! policy = policyIdFromContext<'T> context
@@ -479,6 +521,7 @@ module ApprovalPolicy =
                 | None -> Error(error context "Approval policy was not found.")
         }
 
+    /// Handles the Grace Server create request.
     let Create: HttpHandler =
         fun _ context ->
             task {
@@ -496,6 +539,7 @@ module ApprovalPolicy =
                         |> Services.result200Ok (ApprovalStore.upsertPolicy policy)
             }
 
+    /// Handles the Grace Server list request.
     let List: HttpHandler =
         fun _ context ->
             task {
@@ -507,6 +551,7 @@ module ApprovalPolicy =
                     |> Services.result200Ok (ApprovalStore.listPolicies scope parameters.IncludeDeleted)
             }
 
+    /// Handles the Grace Server show request.
     let Show: HttpHandler =
         fun _ context ->
             task {
@@ -519,6 +564,7 @@ module ApprovalPolicy =
                 | None -> return! Services.result404NotFound context
             }
 
+    /// Handles the Grace Server update request.
     let Update: HttpHandler =
         fun _ context ->
             task {
@@ -550,6 +596,7 @@ module ApprovalPolicy =
                                 )
             }
 
+    /// Handles the Grace Server set status request.
     let private setStatus status : HttpHandler =
         fun _ context ->
             task {
@@ -565,12 +612,16 @@ module ApprovalPolicy =
                         |> Services.result200Ok (ApprovalStore.upsertPolicy { policy with Status = status; UpdatedAt = Some(getCurrentInstant ()) })
             }
 
+    /// Handles the Grace Server enable request.
     let Enable: HttpHandler = setStatus ApprovalPolicyStatus.Enabled
 
+    /// Handles the Grace Server disable request.
     let Disable: HttpHandler = setStatus ApprovalPolicyStatus.Disabled
 
+    /// Handles the Grace Server delete request.
     let Delete: HttpHandler = setStatus ApprovalPolicyStatus.Deleted
 
+    /// Handles the Grace Server evaluate request.
     let Evaluate: HttpHandler =
         fun _ context ->
             task {

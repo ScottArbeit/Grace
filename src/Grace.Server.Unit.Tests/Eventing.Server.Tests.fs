@@ -15,9 +15,11 @@ open System
 open System.Collections.Generic
 open System.Text.Json
 
+/// Covers automation Eventing behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type AutomationEventingTests() =
 
+    /// Constructs metadata fixtures used by the server unit eventing assertions.
     let metadata correlationId repositoryId =
         let properties = Dictionary<string, string>()
         properties[nameof RepositoryId] <- $"{repositoryId}"
@@ -30,6 +32,7 @@ type AutomationEventingTests() =
             Properties = properties
         }
 
+    /// Verifies that reference Promotion With Terminal Link Maps To Promotion Set Applied.
     [<Test>]
     member _.ReferencePromotionWithTerminalLinkMapsToPromotionSetApplied() =
         let repositoryId = Guid.NewGuid()
@@ -90,6 +93,7 @@ type AutomationEventingTests() =
         Assert.That(payloadBranchId, Is.EqualTo(branchId))
         Assert.That(payloadReferenceId, Is.EqualTo(referenceId))
 
+    /// Verifies that reference Promotion Without Terminal Link Does Not Emit Promotion Set Applied.
     [<Test>]
     member _.ReferencePromotionWithoutTerminalLinkDoesNotEmitPromotionSetApplied() =
         let repositoryId = Guid.NewGuid()
@@ -118,6 +122,7 @@ type AutomationEventingTests() =
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)
         Assert.That(envelope.IsNone, Is.True)
 
+    /// Verifies that queue Promotion Set Enqueued Maps To Promotion Set Enqueued.
     [<Test>]
     member _.QueuePromotionSetEnqueuedMapsToPromotionSetEnqueued() =
         let repositoryId = Guid.NewGuid()
@@ -130,6 +135,7 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetEnqueued))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
+    /// Verifies that queue Promotion Set Dequeued Maps To Promotion Set Dequeued.
     [<Test>]
     member _.QueuePromotionSetDequeuedMapsToPromotionSetDequeued() =
         let repositoryId = Guid.NewGuid()
@@ -142,6 +148,7 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetDequeued))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
+    /// Verifies that promotion Set Recompute Started Maps To Automation Event.
     [<Test>]
     member _.PromotionSetRecomputeStartedMapsToAutomationEvent() =
         let repositoryId = Guid.NewGuid()
@@ -155,6 +162,7 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetRecomputeStarted))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
+    /// Verifies that promotion Set Steps Updated Maps To Automation Event.
     [<Test>]
     member _.PromotionSetStepsUpdatedMapsToAutomationEvent() =
         let repositoryId = Guid.NewGuid()
@@ -181,6 +189,7 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetStepsUpdated))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
+    /// Verifies that work Item Artifact Linked Maps To Agent Summary Added.
     [<Test>]
     member _.WorkItemArtifactLinkedMapsToAgentSummaryAdded() =
         let repositoryId = Guid.NewGuid()
@@ -193,6 +202,7 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.AgentSummaryAdded))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
+    /// Verifies that agent Session Envelope Retains Correlation And Identity Metadata.
     [<Test>]
     member _.AgentSessionEnvelopeRetainsCorrelationAndIdentityMetadata() =
         let ownerId = Guid.NewGuid()

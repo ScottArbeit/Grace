@@ -34,14 +34,17 @@ open System.Threading.Tasks
 open System.Text
 open System.Text.Json
 
+/// Contains Grace Server repository behavior and supporting helpers.
 module Repository =
 
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> RepositoryParameters> = 'T -> ValueTask<Result<unit, RepositoryError>> array
 
     let activitySource = new ActivitySource("Repository")
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Repository.Server")
 
+    /// Coordinates process command with post success processing for Grace Server.
     let processCommandWithPostSuccess<'T when 'T :> RepositoryParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -64,6 +67,7 @@ module Repository =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand organizationId repositoryId cmd =
                     task {
                         let actorProxy = Repository.CreateActorProxy organizationId repositoryId correlationId
@@ -184,9 +188,11 @@ module Repository =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> RepositoryParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<RepositoryCommand>) =
         processCommandWithPostSuccess context validations command (fun () -> Task.FromResult(Ok()))
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> RepositoryParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -262,6 +268,7 @@ module Repository =
                 let graceIds = getGraceIds context
 
                 //let! parameters = context |> parse<CreateParameters>
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateRepositoryParameters) =
                     [|
                         Repository.repositoryIdDoesNotExist graceIds.OrganizationId parameters.RepositoryId parameters.CorrelationId RepositoryIdAlreadyExists
@@ -273,6 +280,7 @@ module Repository =
                             RepositoryNameAlreadyExists
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateRepositoryParameters) =
                     task {
                         return
@@ -286,6 +294,7 @@ module Repository =
                     }
                     |> ValueTask<RepositoryCommand>
 
+                /// Ensures creator admin before the handler returns success.
                 let ensureCreatorAdmin () =
                     task {
                         let graceIds = getGraceIds context
@@ -306,12 +315,14 @@ module Repository =
     let SetVisibility: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetRepositoryVisibilityParameters) =
                     [|
                         Repository.visibilityIsValid parameters.Visibility InvalidVisibilityValue
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetRepositoryVisibilityParameters) =
                     SetRepositoryType(
                         discriminatedUnionFromString<RepositoryType>(
@@ -329,12 +340,14 @@ module Repository =
     let SetLogicalDeleteDays: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetLogicalDeleteDaysParameters) =
                     [|
                         Repository.daysIsValid parameters.LogicalDeleteDays InvalidLogicalDeleteDaysValue
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetLogicalDeleteDaysParameters) =
                     SetLogicalDeleteDays(parameters.LogicalDeleteDays)
                     |> returnValueTask
@@ -347,12 +360,14 @@ module Repository =
     let SetSaveDays: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetSaveDaysParameters) =
                     [|
                         Repository.daysIsValid parameters.SaveDays InvalidSaveDaysValue
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetSaveDaysParameters) =
                     SetSaveDays(parameters.SaveDays)
                     |> returnValueTask
@@ -365,12 +380,14 @@ module Repository =
     let SetCheckpointDays: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetCheckpointDaysParameters) =
                     [|
                         Repository.daysIsValid parameters.CheckpointDays InvalidCheckpointDaysValue
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetCheckpointDaysParameters) =
                     SetCheckpointDays(parameters.CheckpointDays)
                     |> returnValueTask
@@ -383,12 +400,14 @@ module Repository =
     let SetDiffCacheDays: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetDiffCacheDaysParameters) =
                     [|
                         Repository.daysIsValid parameters.DiffCacheDays InvalidDiffCacheDaysValue
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetDiffCacheDaysParameters) =
                     SetDiffCacheDays(parameters.DiffCacheDays)
                     |> returnValueTask
@@ -401,12 +420,14 @@ module Repository =
     let SetDirectoryVersionCacheDays: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetDirectoryVersionCacheDaysParameters) =
                     [|
                         Repository.daysIsValid parameters.DirectoryVersionCacheDays InvalidDirectoryVersionCacheDaysValue
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetDirectoryVersionCacheDaysParameters) =
                     SetDirectoryVersionCacheDays(parameters.DirectoryVersionCacheDays)
                     |> returnValueTask
@@ -419,6 +440,7 @@ module Repository =
     let SetStatus: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetRepositoryStatusParameters) =
                     [|
                         String.isNotEmpty parameters.Status InvalidRepositoryStatus
@@ -426,6 +448,7 @@ module Repository =
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetRepositoryStatusParameters) =
                     SetRepositoryStatus(
                         discriminatedUnionFromString<RepositoryStatus>(
@@ -443,11 +466,13 @@ module Repository =
     let SetAllowsLargeFiles: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetAllowsLargeFilesParameters) =
                     [|
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetAllowsLargeFilesParameters) =
                     SetAllowsLargeFiles(parameters.AllowsLargeFiles)
                     |> returnValueTask
@@ -460,11 +485,13 @@ module Repository =
     let SetAnonymousAccess: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetAnonymousAccessParameters) =
                     [|
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetAnonymousAccessParameters) =
                     SetAnonymousAccess(parameters.AnonymousAccess)
                     |> returnValueTask
@@ -477,12 +504,14 @@ module Repository =
     let SetDefaultServerApiVersion: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetDefaultServerApiVersionParameters) =
                     [|
                         String.isNotEmpty parameters.DefaultServerApiVersion InvalidServerApiVersion
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetDefaultServerApiVersionParameters) =
                     SetDefaultServerApiVersion(parameters.DefaultServerApiVersion)
                     |> returnValueTask
@@ -495,6 +524,7 @@ module Repository =
     let SetConflictResolutionPolicy: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetConflictResolutionPolicyParameters) =
                     [|
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
@@ -503,6 +533,7 @@ module Repository =
                             InvalidConflictResolutionPolicy
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetConflictResolutionPolicyParameters) =
                     SetConflictResolutionPolicy(
                         discriminatedUnionFromString<ConflictResolutionPolicy>(
@@ -520,11 +551,13 @@ module Repository =
     let SetRecordSaves: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: RecordSavesParameters) =
                     [|
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: RecordSavesParameters) =
                     SetRecordSaves(parameters.RecordSaves)
                     |> returnValueTask
@@ -537,6 +570,7 @@ module Repository =
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetRepositoryDescriptionParameters) =
                     [|
                         String.isNotEmpty parameters.Description DescriptionIsRequired
@@ -544,6 +578,7 @@ module Repository =
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetRepositoryDescriptionParameters) =
                     SetDescription(parameters.Description)
                     |> returnValueTask
@@ -556,6 +591,7 @@ module Repository =
     let SetName: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetRepositoryNameParameters) =
                     [|
                         String.isNotEmpty parameters.NewName RepositoryNameIsRequired
@@ -569,6 +605,7 @@ module Repository =
                             RepositoryNameAlreadyExists
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetRepositoryNameParameters) = SetName(parameters.NewName) |> returnValueTask
 
                 context.Items.Add("Command", nameof SetName)
@@ -579,12 +616,14 @@ module Repository =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: DeleteRepositoryParameters) =
                     [|
                         String.isNotEmpty parameters.DeleteReason DeleteReasonIsRequired
                         Repository.repositoryIsNotDeleted context parameters.CorrelationId RepositoryIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: DeleteRepositoryParameters) =
                     DeleteLogical(parameters.Force, parameters.DeleteReason)
                     |> returnValueTask
@@ -597,11 +636,13 @@ module Repository =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: RepositoryParameters) =
                     [|
                         Repository.repositoryIsDeleted context parameters.CorrelationId RepositoryIsNotDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: RepositoryParameters) = Undelete |> returnValueTask
 
                 context.Items.Add("Command", nameof Undelete)
@@ -616,8 +657,10 @@ module Repository =
                 let graceIds = context.Items[nameof GraceIds] :?> GraceIds
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: RepositoryParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task { return! actorProxy.Exists(getCorrelationId context) }
 
@@ -665,8 +708,10 @@ module Repository =
                 let graceIds = context.Items[nameof GraceIds] :?> GraceIds
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: RepositoryParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task { return! actorProxy.IsEmpty(getCorrelationId context) }
 
@@ -714,8 +759,10 @@ module Repository =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: RepositoryParameters) = [||]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) = actorProxy.Get(getCorrelationId context)
 
                     let! parameters = context |> parse<RepositoryParameters>
@@ -762,11 +809,13 @@ module Repository =
                 let graceIds = context.Items[nameof GraceIds] :?> GraceIds
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetBranchesParameters) =
                         [|
                             Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
                             let graceIds = context.Items[nameof GraceIds] :?> GraceIds
@@ -821,12 +870,14 @@ module Repository =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetReferencesByReferenceIdParameters) =
                         [|
                             Input.listIsNonEmpty parameters.ReferenceIds ReferenceIdsAreRequired
                             Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
                             let referenceIds = context.Items["ReferenceIds"] :?> IEnumerable<ReferenceId>
@@ -884,12 +935,14 @@ module Repository =
                 let graceIds = context.Items[nameof GraceIds] :?> GraceIds
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetBranchesByBranchIdParameters) =
                         [|
                             Input.listIsNonEmpty parameters.BranchIds BranchIdsAreRequired
                             Number.isWithinRange parameters.MaxCount 1 1000 InvalidMaxCountValue
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IRepositoryActor) =
                         task {
                             let repositoryId = Guid.Parse(graceIds.RepositoryIdString)

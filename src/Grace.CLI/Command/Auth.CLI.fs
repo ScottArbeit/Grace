@@ -30,18 +30,24 @@ open System.IO
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the auth command parser, handlers, and output helpers.
 module Auth =
 
+    /// Models login mode values passed between the parser and auth handlers.
     type LoginMode =
         | Pkce
         | Device
 
+    /// Defines structured data exchanged by CLI helpers.
     type OidcCliConfig = { Authority: string; Audience: string; ClientId: string; RedirectPort: int; Scopes: string list }
 
+    /// Defines structured data exchanged by CLI helpers.
     type OidcM2mConfig = { Authority: string; Audience: string; ClientId: string; ClientSecret: string; Scopes: string list }
 
+    /// Defines structured data exchanged by CLI helpers.
     type AuthInfo = { GraceUserId: string; Claims: string list }
 
+    /// Models token bundle values passed between the parser and auth handlers.
     type TokenBundle =
         {
             RefreshToken: string
@@ -56,8 +62,10 @@ module Auth =
             UpdatedAt: Instant
         }
 
+    /// Defines structured data exchanged by CLI helpers.
     type TokenResponse = { AccessToken: string; RefreshToken: string option; ExpiresIn: int option; Scope: string option; TokenType: string option }
 
+    /// Models device code response values passed between the parser and auth handlers.
     type DeviceCodeResponse =
         {
             DeviceCode: string
@@ -68,14 +76,19 @@ module Auth =
             IntervalSeconds: int
         }
 
+    /// Defines structured data exchanged by CLI helpers.
     type TokenStore = { Helper: MsalCacheHelper; StorageProperties: StorageCreationProperties; LockFilePath: string; InProcessLock: SemaphoreSlim }
 
+    /// Defines structured data exchanged by CLI helpers.
     type AuthStatusGraceTokenSource = { Present: bool option; Valid: bool option; Error: string option }
 
+    /// Defines structured data exchanged by CLI helpers.
     type AuthStatusTokenFileSource = { Present: bool option; Supported: bool option; Error: string option }
 
+    /// Defines structured data exchanged by CLI helpers.
     type AuthStatusM2mSource = { Configured: bool option }
 
+    /// Models auth status interactive source values passed between the parser and auth handlers.
     type AuthStatusInteractiveSource =
         {
             Configured: bool option
@@ -86,6 +99,7 @@ module Auth =
             Error: string option
         }
 
+    /// Models auth status sources values passed between the parser and auth handlers.
     type AuthStatusSources =
         {
             GraceToken: AuthStatusGraceTokenSource
@@ -94,8 +108,10 @@ module Auth =
             Interactive: AuthStatusInteractiveSource
         }
 
+    /// Defines structured data exchanged by CLI helpers.
     type AuthStatusDiagnostic = { Level: string; Source: string; Message: string }
 
+    /// Models auth status output values passed between the parser and auth handlers.
     type AuthStatusOutput =
         {
             Authenticated: bool option
@@ -107,8 +123,10 @@ module Auth =
             Diagnostics: AuthStatusDiagnostic array
         }
 
+    /// Defines structured data exchanged by CLI helpers.
     type AuthEnvironmentFieldStatus = { Name: string; IsSet: bool; Required: bool }
 
+    /// Models auth inspection values passed between the parser and auth handlers.
     type AuthInspection =
         {
             GraceTokenPresent: bool
@@ -125,12 +143,15 @@ module Auth =
             HasUsableCredentialSource: bool
         }
 
+    /// Tries to map get env and returns a GraceError instead of throwing on unsupported input.
     let private tryGetEnv name =
         let value = Environment.GetEnvironmentVariable(name)
         if String.IsNullOrWhiteSpace value then None else Some value
 
+    /// Evaluates is env set against parsed options and command state.
     let private isEnvSet name = tryGetEnv name |> Option.isSome
 
+    /// Normalizes Grace ids for bearer token by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeBearerToken (token: string) =
         let trimmed = token.Trim()
 
@@ -139,19 +160,24 @@ module Auth =
         else
             trimmed
 
+    /// Coordinates auth field behavior for this CLI command path.
     let private authField required name = { Name = name; IsSet = isEnvSet name; Required = required }
 
+    /// Checks whether required fields complete is true for the parsed command input.
     let private requiredFieldsComplete fields =
         fields
         |> Array.filter (fun field -> field.Required)
         |> Array.forall (fun field -> field.IsSet)
 
+    /// Checks whether any fields set is true for the parsed command input.
     let private anyFieldsSet fields = fields |> Array.exists (fun field -> field.IsSet)
 
+    /// Evaluates has partial required fields against parsed options and command state.
     let private hasPartialRequiredFields fields =
         anyFieldsSet fields
         && not (requiredFieldsComplete fields)
 
+    /// Coordinates inspect auth environment behavior for this CLI command path.
     let inspectAuthEnvironment () =
         let tokenValue = tryGetEnv Constants.EnvironmentVariables.GraceToken
         let graceTokenPresent = tokenValue.IsSome
@@ -221,6 +247,7 @@ module Auth =
             HasUsableCredentialSource = hasUsableCredentialSource
         }
 
+    /// Normalizes Grace ids for authority by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeAuthority (authority: string) =
         let trimmed = authority.Trim()
 
@@ -229,12 +256,14 @@ module Auth =
         else
             $"{trimmed}/"
 
+    /// Parses command input into typed values.
     let private parseScopes (value: string) =
         value.Split([| ' ' |], StringSplitOptions.RemoveEmptyEntries)
         |> Seq.map (fun scopeValue -> scopeValue.Trim())
         |> Seq.filter (fun scopeValue -> not (String.IsNullOrWhiteSpace scopeValue))
         |> Seq.toList
 
+    /// Coordinates default cli scopes behavior for this CLI command path.
     let private defaultCliScopes () =
         [
             "openid"
@@ -243,6 +272,7 @@ module Auth =
             "offline_access"
         ]
 
+    /// Builds command objects or parameters for execution.
     let private buildOidcCliConfig (authority: string) (audience: string) (clientId: string) =
         let redirectPort =
             match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcCliRedirectPort with
@@ -259,6 +289,7 @@ module Auth =
 
         { Authority = normalizeAuthority authority; Audience = audience.Trim(); ClientId = clientId.Trim(); RedirectPort = redirectPort; Scopes = scopes }
 
+    /// Tries to map get oidc cli config from env and returns a GraceError instead of throwing on unsupported input.
     let private tryGetOidcCliConfigFromEnv () =
         match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
               tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
@@ -267,6 +298,7 @@ module Auth =
         | Some authority, Some audience, Some clientId -> Some(buildOidcCliConfig authority audience clientId)
         | _ -> None
 
+    /// Tries to map get oidc cli config from server and returns a GraceError instead of throwing on unsupported input.
     let private tryGetOidcCliConfigFromServer (correlationId: string) =
         task {
             match tryGetEnv Constants.EnvironmentVariables.GraceServerUri with
@@ -282,6 +314,7 @@ module Auth =
                 | Error error -> return Error error
         }
 
+    /// Tries to map get oidc cli config and returns a GraceError instead of throwing on unsupported input.
     let private tryGetOidcCliConfig (correlationId: string) =
         task {
             match tryGetOidcCliConfigFromEnv () with
@@ -289,6 +322,7 @@ module Auth =
             | None -> return! tryGetOidcCliConfigFromServer correlationId
         }
 
+    /// Tries to map get oidc m2m config and returns a GraceError instead of throwing on unsupported input.
     let private tryGetOidcM2mConfig () =
         match tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority,
               tryGetEnv Constants.EnvironmentVariables.GraceAuthOidcAudience,
@@ -311,6 +345,7 @@ module Auth =
                 }
         | _ -> None
 
+    /// Tries to map get grace token from env and returns a GraceError instead of throwing on unsupported input.
     let private tryGetGraceTokenFromEnv () =
         match tryGetEnv Constants.EnvironmentVariables.GraceToken with
         | None -> Ok None
@@ -325,6 +360,7 @@ module Auth =
                 | None ->
                     Error $"GRACE_TOKEN accepts Grace PATs only (prefix {Grace.Types.PersonalAccessToken.TokenPrefix}). Auth0 access tokens are not valid here."
 
+    /// Reads token store namespace from ParseResult, local configuration, or Grace ids.
     let private getTokenStoreNamespace (config: OidcCliConfig) =
         let serverUri =
             tryGetEnv Constants.EnvironmentVariables.GraceServerUri
@@ -333,6 +369,7 @@ module Auth =
         $"{config.Authority}|{config.Audience}|{config.ClientId}|{serverUri}"
             .Trim()
 
+    /// Evaluates hash namespace against parsed options and command state.
     let private hashNamespace (value: string) =
         use sha = SHA256.Create()
         let bytes = Encoding.UTF8.GetBytes(value)
@@ -341,6 +378,7 @@ module Auth =
 
     let private tokenStoreCache = System.Collections.Concurrent.ConcurrentDictionary<string, Task<TokenStore>>()
 
+    /// Opens the secure OIDC token store used by interactive CLI authentication.
     let private createTokenStoreAsync (config: OidcCliConfig) =
         task {
             let cacheRoot = UserConfiguration.getUserGraceDirectory ()
@@ -375,10 +413,12 @@ module Auth =
                 }
         }
 
+    /// Reads token store async from ParseResult, local configuration, or Grace ids.
     let private getTokenStoreAsync (config: OidcCliConfig) =
         let key = getTokenStoreNamespace config
         tokenStoreCache.GetOrAdd(key, (fun _ -> createTokenStoreAsync config))
 
+    /// Updates CLI authentication state for verify secure store async while keeping token handling centralized.
     let private verifySecureStoreAsync (config: OidcCliConfig) =
         task {
             try
@@ -389,6 +429,7 @@ module Auth =
             | ex -> return Error $"Secure token storage is unavailable: {ex.Message}"
         }
 
+    /// Updates CLI authentication state for with token lock while keeping token handling centralized.
     let private withTokenLock (store: TokenStore) (action: unit -> Task<'T>) =
         task {
             do! store.InProcessLock.WaitAsync()
@@ -400,6 +441,7 @@ module Auth =
                 store.InProcessLock.Release() |> ignore
         }
 
+    /// Tries to map load token bundle and returns a GraceError instead of throwing on unsupported input.
     let private tryLoadTokenBundle (store: TokenStore) =
         try
             let data = store.Helper.LoadUnencryptedTokenCache()
@@ -413,13 +455,16 @@ module Auth =
         with
         | _ -> None
 
+    /// Updates CLI authentication state for save token bundle while keeping token handling centralized.
     let private saveTokenBundle (store: TokenStore) (bundle: TokenBundle) =
         let json = JsonSerializer.Serialize(bundle, Constants.JsonSerializerOptions)
         let data = Encoding.UTF8.GetBytes(json)
         store.Helper.SaveUnencryptedTokenCache(data)
 
+    /// Clears inherited token bundle values so explicitly scoped access commands do not target child resources accidentally.
     let private clearTokenBundle (store: TokenStore) = store.Helper.SaveUnencryptedTokenCache(Array.Empty<byte>())
 
+    /// Tries to map read string and returns a GraceError instead of throwing on unsupported input.
     let private tryReadString (root: JsonElement) (name: string) =
         match root.TryGetProperty(name) with
         | true, value when value.ValueKind = JsonValueKind.String ->
@@ -427,6 +472,7 @@ module Auth =
             if String.IsNullOrWhiteSpace strValue then None else Some strValue
         | _ -> None
 
+    /// Tries to map read int and returns a GraceError instead of throwing on unsupported input.
     let private tryReadInt (root: JsonElement) (name: string) =
         match root.TryGetProperty(name) with
         | true, value when value.ValueKind = JsonValueKind.Number ->
@@ -435,6 +481,7 @@ module Auth =
             | _ -> None
         | _ -> None
 
+    /// Parses command input into typed values.
     let private parseTokenResponse (json: string) =
         use document = JsonDocument.Parse(json)
         let root = document.RootElement
@@ -451,6 +498,7 @@ module Auth =
                     TokenType = tryReadString root "token_type"
                 }
 
+    /// Parses command input into typed values.
     let private parseDeviceCodeResponse (json: string) =
         use document = JsonDocument.Parse(json)
         let root = document.RootElement
@@ -474,6 +522,7 @@ module Auth =
                 }
         | _ -> Error "Device code response missing required fields."
 
+    /// Tries to map read oauth error and returns a GraceError instead of throwing on unsupported input.
     let private tryReadOAuthError (json: string) =
         try
             use document = JsonDocument.Parse(json)
@@ -489,10 +538,12 @@ module Auth =
         with
         | _ -> None
 
+    /// Builds command objects or parameters for execution.
     let private buildEndpoint (authority: string) (path: string) = $"{authority.TrimEnd('/')}/{path.TrimStart('/')}"
 
     let private httpClient = new HttpClient()
 
+    /// Tries to map create absolute uri and returns a GraceError instead of throwing on unsupported input.
     let private tryCreateAbsoluteUri (url: string) =
         match Uri.TryCreate(url, UriKind.Absolute) with
         | true, uri when
@@ -502,6 +553,7 @@ module Auth =
             Ok uri
         | _ -> Error $"Invalid OIDC endpoint URL: {url}. Check {Constants.EnvironmentVariables.GraceAuthOidcAuthority}."
 
+    /// Sends or polls the post form async OIDC/auth request used by interactive CLI authentication.
     let private postFormAsync (url: string) (formValues: (string * string) list) =
         task {
             let contentValues =
@@ -523,6 +575,7 @@ module Auth =
                     return Error message
         }
 
+    /// Tries to map launch browser and returns a GraceError instead of throwing on unsupported input.
     let private tryLaunchBrowser (url: string) =
         try
             let psi = ProcessStartInfo()
@@ -533,6 +586,7 @@ module Auth =
         with
         | ex -> Error ex.Message
 
+    /// Coordinates generate base64 url behavior for this CLI command path.
     let private generateBase64Url (bytes: int) =
         let data = RandomNumberGenerator.GetBytes(bytes)
 
@@ -542,6 +596,7 @@ module Auth =
             .Replace('+', '-')
             .Replace('/', '_')
 
+    /// Coordinates compute code challenge behavior for this CLI command path.
     let private computeCodeChallenge (verifier: string) =
         use sha = SHA256.Create()
         let bytes = Encoding.ASCII.GetBytes(verifier)
@@ -553,6 +608,7 @@ module Auth =
             .Replace('+', '-')
             .Replace('/', '_')
 
+    /// Tries to map get jwt claim and returns a GraceError instead of throwing on unsupported input.
     let private tryGetJwtClaim (token: string) (claimType: string) =
         try
             let parts = token.Split('.')
@@ -572,6 +628,7 @@ module Auth =
         with
         | _ -> None
 
+    /// Builds command objects or parameters for execution.
     let private buildTokenBundle (config: OidcCliConfig) (tokenResponse: TokenResponse) =
         let now = getCurrentInstant ()
 
@@ -606,6 +663,7 @@ module Auth =
             UpdatedAt = now
         }
 
+    /// Sends or polls the request token with authorization code async OIDC/auth request used by interactive CLI authentication.
     let private requestTokenWithAuthorizationCodeAsync (config: OidcCliConfig) (redirectUri: string) (code: string) (codeVerifier: string) =
         task {
             let tokenEndpoint = buildEndpoint config.Authority "oauth/token"
@@ -626,6 +684,7 @@ module Auth =
             | Error message -> return Error message
         }
 
+    /// Sends or polls the request device code async OIDC/auth request used by interactive CLI authentication.
     let private requestDeviceCodeAsync (config: OidcCliConfig) =
         task {
             let endpoint = buildEndpoint config.Authority "oauth/device/code"
@@ -644,6 +703,7 @@ module Auth =
             | Error message -> return Error message
         }
 
+    /// Sends or polls the poll device code async OIDC/auth request used by interactive CLI authentication.
     let private pollDeviceCodeAsync (config: OidcCliConfig) (deviceCode: DeviceCodeResponse) =
         task {
             let tokenEndpoint = buildEndpoint config.Authority "oauth/token"
@@ -687,6 +747,7 @@ module Auth =
             return finalResult
         }
 
+    /// Tries to map acquire token with pkce async and returns a GraceError instead of throwing on unsupported input.
     let private tryAcquireTokenWithPkceAsync (config: OidcCliConfig) (parseResult: ParseResult) =
         task {
             let redirectUri = $"http://127.0.0.1:{config.RedirectPort}/callback"
@@ -739,6 +800,7 @@ module Auth =
                         let request = context.Request
                         let response = context.Response
 
+                        /// Writes response data through the CLI output contract.
                         let writeResponse (message: string) =
                             task {
                                 use writer = new StreamWriter(response.OutputStream)
@@ -780,6 +842,7 @@ module Auth =
                     listener.Stop()
         }
 
+    /// Tries to map acquire token with device flow async and returns a GraceError instead of throwing on unsupported input.
     let private tryAcquireTokenWithDeviceFlowAsync (config: OidcCliConfig) (parseResult: ParseResult) =
         task {
             let! deviceResponse = requestDeviceCodeAsync config
@@ -797,6 +860,7 @@ module Auth =
                 return! pollDeviceCodeAsync config deviceCode
         }
 
+    /// Updates CLI authentication state for apply refresh token while keeping token handling centralized.
     let private applyRefreshToken (bundle: TokenBundle) (refreshed: TokenResponse) (now: Instant) : TokenBundle =
         let expiresIn = refreshed.ExpiresIn |> Option.defaultValue 3600
         let expiresAt = now.Plus(Duration.FromSeconds(float expiresIn))
@@ -827,6 +891,7 @@ module Auth =
             UpdatedAt = now
         }
 
+    /// Tries to map refresh token async and returns a GraceError instead of throwing on unsupported input.
     let private tryRefreshTokenAsync (config: OidcCliConfig) (bundle: TokenBundle) =
         task {
             if String.IsNullOrWhiteSpace bundle.RefreshToken then
@@ -857,6 +922,7 @@ module Auth =
 
     let private safetyWindow = Duration.FromSeconds(90.0)
 
+    /// Tries to map get interactive token async and returns a GraceError instead of throwing on unsupported input.
     let private tryGetInteractiveTokenAsync (config: OidcCliConfig) =
         task {
             let! storeResult = verifySecureStoreAsync config
@@ -887,6 +953,7 @@ module Auth =
                         })
         }
 
+    /// Tries to map get access token and returns a GraceError instead of throwing on unsupported input.
     let tryGetAccessToken () =
         task {
             match tryGetGraceTokenFromEnv () with
@@ -942,6 +1009,7 @@ module Auth =
                         | Error error -> return Error error.Error
         }
 
+    /// Tries to map get access token for sdk and returns a GraceError instead of throwing on unsupported input.
     let private tryGetAccessTokenForSdk () =
         task {
             let! result = tryGetAccessToken ()
@@ -951,8 +1019,10 @@ module Auth =
             | Error _ -> return None
         }
 
+    /// Updates CLI authentication state for configure sdk auth while keeping token handling centralized.
     let configureSdkAuth () = Grace.SDK.Auth.setTokenProvider (fun () -> tryGetAccessTokenForSdk ())
 
+    /// Parses command input into typed values.
     let private parseDurationSeconds (value: string) =
         if String.IsNullOrWhiteSpace value then
             Error "Expires-in value is required."
@@ -980,15 +1050,19 @@ module Auth =
                     | None -> Error "Expires-in must end with s, m, h, or d."
                 | _ -> Error "Expires-in must start with a positive integer."
 
+    /// Formats instant option values into the text shown in Spectre.Console tables or command output.
     let private formatInstantOption (instant: NodaTime.Instant option) =
         match instant with
         | None -> "Never"
         | Some value -> instantToLocalTime value
 
+    /// Formats instant for json values into the text shown in Spectre.Console tables or command output.
     let private formatInstantForJson (instant: NodaTime.Instant) = instant.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)
 
+    /// Formats instant option for json values into the text shown in Spectre.Console tables or command output.
     let private formatInstantOptionForJson (instant: NodaTime.Instant option) = instant |> Option.map formatInstantForJson
 
+    /// Models internal values passed between the parser and auth handlers.
     type internal AuthStatusContext =
         {
             GraceTokenPresent: bool
@@ -1007,6 +1081,7 @@ module Auth =
             Now: NodaTime.Instant
         }
 
+    /// Builds command objects or parameters for execution.
     let internal buildAuthStatus (context: AuthStatusContext) =
         let interactiveTokenFresh =
             context.InteractiveExpiresAt
@@ -1100,11 +1175,13 @@ module Auth =
             Diagnostics = diagnostics |> List.toArray
         }
 
+    /// Groups the auth command parser, handlers, and output helpers.
     module private LoginOptions =
         let auth =
             (new Option<string>("--auth", Required = false, Description = "Authentication flow: pkce (browser) or device.", Arity = ArgumentArity.ExactlyOne))
                 .AcceptOnlyFromAmong([| "pkce"; "device" |])
 
+    /// Groups the auth command parser, handlers, and output helpers.
     module private TokenOptions =
         let name =
             new Option<string>("--name", Required = true, Description = "A friendly name for the personal access token.", Arity = ArgumentArity.ExactlyOne)
@@ -1163,12 +1240,14 @@ module Auth =
 
     let private authenticationRequiredMessage = $"Authentication required. Run 'grace authenticate login' and try again. {authDevelopmentGuidance}"
 
+    /// Adds options or child commands to a command definition.
     let private addAuthDevelopmentGuidance (message: string) =
         if String.IsNullOrWhiteSpace message then
             authDevelopmentGuidance
         else
             $"{message} {authDevelopmentGuidance}"
 
+    /// Ensures required command context is present.
     let ensureAccessToken (parseResult: ParseResult) =
         task {
             let correlationId = parseResult |> getCorrelationId
@@ -1190,9 +1269,11 @@ module Auth =
                 raise (OperationCanceledException())
         }
 
+    /// Executes the login command by binding ParseResult values to the SDK request and CLI output contract.
     type Login() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous login action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1273,9 +1354,11 @@ module Auth =
                 | Error error -> return Error error |> renderOutput parseResult
             }
 
+    /// Executes the status command by binding ParseResult values to the SDK request and CLI output contract.
     type Status() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1403,9 +1486,11 @@ module Auth =
                     |> renderOutput parseResult
             }
 
+    /// Executes the logout command by binding ParseResult values to the SDK request and CLI output contract.
     type Logout() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous logout action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1437,9 +1522,11 @@ module Auth =
                 | Error error -> return Error error |> renderOutput parseResult
             }
 
+    /// Executes the who am i command by binding ParseResult values to the SDK request and CLI output contract.
     type WhoAmI() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous who am i action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1460,9 +1547,11 @@ module Auth =
                 | Error error -> return Error error |> renderOutput parseResult
             }
 
+    /// Executes the token create command by binding ParseResult values to the SDK request and CLI output contract.
     type TokenCreate() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous token create action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1523,6 +1612,7 @@ module Auth =
                         | Error error -> return Error error |> renderOutput parseResult
             }
 
+    /// Renders token list results only when the selected output mode includes human-readable console text.
     let private renderTokenList (_parseResult: ParseResult) (tokens: Grace.Types.PersonalAccessToken.PersonalAccessTokenSummary list) : unit =
         let table = Table(Border = TableBorder.Rounded)
         table.AddColumn("Name") |> ignore
@@ -1551,9 +1641,11 @@ module Auth =
 
         AnsiConsole.Write(table)
 
+    /// Executes the token list command by binding ParseResult values to the SDK request and CLI output contract.
     type TokenList() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous token list action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1580,9 +1672,11 @@ module Auth =
                 | Error error -> return Error error |> renderOutput parseResult
             }
 
+    /// Executes the token revoke command by binding ParseResult values to the SDK request and CLI output contract.
     type TokenRevoke() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous token revoke action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1612,9 +1706,11 @@ module Auth =
                     | Error error -> return Error error |> renderOutput parseResult
             }
 
+    /// Executes the token set command by binding ParseResult values to the SDK request and CLI output contract.
     type TokenSet() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous token set action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1624,9 +1720,11 @@ module Auth =
                     |> renderOutput parseResult
             }
 
+    /// Executes the token clear command by binding ParseResult values to the SDK request and CLI output contract.
     type TokenClear() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous token clear action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId
@@ -1636,9 +1734,11 @@ module Auth =
                     |> renderOutput parseResult
             }
 
+    /// Executes the token status command by binding ParseResult values to the SDK request and CLI output contract.
     type TokenStatus() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous token status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 let correlationId = parseResult |> getCorrelationId

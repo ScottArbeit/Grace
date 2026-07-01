@@ -23,7 +23,9 @@ open System.Security.Cryptography
 open System.Text
 open System.Text.RegularExpressions
 
+/// Groups shared helpers for restart durability helpers.
 module private RestartDurabilityHelpers =
+    /// Requires ok and fails the test when missing.
     let requireOkAsync (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -31,6 +33,7 @@ module private RestartDurabilityHelpers =
             return body
         }
 
+    /// Defines content block placement from URI behavior for the surrounding tests used by the server integration restart Durability scenario.
     let contentBlockPlacementFromUri (blobUriWithSasToken: Uri) eTag =
         let pathSegments =
             blobUriWithSasToken
@@ -62,6 +65,7 @@ module private RestartDurabilityHelpers =
             ETag = eTag
         }
 
+    /// Gets shared host state from the running test server.
     let getSharedHostState () =
         match App with
         | Some app ->
@@ -78,8 +82,10 @@ module private RestartDurabilityHelpers =
             Assert.Fail("Aspire test host was not started by the shared setup fixture.")
             Unchecked.defaultof<TestHostState>
 
+    /// Restarts grace server to verify durability across process restarts.
     let restartGraceServerAsync () = AspireTestHost.restartGraceServerAsync (getSharedHostState ())
 
+    /// Builds a deterministic repository for integration setup fixture for the server integration restart Durability assertions.
     let createRepositoryAsync repositoryNamePrefix =
         task {
             let repositoryId = $"{Guid.NewGuid()}"
@@ -104,6 +110,7 @@ module private RestartDurabilityHelpers =
             return repositoryId
         }
 
+    /// Gets owner from the running test server.
     let getOwnerAsync () =
         task {
             let parameters = Parameters.Owner.GetOwnerParameters()
@@ -116,6 +123,7 @@ module private RestartDurabilityHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Gets repository from the running test server.
     let getRepositoryAsync repositoryId =
         task {
             let parameters = Parameters.Repository.GetRepositoryParameters()
@@ -130,6 +138,7 @@ module private RestartDurabilityHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Builds a deterministic work item for integration setup fixture for the server integration restart Durability assertions.
     let createWorkItemAsync repositoryId title =
         task {
             let workItemId = $"{Guid.NewGuid()}"
@@ -147,6 +156,7 @@ module private RestartDurabilityHelpers =
             return workItemId
         }
 
+    /// Gets work item from the running test server.
     let getWorkItemAsync repositoryId workItemIdentifier =
         task {
             let parameters = Parameters.WorkItem.GetWorkItemParameters()
@@ -162,6 +172,7 @@ module private RestartDurabilityHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Defines pseudo random bytes behavior for the surrounding tests used by the server integration restart Durability scenario.
     let pseudoRandomBytes length =
         let bytes = Array.zeroCreate<byte> length
         let mutable state = 0x6284A1D7u
@@ -174,6 +185,7 @@ module private RestartDurabilityHelpers =
 
         bytes
 
+    /// Defines encode block behavior for the surrounding tests used by the server integration restart Durability scenario.
     let encodeBlock bytes =
         match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
         | Ok block -> block
@@ -181,6 +193,7 @@ module private RestartDurabilityHelpers =
             Assert.Fail($"Expected test ContentBlock to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Defines manifest for storage pool behavior for the surrounding tests used by the server integration restart Durability scenario.
     let manifestForStoragePool storagePoolId (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
         let contentBlock = ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
 
@@ -196,16 +209,20 @@ module private RestartDurabilityHelpers =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Defines manifest for behavior for the surrounding tests used by the server integration restart Durability scenario.
     let manifestFor bytes block = manifestForStoragePool (StoragePoolId Constants.DefaultStoragePoolId) bytes block
 
+    /// Defines exact upload scope behavior for the surrounding tests used by the server integration restart Durability scenario.
     let exactUploadScope (sessionId: Guid) = $"/restart-durability/upload-sessions/{sessionId:N}/content.bin"
 
+    /// Builds set storage parameters for route calls.
     let setStorageParameters (parameters: Parameters.Storage.StorageParameters) repositoryId correlationId =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
         parameters.CorrelationId <- correlationId
 
+    /// Posts upload session decision to the running test server.
     let postUploadSessionDecisionAsync (route: string) parameters =
         task {
             let! response = Client.PostAsync(route, createJsonContent parameters)
@@ -213,6 +230,7 @@ module private RestartDurabilityHelpers =
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
 
+    /// Uploads content block with SAS through storage test infrastructure.
     let uploadContentBlockWithSasAsync (payload: byte array) (uploadUri: Uri) =
         task {
             let blockBlobClient = BlockBlobClient(uploadUri)
@@ -223,6 +241,7 @@ module private RestartDurabilityHelpers =
             return response.Value.ETag.ToString()
         }
 
+    /// Builds a deterministic confirmed upload session for integration setup fixture for the server integration restart Durability assertions.
     let createConfirmedUploadSessionAsync repositoryId =
         task {
             let correlationId = generateCorrelationId ()
@@ -286,6 +305,7 @@ module private RestartDurabilityHelpers =
             return correlationId, sessionId, block, manifest
         }
 
+    /// Defines finalize manifest upload behavior for the surrounding tests used by the server integration restart Durability scenario.
     let finalizeManifestUploadAsync repositoryId correlationId sessionId manifest =
         task {
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
@@ -299,8 +319,10 @@ module private RestartDurabilityHelpers =
             return finalizeResult.ReturnValue.Session
         }
 
+    /// Formats instant for diagnostics.
     let formatInstant (instant: Instant) = InstantPattern.ExtendedIso.Format instant
 
+    /// Builds a deterministic reminder for integration setup fixture for the server integration restart Durability assertions.
     let createReminderAsync actorName actorId fireAt =
         task {
             let parameters = Parameters.Reminder.CreateReminderParameters()
@@ -326,6 +348,7 @@ module private RestartDurabilityHelpers =
                 return Guid.Empty
         }
 
+    /// Gets reminder from the running test server.
     let getReminderAsync reminderId =
         task {
             let parameters = Parameters.Reminder.GetReminderParameters()
@@ -341,9 +364,11 @@ module private RestartDurabilityHelpers =
             return returnValue.ReturnValue
         }
 
+/// Covers restart durability server scenarios.
 [<NonParallelizable>]
 type RestartDurabilityServer() =
 
+    /// Verifies the grace server project resource restarts and returns healthy responses scenario.
     [<Test>]
     [<Order(1)>]
     member _.GraceServerProjectResourceRestartsAndReturnsHealthyResponses() =
@@ -357,6 +382,7 @@ type RestartDurabilityServer() =
             Assert.That(after.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the durable actor state rehydrates across grace server project restart scenario.
     [<Test>]
     [<Order(2)>]
     member _.DurableActorStateRehydratesAcrossGraceServerProjectRestart() =

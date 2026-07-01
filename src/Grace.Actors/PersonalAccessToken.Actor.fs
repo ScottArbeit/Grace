@@ -16,8 +16,10 @@ open System
 open System.Security.Cryptography
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for personal access token keys, proxies, state, or workflow transitions.
 module PersonalAccessToken =
 
+    /// Wraps personal access token record records exchanged by actor queries or projections.
     [<GenerateSerializer>]
     type PersonalAccessTokenRecord =
         {
@@ -33,12 +35,15 @@ module PersonalAccessToken =
             GroupIds: string list
         }
 
+    /// Stores durable state for personal access token state.
     [<GenerateSerializer>]
     type PersonalAccessTokenState = { Tokens: PersonalAccessTokenRecord list }
 
+    /// Groups Orleans actor helpers for personal access token state keys, proxies, state, or workflow transitions.
     module PersonalAccessTokenState =
         let Empty = { Tokens = [] }
 
+    /// Implements the Orleans grain for personal access token actor.
     type PersonalAccessTokenActor
         (
             [<PersistentState(StateName.PersonalAccessToken, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<PersonalAccessTokenState>
@@ -53,6 +58,7 @@ module PersonalAccessToken =
             tokenState <- if state.RecordExists then state.State else PersonalAccessTokenState.Empty
             Task.CompletedTask
 
+        /// Persists the updated PersonalAccessToken actor state through the Orleans storage provider.
         member private this.SaveState() =
             task {
                 state.State <- tokenState
@@ -63,6 +69,7 @@ module PersonalAccessToken =
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.WriteStateAsync())
             }
 
+        /// Builds the personal-access-token result returned after token state changes.
         member private _.Summarize(record: PersonalAccessTokenRecord) =
             {
                 TokenId = record.TokenId
@@ -73,12 +80,14 @@ module PersonalAccessToken =
                 RevokedAt = record.RevokedAt
             }
 
+        /// Builds the personal-access-token result returned after token state changes.
         member private _.ComputeHash (salt: byte array) (secret: byte array) =
             let combined = Array.zeroCreate<byte> (salt.Length + secret.Length)
             Array.Copy(salt, 0, combined, 0, salt.Length)
             Array.Copy(secret, 0, combined, salt.Length, secret.Length)
             SHA256.HashData combined
 
+        /// Builds token data needed by the PersonalAccessToken actor.
         member private this.CreateToken
             (name: string)
             (claims: string list)
@@ -136,8 +145,10 @@ module PersonalAccessToken =
                     return Ok result
             }
 
+        /// Returns list tokens data from the PersonalAccessToken actor state or related storage.
         member private this.ListTokens (includeRevoked: bool) (includeExpired: bool) (now: Instant) (_correlationId: CorrelationId) =
             task {
+                /// Checks whether the token expiration timestamp is in the past.
                 let isExpired (token: PersonalAccessTokenRecord) =
                     match token.ExpiresAt with
                     | None -> false
@@ -155,6 +166,7 @@ module PersonalAccessToken =
                 return filtered
             }
 
+        /// Removes or invalidates revoke token data from the PersonalAccessToken actor state.
         member private this.RevokeToken (tokenId: PersonalAccessTokenId) (now: Instant) (correlationId: CorrelationId) =
             task {
                 match tokenState.Tokens
@@ -173,8 +185,10 @@ module PersonalAccessToken =
                     return Ok(this.Summarize updated)
             }
 
+        /// Validates token before the operation continues.
         member private this.ValidateToken (tokenId: PersonalAccessTokenId) (secret: byte array) (now: Instant) (_correlationId: CorrelationId) =
             task {
+                /// Checks whether the token expiration timestamp is in the past.
                 let isExpired (token: PersonalAccessTokenRecord) =
                     match token.ExpiresAt with
                     | None -> false
@@ -208,10 +222,14 @@ module PersonalAccessToken =
             }
 
         interface IPersonalAccessTokenActor with
+            /// Builds token data needed by the PersonalAccessToken actor.
             member this.CreateToken name claims groupIds expiresAt now correlationId = this.CreateToken name claims groupIds expiresAt now correlationId
 
+            /// Returns list tokens data from the PersonalAccessToken actor state or related storage.
             member this.ListTokens includeRevoked includeExpired now correlationId = this.ListTokens includeRevoked includeExpired now correlationId
 
+            /// Removes or invalidates revoke token data from the PersonalAccessToken actor state.
             member this.RevokeToken tokenId now correlationId = this.RevokeToken tokenId now correlationId
 
+            /// Validates token before the operation continues.
             member this.ValidateToken tokenId secret now correlationId = this.ValidateToken tokenId secret now correlationId

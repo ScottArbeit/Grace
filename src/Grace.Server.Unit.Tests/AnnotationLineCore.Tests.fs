@@ -7,6 +7,7 @@ open NUnit.Framework
 open System
 open System.Text
 
+/// Covers annotation Line Core behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type AnnotationLineCoreTests() =
 
@@ -23,6 +24,7 @@ type AnnotationLineCoreTests() =
 
     let bytes (text: string) = Encoding.UTF8.GetBytes(text)
 
+    /// Builds source Reference With Type test data for the server unit annotation Line Core scenarios in this file.
     let sourceReferenceWithType sourceReferenceId referenceId referenceType referenceText directoryVersionId =
         { AnnotationSourceReference.Default with
             SourceReferenceId = sourceReferenceId
@@ -32,6 +34,7 @@ type AnnotationLineCoreTests() =
             DirectoryVersionId = directoryVersionId
         }
 
+    /// Builds source Reference test data for the server unit annotation Line Core scenarios in this file.
     let sourceReference sourceReferenceId referenceId referenceText directoryVersionId =
         sourceReferenceWithType sourceReferenceId referenceId "Commit" referenceText directoryVersionId
 
@@ -46,27 +49,35 @@ type AnnotationLineCoreTests() =
 
     let historyDocumentBytes sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = content }
 
+    /// Builds effective History Document test data for the server unit annotation Line Core scenarios in this file.
     let effectiveHistoryDocument document basedOnReferenceId isAuthorized =
         { Document = document; BasedOnReferenceId = basedOnReferenceId; IsAuthorized = isAuthorized; BoundaryKind = None }
 
+    /// Builds boundary Effective History Document test data for the server unit annotation Line Core scenarios in this file.
     let boundaryEffectiveHistoryDocument document boundaryKind =
         { Document = document; BasedOnReferenceId = None; IsAuthorized = true; BoundaryKind = Some boundaryKind }
 
+    /// Builds build test data for the server unit annotation Line Core scenarios in this file.
     let build requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, true, history)
 
+    /// Builds without Line Text fixtures used by the server unit annotation Line Core assertions.
     let buildWithoutLineText requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], DefaultMaxReferences, false, history)
 
+    /// Builds without Reference Type Filter fixtures used by the server unit annotation Line Core assertions.
     let buildWithoutReferenceTypeFilter requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", Array.empty, DefaultMaxReferences, true, history)
 
+    /// Builds with Max References fixtures used by the server unit annotation Line Core assertions.
     let buildWithMaxReferences maxReferences requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", [| ReferenceType.Commit |], maxReferences, true, history)
 
+    /// Builds with Reference Types fixtures used by the server unit annotation Line Core assertions.
     let buildWithReferenceTypes referenceTypes requestedRange history =
         buildAnnotation (requestedRange, targetReferenceId, "src/App.fs", referenceTypes, DefaultMaxReferences, true, history)
 
+    /// Builds from Traversal fixtures used by the server unit annotation Line Core assertions.
     let buildFromTraversal requestedRange traversalResult =
         buildAnnotationFromEffectiveHistoryTraversal (
             requestedRange,
@@ -78,16 +89,19 @@ type AnnotationLineCoreTests() =
             traversalResult
         )
 
+    /// Asserts the ok condition so failures identify the violated server unit annotation Line Core invariant.
     let assertOk result =
         match result with
         | Ok value -> value
         | Error errors -> failwithf "%A" errors
 
+    /// Asserts the valid condition so failures identify the violated server unit annotation Line Core invariant.
     let assertValid (annotation: BranchAnnotationDto) =
         match Grace.Types.Annotation.validate annotation with
         | Ok () -> ()
         | Error errors -> Assert.Fail(String.Join(Environment.NewLine, errors :> seq<string>))
 
+    /// Builds covered Lines test data for the server unit annotation Line Core scenarios in this file.
     let coveredLines (annotation: BranchAnnotationDto) =
         annotation.Spans
         |> Array.collect (fun span ->
@@ -95,6 +109,7 @@ type AnnotationLineCoreTests() =
                 span.LineRange.StartLine .. span.LineRange.EndLine
             |])
 
+    /// Asserts the covered Exactly Once condition so failures identify the violated server unit annotation Line Core invariant.
     let assertCoveredExactlyOnce startLine endLine (annotation: BranchAnnotationDto) =
         let lines = coveredLines annotation
 
@@ -107,10 +122,12 @@ type AnnotationLineCoreTests() =
                 |> Array.iter (fun (lineNumber, count) -> Assert.That(count, Is.EqualTo(1), $"line {lineNumber} should be covered once")))
         )
 
+    /// Builds history Source Reference Ids test data for the server unit annotation Line Core scenarios in this file.
     let historySourceReferenceIds result =
         result.History
         |> Array.map (fun document -> document.SourceReference.SourceReferenceId)
 
+    /// Verifies that traverse Effective Branch History Orders Based On Ancestors Before Target.
     [<Test>]
     member _.TraverseEffectiveBranchHistoryOrdersBasedOnAncestorsBeforeTarget() =
         let oldDocument = historyDocument oldReference "parent"
@@ -140,6 +157,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(sourceReferenceIdsMatch, Is.True))
         )
 
+    /// Verifies that traverse Effective Branch History Stops At Unauthorized Ancestor.
     [<Test>]
     member _.TraverseEffectiveBranchHistoryStopsAtUnauthorizedAncestor() =
         let oldDocument = historyDocument oldReference "parent"
@@ -164,6 +182,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(sourceReferenceIdsMatch, Is.True))
         )
 
+    /// Verifies that traverse Effective Branch History Stops At Missing Parent Reference.
     [<Test>]
     member _.TraverseEffectiveBranchHistoryStopsAtMissingParentReference() =
         let newDocument = historyDocument newReference "child"
@@ -186,6 +205,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(sourceReferenceIdsMatch, Is.True))
         )
 
+    /// Verifies that traverse Effective Branch History Stops At Based On Loop Or Repeated Link.
     [<Test>]
     member _.TraverseEffectiveBranchHistoryStopsAtBasedOnLoopOrRepeatedLink() =
         let oldDocument = historyDocument oldReference "parent"
@@ -215,6 +235,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(sourceReferenceIdsMatch, Is.True))
         )
 
+    /// Verifies that traverse Effective Branch History Stops At Traversal Budget Boundary.
     [<Test>]
     member _.TraverseEffectiveBranchHistoryStopsAtTraversalBudgetBoundary() =
         let oldDocument = historyDocument oldReference "parent"
@@ -239,6 +260,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(sourceReferenceIdsMatch, Is.True))
         )
 
+    /// Verifies that traverse Effective Branch History Stops At Unreadable Ancestor Boundary.
     [<Test>]
     member _.TraverseEffectiveBranchHistoryStopsAtUnreadableAncestorBoundary() =
         let oldDocument = historyDocument oldReference String.Empty
@@ -263,6 +285,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(sourceReferenceIdsMatch, Is.True))
         )
 
+    /// Verifies that decode Visible Text Normalizes Line Endings.
     [<Test>]
     member _.DecodeVisibleTextNormalizesLineEndings() =
         let lf =
@@ -283,18 +306,21 @@ type AnnotationLineCoreTests() =
                 Assert.That(cr.Lines = lf.Lines, Is.True))
         )
 
+    /// Verifies that decode Visible Text Does Not Create Extra Line For Terminal Newline.
     [<Test>]
     member _.DecodeVisibleTextDoesNotCreateExtraLineForTerminalNewline() =
         let document = decodeVisibleText (bytes "one\ntwo\n") |> assertOk
 
         Assert.That(document.Lines = [| "one"; "two" |], Is.True)
 
+    /// Verifies that decode Visible Text Keeps Empty File As Zero Visible Lines.
     [<Test>]
     member _.DecodeVisibleTextKeepsEmptyFileAsZeroVisibleLines() =
         let document = decodeVisibleText Array.empty |> assertOk
 
         Assert.That(document.Lines, Is.Empty)
 
+    /// Verifies that decode Visible Text Rejects Invalid Utf8.
     [<Test>]
     member _.DecodeVisibleTextRejectsInvalidUtf8() =
         let result = decodeVisibleText [| 0xC3uy; 0x28uy |]
@@ -303,6 +329,7 @@ type AnnotationLineCoreTests() =
         | Ok _ -> Assert.Fail("Invalid UTF-8 bytes should be rejected.")
         | Error (InvalidUtf8 message) -> Assert.That(message, Is.Not.Empty)
 
+    /// Verifies that decode Visible Text Strips Utf8 Bom.
     [<Test>]
     member _.DecodeVisibleTextStripsUtf8Bom() =
         let document =
@@ -315,6 +342,7 @@ type AnnotationLineCoreTests() =
 
         Assert.That(document.Lines = [| "ok" |], Is.True)
 
+    /// Verifies that build Annotation Uses Exact Path Continuity And Counts Whitespace Changes.
     [<Test>]
     member _.BuildAnnotationUsesExactPathContinuityAndCountsWhitespaceChanges() =
         let annotation =
@@ -338,6 +366,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[1].SourceReferenceId, Is.EqualTo("source-reference-new")))
         )
 
+    /// Verifies that build Annotation Preserves Shifted Stable Lines After Insertion.
     [<Test>]
     member _.BuildAnnotationPreservesShiftedStableLinesAfterInsertion() =
         let annotation =
@@ -363,6 +392,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[1].LineRange, Is.EqualTo({ StartLine = 1; EndLine = 3 })))
         )
 
+    /// Verifies that build Annotation Preserves Shifted Stable Lines After Deletion.
     [<Test>]
     member _.BuildAnnotationPreservesShiftedStableLinesAfterDeletion() =
         let annotation =
@@ -385,6 +415,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 2; EndLine = 4 })))
         )
 
+    /// Verifies that build Annotation Preserves Unchanged Middle Lines Between Replacements.
     [<Test>]
     member _.BuildAnnotationPreservesUnchangedMiddleLinesBetweenReplacements() =
         let annotation =
@@ -413,6 +444,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[2].LineRange, Is.EqualTo({ StartLine = 3; EndLine = 3 })))
         )
 
+    /// Verifies that build Annotation Preserves Anchored Middle Line When Moved Tie Appears First.
     [<Test>]
     member _.BuildAnnotationPreservesAnchoredMiddleLineWhenMovedTieAppearsFirst() =
         let annotation =
@@ -441,6 +473,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[2].LineRange, Is.EqualTo({ StartLine = 3; EndLine = 3 })))
         )
 
+    /// Verifies that build Annotation Prefers Shorter Anchored Block Over Longer Moved Block.
     [<Test>]
     member _.BuildAnnotationPrefersShorterAnchoredBlockOverLongerMovedBlock() =
         let annotation =
@@ -463,6 +496,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[0].LineRange, Is.EqualTo({ StartLine = 3; EndLine = 3 })))
         )
 
+    /// Verifies that build Annotation Does Not Treat Moved Repeated Text As Proof.
     [<Test>]
     member _.BuildAnnotationDoesNotTreatMovedRepeatedTextAsProof() =
         let annotation =
@@ -497,6 +531,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(secondRow.SourceReferenceId, Is.EqualTo("source-reference-old")))
         )
 
+    /// Verifies that build Annotation Bounds Large Shifted Repeated Alignment.
     [<Test>]
     member _.BuildAnnotationBoundsLargeShiftedRepeatedAlignment() =
         let repeatedLines = Array.create 160 "repeat"
@@ -526,6 +561,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows, Is.Empty))
         )
 
+    /// Verifies that build Annotation Uses Boundary When Shifted Alignment Exceeds Budget.
     [<Test>]
     member _.BuildAnnotationUsesBoundaryWhenShiftedAlignmentExceedsBudget() =
         let stableLines =
@@ -567,6 +603,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows, Is.Empty))
         )
 
+    /// Verifies that build Annotation Returns Bounded Boundary For Tiny Request In Large File.
     [<Test>]
     member _.BuildAnnotationReturnsBoundedBoundaryForTinyRequestInLargeFile() =
         let largeText =
@@ -601,6 +638,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[0].SourceRowIds, Is.Empty))
         )
 
+    /// Verifies that build Annotation Traverses Filtered Save And Projects Attribution To Commit.
     [<Test>]
     member _.BuildAnnotationTraversesFilteredSaveAndProjectsAttributionToCommit() =
         let annotation =
@@ -625,6 +663,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
         )
 
+    /// Verifies that build Annotation Traverses Filtered Save Without Severing Continuity To Earlier Commit.
     [<Test>]
     member _.BuildAnnotationTraversesFilteredSaveWithoutSeveringContinuityToEarlierCommit() =
         let annotation =
@@ -648,6 +687,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
         )
 
+    /// Verifies that build Annotation Rejects Filtered Reference At Different Path Because V1 Does Not Follow Renames.
     [<Test>]
     member _.BuildAnnotationRejectsFilteredReferenceAtDifferentPathBecauseV1DoesNotFollowRenames() =
         let result =
@@ -665,6 +705,7 @@ type AnnotationLineCoreTests() =
             Assert.Fail("Exact-path annotation should not ignore filtered references at a different path.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("must match annotation path"))
 
+    /// Verifies that build Annotation Keeps Unchanged Rebase From Becoming Last Changed Reference.
     [<Test>]
     member _.BuildAnnotationKeepsUnchangedRebaseFromBecomingLastChangedReference() =
         let rebaseReference = sourceReferenceWithType "source-reference-rebase" targetReferenceId "Rebase" "rebase" newDirectoryVersionId
@@ -694,6 +735,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
         )
 
+    /// Verifies that build Annotation Projects Changed Rebase To Explicit Boundary When Filtered Out.
     [<Test>]
     member _.BuildAnnotationProjectsChangedRebaseToExplicitBoundaryWhenFilteredOut() =
         let rebaseReference = sourceReferenceWithType "source-reference-rebase" targetReferenceId "Rebase" "rebase" newDirectoryVersionId
@@ -725,6 +767,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Rebase")))
         )
 
+    /// Verifies that build Annotation Treats Tag As Eligible Without Filter And When Selected.
     [<Test>]
     member _.BuildAnnotationTreatsTagAsEligibleWithoutFilterAndWhenSelected() =
         let tagTargetReference = { tagReference with ReferenceId = targetReferenceId; DirectoryVersionId = newDirectoryVersionId }
@@ -756,6 +799,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(tagOnly.SourceReferences[0].ReferenceType, Is.EqualTo("Tag")))
         )
 
+    /// Verifies that build Annotation Bounds Unauthorized Ancestor When History Starts Mid Span.
     [<Test>]
     member _.BuildAnnotationBoundsUnauthorizedAncestorWhenHistoryStartsMidSpan() =
         let annotation =
@@ -780,6 +824,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1)))
         )
 
+    /// Verifies that build Annotation Preserves Unauthorized Ancestor Boundary From Traversal Result.
     [<Test>]
     member _.BuildAnnotationPreservesUnauthorizedAncestorBoundaryFromTraversalResult() =
         let oldDocument = historyDocument oldReference "same"
@@ -812,6 +857,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1)))
         )
 
+    /// Verifies that build Annotation Preserves Missing Parent Boundary From Traversal Result.
     [<Test>]
     member _.BuildAnnotationPreservesMissingParentBoundaryFromTraversalResult() =
         let newDocument = historyDocument newReference "same"
@@ -842,6 +888,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1)))
         )
 
+    /// Verifies that build Annotation Preserves Based On Loop Boundary From Traversal Result.
     [<Test>]
     member _.BuildAnnotationPreservesBasedOnLoopBoundaryFromTraversalResult() =
         let oldDocument = historyDocument oldReference "same\nold"
@@ -877,6 +924,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(2)))
         )
 
+    /// Verifies that build Annotation Bounds Traversal Budget Reached Mid Span.
     [<Test>]
     member _.BuildAnnotationBoundsTraversalBudgetReachedMidSpan() =
         let middleReference = sourceReferenceWithType "source-reference-middle" saveReferenceId "Commit" "middle" saveDirectoryVersionId
@@ -905,6 +953,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(2)))
         )
 
+    /// Verifies that build Annotation Ignores Pruned Different Path Ancestor When Budget Bounded.
     [<Test>]
     member _.BuildAnnotationIgnoresPrunedDifferentPathAncestorWhenBudgetBounded() =
         let middleReference = sourceReferenceWithType "source-reference-middle" saveReferenceId "Commit" "middle" saveDirectoryVersionId
@@ -933,6 +982,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(2)))
         )
 
+    /// Verifies that build Annotation Rejects Unknown Target Reference Type Without Filter.
     [<Test>]
     member _.BuildAnnotationRejectsUnknownTargetReferenceTypeWithoutFilter() =
         let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "Unknown" "unknown" newDirectoryVersionId
@@ -950,6 +1000,7 @@ type AnnotationLineCoreTests() =
             Assert.Fail("Unknown target reference types should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
 
+    /// Verifies that build Annotation Rejects Unknown Target Reference Type Past End Of File Without Filter.
     [<Test>]
     member _.BuildAnnotationRejectsUnknownTargetReferenceTypePastEndOfFileWithoutFilter() =
         let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "Unknown" "unknown" newDirectoryVersionId
@@ -967,6 +1018,7 @@ type AnnotationLineCoreTests() =
             Assert.Fail("Unknown target reference types should be rejected even when requested lines are missing.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
 
+    /// Verifies that build Annotation Rejects Unknown Source Reference Type Without Filter.
     [<Test>]
     member _.BuildAnnotationRejectsUnknownSourceReferenceTypeWithoutFilter() =
         let unknownReference = sourceReferenceWithType "source-reference-unknown" oldReferenceId "Unknown" "unknown" oldDirectoryVersionId
@@ -985,6 +1037,7 @@ type AnnotationLineCoreTests() =
             Assert.Fail("Unknown source reference types should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
 
+    /// Verifies that build Annotation Rejects Blank Used Source Reference Id.
     [<Test>]
     member _.BuildAnnotationRejectsBlankUsedSourceReferenceId() =
         let blankReference = sourceReference String.Empty oldReferenceId "blank" oldDirectoryVersionId
@@ -1003,6 +1056,7 @@ type AnnotationLineCoreTests() =
             Assert.Fail("Blank source reference ids should be rejected before DTO creation.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("blank SourceReferenceId"))
 
+    /// Verifies that build Annotation Rejects Duplicate Included Source Reference Ids.
     [<Test>]
     member _.BuildAnnotationRejectsDuplicateIncludedSourceReferenceIds() =
         let duplicateOldReference = { oldReference with ReferenceId = saveReferenceId; ReferenceText = "duplicate old" }
@@ -1022,6 +1076,7 @@ type AnnotationLineCoreTests() =
             Assert.Fail("Duplicate source reference ids should be rejected before budgeting and DTO creation.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("appears more than once"))
 
+    /// Verifies that build Annotation Rejects History When Last Reference Does Not Match Target Reference Id.
     [<Test>]
     member _.BuildAnnotationRejectsHistoryWhenLastReferenceDoesNotMatchTargetReferenceId() =
         let result =
@@ -1042,6 +1097,7 @@ type AnnotationLineCoreTests() =
         | Ok _ -> Assert.Fail("History ending at a different target reference should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("TargetReferenceId"))
 
+    /// Verifies that build Annotation Rejects Filtered Invalid Utf8 Reference Because Traversal Needs Content.
     [<Test>]
     member _.BuildAnnotationRejectsFilteredInvalidUtf8ReferenceBecauseTraversalNeedsContent() =
         let result =
@@ -1059,6 +1115,7 @@ type AnnotationLineCoreTests() =
             Assert.Fail("Filtered references still participate in traversal, so invalid UTF-8 must be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("invalid UTF-8"))
 
+    /// Verifies that build Annotation Coalesces Only Contiguous Matching Source Details.
     [<Test>]
     member _.BuildAnnotationCoalescesOnlyContiguousMatchingSourceDetails() =
         let annotation =
@@ -1082,6 +1139,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[2].LineRange, Is.EqualTo({ StartLine = 4; EndLine = 4 })))
         )
 
+    /// Verifies that build Annotation Adds Boundary Span For Requested Line Past End Of File.
     [<Test>]
     member _.BuildAnnotationAddsBoundarySpanForRequestedLinePastEndOfFile() =
         let annotation =
@@ -1111,6 +1169,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[1].SourceRowIds, Is.Empty))
         )
 
+    /// Verifies that build Annotation Collapses Huge Missing Range Without Per Line State.
     [<Test>]
     member _.BuildAnnotationCollapsesHugeMissingRangeWithoutPerLineState() =
         let annotation =
@@ -1135,6 +1194,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[0].SourceRowIds, Is.Empty))
         )
 
+    /// Verifies that build Annotation Rejects Required Source References Above Budget.
     [<Test>]
     member _.BuildAnnotationRejectsRequiredSourceReferencesAboveBudget() =
         let result =
@@ -1152,6 +1212,7 @@ type AnnotationLineCoreTests() =
             Assert.That(annotation.SourceReferences, Has.Length.LessThanOrEqualTo(annotation.MaxReferences))
         | Error errors -> Assert.That(errors, Has.Some.Contains("MaxReferences"))
 
+    /// Verifies that build Components Does Not Collapse When Boundary State Differs.
     [<Test>]
     member _.BuildComponentsDoesNotCollapseWhenBoundaryStateDiffers() =
         let requestedRange = { StartLine = 1; EndLine = 2 }

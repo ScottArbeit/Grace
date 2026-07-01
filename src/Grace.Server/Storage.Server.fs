@@ -40,10 +40,12 @@ open System.Net.Http.Json
 
 module StorageParameterContracts = Grace.Shared.Parameters.Storage
 
+/// Contains Grace Server storage behavior and supporting helpers.
 module Storage =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Storage.Server")
 
+    /// Normalizes normalize whole file content reference data for stable server comparisons.
     let private normalizeWholeFileContentReference (fileVersion: FileVersion) =
         if isNull (box fileVersion.ContentReference) then
             FileContentReference.WholeFileContent
@@ -54,48 +56,59 @@ module Storage =
                 invalidOp "FileManifest content references are not supported by the current storage compatibility endpoints."
             | unsupported -> invalidOp $"Unsupported file content reference type: {unsupported}."
 
+    /// Builds the object key used for whole-file content stored from an upload session.
     let private getWholeFileContentObjectKey (fileVersion: FileVersion) =
         normalizeWholeFileContentReference fileVersion
         |> ignore
 
         StorageKeys.wholeFileContentObjectKey fileVersion
 
+    /// Builds the object key for readable whole-file content returned by storage materialization.
     let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) correlationId =
         task { return getWholeFileContentObjectKey fileVersion }
 
+    /// Builds the object key for a content block within its storage-account shard.
     let private getContentBlockObjectKey (contentBlockAddress: ContentBlockAddress) = StorageKeys.contentBlockObjectKey contentBlockAddress
 
+    /// Implements append shard evidence fragment for the server request pipeline.
     let private appendShardEvidenceFragment (storageAccountName: StorageAccountName) (uri: Uri) =
         let builder = UriBuilder(uri)
         builder.Fragment <- $"graceStorageAccount={Uri.EscapeDataString(storageAccountName)}"
         builder.Uri
 
+    /// Implements invalid content block address error for the server request pipeline.
     let private invalidContentBlockAddressError correlationId =
         GraceError.Create "ContentBlockAddress must be a 64-character hexadecimal BLAKE3 value." correlationId
 
+    /// Implements invalid manifest address error for the server request pipeline.
     let private invalidManifestAddressError correlationId =
         GraceError.Create "ManifestAddress must be a 64-character lowercase hexadecimal BLAKE3 value." correlationId
 
+    /// Validates validate content block address inputs before server processing continues.
     let internal validateContentBlockAddress correlationId (contentBlockAddress: ContentBlockAddress) =
         match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
         | Some normalizedAddress -> Ok(ContentBlockAddress normalizedAddress)
         | None -> Error(invalidContentBlockAddressError correlationId)
 
+    /// Validates validate supported manifest chunking suite inputs before server processing continues.
     let internal validateSupportedManifestChunkingSuite correlationId (chunkingSuiteId: ChunkingSuiteId) =
         if String.Equals(chunkingSuiteId, RabinChunking.SuiteName, StringComparison.Ordinal) then
             Ok()
         else
             Error(GraceError.Create $"StartManifestUploadSession ChunkingSuiteId must be {RabinChunking.SuiteName}." correlationId)
 
+    /// Validates validate manifest address inputs before server processing continues.
     let private validateManifestAddress correlationId (manifestAddress: ManifestAddress) =
         if ContentAddress.isValidAddress manifestAddress then
             Ok()
         else
             Error(invalidManifestAddressError correlationId)
 
+    /// Implements expected content block storage placement for the server request pipeline.
     let private expectedContentBlockStoragePlacement (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) eTag =
         StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockObjectKey contentBlockAddress) eTag
 
+    /// Implements expected content block staging placement for the server request pipeline.
     let private expectedContentBlockStagingPlacement
         (route: StoragePoolRouting.StoragePoolRoute)
         (repositoryId: RepositoryId)
@@ -105,6 +118,7 @@ module Storage =
         =
         getContentBlockStagingPlacement route repositoryId uploadSessionId contentBlockAddress eTag
 
+    /// Validates validate content block staging placement for route inputs before server processing continues.
     let private validateContentBlockStagingPlacementForRoute
         correlationId
         (route: StoragePoolRouting.StoragePoolRoute)
@@ -141,9 +155,11 @@ module Storage =
             else
                 Ok()
 
+    /// Implements content block payload validation error for the server request pipeline.
     let private contentBlockPayloadValidationError contentBlockAddress error correlationId =
         GraceError.Create $"ContentBlock payload for {contentBlockAddress} is invalid: {error}." correlationId
 
+    /// Validates validate content block payload inputs before server processing continues.
     let private validateContentBlockPayload contentBlockAddress (payload: byte array) correlationId =
         if isNull payload then
             Error(GraceError.Create "ContentBlock payload is required." correlationId)
@@ -157,6 +173,7 @@ module Storage =
                 | Error error -> Error(contentBlockPayloadValidationError contentBlockAddress error correlationId)
                 | Ok () -> Ok()
 
+    /// Implements decode content block payload for the server request pipeline.
     let private decodeContentBlockPayload contentBlockAddress (payload: byte array) correlationId =
         match ContentBlockFormat.decode payload with
         | Error error -> Error(contentBlockPayloadValidationError contentBlockAddress error correlationId)
@@ -165,6 +182,7 @@ module Storage =
             | Error error -> Error(contentBlockPayloadValidationError contentBlockAddress error correlationId)
             | Ok () -> Ok decodedBlock
 
+    /// Implements content block payloads are equivalent for the server request pipeline.
     let private contentBlockPayloadsAreEquivalent (expected: ContentBlockFormat.DecodedContentBlock) (actual: ContentBlockFormat.DecodedContentBlock) =
         expected.Address = actual.Address
         && expected.Payload.SequenceEqual(actual.Payload)
@@ -179,6 +197,7 @@ module Storage =
             expected.Chunks
             actual.Chunks
 
+    /// Coordinates read content block payload from placement processing for Grace Server.
     let private readContentBlockPayloadFromPlacement (placement: ContentBlockStoragePlacement) correlationId =
         task {
             try
@@ -192,6 +211,7 @@ module Storage =
                 return Error(GraceError.Create $"ContentBlock payload could not be read from object storage: {ex.Message}" correlationId)
         }
 
+    /// Coordinates delete content block payload best effort processing for Grace Server.
     let private deleteContentBlockPayloadBestEffort placement correlationId =
         task {
             match! deleteAzureContentBlockPlacementIfExists placement correlationId with
@@ -199,10 +219,13 @@ module Storage =
             | Error _ -> return ()
         }
 
+    /// Coordinates delete content block staging payload processing for Grace Server.
     let private deleteContentBlockStagingPayload placement correlationId = deleteContentBlockPayloadBestEffort placement correlationId
 
+    /// Represents materialized content block used by Grace Server APIs and background services.
     type private MaterializedContentBlock = { StoragePlacement: ContentBlockStoragePlacement }
 
+    /// Issues a SAS URI for an already-routed content-block placement and rejects missing placement metadata.
     let private createAzureContentBlockSasUriForPlacement (placement: ContentBlockStoragePlacement) permission correlationId =
         task {
             if isNull (box placement) then
@@ -217,11 +240,13 @@ module Storage =
                 return! createAzureContentBlockSasUriForObjectKey route placement.ObjectKey permission correlationId
         }
 
+    /// Determines whether existing blob conflict.
     let private isExistingBlobConflict (ex: RequestFailedException) =
         ex.Status = int HttpStatusCode.Conflict
         || ex.Status = int HttpStatusCode.PreconditionFailed
         || String.Equals(ex.ErrorCode, "BlobAlreadyExists", StringComparison.OrdinalIgnoreCase)
 
+    /// Implements materialize validated content block for the server request pipeline.
     let private materializeValidatedContentBlock
         (route: StoragePoolRouting.StoragePoolRoute)
         (contentBlockAddress: ContentBlockAddress)
@@ -275,6 +300,7 @@ module Storage =
                         return Error(GraceError.Create $"ContentBlock payload could not be materialized to final CAS storage: {ex.Message}" correlationId)
         }
 
+    /// Resolves resolve storage ids data from request or repository state.
     let private resolveStorageIds (graceIds: GraceIds) (parameters: StorageParameters) =
         let organizationId =
             if graceIds.OrganizationId <> OrganizationId.Empty then
@@ -290,12 +316,14 @@ module Storage =
 
         organizationId, repositoryId
 
+    /// Resolves resolve repository dedupe storage pool id data from request or repository state.
     let internal resolveRepositoryDedupeStoragePoolId (repositoryDto: RepositoryDto) correlationId =
         try
             Ok(DedupeIndex.storagePoolIdForRepository repositoryDto)
         with
         | ex -> Error(GraceError.Create ex.Message correlationId)
 
+    /// Validates validate repository exists for storage request inputs before server processing continues.
     let internal validateRepositoryExistsForStorageRequest requestedRepositoryId (repositoryDto: RepositoryDto) correlationId =
         if isNull (box repositoryDto)
            || repositoryDto.RepositoryId = RepositoryId.Empty
@@ -311,17 +339,20 @@ module Storage =
         else
             Ok()
 
+    /// Resolves resolve owner id data from request or repository state.
     let private resolveOwnerId (graceIds: GraceIds) (parameters: StorageParameters) =
         if graceIds.OwnerId <> OwnerId.Empty then
             graceIds.OwnerId
         else
             OwnerId.Parse parameters.OwnerId
 
+    /// Builds request event metadata with the active correlation id and HTTP path for storage actor commands.
     let internal createEventMetadata (context: HttpContext) correlationId =
         let metadata = { createMetadata context with CorrelationId = correlationId }
         metadata.Properties[ "Path" ] <- $"{context.Request.Path}"
         metadata
 
+    /// Represents upload session request context used by Grace Server APIs and background services.
     type private UploadSessionRequestContext =
         {
             UploadSessionActor: IUploadSessionActor
@@ -330,6 +361,7 @@ module Storage =
             SessionForScope: UploadSessionDto
         }
 
+    /// Resolves the request repository and upload-session actor that storage upload-session handlers share.
     let private createUploadSessionRequestContext (context: HttpContext) (parameters: UploadSessionStorageParameters) correlationId =
         task {
             let graceIds = getGraceIds context
@@ -346,6 +378,7 @@ module Storage =
                 }
         }
 
+    /// Coordinates load session for scope processing for Grace Server.
     let private loadSessionForScope (uploadSessionActor: IUploadSessionActor) correlationId =
         task {
             let! session = uploadSessionActor.Get correlationId
@@ -360,6 +393,7 @@ module Storage =
                 return session
         }
 
+    /// Validates validate upload session repository id inputs before server processing continues.
     let internal validateUploadSessionRepositoryId repositoryId (session: UploadSessionDto) correlationId =
         if not (isNull (box session))
            && session.UploadSessionId <> UploadSessionId.Empty
@@ -373,6 +407,7 @@ module Storage =
         else
             Ok()
 
+    /// Validates validate start manifest upload session authorized scope inputs before server processing continues.
     let internal validateStartManifestUploadSessionAuthorizedScope correlationId (authorizedScope: RelativePath) =
         let normalizedScope = (normalizeFilePath $"{authorizedScope}").Trim()
 
@@ -385,6 +420,7 @@ module Storage =
         else
             Ok()
 
+    /// Validates validate upload session scope inputs before server processing continues.
     let private validateUploadSessionScope requestContext (parameters: UploadSessionStorageParameters) correlationId requireExistingSession =
         task {
             let! sessionForScope = loadSessionForScope requestContext.UploadSessionActor correlationId
@@ -412,6 +448,7 @@ module Storage =
             | Ok () -> return Ok { requestContext with SessionForScope = sessionForScope }
         }
 
+    /// Validates validate active dedupe discovery for claim inputs before server processing continues.
     let private validateActiveDedupeDiscoveryForClaim requestContext (parameters: ClaimReuseRangesParameters) correlationId =
         match requestContext.SessionForScope.DedupeDiscovery with
         | None -> Error(GraceError.Create "Dedupe discovery must be issued before reuse ranges can be claimed." correlationId)
@@ -427,6 +464,7 @@ module Storage =
             Error(GraceError.Create "Dedupe discovery has expired; reuse ranges cannot be claimed." correlationId)
         | Some discovery -> Ok discovery
 
+    /// Implements hint matches issued hint for the server request pipeline.
     let private hintMatchesIssuedHint (hint: ContentBlockReuseRangeHint) (issued: ContentBlockReuseRangeHint) =
         not (isNull (box issued))
         && issued.StoragePoolId = hint.StoragePoolId
@@ -435,6 +473,7 @@ module Storage =
         && issued.OrdinalCount = hint.OrdinalCount
         && issued.MetadataVersion = hint.MetadataVersion
 
+    /// Validates validate issued dedupe discovery hints inputs before server processing continues.
     let private validateIssuedDedupeDiscoveryHints
         correlationId
         storagePoolId
@@ -476,6 +515,7 @@ module Storage =
         | Some error -> Error error
         | None -> Ok(boundHints.ToArray())
 
+    /// Validates validate claim reuse hints inputs before server processing continues.
     let private validateClaimReuseHints correlationId storagePoolId (discovery: DedupeDiscoverySnapshot) (hints: ContentBlockReuseRangeHint array) =
         let boundHints = ResizeArray<ContentBlockReuseRangeHint>()
         let issuedHints = if isNull discovery.Hints then Array.empty else discovery.Hints
@@ -504,6 +544,7 @@ module Storage =
         | Some error -> Error error
         | None -> Ok(boundHints.ToArray())
 
+    /// Coordinates handle upload session command processing for Grace Server.
     let private handleUploadSessionCommand
         (context: HttpContext)
         (parameters: UploadSessionStorageParameters)
@@ -530,8 +571,10 @@ module Storage =
                 | Error error -> return! context |> result400BadRequest error
         }
 
+    /// Represents hydrated finalize evidence used by Grace Server APIs and background services.
     type private HydratedFinalizeEvidence = { BlockPayloads: FinalizeManifestBlockPayload array; ClaimedMetadata: ContentBlockMetadata array }
 
+    /// Implements manifest blocks for payload hydration for the server request pipeline.
     let private manifestBlocksForPayloadHydration (manifest: FileManifest) =
         let seen = HashSet<ContentBlockAddress>()
         let blocks = ResizeArray<ContentBlock>()
@@ -549,6 +592,7 @@ module Storage =
 
         blocks.ToArray()
 
+    /// Implements manifest block was uploaded for the server request pipeline.
     let private manifestBlockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
         session.ConfirmedBlockUploads
         |> Array.exists (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = block.Address)
@@ -558,6 +602,7 @@ module Storage =
                && intent.LogicalOffset = block.Offset
                && intent.LogicalLength = block.Size)
 
+    /// Implements manifest blocks requiring claimed metadata for the server request pipeline.
     let private manifestBlocksRequiringClaimedMetadata (session: UploadSessionDto) (manifest: FileManifest) =
         if isNull (box manifest) || isNull manifest.Blocks then
             Array.empty
@@ -568,6 +613,7 @@ module Storage =
                 && not (manifestBlockWasUploaded session block))
             |> Seq.toArray
 
+    /// Coordinates read finalize block payload from placement processing for Grace Server.
     let private readFinalizeBlockPayloadFromPlacement contentBlockAddress placement correlationId =
         task {
             match! readContentBlockPayloadFromPlacement placement correlationId with
@@ -581,12 +627,14 @@ module Storage =
                     )
         }
 
+    /// Implements complete content block storage placement for the server request pipeline.
     let private completeContentBlockStoragePlacement (placement: ContentBlockStoragePlacement) =
         not (isNull (box placement))
         && not (String.IsNullOrWhiteSpace placement.StorageAccountName)
         && not (String.IsNullOrWhiteSpace placement.StorageContainerName)
         && not (String.IsNullOrWhiteSpace placement.ObjectKey)
 
+    /// Implements has authoritative claimed range for the server request pipeline.
     let private hasAuthoritativeClaimedRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         if isNull (box claimedRange) || isNull (box metadata) then
             false
@@ -605,6 +653,7 @@ module Storage =
                    && range.PhysicalOffset = claimedRange.PhysicalOffset
                    && range.PhysicalLength = claimedRange.PhysicalLength)
 
+    /// Implements has authoritative finalized logical range for the server request pipeline.
     let private hasAuthoritativeFinalizedLogicalRange (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         if isNull (box claimedRange) || isNull (box metadata) then
             false
@@ -623,14 +672,17 @@ module Storage =
                    && range.PhysicalLength = claimedRange.PhysicalLength
                    && range.ActiveManifestCount > 0)
 
+    /// Implements authoritative claimed range matches for finalize replay for the server request pipeline.
     let internal authoritativeClaimedRangeMatchesForFinalizeReplay (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         hasAuthoritativeClaimedRange claimedRange metadata
         || hasAuthoritativeFinalizedLogicalRange claimedRange metadata
 
+    /// Implements authoritative claimed range matches for finalize for the server request pipeline.
     let internal authoritativeClaimedRangeMatchesForFinalize (claimedRange: ClaimedReuseRange) (metadata: ContentBlockMetadata) =
         hasAuthoritativeClaimedRange claimedRange metadata
         || hasAuthoritativeFinalizedLogicalRange claimedRange metadata
 
+    /// Implements compare claimed range newest first for the server request pipeline.
     let private compareClaimedRangeNewestFirst (left: ClaimedReuseRange) (right: ClaimedReuseRange) =
         let versionComparison = compare right.MetadataVersion left.MetadataVersion
 
@@ -639,6 +691,7 @@ module Storage =
         else
             compare right.ClaimedAt left.ClaimedAt
 
+    /// Attempts to select claimed range cover and returns an option or result instead of throwing.
     let private trySelectClaimedRangeCover blockLength (claimedRanges: ClaimedReuseRange array) =
         if blockLength <= 0L || isNull claimedRanges then
             None
@@ -653,6 +706,7 @@ module Storage =
                     && claimedRange.PhysicalLength > 0L
                     && claimedRange.PhysicalLength <= blockLength)
 
+            /// Implements rec for the server request pipeline.
             let rec selectCover nextOrdinal selectedLength selected =
                 if selectedLength = blockLength then
                     selected |> List.rev |> List.toArray |> Some
@@ -671,10 +725,12 @@ module Storage =
 
             selectCover 0 0L []
 
+    /// Implements claimed reuse ranges cover manifest block for the server request pipeline.
     let internal claimedReuseRangesCoverManifestBlock physicalLength claimedRanges =
         trySelectClaimedRangeCover physicalLength claimedRanges
         |> Option.isSome
 
+    /// Implements claimed ranges for manifest block newest first for the server request pipeline.
     let private claimedRangesForManifestBlockNewestFirst (session: UploadSessionDto) contentBlockAddress =
         if isNull session.ClaimedReuseRanges then
             Array.empty
@@ -685,6 +741,7 @@ module Storage =
                 && claimedRange.ContentBlockAddress = contentBlockAddress)
             |> Array.sortWith compareClaimedRangeNewestFirst
 
+    /// Attempts to load authoritative content block metadata for finalize and returns an option or result instead of throwing.
     let private tryLoadAuthoritativeContentBlockMetadataForFinalize (requestContext: UploadSessionRequestContext) contentBlockAddress correlationId =
         task {
             let metadataActor =
@@ -734,6 +791,7 @@ module Storage =
             | Some metadata -> return Ok(Some metadata)
         }
 
+    /// Coordinates load authoritative content block metadata for finalize processing for Grace Server.
     let private loadAuthoritativeContentBlockMetadataForFinalize requestContext contentBlockAddress correlationId =
         task {
             match! tryLoadAuthoritativeContentBlockMetadataForFinalize requestContext contentBlockAddress correlationId with
@@ -744,6 +802,7 @@ module Storage =
             | Error error -> return Error error
         }
 
+    /// Attempts to read finalize block payload from authoritative metadata and returns an option or result instead of throwing.
     let private tryReadFinalizeBlockPayloadFromAuthoritativeMetadata (requestContext: UploadSessionRequestContext) contentBlockAddress correlationId =
         task {
             match! tryLoadAuthoritativeContentBlockMetadataForFinalize requestContext contentBlockAddress correlationId with
@@ -755,6 +814,7 @@ module Storage =
             | Error error -> return Error error
         }
 
+    /// Coordinates load claimed metadata for finalize with processing for Grace Server.
     let private loadClaimedMetadataForFinalizeWith
         (rangeMatches: ClaimedReuseRange -> ContentBlockMetadata -> bool)
         (evidenceMetadata: ClaimedReuseRange -> ContentBlockMetadata -> ContentBlockMetadata)
@@ -849,6 +909,7 @@ module Storage =
             | None -> return Ok(metadata.ToArray())
         }
 
+    /// Coordinates load claimed metadata for finalize processing for Grace Server.
     let private loadClaimedMetadataForFinalize (requestContext: UploadSessionRequestContext) (manifest: FileManifest) correlationId =
         loadClaimedMetadataForFinalizeWith
             authoritativeClaimedRangeMatchesForFinalize
@@ -858,6 +919,7 @@ module Storage =
             manifest
             correlationId
 
+    /// Implements hydrate finalize evidence from claimed metadata for the server request pipeline.
     let private hydrateFinalizeEvidenceFromClaimedMetadata
         (requestContext: UploadSessionRequestContext)
         (parameters: FinalizeManifestUploadParameters)
@@ -926,6 +988,7 @@ module Storage =
             | None -> return Ok { BlockPayloads = payloads.ToArray(); ClaimedMetadata = claimedMetadata }
         }
 
+    /// Implements hydrate finalize evidence for the server request pipeline.
     let private hydrateFinalizeEvidence
         (requestContext: UploadSessionRequestContext)
         (parameters: FinalizeManifestUploadParameters)
@@ -940,6 +1003,7 @@ module Storage =
                 return! hydrateFinalizeEvidenceFromClaimedMetadata requestContext parameters manifest claimedMetadata useRequestBlockPayloads correlationId
         }
 
+    /// Implements hydrate finalize replay evidence from current metadata for the server request pipeline.
     let private hydrateFinalizeReplayEvidenceFromCurrentMetadata
         (requestContext: UploadSessionRequestContext)
         (manifest: FileManifest)
@@ -994,6 +1058,7 @@ module Storage =
             | None -> return Ok { BlockPayloads = payloads.ToArray(); ClaimedMetadata = metadata.ToArray() }
         }
 
+    /// Implements hydrate finalize replay evidence for the server request pipeline.
     let private hydrateFinalizeReplayEvidence
         (requestContext: UploadSessionRequestContext)
         (_parameters: FinalizeManifestUploadParameters)
@@ -1002,10 +1067,12 @@ module Storage =
         =
         hydrateFinalizeReplayEvidenceFromCurrentMetadata requestContext manifest correlationId
 
+    /// Looks up whether a finalize operation id already produced a manifest address for replay handling.
     let private getFinalizeReplayState requestContext operationId correlationId =
         task {
             let! events = requestContext.UploadSessionActor.GetEvents correlationId
 
+            /// Implements event operation id for the server request pipeline.
             let eventOperationId (uploadSessionEvent: UploadSessionEvent) =
                 match uploadSessionEvent.Event with
                 | UploadSessionEventType.Started start -> Some start.OperationId
@@ -1033,9 +1100,11 @@ module Storage =
             return operationAlreadyApplied, finalizedManifestAddress
         }
 
+    /// Implements operation already applied to different upload session event error for the server request pipeline.
     let private operationAlreadyAppliedToDifferentUploadSessionEventError operationId correlationId =
         GraceError.Create $"UploadSession OperationId {operationId} was already applied to a non-finalize event and cannot finalize this session." correlationId
 
+    /// Validates validate finalize replay manifest address inputs before server processing continues.
     let private validateFinalizeReplayManifestAddress finalizedManifestAddress (manifest: FileManifest) correlationId =
         if isNull (box manifest) then
             Error(GraceError.Create "FileManifest is required for finalize replay." correlationId)
@@ -1049,6 +1118,7 @@ module Storage =
         else
             Ok()
 
+    /// Validates validate finalize replay evidence inputs before server processing continues.
     let private validateFinalizeReplayEvidence
         (session: UploadSessionDto)
         finalizedManifestAddress
@@ -1104,6 +1174,7 @@ module Storage =
                             correlationId
                     ))
 
+    /// Validates validate finalize replay manifest before hydration inputs before server processing continues.
     let internal validateFinalizeReplayManifestBeforeHydration (session: UploadSessionDto) finalizedManifestAddress (manifest: FileManifest) correlationId =
         validateFinalizeReplayManifestAddress finalizedManifestAddress manifest correlationId
         |> Result.bind (fun () ->
@@ -1191,6 +1262,7 @@ module Storage =
                     else
                         Ok())
 
+    /// Advertises the conservative content-block discovery limits used while positive candidate reuse is disabled.
     let private createDiscoveryPolicy () : StorageParameterContracts.ContentBlockDiscoveryPolicy =
         {
             MaxKeyChunkAddresses = StorageParameterContracts.MaxDiscoveryKeyChunkAddresses
@@ -1204,6 +1276,7 @@ module Storage =
             IsAuthoritative = false
         }
 
+    /// Returns a partial, non-authoritative discovery response when the server has no reusable candidates to expose.
     let private createEmptyDiscoveryResult requestedKeyChunkCount : StorageParameterContracts.DiscoverContentBlocksResult =
         {
             RequestedKeyChunkCount = requestedKeyChunkCount
@@ -1234,6 +1307,7 @@ module Storage =
                 return Error(getErrorMessage StorageError.UnknownObjectStorageProvider)
         }
 
+    /// Determines whether active upload session lifecycle.
     let private isActiveUploadSessionLifecycle lifecycleState =
         match lifecycleState with
         | UploadSessionLifecycleState.Started
@@ -1242,6 +1316,7 @@ module Storage =
         | UploadSessionLifecycleState.ClaimingRanges -> true
         | _ -> false
 
+    /// Validates validate upload session for content block upload inputs before server processing continues.
     let private validateUploadSessionForContentBlockUpload (parameters: GetContentBlockUploadUriParameters) repositoryId correlationId =
         task {
             if parameters.UploadSessionId = UploadSessionId.Empty then
@@ -1293,6 +1368,7 @@ module Storage =
                             return Ok session
         }
 
+    /// Implements upload session event operation id for the server request pipeline.
     let private uploadSessionEventOperationId (uploadSessionEvent: UploadSessionEvent) =
         match uploadSessionEvent.Event with
         | UploadSessionEventType.Started start -> Some start.OperationId
@@ -1306,6 +1382,7 @@ module Storage =
         | UploadSessionEventType.DedupeDiscoveryIssued (operationId, _)
         | UploadSessionEventType.ReuseRangesClaimed (operationId, _) -> Some operationId
 
+    /// Attempts to replay upload session command and returns an option or result instead of throwing.
     let private tryReplayUploadSessionCommand requestContext command operationId correlationId =
         task {
             let! events = requestContext.UploadSessionActor.GetEvents correlationId
@@ -1318,12 +1395,14 @@ module Storage =
                 return None
         }
 
+    /// Validates validate confirm command before materialization inputs before server processing continues.
     let internal validateConfirmCommandBeforeMaterialization (parameters: ConfirmContentBlockUploadParameters) correlationId =
         if String.IsNullOrWhiteSpace parameters.OperationId then
             Error(GraceError.Create "UploadSession command requires a non-empty operation id." correlationId)
         else
             Ok()
 
+    /// Validates validate active confirm session inputs before server processing continues.
     let private validateActiveConfirmSession requestContext (parameters: ConfirmContentBlockUploadParameters) correlationId =
         let session = requestContext.SessionForScope
 
@@ -1347,10 +1426,12 @@ module Storage =
         else
             Ok()
 
+    /// Implements decoded content block logical length for the server request pipeline.
     let private decodedContentBlockLogicalLength (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
         decodedBlock.Chunks
         |> Array.sumBy (fun chunk -> int64 chunk.Length)
 
+    /// Validates validate confirm intent against payload inputs before server processing continues.
     let private validateConfirmIntentAgainstPayload requestContext (parameters: ConfirmContentBlockUploadParameters) (stagedPayload: byte array) correlationId =
         let session = requestContext.SessionForScope
 
@@ -1403,9 +1484,11 @@ module Storage =
                     else
                         Ok()
 
+    /// Attempts to find finalized scoped content block metadata and returns an option or result instead of throwing.
     let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state =
         DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
 
+    /// Validates validate manifest for content block download inputs before server processing continues.
     let private validateManifestForContentBlockDownload repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
         task {
             if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
@@ -1493,6 +1576,7 @@ module Storage =
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
+    /// Handles the Grace Server get content block upload uri request.
     let GetContentBlockUploadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -1536,6 +1620,7 @@ module Storage =
                     return! context.WriteTextAsync $"{getCurrentInstantExtended ()} Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."
             }
 
+    /// Handles the Grace Server get content block download uri request.
     let GetContentBlockDownloadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -1621,6 +1706,7 @@ module Storage =
                         |> result500ServerError (GraceError.Create (getErrorMessage StorageError.ObjectStorageException) correlationId)
             }
 
+    /// Handles the Grace Server start manifest upload session request.
     let StartManifestUploadSession: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -1676,6 +1762,7 @@ module Storage =
                         |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
             }
 
+    /// Handles the Grace Server issue dedupe discovery request.
     let IssueDedupeDiscovery: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -1752,6 +1839,7 @@ module Storage =
                             |> result500ServerError (GraceError.Create exceptionText correlationId)
             }
 
+    /// Handles the Grace Server claim reuse ranges request.
     let ClaimReuseRanges: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -1847,6 +1935,7 @@ module Storage =
                             |> result500ServerError (GraceError.Create exceptionText correlationId)
             }
 
+    /// Handles the Grace Server register content block upload request.
     let RegisterContentBlockUpload: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -1881,6 +1970,7 @@ module Storage =
                         |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
             }
 
+    /// Handles the Grace Server confirm content block upload request.
     let ConfirmContentBlockUpload: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -2001,6 +2091,7 @@ module Storage =
                         |> result500ServerError (GraceError.Create $"{exceptionResponse}" correlationId)
             }
 
+    /// Handles the Grace Server finalize manifest upload request.
     let FinalizeManifestUpload: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -2014,6 +2105,7 @@ module Storage =
                     match scopeValidation with
                     | Error error -> return! context |> result400BadRequest error
                     | Ok requestContext ->
+                        /// Captures manifest finalization evidence in the actor command while preserving replay operation id.
                         let createFinalizeCommand evidence =
                             UploadSessionCommand.FinalizeManifest
                                 {

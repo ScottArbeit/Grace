@@ -37,9 +37,11 @@ open System.Threading.Tasks
 open System.Text
 open System.Text.Json
 
+/// Groups the reference command parser, handlers, and output helpers.
 module Reference =
     open Grace.Shared.Validation.Common.Input
 
+    /// Defines the options parsed by the reference command handlers.
     module private Options =
 
         let branchId =
@@ -205,12 +207,16 @@ module Reference =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Coordinates value or empty behavior for this CLI command path.
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
+    /// Reads optional blake3 hash from ParseResult, local configuration, or Grace ids.
     let private getOptionalBlake3Hash (parseResult: ParseResult) = HashOptions.getBlake3HashPrefix parseResult
 
+    /// Coordinates reference validations behavior for this CLI command path.
     let private ReferenceValidations (parseResult: ParseResult) = Ok parseResult
 
+    /// Formats print contents data for Spectre.Console output.
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
         let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
 
@@ -255,9 +261,11 @@ module Reference =
                     $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {HashOptions.formatVersionHashPair hashDisplayMode file.Blake3Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
                 ))
 
+    /// Executes the get recursive size command by binding ParseResult values to the SDK request and CLI output contract.
     type GetRecursiveSize() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get recursive size action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -335,9 +343,11 @@ module Reference =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the list contents command by binding ParseResult values to the SDK request and CLI output contract.
     type ListContents() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous list contents action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -439,6 +449,7 @@ module Reference =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Builds command objects or parameters for execution.
     let buildAssignParameters (parseResult: ParseResult) : Parameters.Branch.AssignParameters =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -475,6 +486,7 @@ module Reference =
             CorrelationId = getCorrelationId parseResult
         )
 
+    /// Routes the assign command from parsed options through validation, the SDK call, and result rendering.
     let private assignImpl (parseResult: ParseResult) : Tasks.Task<int> =
         try
             if parseResult |> verbose then printParseResult parseResult
@@ -527,11 +539,14 @@ module Reference =
 
             Task.FromResult(Error error |> renderOutput parseResult)
 
+    /// Executes the assign command by binding ParseResult values to the SDK request and CLI output contract.
     type Assign() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous assign action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> = assignImpl parseResult
 
+    /// Models create reference command values passed between the parser and reference handlers.
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<string>>
 
     //type ReferenceCommandContext =
@@ -596,6 +611,7 @@ module Reference =
     //      BranchName = branchName
     //      CorrelationId = getCorrelationId parseResult }
 
+    /// Routes the create reference command from parsed options through validation, the SDK call, and result rendering.
     let createReferenceHandler (parseResult: ParseResult) (message: string) (command: CreateReferenceCommand) (commandType: string) =
         task {
             try
@@ -925,6 +941,7 @@ module Reference =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Routes the promotion command from parsed options through validation, the SDK call, and result rendering.
     let promotionHandler (parseResult: ParseResult) (message: string) =
         task {
             try
@@ -1116,9 +1133,11 @@ module Reference =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Executes the promote command by binding ParseResult values to the SDK request and CLI output contract.
     type Promote() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous promote action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -1131,9 +1150,11 @@ module Reference =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the commit command by binding ParseResult values to the SDK request and CLI output contract.
     type Commit() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous commit action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -1142,6 +1163,7 @@ module Reference =
                     parseResult.GetValue(Options.messageRequired)
                     |> valueOrEmpty
 
+                /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Commit(parameters) }
 
                 let! result = createReferenceHandler parseResult message command (nameof(Commit).ToLowerInvariant())
@@ -1149,9 +1171,11 @@ module Reference =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the checkpoint command by binding ParseResult values to the SDK request and CLI output contract.
     type Checkpoint() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous checkpoint action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -1160,6 +1184,7 @@ module Reference =
                     parseResult.GetValue(Options.message)
                     |> valueOrEmpty
 
+                /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Checkpoint(parameters) }
 
                 let! result = createReferenceHandler parseResult message command (nameof(Checkpoint).ToLowerInvariant())
@@ -1167,9 +1192,11 @@ module Reference =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the save command by binding ParseResult values to the SDK request and CLI output contract.
     type Save() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous save action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -1178,6 +1205,7 @@ module Reference =
                     parseResult.GetValue(Options.message)
                     |> valueOrEmpty
 
+                /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Save(parameters) }
 
                 let! result = createReferenceHandler parseResult message command (nameof(Save).ToLowerInvariant())
@@ -1185,9 +1213,11 @@ module Reference =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the tag command by binding ParseResult values to the SDK request and CLI output contract.
     type Tag() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous tag action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -1196,6 +1226,7 @@ module Reference =
                     parseResult.GetValue(Options.messageRequired)
                     |> valueOrEmpty
 
+                /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.Tag(parameters) }
 
                 let! result = createReferenceHandler parseResult message command (nameof(Tag).ToLowerInvariant())
@@ -1203,9 +1234,11 @@ module Reference =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the create external command by binding ParseResult values to the SDK request and CLI output contract.
     type CreateExternal() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous create external action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -1214,6 +1247,7 @@ module Reference =
                     parseResult.GetValue(Options.messageRequired)
                     |> valueOrEmpty
 
+                /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                 let command (parameters: CreateReferenceParameters) = task { return! Grace.SDK.Branch.CreateExternal(parameters) }
 
                 let! result = createReferenceHandler parseResult message command ("External".ToLowerInvariant())
@@ -1221,9 +1255,11 @@ module Reference =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the get command by binding ParseResult values to the SDK request and CLI output contract.
     type Get() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1328,9 +1364,11 @@ module Reference =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the delete command by binding ParseResult values to the SDK request and CLI output contract.
     type Delete() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous delete action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1382,6 +1420,7 @@ module Reference =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

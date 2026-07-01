@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.Common
 open System
 
+/// Contains diff helpers.
 module Diff =
 
     /// Parameters used by multiple endpoints in the /diff path.
@@ -26,6 +27,7 @@ module Diff =
     type GetDiffParameters() =
         inherit DiffParameters()
 
+    /// Represents get diff by reference type parameters.
     type GetDiffByReferenceTypeParameters() =
         inherit DiffParameters()
         member val public BranchId = String.Empty with get, set

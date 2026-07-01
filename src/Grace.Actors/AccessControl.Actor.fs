@@ -14,16 +14,20 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for access control keys, proxies, state, or workflow transitions.
 module AccessControl =
 
     let ActorName = ActorName.AccessControl
 
+    /// Stores durable state for access control state.
     [<GenerateSerializer>]
     type AccessControlState = { Assignments: RoleAssignment list }
 
+    /// Groups Orleans actor helpers for access control state keys, proxies, state, or workflow transitions.
     module AccessControlState =
         let Empty = { Assignments = [] }
 
+    /// Converts an authorization scope into the stable key used for access-control lookups.
     let getScopeKey (scope: Scope) =
         match scope with
         | Scope.System -> "system"
@@ -32,6 +36,7 @@ module AccessControl =
         | Scope.Repository (ownerId, organizationId, repositoryId) -> $"repo:{ownerId}:{organizationId}:{repositoryId}"
         | Scope.Branch (ownerId, organizationId, repositoryId, branchId) -> $"branch:{ownerId}:{organizationId}:{repositoryId}:{branchId}"
 
+    /// Implements the Orleans grain for access control actor.
     type AccessControlActor([<PersistentState(StateName.AccessControl, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<AccessControlState>) =
         inherit Grain()
 
@@ -51,6 +56,7 @@ module AccessControl =
 
                 if isSystemScope
                    && accessControlState.Assignments.IsEmpty then
+                    /// Splits a comma-delimited metadata value into normalized role or scope entries.
                     let parseList (value: string) =
                         if String.IsNullOrWhiteSpace value then
                             []
@@ -128,6 +134,7 @@ module AccessControl =
             }
             :> Task
 
+        /// Validates scope before the operation continues.
         member private this.ValidateScope (scope: Scope) (correlationId: CorrelationId) =
             let expectedKey = getScopeKey scope
             let actualKey = this.GetPrimaryKeyString()
@@ -137,6 +144,7 @@ module AccessControl =
             else
                 Error(GraceError.Create $"AccessControl scope mismatch. Expected '{expectedKey}', got '{actualKey}'." correlationId)
 
+        /// Persists the updated AccessControl actor state through the Orleans storage provider.
         member private this.SaveState() =
             task {
                 state.State <- accessControlState
@@ -147,6 +155,7 @@ module AccessControl =
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.WriteStateAsync())
             }
 
+        /// Adds a role assignment event when the principal does not already hold the role.
         member private this.GrantRole (assignment: RoleAssignment) (metadata: EventMetadata) =
             task {
                 correlationId <- metadata.CorrelationId
@@ -169,6 +178,7 @@ module AccessControl =
                     return Ok returnValue
             }
 
+        /// Records a role revocation event when the principal currently holds the role.
         member private this.RevokeRole (principal: Principal) (roleId: RoleId) (metadata: EventMetadata) =
             task {
                 correlationId <- metadata.CorrelationId
@@ -188,6 +198,7 @@ module AccessControl =
                 return Ok returnValue
             }
 
+        /// Filters role assignments by principal and projects the access-control response.
         member private this.ListAssignments (principal: Principal option) (metadata: EventMetadata) =
             task {
                 correlationId <- metadata.CorrelationId
@@ -204,12 +215,14 @@ module AccessControl =
             }
 
         interface IAccessControlActor with
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 match command with
                 | AccessControlCommand.GrantRole assignment -> this.GrantRole assignment metadata
                 | AccessControlCommand.RevokeRole (principal, roleId) -> this.RevokeRole principal roleId metadata
                 | AccessControlCommand.ListAssignments principal -> this.ListAssignments principal metadata
 
+            /// Returns access-control assignments visible to the requested principal filter.
             member this.GetAssignments principal correlationId =
                 let filtered =
                     match principal with

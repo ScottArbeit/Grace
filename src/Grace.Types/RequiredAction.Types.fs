@@ -10,6 +10,7 @@ open System
 open System.Collections.Generic
 open System.Runtime.Serialization
 
+/// Contains required action helpers.
 module RequiredAction =
     /// The taxonomy for required actions.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
@@ -23,6 +24,7 @@ module RequiredAction =
         | ReAckDueToBaselineDrift
         | ProvideMigrationNotes
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RequiredActionType>()
 
     /// Machine-readable required action description.

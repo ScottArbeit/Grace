@@ -7,11 +7,13 @@ open Grace.Types.Repository
 open NUnit.Framework
 open System
 
+/// Covers storage Pool Routing Server behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type StoragePoolRoutingServerTests() =
 
     do Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Local")
 
+    /// Builds repository With Id test data for the server unit storage Pool Routing scenarios in this file.
     let repositoryWithId repositoryId =
         { RepositoryDto.Default with
             RepositoryId = repositoryId
@@ -23,6 +25,7 @@ type StoragePoolRoutingServerTests() =
             StorageContainerName = StorageContainerName $"{repositoryId}"
         }
 
+    /// Verifies that default Repositories Resolve To Shared Configured Pool And Shard.
     [<Test>]
     member _.DefaultRepositoriesResolveToSharedConfiguredPoolAndShard() =
         let firstRepository = repositoryWithId (Guid.Parse("11111111-1111-1111-1111-111111111111"))
@@ -45,6 +48,7 @@ type StoragePoolRoutingServerTests() =
         | Error error, _ -> Assert.Fail($"Expected first repository route to resolve, got {error.Error}.")
         | _, Error error -> Assert.Fail($"Expected second repository route to resolve, got {error.Error}.")
 
+    /// Verifies that blank Repository Storage Pool Fails Closed.
     [<Test>]
     member _.BlankRepositoryStoragePoolFailsClosed() =
         let repository = { repositoryWithId (Guid.Parse("33333333-3333-3333-3333-333333333333")) with StoragePoolId = StoragePoolId " " }
@@ -55,6 +59,7 @@ type StoragePoolRoutingServerTests() =
             Assert.That(error.Error, Does.Contain("Repository StoragePoolId is not configured."))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-blank-pool"))
 
+    /// Verifies that unconfigured Repository Storage Pool Fails Closed.
     [<Test>]
     member _.UnconfiguredRepositoryStoragePoolFailsClosed() =
         let repository = { repositoryWithId (Guid.Parse("44444444-4444-4444-4444-444444444444")) with StoragePoolId = StoragePoolId "pool-a" }
@@ -65,6 +70,7 @@ type StoragePoolRoutingServerTests() =
             Assert.That(error.Error, Does.Contain("StoragePoolId 'pool-a' is not configured."))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-missing-pool"))
 
+    /// Verifies that upload Session Recorded Storage Pool Route Does Not Follow Repository Route Drift.
     [<Test>]
     member _.UploadSessionRecordedStoragePoolRouteDoesNotFollowRepositoryRouteDrift() =
         let repositoryId = Guid.Parse("45454545-4545-4545-4545-454545454545")
@@ -95,6 +101,7 @@ type StoragePoolRoutingServerTests() =
             Assert.That(route.Shard.StorageContainerName, Is.EqualTo(StorageContainerName "cas-recorded"))
             Assert.That(route.Shard.ObjectKeyPrefix, Is.EqualTo("recorded"))
 
+    /// Verifies that upload Session Repository Scoped Dedupe Pool Resolves To Default Shard Without Losing Recorded Pool Id.
     [<Test>]
     member _.UploadSessionRepositoryScopedDedupePoolResolvesToDefaultShardWithoutLosingRecordedPoolId() =
         let repositoryId = Guid.Parse("4b01c5b6-a12e-4f53-b7df-77034fa6c30f")
@@ -110,6 +117,7 @@ type StoragePoolRoutingServerTests() =
             Assert.That(route.Shard.StorageContainerName, Is.EqualTo(StorageContainerName Constants.DefaultCasStorageContainerName))
             Assert.That(route.Shard.ObjectKeyPrefix, Is.EqualTo(Constants.DefaultCasStoragePrefix))
 
+    /// Verifies that shard Placement Uses Selected Account Container And Prefix.
     [<Test>]
     member _.ShardPlacementUsesSelectedAccountContainerAndPrefix() =
         let shard: StoragePoolRouting.StorageShard =
@@ -122,6 +130,7 @@ type StoragePoolRoutingServerTests() =
         Assert.That(placement.ObjectKey, Is.EqualTo("pool-a/blocks/aa"))
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-a"))
 
+    /// Verifies that same Object Key In Two Storage Pools Has Distinct Placement Evidence.
     [<Test>]
     member _.SameObjectKeyInTwoStoragePoolsHasDistinctPlacementEvidence() =
         let objectKey = "blocks/same-address"
@@ -142,6 +151,7 @@ type StoragePoolRoutingServerTests() =
         Assert.That(second.ObjectKey.EndsWith(objectKey, StringComparison.Ordinal), Is.True)
         Assert.That(first, Is.Not.EqualTo(second))
 
+    /// Verifies that missing Shard Container Fails Closed.
     [<Test>]
     member _.MissingShardContainerFailsClosed() =
         let shard: StoragePoolRouting.StorageShard =
@@ -153,6 +163,7 @@ type StoragePoolRoutingServerTests() =
             Assert.That(error.Error, Is.EqualTo("StorageShard.StorageContainerName is required."))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-missing-shard-container"))
 
+    /// Verifies that same Account Shared Key Shard Can Be Signed.
     [<Test>]
     member _.SameAccountSharedKeyShardCanBeSigned() =
         let shard: StoragePoolRouting.StorageShard =
@@ -166,6 +177,7 @@ type StoragePoolRoutingServerTests() =
         | Ok () -> Assert.Pass()
         | Error error -> Assert.Fail($"Expected same-account shared-key shard to be accepted, got {error.Error}.")
 
+    /// Verifies that cross Account Shared Key Shard Fails Before Sas Minting.
     [<Test>]
     member _.CrossAccountSharedKeyShardFailsBeforeSasMinting() =
         let shard: StoragePoolRouting.StorageShard =
@@ -181,6 +193,7 @@ type StoragePoolRoutingServerTests() =
             Assert.That(error.Error, Does.Contain("cannot be signed with the configured shared-key account"))
             Assert.That(error.CorrelationId, Is.EqualTo("corr-cross-account-shared-key"))
 
+    /// Verifies that managed Identity Cas User Delegation Sas Uses Selected Shard Account Name.
     [<Test>]
     member _.ManagedIdentityCasUserDelegationSasUsesSelectedShardAccountName() =
         let route: StoragePoolRouting.StoragePoolRoute =
@@ -196,18 +209,21 @@ type StoragePoolRoutingServerTests() =
         Assert.That(signingAccount, Is.EqualTo(route.Shard.StorageAccountName))
         Assert.That(signingAccount, Is.Not.EqualTo(AzureEnvironment.storageEndpoints.AccountName))
 
+    /// Verifies that shard Blob Host Replacement Preserves Private Link Suffix.
     [<Test>]
     member _.ShardBlobHostReplacementPreservesPrivateLinkSuffix() =
         let host = Grace.Actors.Services.shardBlobHostForConfiguredHost "cas-shard-private" "primaryacct.privatelink.blob.core.windows.net"
 
         Assert.That(host, Is.EqualTo("cas-shard-private.privatelink.blob.core.windows.net"))
 
+    /// Verifies that shard Blob Host Replacement Preserves Standard Blob Suffix.
     [<Test>]
     member _.ShardBlobHostReplacementPreservesStandardBlobSuffix() =
         let host = Grace.Actors.Services.shardBlobHostForConfiguredHost "cas-shard-standard" "primaryacct.blob.core.windows.net"
 
         Assert.That(host, Is.EqualTo("cas-shard-standard.blob.core.windows.net"))
 
+    /// Verifies that repository Derived Bridge Remains Repository Scoped Until Content Block Placement Uses Storage Pool Shard.
     [<Test>]
     member _.RepositoryDerivedBridgeRemainsRepositoryScopedUntilContentBlockPlacementUsesStoragePoolShard() =
         let firstRepositoryId = Guid.Parse("55555555-5555-5555-5555-555555555555")
@@ -221,6 +237,7 @@ type StoragePoolRoutingServerTests() =
         Assert.That(firstPool, Is.Not.EqualTo(secondPool))
         Assert.That(firstPool, Is.Not.EqualTo(StoragePoolRouting.defaultStoragePoolId))
 
+    /// Verifies that repository Creation Keeps Whole File Storage Container Repository Scoped.
     [<Test>]
     member _.RepositoryCreationKeepsWholeFileStorageContainerRepositoryScoped() =
         let repositoryId = Guid.Parse("77777777-7777-7777-7777-777777777777")

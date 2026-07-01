@@ -18,8 +18,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for artifact keys, proxies, state, or workflow transitions.
 module Artifact =
 
+    /// Implements the Orleans grain for artifact actor.
     type ArtifactActor([<PersistentState(StateName.Artifact, Constants.GraceActorStorage)>] eventState: IPersistentState<List<ArtifactEvent>>) =
         inherit Grain()
 
@@ -29,6 +31,7 @@ module Artifact =
         let mutable currentCommand = String.Empty
         let mutable artifact = ArtifactMetadata.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -42,6 +45,7 @@ module Artifact =
 
             Task.CompletedTask
 
+        /// Applies one persisted Artifact event to this activation's in-memory state.
         member private this.ApplyEvent(artifactEvent: ArtifactEvent) =
             task {
                 let correlationId = artifactEvent.Metadata.CorrelationId
@@ -85,9 +89,11 @@ module Artifact =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this Artifact actor state.
             member this.GetRepositoryId correlationId = artifact.RepositoryId |> returnTask
 
         interface IArtifactActor with
+            /// Reports whether this Artifact actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -95,19 +101,23 @@ module Artifact =
                 <| artifact.ArtifactId.Equals(ArtifactId.Empty)
                 |> returnTask
 
+            /// Returns the current Artifact actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
 
                 if artifact.ArtifactId = ArtifactId.Empty then Option.None else Some artifact
                 |> returnTask
 
+            /// Returns the persisted Artifact event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 eventState.State :> IReadOnlyList<ArtifactEvent>
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (artifactCommand: ArtifactCommand) (eventMetadata: EventMetadata) =
                     task {
                         if eventState.State.Exists(fun ev -> ev.Metadata.CorrelationId = eventMetadata.CorrelationId) then
@@ -128,6 +138,7 @@ module Artifact =
                             | _ -> return Ok artifactCommand
                     }
 
+                /// Runs Artifact command decisions, applies emitted events, and persists the result.
                 let processCommand (artifactCommand: ArtifactCommand) (eventMetadata: EventMetadata) =
                     task {
                         let artifact = artifactCommand.ToCreated()

@@ -7,10 +7,11 @@ open Grace.Types.Common
 open System
 open System.Threading.Tasks
 
+/// SDK entry point for owner profile, visibility, lifecycle, and lookup endpoints.
 type Owner() =
 
     /// <summary>
-    /// Creates a new owner.
+    /// Registers an owner profile that can contain organizations and repositories.
     /// </summary>
     /// <param name="parameters">Values to use when creating the new owner.</param>
     static member public Create(parameters: CreateOwnerParameters) =

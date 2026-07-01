@@ -18,10 +18,13 @@ open NodaTime
 open System
 open System.Text
 
+/// Contains Grace Server auth behavior and supporting helpers.
 module Auth =
 
+    /// Represents auth info used by Grace Server APIs and background services.
     type AuthInfo = { GraceUserId: string; Claims: string list; RawClaims: (string * string) list }
 
+    /// Determines whether testing.
     let private isTesting () =
         match Environment.GetEnvironmentVariable("GRACE_TESTING") with
         | null -> false
@@ -30,15 +33,18 @@ module Auth =
             || value.Equals("true", StringComparison.OrdinalIgnoreCase)
             || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
 
+    /// Gets try get query value data needed by the server flow.
     let private tryGetQueryValue (context: HttpContext) (name: string) =
         let values = context.Request.Query[name]
         if values.Count = 0 then None else Some(values.ToString())
 
+    /// Chooses the login return URL from the query string or falls back to the root path.
     let private getReturnUrl (context: HttpContext) =
         match tryGetQueryValue context "returnUrl" with
         | Some value when not (String.IsNullOrWhiteSpace value) -> value
         | _ -> "/"
 
+    /// Implements render login page for the server request pipeline.
     let private renderLoginPage (returnUrl: string) =
         let builder = StringBuilder()
         builder.AppendLine("<!doctype html>") |> ignore
@@ -60,6 +66,7 @@ module Auth =
         builder.AppendLine("</body></html>") |> ignore
         builder.ToString()
 
+    /// Handles the Grace Server login request.
     let Login: HttpHandler =
         fun next context ->
             task {
@@ -68,9 +75,11 @@ module Auth =
                 return! htmlString html next context
             }
 
+    /// Handles the Grace Server login provider request.
     let LoginProvider (providerId: string) : HttpHandler =
         fun next context -> task { return! RequestErrors.NOT_FOUND "Login provider not available." next context }
 
+    /// Handles the Grace Server logout request.
     let Logout: HttpHandler =
         fun next context ->
             task {
@@ -79,6 +88,7 @@ module Auth =
                 return! redirectTo false returnUrl next context
             }
 
+    /// Handles the Grace Server me request.
     let Me: HttpHandler =
         fun next context ->
             task {
@@ -102,6 +112,7 @@ module Auth =
                     return! context |> result200Ok returnValue
             }
 
+    /// Handles the Grace Server oidc config request.
     let OidcConfig (configuration: IConfiguration) : HttpHandler =
         fun next context ->
             task {
@@ -119,6 +130,7 @@ module Auth =
                     return! context |> result400BadRequest error
             }
 
+    /// Gets try get config value data needed by the server flow.
     let private tryGetConfigValue (configuration: IConfiguration) (name: string) =
         if isNull configuration then
             None
@@ -126,6 +138,7 @@ module Auth =
             let value = configuration[getConfigKey name]
             if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
+    /// Reads a positive integer PAT policy setting or uses the supplied default.
     let private getIntConfig (configuration: IConfiguration) (name: string) (defaultValue: int) =
         match tryGetConfigValue configuration name with
         | None -> defaultValue
@@ -134,6 +147,7 @@ module Auth =
             | true, parsed when parsed > 0 -> parsed
             | _ -> defaultValue
 
+    /// Reads a boolean PAT policy setting or uses the supplied default.
     let private getBoolConfig (configuration: IConfiguration) (name: string) (defaultValue: bool) =
         match tryGetConfigValue configuration name with
         | None -> defaultValue
@@ -142,6 +156,7 @@ module Auth =
             | true, parsed -> parsed
             | _ -> defaultValue
 
+    /// Builds PAT lifetime and refresh policy from configuration with bounded defaults.
     let private getPatPolicy (configuration: IConfiguration) =
         let defaultDays = getIntConfig configuration Constants.EnvironmentVariables.GraceAuthPatDefaultLifetimeDays 90
 
@@ -154,6 +169,7 @@ module Auth =
 
         effectiveDefault, normalizedMax, allowNoExpiry
 
+    /// Collects non-empty values for a claim type from the authenticated user.
     let private getClaimValues (context: HttpContext) (claimType: string) =
         context.User.Claims
         |> Seq.filter (fun claim -> claim.Type = claimType)
@@ -162,6 +178,7 @@ module Auth =
         |> Seq.distinct
         |> Seq.toList
 
+    /// Handles the Grace Server token create request.
     let TokenCreate (configuration: IConfiguration) : HttpHandler =
         fun next context ->
             task {
@@ -212,6 +229,7 @@ module Auth =
                         | Error error -> return! context |> result400BadRequest error
             }
 
+    /// Handles the Grace Server token list request.
     let TokenList (configuration: IConfiguration) : HttpHandler =
         fun next context ->
             task {
@@ -228,6 +246,7 @@ module Auth =
                     return! context |> result200Ok returnValue
             }
 
+    /// Handles the Grace Server token revoke request.
     let TokenRevoke (configuration: IConfiguration) : HttpHandler =
         fun next context ->
             task {

@@ -8,10 +8,12 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 
+/// Covers review Notes Determinism behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ReviewNotesDeterminism() =
     let evidenceSummary path = { RelativePath = path; StartLine = 1; EndLine = 2; Score = 1.0; Reasons = [] }
 
+    /// Verifies that chaptering Is Deterministic Across Ordering.
     [<Test>]
     member _.ChapteringIsDeterministicAcrossOrdering() =
         let paths =
@@ -38,6 +40,7 @@ type ReviewNotesDeterminism() =
         let matches = first = second
         Assert.That(matches, Is.True)
 
+    /// Verifies that chapters Use Top Level Path Segment.
     [<Test>]
     member _.ChaptersUseTopLevelPathSegment() =
         let paths =
@@ -72,6 +75,7 @@ type ReviewNotesDeterminism() =
         Assert.That(srcMatch, Is.True)
         Assert.That(docsMatch, Is.True)
 
+    /// Verifies that chapter Ids Stay Stable When Evidence Ordering Changes.
     [<Test>]
     member _.ChapterIdsStayStableWhenEvidenceOrderingChanges() =
         let paths = [ "src/App.fs"; "docs/readme.md" ]
@@ -92,6 +96,7 @@ type ReviewNotesDeterminism() =
         let idsMatch = chapterIdsFirst = chapterIdsSecond
         Assert.That(idsMatch, Is.True)
 
+    /// Verifies that baseline Drift Targets Affected Chapters And Findings.
     [<Test>]
     member _.BaselineDriftTargetsAffectedChaptersAndFindings() =
         let threshold = { ChurnLines = 1; FilesTouched = 1 }
@@ -144,6 +149,7 @@ type ReviewNotesDeterminism() =
         Assert.That(result.AffectedChapterIds, Does.Contain(chapterId))
         Assert.That(result.AffectedFindingIds, Does.Contain(findingId))
 
+    /// Verifies that baseline Drift Below Threshold Is Not Meaningful.
     [<Test>]
     member _.BaselineDriftBelowThresholdIsNotMeaningful() =
         let threshold = { ChurnLines = 10; FilesTouched = 5 }
@@ -167,6 +173,7 @@ type ReviewNotesDeterminism() =
 
         Assert.That(result.IsMeaningful, Is.False)
 
+    /// Verifies that baseline Drift Skips Chapters And Findings Without Matching Paths.
     [<Test>]
     member _.BaselineDriftSkipsChaptersAndFindingsWithoutMatchingPaths() =
         let threshold = { ChurnLines = 1; FilesTouched = 1 }
@@ -209,6 +216,7 @@ type ReviewNotesDeterminism() =
         Assert.That(result.AffectedChapterIds, Is.Empty)
         Assert.That(result.AffectedFindingIds, Is.Empty)
 
+    /// Verifies that baseline Drift Is Meaningful At Threshold.
     [<Test>]
     member _.BaselineDriftIsMeaningfulAtThreshold() =
         let threshold = { ChurnLines = 4; FilesTouched = 2 }

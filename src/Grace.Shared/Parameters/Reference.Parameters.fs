@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.Common
 open System
 
+/// Contains reference helpers.
 module Reference =
 
     /// Parameters for many endpoints in the /branch path.

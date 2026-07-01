@@ -16,7 +16,9 @@ open System.Net.Http
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups shared helpers for queue integration test helpers.
 module private QueueIntegrationTestHelpers =
+    /// Builds get branch parameters for route calls.
     let getBranchParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Branch.GetBranchParameters()
         parameters.OwnerId <- ownerId
@@ -26,6 +28,7 @@ module private QueueIntegrationTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds get policy parameters for route calls.
     let getPolicyParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Policy.GetPolicyParameters()
         parameters.OwnerId <- ownerId
@@ -35,6 +38,7 @@ module private QueueIntegrationTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds queue status parameters for route calls.
     let queueStatusParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Queue.QueueStatusParameters()
         parameters.OwnerId <- ownerId
@@ -44,6 +48,7 @@ module private QueueIntegrationTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds queue action parameters for route calls.
     let queueActionParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Queue.QueueActionParameters()
         parameters.OwnerId <- ownerId
@@ -53,6 +58,7 @@ module private QueueIntegrationTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds enqueue parameters for route calls.
     let enqueueParameters (repositoryId: string) (branchId: string) (promotionSetId: string) (policySnapshotId: string) =
         let parameters = Parameters.Queue.EnqueueParameters()
         parameters.OwnerId <- ownerId
@@ -64,6 +70,7 @@ module private QueueIntegrationTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds dequeue parameters for route calls.
     let dequeueParameters (repositoryId: string) (branchId: string) (promotionSetId: string) =
         let parameters = Parameters.Queue.PromotionSetActionParameters()
         parameters.OwnerId <- ownerId
@@ -74,6 +81,7 @@ module private QueueIntegrationTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds seed policy snapshot parameters for route calls.
     let seedPolicySnapshotParameters (repositoryId: string) (branchId: string) (policySnapshotId: string) =
         let parameters = Grace.Server.Policy.SeedPolicySnapshotParameters()
         parameters.OwnerId <- ownerId
@@ -84,12 +92,14 @@ module private QueueIntegrationTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Posts Async to the running test server.
     let postAsync (route: string) (content: HttpContent) =
         let request = new HttpRequestMessage(HttpMethod.Post, route)
         request.Headers.Add(Constants.CorrelationIdHeaderKey, generateCorrelationId ())
         request.Content <- content
         Client.SendAsync(request)
 
+    /// Gets JSON property from the running test server.
     let getJsonProperty (name: string) (element: JsonElement) =
         let mutable property = Unchecked.defaultof<JsonElement>
 
@@ -101,6 +111,7 @@ module private QueueIntegrationTestHelpers =
             Assert.Fail($"Expected JSON property '{name}' in {element.GetRawText()}.")
             Unchecked.defaultof<JsonElement>
 
+    /// Waits for for branch to become observable in the test host.
     let waitForBranchAsync (repositoryId: string) (branchId: string) =
         task {
             let timeoutAt = DateTime.UtcNow.AddSeconds(15.0)
@@ -127,6 +138,7 @@ module private QueueIntegrationTestHelpers =
                 return Unchecked.defaultof<Branch.BranchDto>
         }
 
+    /// Builds a deterministic isolated branch for integration setup fixture for the server integration queue Integration assertions.
     let createIsolatedBranchAsync (repositoryId: string) =
         task {
             let parentBranchId = repositoryDefaultBranchIds[0]
@@ -148,6 +160,7 @@ module private QueueIntegrationTestHelpers =
             return! waitForBranchAsync repositoryId branchId
         }
 
+    /// Builds a deterministic promotion set for integration setup fixture for the server integration queue Integration assertions.
     let createPromotionSetAsync (repositoryId: string) (branchId: string) =
         task {
             let promotionSetId = $"{Guid.NewGuid()}"
@@ -165,6 +178,7 @@ module private QueueIntegrationTestHelpers =
             return promotionSetId
         }
 
+    /// Seeds policy snapshot for integration test setup.
     let seedPolicySnapshotAsync (repositoryId: string) (branchId: string) =
         task {
             let policySnapshotId = $"{Guid.NewGuid():N}{Guid.NewGuid():N}"
@@ -177,6 +191,7 @@ module private QueueIntegrationTestHelpers =
             return policySnapshotId
         }
 
+    /// Gets queue with body from the running test server.
     let getQueueWithBodyAsync (repositoryId: string) (branchId: string) =
         task {
             let! response = postAsync "/queue/status" (createJsonContent (queueStatusParameters repositoryId branchId))
@@ -203,12 +218,14 @@ module private QueueIntegrationTestHelpers =
                 return PromotionQueue.Default, body
         }
 
+    /// Gets queue from the running test server.
     let getQueueAsync repositoryId branchId =
         task {
             let! queue, _body = getQueueWithBodyAsync repositoryId branchId
             return queue
         }
 
+    /// Posts ok with body to the running test server.
     let postOkWithBodyAsync (route: string) (content: HttpContent) =
         task {
             let! response = postAsync route content
@@ -217,12 +234,14 @@ module private QueueIntegrationTestHelpers =
             return body
         }
 
+    /// Posts ok to the running test server.
     let postOkAsync route content =
         task {
             let! _body = postOkWithBodyAsync route content
             return ()
         }
 
+    /// Asserts bad request contains for integration responses.
     let assertBadRequestContainsAsync expectedText (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -230,9 +249,11 @@ module private QueueIntegrationTestHelpers =
             Assert.That(body, Does.Contain(expectedText))
         }
 
+/// Covers queue API scenarios.
 [<NonParallelizable>]
 type QueueApiIntegrationTests() =
 
+    /// Verifies the queue status enqueue pause resume and dequeue follow hosted lifecycle scenario.
     [<Test>]
     member _.QueueStatusEnqueuePauseResumeAndDequeueFollowHostedLifecycle() =
         task {
@@ -282,6 +303,7 @@ type QueueApiIntegrationTests() =
             Assert.That(dequeued.PromotionSetIds, Is.Empty)
         }
 
+    /// Verifies the queue enqueue rejects missing snapshot for initialization and invalid promotion set input scenario.
     [<Test>]
     member _.QueueEnqueueRejectsMissingSnapshotForInitializationAndInvalidPromotionSetInput() =
         task {

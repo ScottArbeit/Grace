@@ -28,13 +28,16 @@ open System.Threading.Tasks
 open Giraffe.ViewEngine.HtmlElements
 open System.IO
 
+/// Contains Grace Server directory version behavior and supporting helpers.
 module DirectoryVersion =
 
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> DirectoryVersionParameters> = 'T -> ValueTask<Result<unit, DirectoryVersionError>> array
     //type QueryResult<'T, 'U when 'T :> DirectoryParameters> = 'T -> int -> IDirectoryVersionActor ->Task<'U>
 
     let activitySource = new ActivitySource("Branch")
 
+    /// Implements directory save depth for the server request pipeline.
     let private directorySaveDepth (relativePath: RelativePath) =
         let trimmedPath = $"{relativePath}".Trim().TrimEnd('/', '\\')
 
@@ -49,6 +52,7 @@ module DirectoryVersion =
                 )
                 .Length
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> DirectoryVersionParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -82,6 +86,7 @@ module DirectoryVersion =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> DirectoryVersionParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -133,6 +138,7 @@ module DirectoryVersion =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateParameters) =
                     [|
                         String.isNotEmpty $"{parameters.DirectoryVersion.DirectoryVersionId}" DirectoryVersionError.InvalidDirectoryVersionId
@@ -149,6 +155,7 @@ module DirectoryVersion =
                             DirectoryVersionError.RepositoryDoesNotExist
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateParameters) (context: HttpContext) =
                     task {
                         let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId (getCorrelationId context)
@@ -171,6 +178,7 @@ module DirectoryVersion =
                 let graceIds = getGraceIds context
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: GetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
@@ -187,6 +195,7 @@ module DirectoryVersion =
                             DirectoryVersionError.DirectoryDoesNotExist
                     |]
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let! directoryVersionDto = actorProxy.Get(getCorrelationId context)
@@ -204,6 +213,7 @@ module DirectoryVersion =
                 let graceIds = getGraceIds context
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: GetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
@@ -220,6 +230,7 @@ module DirectoryVersion =
                             DirectoryVersionError.DirectoryDoesNotExist
                     |]
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let! directoryVersionDtos = actorProxy.GetRecursiveDirectoryVersions false (getCorrelationId context)
@@ -238,6 +249,7 @@ module DirectoryVersion =
                 let graceIds = getGraceIds context
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: GetByDirectoryIdsParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
@@ -253,6 +265,7 @@ module DirectoryVersion =
                             DirectoryVersionError.DirectoryDoesNotExist
                     |]
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let directoryVersionDtos = List<DirectoryVersionDto>()
@@ -340,6 +353,7 @@ module DirectoryVersion =
                         |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" correlationId)
             }
 
+    /// Coordinates add grace ids processing for Grace Server.
     let private addGraceIds (context: HttpContext) (graceReturnValue: GraceReturnValue<'T>) =
         let graceIds = getGraceIds context
         graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
@@ -348,6 +362,7 @@ module DirectoryVersion =
         graceReturnValue.Properties[ nameof BranchId ] <- graceIds.BranchId
         graceReturnValue
 
+    /// Implements directory version hash error for the server request pipeline.
     let private directoryVersionHashError (context: HttpContext) message =
         let graceError = GraceError.Create message (getCorrelationId context)
         graceError.Properties.Add("Path", context.Request.Path.Value)
@@ -424,6 +439,7 @@ module DirectoryVersion =
                 let graceIds = getGraceIds context
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: GetZipFileParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid $"{parameters.RepositoryId}" DirectoryVersionError.InvalidRepositoryId
@@ -440,6 +456,7 @@ module DirectoryVersion =
                             DirectoryVersionError.DirectoryDoesNotExist
                     |]
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) (maxCount: int) (actorProxy: IDirectoryVersionActor) =
                     task {
                         let! zipFile = actorProxy.GetZipFileUri(getCorrelationId context)
@@ -459,6 +476,7 @@ module DirectoryVersion =
                 let graceIds = getGraceIds context
                 let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SaveDirectoryVersionsParameters) =
                     let mutable allValidations: ValueTask<Result<unit, DirectoryVersionError>> array = Array.Empty()
 
@@ -483,6 +501,7 @@ module DirectoryVersion =
 
                     allValidations
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SaveDirectoryVersionsParameters) (context: HttpContext) =
                     task {
                         let correlationId = getCorrelationId context

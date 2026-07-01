@@ -8,8 +8,10 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains artifact helpers.
 module Artifact =
 
+    /// Represents artifact type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ArtifactType =
         | AgentSummary
@@ -19,8 +21,10 @@ module Artifact =
         | ReviewNotes
         | Other of kind: string
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ArtifactType>()
 
+    /// Represents artifact metadata.
     [<GenerateSerializer>]
     type ArtifactMetadata =
         {
@@ -50,6 +54,7 @@ module Artifact =
             CreatedBy: UserId
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof ArtifactMetadata
@@ -66,12 +71,15 @@ module Artifact =
                 CreatedBy = UserId String.Empty
             }
 
+    /// Represents the artifact create result contract.
     [<GenerateSerializer>]
     type ArtifactCreateResult = { ArtifactId: ArtifactId; UploadUri: UriWithSharedAccessSignature; BlobPath: string }
 
+    /// Represents the artifact download uri result contract.
     [<GenerateSerializer>]
     type ArtifactDownloadUriResult = { ArtifactId: ArtifactId; DownloadUri: UriWithSharedAccessSignature }
 
+    /// Represents artifact created.
     [<CLIMutable; GenerateSerializer>]
     type ArtifactCreated =
         {
@@ -101,6 +109,7 @@ module Artifact =
             CreatedBy: string
         }
 
+        /// Rehydrates the artifact contract from persisted metadata fields.
         static member FromMetadata(artifact: ArtifactMetadata) =
             let artifactType, otherArtifactType =
                 match artifact.ArtifactType with
@@ -129,6 +138,7 @@ module Artifact =
                 CreatedBy = artifact.CreatedBy
             }
 
+        /// Projects the artifact contract into the metadata shape stored outside the aggregate.
         member this.ToMetadata() =
             let artifactType =
                 match this.ArtifactType with
@@ -158,6 +168,7 @@ module Artifact =
                 CreatedBy = UserId this.CreatedBy
             }
 
+    /// Represents artifact command.
     [<CLIMutable; GenerateSerializer>]
     type ArtifactCommand =
         {
@@ -189,6 +200,7 @@ module Artifact =
             CreatedBy: string
         }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create(artifact: ArtifactCreated) =
             {
                 Command = "Create"
@@ -206,6 +218,7 @@ module Artifact =
                 CreatedBy = artifact.CreatedBy
             }
 
+        /// Projects the artifact contract into the event payload emitted when the artifact is first recorded.
         member this.ToCreated() =
             {
                 ArtifactId = this.ArtifactId
@@ -222,9 +235,11 @@ module Artifact =
                 CreatedBy = this.CreatedBy
             }
 
+    /// Contains artifact command names helpers.
     module ArtifactCommandNames =
         let Create = "Create"
 
+    /// Represents artifact event.
     [<CLIMutable; GenerateSerializer>]
     type ArtifactEvent =
         {
@@ -258,6 +273,7 @@ module Artifact =
             Metadata: EventMetadata
         }
 
+        /// Rehydrates the artifact contract from the creation event payload.
         static member FromCreated(eventName: string, artifact: ArtifactCreated, metadata: EventMetadata) =
             {
                 Event = eventName
@@ -276,6 +292,7 @@ module Artifact =
                 Metadata = metadata
             }
 
+        /// Projects the artifact contract into the metadata shape stored outside the aggregate.
         member this.ToMetadata() =
             {
                 ArtifactId = this.ArtifactId
@@ -293,10 +310,13 @@ module Artifact =
             }
                 .ToMetadata()
 
+    /// Contains artifact event names helpers.
     module ArtifactEventNames =
         let Created = "Created"
 
+    /// Contains artifact metadata helpers.
     module ArtifactMetadata =
+        /// Carries optional artifact fields that can be patched without rebuilding the full artifact record.
         let UpdateDto (artifactEvent: ArtifactEvent) (current: ArtifactMetadata) =
             if String.Equals(artifactEvent.Event, ArtifactEventNames.Created, StringComparison.OrdinalIgnoreCase) then
                 artifactEvent.ToMetadata()

@@ -32,24 +32,36 @@ open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 
+/// Contains Grace Server notification behavior and supporting helpers.
 module Notification =
 
     let log = loggerFactory.CreateLogger("Notification.Server")
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
+    /// Defines the contract for igrace client connection.
     type IGraceClientConnection =
+        /// Defines the register repository operation for implementers.
         abstract member RegisterRepository: RepositoryId -> Task
+        /// Defines the register parent branch operation for implementers.
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
+        /// Defines the notify repository operation for implementers.
         abstract member NotifyRepository: RepositoryId * ReferenceId -> Task
+        /// Defines the notify on commit operation for implementers.
         abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
+        /// Defines the notify on checkpoint operation for implementers.
         abstract member NotifyOnCheckpoint: BranchName * BranchName * BranchId * ReferenceId -> Task
+        /// Defines the notify on save operation for implementers.
         abstract member NotifyOnSave: BranchName * BranchName * BranchId * ReferenceId -> Task
+        /// Defines the notify automation event operation for implementers.
         abstract member NotifyAutomationEvent: AutomationEventEnvelope -> Task
+        /// Defines the server to client message operation for implementers.
         abstract member ServerToClientMessage: string -> Task
 
+    /// Represents notification hub used by Grace Server APIs and background services.
     type NotificationHub() =
         inherit Hub<IGraceClientConnection>()
 
+        /// Registers a connected SignalR client with the repository and branch groups supplied in the query string.
         override this.OnConnectedAsync() =
             task {
                 log.LogInformation(
@@ -60,6 +72,7 @@ module Notification =
                 )
             }
 
+        /// Adds the current SignalR connection to the repository group used for repository-wide notifications.
         member this.RegisterRepository(repositoryId: RepositoryId) =
             task {
                 log.LogInformation(
@@ -73,6 +86,7 @@ module Notification =
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{repositoryId}")
             }
 
+        /// Adds the current SignalR connection to the parent-branch group used for branch notifications.
         member this.RegisterParentBranch(branchId: BranchId, parentBranchId: BranchId) =
             task {
                 log.LogInformation(
@@ -86,6 +100,7 @@ module Notification =
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{parentBranchId}")
             }
 
+        /// Broadcasts repository-scoped notifications to clients registered for the repository group.
         member this.NotifyRepository((repositoryId: RepositoryId), (referenceId: ReferenceId)) =
             task {
                 log.LogInformation(
@@ -104,6 +119,7 @@ module Notification =
             }
             :> Task
 
+        /// Broadcasts a save notification to clients watching the affected repository or branch.
         member this.NotifyOnSave((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
                 log.LogInformation(
@@ -126,6 +142,7 @@ module Notification =
             }
             :> Task
 
+        /// Broadcasts a checkpoint notification to clients watching the affected repository or branch.
         member this.NotifyOnCheckpoint((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
                 log.LogInformation(
@@ -146,6 +163,7 @@ module Notification =
             }
             :> Task
 
+        /// Broadcasts a commit notification to clients watching the affected repository or branch.
         member this.NotifyOnCommit((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
                 log.LogInformation(
@@ -166,6 +184,7 @@ module Notification =
             }
             :> Task
 
+        /// Sends a typed notification payload to connected SignalR clients.
         member this.ServerToClientMessage(message: string) =
             task {
                 if not <| isNull (this.Clients) then
@@ -175,6 +194,7 @@ module Notification =
             }
             :> Task
 
+        /// Broadcasts an automation event notification to registered SignalR clients.
         member this.NotifyAutomationEvent(envelope: AutomationEventEnvelope) =
             task {
                 if not <| isNull (this.Clients) then
@@ -197,6 +217,7 @@ module Notification =
             }
             :> Task
 
+    /// Implements route automation event for the server request pipeline.
     let routeAutomationEvent (serviceProvider: IServiceProvider) (envelope: AutomationEventEnvelope) =
         task {
             try
@@ -244,6 +265,7 @@ module Notification =
                 )
         }
 
+    /// Contains Grace Server subscriber behavior and supporting helpers.
     module Subscriber =
         /// Gets the ReferenceDto for the given ReferenceId.
         let getReferenceDto referenceId repositoryId correlationId =
@@ -261,6 +283,7 @@ module Notification =
                 return! branchActorProxy.Get correlationId
             }
 
+        /// Implements diff two directory versions for the server request pipeline.
         let diffTwoDirectoryVersions directoryVersionId1 directoryVersionId2 ownerId organizationId repositoryId correlationId =
             task {
                 let diffActorProxy = Diff.CreateActorProxy directoryVersionId1 directoryVersionId2 ownerId organizationId repositoryId correlationId
@@ -281,6 +304,7 @@ module Notification =
                     return ()
             }
 
+        /// Gets try get repository id from metadata data needed by the server flow.
         let tryGetRepositoryIdFromMetadata (metadata: EventMetadata) =
             match metadata.Properties.TryGetValue(nameof RepositoryId) with
             | true, value ->
@@ -289,6 +313,7 @@ module Notification =
                 | _ -> None
             | _ -> None
 
+        /// Implements trigger promotion set recompute for the server request pipeline.
         let triggerPromotionSetRecompute (repositoryId: RepositoryId) (promotionSetId: PromotionSetId) (reason: string) (correlationId: CorrelationId) =
             task {
                 try
@@ -324,6 +349,7 @@ module Notification =
                     )
             }
 
+        /// Implements trigger queued promotion set recompute for the server request pipeline.
         let triggerQueuedPromotionSetRecompute (repositoryId: RepositoryId) (targetBranchId: BranchId) (reason: string) (correlationId: CorrelationId) =
             task {
                 try
@@ -355,6 +381,7 @@ module Notification =
                     )
             }
 
+        /// Reads a SignalR query value as a GUID and rejects missing or malformed identifiers.
         let private parseGuid (value: string) =
             let mutable parsed = Guid.Empty
 
@@ -365,6 +392,7 @@ module Notification =
             else
                 None
 
+        /// Implements matches branch glob for the server request pipeline.
         let internal matchesBranchGlob (branchName: BranchName) (branchNameGlob: string) =
             let normalizedPattern = if String.IsNullOrWhiteSpace branchNameGlob then "*" else branchNameGlob.Trim()
 
@@ -382,11 +410,13 @@ module Notification =
                 ||| RegexOptions.CultureInvariant
             )
 
+        /// Gets try get promotion set id from metadata data needed by the server flow.
         let private tryGetPromotionSetIdFromMetadata (metadata: EventMetadata) =
             match metadata.Properties.TryGetValue("ActorId") with
             | true, actorId -> parseGuid actorId
             | _ -> None
 
+        /// Gets try get terminal promotion set id data needed by the server flow.
         let private tryGetTerminalPromotionSetId (links: ReferenceLinkType seq) =
             links
             |> Seq.tryPick (fun link ->
@@ -394,6 +424,7 @@ module Notification =
                 | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
                 | _ -> None)
 
+        /// Implements emit automation event for the server request pipeline.
         let private emitAutomationEvent (hubContext: IHubContext<NotificationHub, IGraceClientConnection>) (envelope: AutomationEventEnvelope) =
             task {
                 if not <| isNull hubContext then
@@ -413,6 +444,7 @@ module Notification =
                                 .NotifyAutomationEvent(envelope)
             }
 
+        /// Loads a promotion set and its target branch before broadcasting promotion-set notifications.
         let private getPromotionSetContext (repositoryId: RepositoryId) (promotionSetId: PromotionSetId) (correlationId: CorrelationId) =
             task {
                 let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId repositoryId correlationId
@@ -426,6 +458,7 @@ module Notification =
                     return None
             }
 
+        /// Resolves try resolve automation branch context data from request or repository state.
         let private tryResolveAutomationBranchContext (graceEvent: GraceEvent) (correlationId: CorrelationId) =
             task {
                 match graceEvent with
@@ -487,6 +520,7 @@ module Notification =
                 | _ -> return None
             }
 
+        /// Implements emit validation requested events for the server request pipeline.
         let private emitValidationRequestedEvents
             (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
             (sourceEnvelope: AutomationEventEnvelope)
@@ -992,12 +1026,14 @@ module Notification =
             //return! setStatusCode StatusCodes.Status204NoContent next context
             }
 
+        /// Represents grace event subscription service used by Grace Server APIs and background services.
         type GraceEventSubscriptionService(loggerFactory: ILoggerFactory) =
             let subscriptionLog = loggerFactory.CreateLogger("Notification.Server.Subscription")
             let credential = lazy (DefaultAzureCredential())
             let mutable client: ServiceBusClient option = None
             let mutable processor: ServiceBusProcessor option = None
 
+            /// Coordinates handle processor error processing for Grace Server.
             let handleProcessorError (args: ProcessErrorEventArgs) =
                 task {
                     //subscriptionLog.LogError(
@@ -1012,6 +1048,7 @@ module Notification =
                 }
                 :> Task
 
+            /// Coordinates process grace event processing for Grace Server.
             let processGraceEvent (args: ProcessMessageEventArgs) =
                 task {
                     try
@@ -1032,6 +1069,7 @@ module Notification =
                         do! args.AbandonMessageAsync(args.Message, cancellationToken = args.CancellationToken)
                 }
 
+            /// Implements start azure service bus processor for the server request pipeline.
             let startAzureServiceBusProcessor (settings: AzureServiceBusPubSubSettings) (cancellationToken: CancellationToken) =
                 task {
                     if processor.IsSome then
@@ -1088,6 +1126,7 @@ module Notification =
                                 do! Task.Delay(TimeSpan.FromSeconds(5.0), cancellationToken)
                 }
 
+            /// Implements stop azure service bus processor for the server request pipeline.
             let stopAzureServiceBusProcessor cancellationToken =
                 task {
                     match processor with
@@ -1108,6 +1147,7 @@ module Notification =
                     | None -> ()
                 }
 
+            /// Implements start subscriber for the server request pipeline.
             let startSubscriber (cancellationToken: CancellationToken) : Task =
                 match pubSubSettings with
                 | { System = GracePubSubSystem.AzureServiceBus; AzureServiceBus = Some settings } -> startAzureServiceBusProcessor settings cancellationToken
@@ -1124,6 +1164,8 @@ module Notification =
                     Task.CompletedTask
 
             interface IHostedService with
+                /// Starts the Service Bus notification listener hosted by the server.
                 member _.StartAsync(cancellationToken: CancellationToken) = startSubscriber cancellationToken
 
+                /// Stops the Service Bus notification listener during host shutdown.
                 member _.StopAsync(cancellationToken: CancellationToken) = task { do! stopAzureServiceBusProcessor cancellationToken }

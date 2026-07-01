@@ -8,6 +8,7 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains work item helpers.
 module WorkItem =
     /// Defines the status of a work item.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
@@ -19,6 +20,7 @@ module WorkItem =
         | Done
         | Canceled
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<WorkItemStatus>()
 
     /// Defines the commands for the WorkItem actor.
@@ -60,6 +62,7 @@ module WorkItem =
         | LinkValidationResult of validationResultId: ValidationResultId
         | UnlinkValidationResult of validationResultId: ValidationResultId
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<WorkItemCommand>()
 
     /// Defines the events for the WorkItem actor.
@@ -101,6 +104,7 @@ module WorkItem =
         | ValidationResultLinked of validationResultId: ValidationResultId
         | ValidationResultUnlinked of validationResultId: ValidationResultId
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<WorkItemEventType>()
 
     /// Record that holds the event type and metadata for a WorkItem event.
@@ -144,6 +148,7 @@ module WorkItem =
             UpdatedAt: Instant option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof WorkItemDto
@@ -337,6 +342,7 @@ module WorkItem =
 
             { newWorkItemDto with OnBehalfOf = onBehalfOf; UpdatedAt = Some workItemEvent.Metadata.Timestamp }
 
+    /// Represents work item links dto.
     type WorkItemLinksDto =
         {
             WorkItemId: WorkItemId
@@ -350,6 +356,7 @@ module WorkItem =
             OtherArtifactIds: ArtifactId list
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 WorkItemId = WorkItemId.Empty

@@ -14,6 +14,7 @@ open System.Collections.Generic
 open System.Security.Cryptography
 open System.Text
 
+/// Covers dedupe Index Server behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type DedupeIndexServerTests() =
 
@@ -23,6 +24,7 @@ type DedupeIndexServerTests() =
 
     let bytes (text: string) = Encoding.UTF8.GetBytes(text)
 
+    /// Builds encoded Block test data for the server unit dedupe Index scenarios in this file.
     let encodedBlock name chunkCount =
         let mutable physicalOffset = 0L
 
@@ -41,10 +43,12 @@ type DedupeIndexServerTests() =
             Assert.Fail($"Expected test content block to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Builds decoded Chunk Addresses test data for the server unit dedupe Index scenarios in this file.
     let decodedChunkAddresses (block: ContentBlockFormat.EncodedContentBlock) =
         block.Chunks
         |> Array.map (fun chunk -> chunk.Address)
 
+    /// Builds manifest For test data for the server unit dedupe Index scenarios in this file.
     let manifestFor (block: ContentBlockFormat.EncodedContentBlock) =
         let size =
             block.Chunks
@@ -65,6 +69,7 @@ type DedupeIndexServerTests() =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Builds finalized Session test data for the server unit dedupe Index scenarios in this file.
     let finalizedSession manifest =
         { UploadSessionDto.Default with
             RepositoryId = repositoryId
@@ -72,6 +77,7 @@ type DedupeIndexServerTests() =
             FinalizedManifestAddress = Some manifest.ManifestAddress
         }
 
+    /// Builds non Finalized Session test data for the server unit dedupe Index scenarios in this file.
     let nonFinalizedSession () =
         { UploadSessionDto.Default with
             RepositoryId = repositoryId
@@ -79,6 +85,7 @@ type DedupeIndexServerTests() =
             FinalizedManifestAddress = None
         }
 
+    /// Builds metadata For test data for the server unit dedupe Index scenarios in this file.
     let metadataFor activeManifestCount metadataVersion (block: ContentBlockFormat.EncodedContentBlock) =
         {
             Class = nameof ContentBlockMetadata
@@ -110,6 +117,7 @@ type DedupeIndexServerTests() =
 
     let payloadFor (block: ContentBlockFormat.EncodedContentBlock) : FinalizeManifestBlockPayload = { Address = block.Address; Payload = block.Payload }
 
+    /// Builds source For test data for the server unit dedupe Index scenarios in this file.
     let sourceFor session manifest (block: ContentBlockFormat.EncodedContentBlock) metadata : DedupeIndex.FinalizedManifestIndexSource =
         { StoragePoolId = storagePoolId; Session = session; Manifest = manifest; BlockPayloads = [| payloadFor block |]; Metadata = [| metadata |] }
 
@@ -117,14 +125,17 @@ type DedupeIndexServerTests() =
 
     let defaultRepository repositoryId = { RepositoryDto.Default with RepositoryId = repositoryId; StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
 
+    /// Builds candidate Shape test data for the server unit dedupe Index scenarios in this file.
     let candidateShape (candidate: ContentBlockDiscoveryCandidate) =
         candidate.ContentBlockAddress, candidate.OrdinalStart, candidate.OrdinalCount, candidate.MetadataVersion, candidate.ProtectedChunkAddresses
 
+    /// Builds protected Chunk Address test data for the server unit dedupe Index scenarios in this file.
     let protectedChunkAddress storagePoolId chunkAddress =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
         let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
         $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
 
+    /// Verifies that protected Chunk Address Known Vector Keeps Sha256 Label And Preimage Stable.
     [<Test>]
     member _.ProtectedChunkAddressKnownVectorKeepsSha256LabelAndPreimageStable() =
         let chunkAddress = ChunkAddress "chunk-blake3-0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -135,6 +146,7 @@ type DedupeIndexServerTests() =
         Assert.That(protectedAddress, Does.StartWith("protected-sha256:"))
         Assert.That(protectedAddress, Does.Not.Contain("blake3"))
 
+    /// Verifies that writes Only After Finalized Manifest And Active Metadata Without Raw Inventory.
     [<Test>]
     member _.WritesOnlyAfterFinalizedManifestAndActiveMetadataWithoutRawInventory() =
         let block = encodedBlock "primary" 12
@@ -164,6 +176,7 @@ type DedupeIndexServerTests() =
         for rawChunkAddress in decodedChunkAddresses block do
             Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(rawChunkAddress))
 
+    /// Verifies that finalized Sdk Granularity One Chunk Blocks Publish Cross Repository Candidates.
     [<Test>]
     member _.FinalizedSdkGranularityOneChunkBlocksPublishCrossRepositoryCandidates() =
         let repoA = defaultRepository (Guid.Parse("9a6b2b42-22de-4763-9d2c-f7187128bafe"))
@@ -283,6 +296,7 @@ type DedupeIndexServerTests() =
             )
         | Error error -> Assert.Fail($"Expected whole one-chunk reuse range claim to succeed, got {error.Error}.")
 
+    /// Verifies that one Chunk Fragments Inside Larger Blocks Stay Below The Accepted Reuse Run Length.
     [<Test>]
     member _.OneChunkFragmentsInsideLargerBlocksStayBelowTheAcceptedReuseRunLength() =
         let block = encodedBlock "larger-block-short-fragment" 12
@@ -300,6 +314,7 @@ type DedupeIndexServerTests() =
 
         Assert.That(records, Is.Empty, "A one-chunk fragment inside a larger ContentBlock must not bypass the minimum reuse-run guard.")
 
+    /// Verifies that protected Chunk Addresses Use Stable Preimage Separator.
     [<Test>]
     member _.ProtectedChunkAddressesUseStablePreimageSeparator() =
         let block = encodedBlock "stable-protection" 12
@@ -311,6 +326,7 @@ type DedupeIndexServerTests() =
         Assert.That(records, Is.Not.Empty)
         Assert.That(records[0].ProtectedChunkAddresses[0], Is.EqualTo(expectedProtectedAddress))
 
+    /// Verifies that default Storage Pool Exposes Cross Repository Metadata After Physical Placement Is Shard Aware.
     [<Test>]
     member _.DefaultStoragePoolExposesCrossRepositoryMetadataAfterPhysicalPlacementIsShardAware() =
         let repoA = defaultRepository (Guid.Parse("507ccba8-8026-426c-ab65-c36d44625f1f"))
@@ -363,6 +379,7 @@ type DedupeIndexServerTests() =
             Is.EqualTo(block.Address)
         )
 
+    /// Verifies that finalized Manifest Registrations Are Scoped By Repository Before Shared Pool Collapse.
     [<Test>]
     member _.FinalizedManifestRegistrationsAreScopedByRepositoryBeforeSharedPoolCollapse() =
         let uploadSessionId = Guid.Parse("7121d3c7-61dc-4a47-a433-62d5a42288a7")
@@ -373,6 +390,7 @@ type DedupeIndexServerTests() =
         let repoA = Guid.Parse("ff4b53c2-bac9-4d8b-b31b-5f7f2d82d6d8")
         let repoB = Guid.Parse("568ee3cc-5c49-4446-80c7-910875ea1a03")
 
+        /// Builds session For test data for the server unit dedupe Index scenarios in this file.
         let sessionFor repositoryId =
             { finalizedSession manifest with
                 UploadSessionId = uploadSessionId
@@ -381,6 +399,7 @@ type DedupeIndexServerTests() =
                 StoragePoolId = StoragePoolRouting.defaultStoragePoolId
             }
 
+        /// Builds registration For test data for the server unit dedupe Index scenarios in this file.
         let registrationFor repositoryId : DedupeIndex.FinalizedManifestRegistration =
             {
                 StoragePoolId = StoragePoolRouting.defaultStoragePoolId
@@ -418,6 +437,7 @@ type DedupeIndexServerTests() =
             Is.True
         )
 
+    /// Verifies that shared Pool Metadata Refresh Rewrites All Matching Manifest Registrations.
     [<Test>]
     member _.SharedPoolMetadataRefreshRewritesAllMatchingManifestRegistrations() =
         let block = encodedBlock "shared-refresh-all-manifests" 12
@@ -427,6 +447,7 @@ type DedupeIndexServerTests() =
 
         let metadata = { metadataFor 2 61L block with StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
 
+        /// Builds registration For test data for the server unit dedupe Index scenarios in this file.
         let registrationFor manifest : DedupeIndex.FinalizedManifestRegistration =
             let session = { finalizedSession manifest with StoragePoolId = StoragePoolRouting.defaultStoragePoolId }
 
@@ -449,6 +470,7 @@ type DedupeIndexServerTests() =
         Assert.That(refreshedManifestAddresses.Contains firstManifest.ManifestAddress, Is.True)
         Assert.That(refreshedManifestAddresses.Contains secondManifest.ManifestAddress, Is.True)
 
+    /// Verifies that coalesced Active Ranges Publish Bounded Windows Beyond First Max Window.
     [<Test>]
     member _.CoalescedActiveRangesPublishBoundedWindowsBeyondFirstMaxWindow() =
         let block =
@@ -480,6 +502,7 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(MaxWindowChunks))
 
+    /// Verifies that coalesced Active Ranges Publish Overlapping Tail Window When Remainder Is Short.
     [<Test>]
     member _.CoalescedActiveRangesPublishOverlappingTailWindowWhenRemainderIsShort() =
         let block = encodedBlock "short-tail-window" (MaxWindowChunks + 4)
@@ -510,6 +533,7 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(tailStart))
 
+    /// Verifies that contiguous Per Chunk Active Ranges Publish Only Maximal Chain Windows.
     [<Test>]
     member _.ContiguousPerChunkActiveRangesPublishOnlyMaximalChainWindows() =
         let block = encodedBlock "per-chunk-maximal-chain" (MinimumAcceptedReuseRunLength + 4)
@@ -535,6 +559,7 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].OrdinalStart, Is.EqualTo(0))
 
+    /// Verifies that coalesced Active Ranges Backtracks Around Duplicate Physical Copies.
     [<Test>]
     member _.CoalescedActiveRangesBacktracksAroundDuplicatePhysicalCopies() =
         let block = encodedBlock "alternate-chain" 12
@@ -568,11 +593,13 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks, Has.Length.EqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].OrdinalCount, Is.EqualTo(MinimumAcceptedReuseRunLength))
 
+    /// Verifies that discovery Limits Candidate Windows For A Key Chunk.
     [<Test>]
     member _.DiscoveryLimitsCandidateWindowsForAKeyChunk() =
         let firstBlock = encodedBlock "limit-shared" 12
         let sharedChunkBytes = firstBlock.Chunks[0].Bytes
 
+        /// Constructs block fixtures used by the server unit dedupe Index assertions.
         let createBlock index =
             let tail = bytes $"limit-tail-{index}-{String('y', 128)}"
 
@@ -616,6 +643,7 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks.Length, Is.EqualTo(MaxCandidateWindowsPerKeyChunk))
         Assert.That(result.IsPartial, Is.True)
 
+    /// Verifies that discovery Deduplicates And Caps Key Chunks Without Making Empty Results Authoritative.
     [<Test>]
     member _.DiscoveryDeduplicatesAndCapsKeyChunksWithoutMakingEmptyResultsAuthoritative() =
         let duplicateBlock = encodedBlock "duplicate-requested" 12
@@ -640,6 +668,7 @@ type DedupeIndexServerTests() =
         Assert.That(result.IsPartial, Is.True)
         Assert.That(result.Message, Does.Contain("non-authoritative"))
 
+    /// Verifies that discovery Response Budget Truncates Protected Windows And Marks Partial.
     [<Test>]
     member _.DiscoveryResponseBudgetTruncatesProtectedWindowsAndMarksPartial() =
         let blocks =
@@ -678,6 +707,7 @@ type DedupeIndexServerTests() =
             for rawChunkAddress in requested do
                 Assert.That(candidate.ProtectedChunkAddresses, Has.None.EqualTo(rawChunkAddress))
 
+    /// Verifies that stale Index Candidates Still Require Authoritative Range Claims.
     [<Test>]
     member _.StaleIndexCandidatesStillRequireAuthoritativeRangeClaims() =
         let block = encodedBlock "stale" 12
@@ -751,6 +781,7 @@ type DedupeIndexServerTests() =
         | Ok _ -> Assert.Fail("Expected stale index candidate to be rejected by authoritative metadata at claim time.")
         | Error error -> Assert.That(error.Error, Does.Contain("stale"))
 
+    /// Verifies that rebuild From Finalized Manifests And Metadata Reproduces Candidates.
     [<Test>]
     member _.RebuildFromFinalizedManifestsAndMetadataReproducesCandidates() =
         let block = encodedBlock "rebuild" 12
@@ -777,6 +808,7 @@ type DedupeIndexServerTests() =
         for index in 0 .. rebuiltCandidates.Length - 1 do
             Assert.That(rebuiltCandidates[index], Is.EqualTo(incrementalCandidates[index]))
 
+    /// Verifies that rebuild Deduplicates Candidate Windows With Newest Metadata Version.
     [<Test>]
     member _.RebuildDeduplicatesCandidateWindowsWithNewestMetadataVersion() =
         let block = encodedBlock "rebuild-newest" 12
@@ -798,6 +830,7 @@ type DedupeIndexServerTests() =
         Assert.That(matchingRecords, Has.Length.EqualTo(1))
         Assert.That(matchingRecords[0].MetadataVersion, Is.EqualTo(newerMetadata.MetadataVersion))
 
+    /// Verifies that finalize Registration Publishes When Authoritative Metadata Arrives.
     [<Test>]
     member _.FinalizeRegistrationPublishesWhenAuthoritativeMetadataArrives() =
         let block = encodedBlock "actor-publish" 12
@@ -816,6 +849,7 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks, Has.Length.GreaterThanOrEqualTo(1))
         Assert.That(result.CandidateContentBlocks[0].ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
 
+    /// Verifies that finalize Registration Ignores Authoritative Metadata From Different Storage Pool.
     [<Test>]
     member _.FinalizeRegistrationIgnoresAuthoritativeMetadataFromDifferentStoragePool() =
         let block = encodedBlock "cross-pool" 12
@@ -840,12 +874,14 @@ type DedupeIndexServerTests() =
         Assert.That(result.CandidateContentBlocks[0].StoragePoolId, Is.EqualTo(storagePoolId))
         Assert.That(result.CandidateContentBlocks[0].MetadataVersion, Is.EqualTo(localMetadata.MetadataVersion))
 
+    /// Verifies that identical Content Blocks Remain Reusable Only Inside The Same Storage Pool.
     [<Test>]
     member _.IdenticalContentBlocksRemainReusableOnlyInsideTheSameStoragePool() =
         let block = encodedBlock "identical-cross-pool" 12
         let poolA = StoragePoolId "pool-a"
         let poolB = StoragePoolId "pool-b"
 
+        /// Builds manifest For Pool test data for the server unit dedupe Index scenarios in this file.
         let manifestForPool storagePoolId =
             let size =
                 block.Chunks
@@ -865,9 +901,11 @@ type DedupeIndexServerTests() =
 
             { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+        /// Builds session For test data for the server unit dedupe Index scenarios in this file.
         let sessionFor storagePoolId manifest =
             { finalizedSession manifest with StoragePoolId = storagePoolId; FinalizedManifestAddress = Some manifest.ManifestAddress }
 
+        /// Builds metadata For Pool test data for the server unit dedupe Index scenarios in this file.
         let metadataForPool storagePoolId metadataVersion =
             { metadataFor 1 metadataVersion block with
                 StoragePoolId = storagePoolId
@@ -880,6 +918,7 @@ type DedupeIndexServerTests() =
                     }
             }
 
+        /// Builds registration For test data for the server unit dedupe Index scenarios in this file.
         let registrationFor storagePoolId manifest : DedupeIndex.FinalizedManifestRegistration =
             { StoragePoolId = storagePoolId; Session = sessionFor storagePoolId manifest; Manifest = manifest; BlockPayloads = [| payloadFor block |] }
 
@@ -915,6 +954,7 @@ type DedupeIndexServerTests() =
         Assert.That(poolBCandidate.ContentBlockAddress, Is.EqualTo(block.Address))
         Assert.That(poolACandidate.ProtectedChunkAddresses[0], Is.Not.EqualTo(poolBCandidate.ProtectedChunkAddresses[0]))
 
+    /// Verifies that newer Non Authoritative Metadata Evicts Older Candidate Windows.
     [<Test>]
     member _.NewerNonAuthoritativeMetadataEvictsOlderCandidateWindows() =
         let block = encodedBlock "metadata-evict" 12
@@ -943,6 +983,7 @@ type DedupeIndexServerTests() =
             "Newer metadata with no reusable ranges should evict older windows for that content block."
         )
 
+    /// Verifies that published Registration Rebuilds Candidates For Later Metadata Versions.
     [<Test>]
     member _.PublishedRegistrationRebuildsCandidatesForLaterMetadataVersions() =
         let block = encodedBlock "metadata-rebuild" 12
@@ -984,6 +1025,7 @@ type DedupeIndexServerTests() =
             Is.True
         )
 
+    /// Verifies that incomplete Replay Registration Does Not Replace Finalized Registration.
     [<Test>]
     member _.IncompleteReplayRegistrationDoesNotReplaceFinalizedRegistration() =
         let block = encodedBlock "replay-preserve" 12
@@ -1023,6 +1065,7 @@ type DedupeIndexServerTests() =
             Is.True
         )
 
+    /// Verifies that newer Metadata Versions Replace Older Candidate Windows.
     [<Test>]
     member _.NewerMetadataVersionsReplaceOlderCandidateWindows() =
         let block = encodedBlock "newer-metadata" 12

@@ -9,6 +9,7 @@ open NodaTime
 open NUnit.Framework
 open System
 
+/// Contains webhook contract test helpers helpers.
 module WebhookContractTestHelpers =
 
     let assertRoundTrips<'T when 'T: equality> (value: 'T) =
@@ -17,6 +18,7 @@ module WebhookContractTestHelpers =
 
         Assert.That(deserialized, Is.EqualTo(value))
 
+/// Contains tests covering webhook contract serialization behavior.
 [<Parallelizable(ParallelScope.All)>]
 type WebhookContractSerializationTests() =
 
@@ -34,6 +36,7 @@ type WebhookContractSerializationTests() =
             ApprovalPolicyVersion = Some 3
         }
 
+    /// Verifies that webhook rule round trips serialization.
     [<Test>]
     member _.WebhookRuleRoundTripsSerialization() =
         let rule =
@@ -58,6 +61,7 @@ type WebhookContractSerializationTests() =
 
         WebhookContractTestHelpers.assertRoundTrips rule
 
+    /// Verifies that webhook delivery round trips serialization.
     [<Test>]
     member _.WebhookDeliveryRoundTripsSerialization() =
         let delivery =
@@ -77,6 +81,7 @@ type WebhookContractSerializationTests() =
 
         WebhookContractTestHelpers.assertRoundTrips delivery
 
+    /// Verifies that approval policy round trips serialization.
     [<Test>]
     member _.ApprovalPolicyRoundTripsSerialization() =
         let policy =
@@ -97,6 +102,7 @@ type WebhookContractSerializationTests() =
 
         WebhookContractTestHelpers.assertRoundTrips policy
 
+    /// Verifies that approval request round trips serialization.
     [<Test>]
     member _.ApprovalRequestRoundTripsSerialization() =
         let request =
@@ -124,6 +130,7 @@ type WebhookContractSerializationTests() =
 
         WebhookContractTestHelpers.assertRoundTrips request
 
+    /// Verifies that approval notification delivery round trips serialization without becoming webhook delivery.
     [<Test>]
     member _.ApprovalNotificationDeliveryRoundTripsSerializationWithoutBecomingWebhookDelivery() =
         let delivery =
@@ -146,6 +153,7 @@ type WebhookContractSerializationTests() =
                 Assert.That(deserialized.Class, Is.Not.EqualTo(nameof WebhookDelivery)))
         )
 
+    /// Verifies that promotion set approval summary round trips serialization.
     [<Test>]
     member _.PromotionSetApprovalSummaryRoundTripsSerialization() =
         let summary =
@@ -159,9 +167,11 @@ type WebhookContractSerializationTests() =
 
         WebhookContractTestHelpers.assertRoundTrips summary
 
+/// Contains tests covering external webhook event registry behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ExternalWebhookEventRegistryTests() =
 
+    /// Verifies that promotion set applied parses as canonical external event.
     [<Test>]
     member _.PromotionSetAppliedParsesAsCanonicalExternalEvent() =
         let parsed = parse "promotion-set.applied"
@@ -180,6 +190,7 @@ type ExternalWebhookEventRegistryTests() =
             )
         | Error errorText -> Assert.Fail(errorText)
 
+    /// Verifies that event name parsing is stable and case sensitive.
     [<Test>]
     member _.EventNameParsingIsStableAndCaseSensitive() =
         Assert.Multiple(
@@ -190,12 +201,14 @@ type ExternalWebhookEventRegistryTests() =
                 Assert.That((tryParse "").IsNone, Is.True))
         )
 
+    /// Verifies that registry has unique canonical sources.
     [<Test>]
     member _.RegistryHasUniqueCanonicalSources() =
         match validateUniqueCanonicalSources All with
         | Ok () -> Assert.Pass()
         | Error errorText -> Assert.Fail(errorText)
 
+    /// Verifies that registry rejects duplicate canonical sources.
     [<Test>]
     member _.RegistryRejectsDuplicateCanonicalSources() =
         let duplicate = { promotionSetApplied with Name = "promotion-set.applied.copy" }
@@ -208,6 +221,7 @@ type ExternalWebhookEventRegistryTests() =
         | Ok () -> Assert.Fail("Duplicate canonical sources should be rejected.")
         | Error errorText -> Assert.That(errorText, Does.Contain("duplicate canonical sources"))
 
+    /// Verifies that promotion set applied does not use terminal promotion reference as independent source.
     [<Test>]
     member _.PromotionSetAppliedDoesNotUseTerminalPromotionReferenceAsIndependentSource() =
         let sources =

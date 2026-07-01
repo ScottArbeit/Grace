@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.Validation
 open System
 
+/// Contains validation helpers.
 module Validation =
 
     /// Base parameters for validation-set and validation-result endpoints.

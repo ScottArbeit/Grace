@@ -6,12 +6,14 @@ open NUnit.Framework
 open System
 open System.IO
 
+/// Groups promotion set command coverage for the CLI test project.
 [<NonParallelizable>]
 module PromotionSetCommandTests =
     let private ownerId = Guid.NewGuid()
     let private organizationId = Guid.NewGuid()
     let private repositoryId = Guid.NewGuid()
 
+    /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
             args
@@ -24,11 +26,13 @@ module PromotionSetCommandTests =
                 repositoryId.ToString()
             |]
 
+    /// Runs the supplied action with ids and silent applied.
     let private withIdsAndSilent (args: string array) =
         args
         |> Array.append [| "--output"; "Silent" |]
         |> withIds
 
+    /// Verifies that promotion set create rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set create rejects invalid promotion set id`` () =
         let parseResult =
@@ -44,6 +48,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set create rejects invalid target branch id.
     [<Test>]
     let ``promotion-set create rejects invalid target branch id`` () =
         let parseResult =
@@ -57,6 +62,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set get rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set get rejects invalid promotion set id`` () =
         let parseResult =
@@ -70,6 +76,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set get events rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set get-events rejects invalid promotion set id`` () =
         let parseResult =
@@ -83,6 +90,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set update input promotions rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set update-input-promotions rejects invalid promotion set id`` () =
         let parseResult =
@@ -98,6 +106,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set update input promotions rejects missing pointers file.
     [<Test>]
     let ``promotion-set update-input-promotions rejects missing pointers file`` () =
         let missingFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.json")
@@ -115,6 +124,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set update input promotions rejects malformed pointers file.
     [<Test>]
     let ``promotion-set update-input-promotions rejects malformed pointers file`` () =
         let tempFile = Path.GetTempFileName()
@@ -137,6 +147,7 @@ module PromotionSetCommandTests =
         finally
             if File.Exists tempFile then File.Delete tempFile
 
+    /// Verifies that promotion set recompute rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set recompute rejects invalid promotion set id`` () =
         let parseResult =
@@ -150,6 +161,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set apply rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set apply rejects invalid promotion set id`` () =
         let parseResult =
@@ -163,6 +175,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set delete rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set delete rejects invalid promotion set id`` () =
         let parseResult =
@@ -176,6 +189,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set conflicts show rejects invalid promotion set id.
     [<Test>]
     let ``promotion-set conflicts show rejects invalid promotion set id`` () =
         let parseResult =
@@ -190,6 +204,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set conflicts resolve rejects invalid step id.
     [<Test>]
     let ``promotion-set conflicts resolve rejects invalid step id`` () =
         let tempFile = Path.GetTempFileName()
@@ -215,6 +230,7 @@ module PromotionSetCommandTests =
         finally
             if File.Exists tempFile then File.Delete tempFile
 
+    /// Verifies that promotion set conflicts resolve rejects missing decisions file.
     [<Test>]
     let ``promotion-set conflicts resolve rejects missing decisions file`` () =
         let missingFile = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.json")
@@ -235,6 +251,7 @@ module PromotionSetCommandTests =
         let exitCode = parseResult.Invoke()
         exitCode |> should equal -1
 
+    /// Verifies that promotion set conflicts resolve rejects malformed decisions file.
     [<Test>]
     let ``promotion-set conflicts resolve rejects malformed decisions file`` () =
         let tempFile = Path.GetTempFileName()

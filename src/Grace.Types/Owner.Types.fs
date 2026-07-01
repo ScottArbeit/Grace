@@ -26,6 +26,7 @@ module Owner =
         | DeletePhysical
         | Undelete
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OwnerCommand>()
 
     /// Defines the events for the Owner actor.
@@ -40,6 +41,7 @@ module Owner =
         | PhysicalDeleted
         | Undeleted
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OwnerEventType>()
 
     /// Record that holds the event type and metadata for an Owner event.

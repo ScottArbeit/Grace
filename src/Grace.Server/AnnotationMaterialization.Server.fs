@@ -15,6 +15,7 @@ open System.Text
 open System.Threading
 open System.Threading.Tasks
 
+/// Contains Grace Server annotation materialization behavior and supporting helpers.
 module internal AnnotationMaterialization =
 
     [<Literal>]
@@ -23,30 +24,39 @@ module internal AnnotationMaterialization =
     [<Literal>]
     let private MaxContentBlockPayloadBytes = MaxMaterializedTextBytes + 1024L * 1024L
 
+    /// Represents materialized text content used by Grace Server APIs and background services.
     type MaterializedTextContent = { FileVersion: FileVersion; Bytes: byte array; Text: string }
 
+    /// Represents object payload reader used by Grace Server APIs and background services.
     type ObjectPayloadReader = string -> CorrelationId -> CancellationToken -> Task<Result<byte array, GraceError>>
 
+    /// Represents content block metadata resolver used by Grace Server APIs and background services.
     type ContentBlockMetadataResolver =
         FileManifest -> ContentBlockAddress -> CorrelationId -> CancellationToken -> Task<Result<ContentBlockMetadata, GraceError>>
 
+    /// Represents content block placement payload reader used by Grace Server APIs and background services.
     type ContentBlockPlacementPayloadReader =
         ContentBlockStoragePlacement -> ContentBlockAddress -> CorrelationId -> CancellationToken -> Task<Result<byte array, GraceError>>
 
+    /// Computes error data used by Grace Server.
     let private error correlationId message = GraceError.Create message correlationId
 
+    /// Computes copy bytes data used by Grace Server.
     let private copyBytes (bytes: byte array) =
         let copy = Array.zeroCreate<byte> bytes.Length
         Array.Copy(bytes, copy, bytes.Length)
         copy
 
+    /// Computes sha256 hex data used by Grace Server.
     let private sha256Hex (bytes: byte array) =
         SHA256.HashData(bytes)
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
+    /// Computes blake3 hex data used by Grace Server.
     let private blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
 
+    /// Validates validate file version shape inputs before server processing continues.
     let private validateFileVersionShape (fileVersion: FileVersion) correlationId =
         if isNull (box fileVersion) then
             Error(error correlationId "Annotation target FileVersion is required.")
@@ -65,6 +75,7 @@ module internal AnnotationMaterialization =
         else
             Ok()
 
+    /// Validates validate exact file bytes inputs before server processing continues.
     let private validateExactFileBytes (fileVersion: FileVersion) (bytes: byte array) correlationId =
         if isNull bytes then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' content reader returned null bytes.")
@@ -87,12 +98,14 @@ module internal AnnotationMaterialization =
         else
             Ok(copyBytes bytes)
 
+    /// Implements looks like gzip for the server request pipeline.
     let private looksLikeGzip (bytes: byte array) =
         not (isNull bytes)
         && bytes.Length >= 2
         && bytes[0] = 0x1fuy
         && bytes[1] = 0x8buy
 
+    /// Implements decompress gzip whole file bytes for the server request pipeline.
     let private decompressGzipWholeFileBytes (fileVersion: FileVersion) (bytes: byte array) correlationId =
         if looksLikeGzip bytes then
             try
@@ -114,6 +127,7 @@ module internal AnnotationMaterialization =
         else
             Ok bytes
 
+    /// Implements decode utf8 text for the server request pipeline.
     let private decodeUtf8Text (fileVersion: FileVersion) (bytes: byte array) correlationId =
         if int64 bytes.Length > MaxMaterializedTextBytes then
             Error(
@@ -129,20 +143,24 @@ module internal AnnotationMaterialization =
             | :? DecoderFallbackException as ex ->
                 Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' is not valid UTF-8 text: {ex.Message}")
 
+    /// Implements describe manifest validation error for the server request pipeline.
     let private describeManifestValidationError validationError = $"Invalid manifest reconstruction: {validationError}."
 
+    /// Implements complete content block storage placement for the server request pipeline.
     let private completeContentBlockStoragePlacement (placement: ContentBlockStoragePlacement) =
         not (isNull (box placement))
         && not (String.IsNullOrWhiteSpace placement.StorageAccountName)
         && not (String.IsNullOrWhiteSpace placement.StorageContainerName)
         && not (String.IsNullOrWhiteSpace placement.ObjectKey)
 
+    /// Validates validate manifest storage pool inputs before server processing continues.
     let private validateManifestStoragePool (fileVersion: FileVersion) (manifest: FileManifest) correlationId =
         if String.IsNullOrWhiteSpace manifest.StoragePoolId then
             Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' FileManifest StoragePoolId is required.")
         else
             Ok()
 
+    /// Validates validate manifest block metadata inputs before server processing continues.
     let private validateManifestBlockMetadata
         (fileVersion: FileVersion)
         (manifest: FileManifest)
@@ -182,6 +200,7 @@ module internal AnnotationMaterialization =
         else
             Ok metadata.StoragePlacement
 
+    /// Implements manifest payloads for the server request pipeline.
     let private manifestPayloads
         (fileVersion: FileVersion)
         (manifest: FileManifest)
@@ -226,6 +245,7 @@ module internal AnnotationMaterialization =
             | None -> return Ok(payloads.ToArray())
         }
 
+    /// Implements materialize manifest bytes for the server request pipeline.
     let private materializeManifestBytes
         (fileVersion: FileVersion)
         (manifest: FileManifest)
@@ -265,6 +285,7 @@ module internal AnnotationMaterialization =
                                 Error(error correlationId $"Annotation target '{fileVersion.RelativePath}' {describeManifestValidationError validationError}")
         }
 
+    /// Implements unsupported manifest metadata resolver for the server request pipeline.
     let private unsupportedManifestMetadataResolver (manifest: FileManifest) contentBlockAddress correlationId _ =
         Task.FromResult(
             Error(
@@ -274,11 +295,13 @@ module internal AnnotationMaterialization =
             )
         )
 
+    /// Implements unsupported content block payload reader for the server request pipeline.
     let private unsupportedContentBlockPayloadReader placement contentBlockAddress correlationId _ =
         Task.FromResult(
             Error(error correlationId $"Annotation target FileManifest block {contentBlockAddress} cannot be read without a ContentBlock placement reader.")
         )
 
+    /// Implements materialize whole file bytes for the server request pipeline.
     let private materializeWholeFileBytes (fileVersion: FileVersion) (readObjectPayload: ObjectPayloadReader) correlationId cancellationToken =
         task {
             let objectKey = StorageKeys.wholeFileContentObjectKey fileVersion
@@ -291,6 +314,7 @@ module internal AnnotationMaterialization =
             | Error readError -> return Error readError
         }
 
+    /// Implements materialize text with readers for the server request pipeline.
     let materializeTextWithReaders
         (readWholeFileObjectPayload: ObjectPayloadReader)
         (resolveContentBlockMetadata: ContentBlockMetadataResolver)
@@ -330,6 +354,7 @@ module internal AnnotationMaterialization =
                     | Ok text -> return Ok { FileVersion = fileVersion; Bytes = bytes; Text = text }
         }
 
+    /// Implements materialize text with object reader for the server request pipeline.
     let materializeTextWithObjectReader
         (readObjectPayload: ObjectPayloadReader)
         (fileVersion: FileVersion)
@@ -344,6 +369,7 @@ module internal AnnotationMaterialization =
             correlationId
             cancellationToken
 
+    /// Implements azure object payload reader for the server request pipeline.
     let private azureObjectPayloadReader
         (repositoryDto: RepositoryDto)
         (maxPayloadBytes: int64)
@@ -377,6 +403,7 @@ module internal AnnotationMaterialization =
                 return Error(error correlationId "Annotation content materialization cannot use an unknown object storage provider.")
         }
 
+    /// Implements azure content block placement payload reader for the server request pipeline.
     let private azureContentBlockPlacementPayloadReader
         maxPayloadBytes
         (placement: ContentBlockStoragePlacement)
@@ -409,6 +436,7 @@ module internal AnnotationMaterialization =
                     )
         }
 
+    /// Implements finalized manifest metadata resolver for the server request pipeline.
     let private finalizedManifestMetadataResolver
         (repositoryDto: RepositoryDto)
         (fileVersion: FileVersion)
@@ -442,13 +470,17 @@ module internal AnnotationMaterialization =
                     )
         }
 
+    /// Implements materialize target text for the server request pipeline.
     let materializeTargetText (repositoryDto: RepositoryDto) authorizedScope (fileVersion: FileVersion) correlationId cancellationToken =
+        /// Implements whole file reader for the server request pipeline.
         let wholeFileReader (objectKey: string) correlationId cancellationToken =
             azureObjectPayloadReader repositoryDto MaxContentBlockPayloadBytes objectKey correlationId cancellationToken
 
+        /// Computes metadata resolver data used by Grace Server.
         let metadataResolver manifest contentBlockAddress correlationId cancellationToken =
             finalizedManifestMetadataResolver repositoryDto fileVersion authorizedScope manifest contentBlockAddress correlationId cancellationToken
 
+        /// Implements content block reader for the server request pipeline.
         let contentBlockReader placement contentBlockAddress correlationId cancellationToken =
             azureContentBlockPlacementPayloadReader MaxContentBlockPayloadBytes placement contentBlockAddress correlationId cancellationToken
 

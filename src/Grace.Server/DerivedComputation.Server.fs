@@ -15,11 +15,13 @@ open Microsoft.Extensions.Logging
 open System
 open System.Threading.Tasks
 
+/// Contains Grace Server derived computation behavior and supporting helpers.
 module DerivedComputation =
 
     let log = loggerFactory.CreateLogger("DerivedComputation.Server")
 
 
+    /// Determines whether record quick scan.
     let internal shouldRecordQuickScan referenceType =
         match referenceType with
         | ReferenceType.Commit
@@ -27,6 +29,7 @@ module DerivedComputation =
         | ReferenceType.Promotion -> true
         | _ -> false
 
+    /// Coordinates handle reference event processing for Grace Server.
     let handleReferenceEvent (referenceEvent: ReferenceEvent) =
         task {
             match referenceEvent.Event with
@@ -101,6 +104,7 @@ module DerivedComputation =
             | _ -> ()
         }
 
+    /// Coordinates handle policy event processing for Grace Server.
     let handlePolicyEvent (policyEvent: PolicyEvent) =
         task {
             match policyEvent.Event with

@@ -7,6 +7,7 @@ open System.Collections.Generic
 open System.Linq
 open Grace.Types
 
+/// Contains en us helpers.
 module en_US =
 
     /// <summary>

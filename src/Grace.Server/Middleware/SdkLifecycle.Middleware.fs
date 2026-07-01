@@ -8,6 +8,7 @@ open System
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Contains Grace Server sdk lifecycle policy behavior and supporting helpers.
 module SdkLifecyclePolicy =
 
     [<Literal>]
@@ -34,10 +35,13 @@ module SdkLifecyclePolicy =
     [<Literal>]
     let UnsupportedStatus = "unsupported"
 
+    /// Represents client identity used by Grace Server APIs and background services.
     type ClientIdentity = { ClientType: string option; ClientVersion: string option }
 
+    /// Represents lifecycle headers used by Grace Server APIs and background services.
     type LifecycleHeaders = { Status: string; UnsupportedAfter: string; MinimumSupportedVersion: string; RecommendedVersion: string; UpdateUrl: string }
 
+    /// Represents unsupported client used by Grace Server APIs and background services.
     type UnsupportedClient =
         {
             ClientType: string
@@ -49,23 +53,28 @@ module SdkLifecyclePolicy =
             Message: string
         }
 
+    /// Represents lifecycle decision used by Grace Server APIs and background services.
     type LifecycleDecision =
         | Continue
         | ContinueWithHeaders of LifecycleHeaders
         | RejectUnsupported of UnsupportedClient
 
+    /// Parses try parse version input into the server model.
     let private tryParseVersion (value: string) =
         let mutable parsed = Unchecked.defaultof<Version>
 
         if Version.TryParse(value, &parsed) then Some parsed else None
 
+    /// Implements compare version to for the server request pipeline.
     let private compareVersionTo (candidate: Version) (threshold: string) =
         match tryParseVersion threshold with
         | Some thresholdVersion -> candidate.CompareTo(thresholdVersion)
         | None -> 0
 
+    /// Determines whether cli.
     let private isCli (clientType: string) = clientType.Equals(KnownClientTypeCli, StringComparison.OrdinalIgnoreCase)
 
+    /// Implements decide for the server request pipeline.
     let decide (identity: ClientIdentity) =
         match identity.ClientType, identity.ClientVersion with
         | Some clientType, Some clientVersion when isCli clientType ->
@@ -95,8 +104,10 @@ module SdkLifecyclePolicy =
             | None -> Continue
         | _ -> Continue
 
+/// Represents sdk lifecycle middleware used by Grace Server APIs and background services.
 type SdkLifecycleMiddleware(next: RequestDelegate) =
 
+    /// Gets try get header data needed by the server flow.
     let tryGetHeader (context: HttpContext) headerName =
         match context.Request.Headers.TryGetValue headerName with
         | true, values when
@@ -106,11 +117,13 @@ type SdkLifecycleMiddleware(next: RequestDelegate) =
             Some(values[ 0 ].ToString())
         | _ -> None
 
+    /// Reads the request correlation id used to enrich SDK lifecycle error payloads.
     let getCorrelationId (context: HttpContext) =
         match context.Items.TryGetValue(Constants.CorrelationId) with
         | true, value when not (isNull value) -> value.ToString()
         | _ -> String.Empty
 
+    /// Writes lifecycle headers onto the current response or server state.
     let setLifecycleHeaders (response: HttpResponse) (headers: SdkLifecyclePolicy.LifecycleHeaders) =
         response.Headers[
             Constants.SdkLifecycleStatusHeaderKey
@@ -132,6 +145,7 @@ type SdkLifecycleMiddleware(next: RequestDelegate) =
             Constants.SdkLifecycleUpdateUrlHeaderKey
         ] <- StringValues(headers.UpdateUrl)
 
+    /// Writes SDK lifecycle response headers that tell an unsupported client which versions and update URL to use.
     let setUnsupportedLifecycleHeaders (response: HttpResponse) (unsupportedClient: SdkLifecyclePolicy.UnsupportedClient) =
         response.Headers[
             Constants.SdkLifecycleStatusHeaderKey
@@ -153,6 +167,7 @@ type SdkLifecycleMiddleware(next: RequestDelegate) =
             Constants.SdkLifecycleUpdateUrlHeaderKey
         ] <- StringValues(unsupportedClient.UpdateUrl)
 
+    /// Builds the structured 426 error payload returned when SDK lifecycle policy rejects a client version.
     let createUnsupportedClientError (context: HttpContext) (unsupportedClient: SdkLifecyclePolicy.UnsupportedClient) =
         let error = GraceError.Create "UnsupportedClientVersion" (getCorrelationId context)
 
@@ -165,6 +180,7 @@ type SdkLifecycleMiddleware(next: RequestDelegate) =
             .enhance("updateUrl", unsupportedClient.UpdateUrl)
             .enhance ("message", unsupportedClient.Message)
 
+    /// Applies SDK lifecycle policy to request headers and short-circuits unsupported clients with status 426.
     member _.Invoke(context: HttpContext) =
         let identity: SdkLifecyclePolicy.ClientIdentity =
             { ClientType = tryGetHeader context Constants.ClientTypeHeaderKey; ClientVersion = tryGetHeader context Constants.ClientVersionHeaderKey }

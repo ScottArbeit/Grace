@@ -8,9 +8,11 @@ open System
 open System.Net
 open System.Net.Http
 
+/// Covers access bootstrap enabled scenarios.
 [<NonParallelizable>]
 type AccessBootstrapEnabledTests() =
 
+    /// Builds a deterministic owner for integration setup fixture for the server integration access assertions.
     let createOwner (client: HttpClient) =
         task {
             let ownerId = $"{Guid.NewGuid()}"
@@ -25,6 +27,7 @@ type AccessBootstrapEnabledTests() =
             return ownerId
         }
 
+    /// Builds create grant role parameters for route calls.
     let createGrantRoleParameters (roleId: string) (principalId: string) =
         let parameters = Parameters.Access.GrantRoleParameters()
         parameters.ScopeKind <- "system"
@@ -35,12 +38,14 @@ type AccessBootstrapEnabledTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds a deterministic client for integration setup fixture for the server integration access assertions.
     let createClient (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Verifies the bootstrap seeds system admin when configured scenario.
     [<Test>]
     member _.BootstrapSeedsSystemAdminWhenConfigured() =
         task {
@@ -64,9 +69,11 @@ open System
 open System.Net
 open System.Net.Http
 
+/// Covers access bootstrap scenarios.
 [<NonParallelizable>]
 type AccessBootstrapTests() =
 
+    /// Builds a deterministic owner for integration setup fixture for the server integration access assertions.
     let createOwner (client: HttpClient) =
         task {
             let ownerId = $"{Guid.NewGuid()}"
@@ -81,6 +88,7 @@ type AccessBootstrapTests() =
             return ownerId
         }
 
+    /// Builds create grant role parameters for route calls.
     let createGrantRoleParameters (roleId: string) (principalId: string) =
         let parameters = Parameters.Access.GrantRoleParameters()
         parameters.ScopeKind <- "system"
@@ -91,12 +99,14 @@ type AccessBootstrapTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds a deterministic client for integration setup fixture for the server integration access assertions.
     let createClient (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Verifies the bootstrap disabled by default returns forbidden scenario.
     [<Test>]
     member _.BootstrapDisabledByDefaultReturnsForbidden() =
         task {
@@ -121,9 +131,11 @@ open System.Net
 open System.Net.Http
 open System.Net.Http.Json
 
+/// Covers access check permission scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type AccessCheckPermissionTests() =
 
+    /// Builds a deterministic client for integration setup fixture for the server integration access assertions.
     let createClient (userId: string) (groups: string list) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
@@ -134,6 +146,7 @@ type AccessCheckPermissionTests() =
 
         client
 
+    /// Defines check permission behavior for the surrounding tests used by the server integration access scenario.
     let checkPermissionAsync (client: HttpClient) ownerId organizationId repositoryId resourceKind operation principalType principalId =
         task {
             let parameters = Parameters.Access.CheckPermissionParameters()
@@ -150,6 +163,7 @@ type AccessCheckPermissionTests() =
             return! client.PostAsync("/authorize/check-permission", createJsonContent parameters)
         }
 
+    /// Verifies the self check without principal specified returns ok scenario.
     [<Test>]
     member _.SelfCheckWithoutPrincipalSpecifiedReturnsOk() =
         task {
@@ -160,6 +174,7 @@ type AccessCheckPermissionTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the explicit self principal returns ok scenario.
     [<Test>]
     member _.ExplicitSelfPrincipalReturnsOk() =
         task {
@@ -171,6 +186,7 @@ type AccessCheckPermissionTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the group principal member returns ok scenario.
     [<Test>]
     member _.GroupPrincipalMemberReturnsOk() =
         task {
@@ -183,6 +199,7 @@ type AccessCheckPermissionTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the other principal requires admin scenario.
     [<Test>]
     member _.OtherPrincipalRequiresAdmin() =
         task {
@@ -207,15 +224,18 @@ open System.Net
 open System.Net.Http
 open System.Net.Http.Json
 
+/// Covers access control security scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type AccessControlSecurityTests() =
 
+    /// Builds a deterministic client with user ID for integration setup fixture for the server integration access assertions.
     let createClientWithUserId (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Grants role needed by authorization-sensitive tests.
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -233,6 +253,7 @@ type AccessControlSecurityTests() =
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
+    /// Revokes role during authorization-sensitive tests.
     let revokeRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
         task {
             let parameters = Parameters.Access.RevokeRoleParameters()
@@ -249,6 +270,7 @@ type AccessControlSecurityTests() =
             return! client.PostAsync("/authorize/revoke-role", createJsonContent parameters)
         }
 
+    /// Lists role assignments from the running test server.
     let listRoleAssignmentsAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId =
         task {
             let parameters = Parameters.Access.ListRoleAssignmentsParameters()
@@ -262,6 +284,7 @@ type AccessControlSecurityTests() =
             return! client.PostAsync("/authorize/list-role-assignments", createJsonContent parameters)
         }
 
+    /// Verifies the system scope requires system admin scenario.
     [<Test>]
     member _.SystemScopeRequiresSystemAdmin() =
         task {
@@ -281,6 +304,7 @@ type AccessControlSecurityTests() =
             Assert.That(forbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the owner scope boundaries enforced scenario.
     [<Test>]
     member _.OwnerScopeBoundariesEnforced() =
         task {
@@ -309,6 +333,7 @@ type AccessControlSecurityTests() =
             Assert.That(listForbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the organization scope boundaries enforced scenario.
     [<Test>]
     member _.OrganizationScopeBoundariesEnforced() =
         task {
@@ -338,6 +363,7 @@ type AccessControlSecurityTests() =
             Assert.That(listForbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the repository scope boundaries enforced scenario.
     [<Test>]
     member _.RepositoryScopeBoundariesEnforced() =
         task {
@@ -368,6 +394,7 @@ type AccessControlSecurityTests() =
             Assert.That(listForbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the branch scope boundaries enforced scenario.
     [<Test>]
     member _.BranchScopeBoundariesEnforced() =
         task {
@@ -399,6 +426,7 @@ type AccessControlSecurityTests() =
             Assert.That(listForbidden.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the privilege escalation prevention scenario.
     [<Test>]
     member _.PrivilegeEscalationPrevention() =
         task {
@@ -436,6 +464,7 @@ type AccessControlSecurityTests() =
             Assert.That(repoWriterCannotGrantRepositoryAdmin.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the grant role rejects invalid role scenario.
     [<Test>]
     member _.GrantRoleRejectsInvalidRole() =
         task {
@@ -448,6 +477,7 @@ type AccessControlSecurityTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the grant role rejects role scope mismatch scenario.
     [<Test>]
     member _.GrantRoleRejectsRoleScopeMismatch() =
         task {
@@ -476,7 +506,9 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Threading.Tasks
 
+/// Groups shared helpers for access storage test data.
 module AccessStorageTestData =
+    /// Builds a deterministic file version for integration setup fixture for the server integration access assertions.
     let createFileVersion (relativePath: string) =
         FileVersion.CreateWithHashes
             (RelativePath relativePath)
@@ -486,9 +518,11 @@ module AccessStorageTestData =
             false
             1L
 
+/// Covers access control scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type AccessControl() =
 
+    /// Builds a deterministic organization for integration setup fixture for the server integration access assertions.
     let createOrganizationAsync (client: HttpClient) =
         task {
             let organizationId = $"{Guid.NewGuid()}"
@@ -504,6 +538,7 @@ type AccessControl() =
             return organizationId
         }
 
+    /// Builds a deterministic repository for integration setup fixture for the server integration access assertions.
     let createRepositoryAsync (client: HttpClient) (organizationId: string) =
         task {
             let repositoryId = $"{Guid.NewGuid()}"
@@ -520,6 +555,7 @@ type AccessControl() =
             return repositoryId
         }
 
+    /// Grants role needed by authorization-sensitive tests.
     let grantRoleAsync (client: HttpClient) ownerId organizationId repositoryId scopeKind roleId principalId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -537,6 +573,7 @@ type AccessControl() =
             response.EnsureSuccessStatusCode() |> ignore
         }
 
+    /// Defines upsert path permission behavior for the surrounding tests used by the server integration access scenario.
     let upsertPathPermissionAsync (client: HttpClient) ownerId organizationId repositoryId path claimPermissions =
         task {
             let parameters = Parameters.Access.UpsertPathPermissionParameters()
@@ -556,6 +593,7 @@ type AccessControl() =
             response.EnsureSuccessStatusCode() |> ignore
         }
 
+    /// Defines check permission behavior for the surrounding tests used by the server integration access scenario.
     let checkPermissionAsync (client: HttpClient) ownerId organizationId repositoryId resourceKind operation path =
         task {
             let parameters = Parameters.Access.CheckPermissionParameters()
@@ -573,6 +611,7 @@ type AccessControl() =
             return returnValue.ReturnValue
         }
 
+    /// Revokes role during authorization-sensitive tests.
     let revokeRoleAsync (client: HttpClient) ownerId organizationId repositoryId scopeKind roleId principalId =
         task {
             let parameters = Parameters.Access.RevokeRoleParameters()
@@ -589,6 +628,7 @@ type AccessControl() =
             response.EnsureSuccessStatusCode() |> ignore
         }
 
+    /// Lists role assignments from the running test server.
     let listRoleAssignmentsAsync (client: HttpClient) ownerId organizationId repositoryId scopeKind =
         task {
             let parameters = Parameters.Access.ListRoleAssignmentsParameters()
@@ -605,6 +645,7 @@ type AccessControl() =
             return returnValue.ReturnValue
         }
 
+    /// Builds a deterministic client with claims for integration setup fixture for the server integration access assertions.
     let createClientWithClaims (claims: string list) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
@@ -615,12 +656,14 @@ type AccessControl() =
 
         client
 
+    /// Builds a deterministic client with user ID for integration setup fixture for the server integration access assertions.
     let createClientWithUserId (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Verifies the protected endpoints require authentication scenario.
     [<Test>]
     member _.ProtectedEndpointsRequireAuthentication() =
         task {
@@ -638,6 +681,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }
 
+    /// Verifies the role inheritance resolves permissions across organizations scenario.
     [<Test>]
     member _.RoleInheritanceResolvesPermissionsAcrossOrganizations() =
         task {
@@ -669,6 +713,7 @@ type AccessControl() =
             | Denied reason -> Assert.Fail($"Expected repoB read to be allowed. {reason}")
         }
 
+    /// Verifies the grant list revoke updates stored assignments and permission check scenario.
     [<Test>]
     member _.GrantListRevokeUpdatesStoredAssignmentsAndPermissionCheck() =
         task {
@@ -723,6 +768,7 @@ type AccessControl() =
             | Allowed reason -> Assert.Fail($"Expected repo read to be denied after revoke. {reason}")
         }
 
+    /// Verifies the path permission deny overrides allow in check permission scenario.
     [<Test>]
     member _.PathPermissionDenyOverridesAllowInCheckPermission() =
         task {
@@ -762,6 +808,7 @@ type AccessControl() =
             | Denied reason -> Assert.Fail($"Expected path write to be allowed. {reason}")
         }
 
+    /// Verifies the repository endpoint requires role assignment scenario.
     [<Test>]
     member _.RepositoryEndpointRequiresRoleAssignment() =
         task {
@@ -787,6 +834,7 @@ type AccessControl() =
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the storage upload metadata respects path permissions scenario.
     [<Test>]
     member _.StorageUploadMetadataRespectsPathPermissions() =
         task {
@@ -829,6 +877,7 @@ type AccessControl() =
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the branch annotate respects path read deny scenario.
     [<Test>]
     member _.BranchAnnotateRespectsPathReadDeny() =
         task {
@@ -873,6 +922,7 @@ type AccessControl() =
             Assert.That(deniedResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden), deniedBody)
         }
 
+    /// Verifies the access grant role requires admin scope scenario.
     [<Test>]
     member _.AccessGrantRoleRequiresAdminScope() =
         task {
@@ -890,6 +940,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the access grant role validates role ID scenario.
     [<Test>]
     member _.AccessGrantRoleValidatesRoleId() =
         task {
@@ -904,6 +955,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the access grant role validates scope applicability scenario.
     [<Test>]
     member _.AccessGrantRoleValidatesScopeApplicability() =
         task {
@@ -919,6 +971,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the access grant role rejects conflicting requested scope kind scenario.
     [<Test>]
     member _.AccessGrantRoleRejectsConflictingRequestedScopeKind() =
         task {
@@ -939,6 +992,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the access revoke role rejects conflicting requested scope kind scenario.
     [<Test>]
     member _.AccessRevokeRoleRejectsConflictingRequestedScopeKind() =
         task {
@@ -959,6 +1013,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the bootstrap seeds system admin scenario.
     [<Test>]
     member _.BootstrapSeedsSystemAdmin() =
         task {
@@ -981,6 +1036,7 @@ type AccessControl() =
             Assert.That(seeded, Is.True)
         }
 
+    /// Verifies the access show role assignments without owner shows only current principal system assignments scenario.
     [<Test>]
     member _.AccessShowRoleAssignmentsWithoutOwnerShowsOnlyCurrentPrincipalSystemAssignments() =
         task {
@@ -1017,6 +1073,7 @@ type AccessControl() =
             )
         }
 
+    /// Verifies the access show role assignments rejects repository without organization scenario.
     [<Test>]
     member _.AccessShowRoleAssignmentsRejectsRepositoryWithoutOrganization() =
         task {
@@ -1029,6 +1086,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the access show role assignments rejects branch without repository scenario.
     [<Test>]
     member _.AccessShowRoleAssignmentsRejectsBranchWithoutRepository() =
         task {
@@ -1044,6 +1102,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the access show role assignments rejects child scope without owner scenario.
     [<Test>]
     member _.AccessShowRoleAssignmentsRejectsChildScopeWithoutOwner() =
         task {
@@ -1055,6 +1114,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the access list role assignments requires admin scope scenario.
     [<Test>]
     member _.AccessListRoleAssignmentsRequiresAdminScope() =
         task {
@@ -1070,6 +1130,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the access check permission restricts other principals scenario.
     [<Test>]
     member _.AccessCheckPermissionRestrictsOtherPrincipals() =
         task {
@@ -1090,6 +1151,7 @@ type AccessControl() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the access check permission allows self principal scenario.
     [<Test>]
     member _.AccessCheckPermissionAllowsSelfPrincipal() =
         task {
@@ -1124,20 +1186,24 @@ open System.Net
 open System.Net.Http
 open System.Net.Http.Json
 
+/// Covers endpoint authorization scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type EndpointAuthorizationTests() =
 
+    /// Builds a deterministic client with user ID for integration setup fixture for the server integration access assertions.
     let createClientWithUserId (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Builds a deterministic unauthenticated client for integration setup fixture for the server integration access assertions.
     let createUnauthenticatedClient () =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client
 
+    /// Grants role needed by authorization-sensitive tests.
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -1155,6 +1221,7 @@ type EndpointAuthorizationTests() =
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
+    /// Gets default branch from the running test server.
     let getDefaultBranchAsync (repositoryId: string) =
         task {
             let repositoryIndex =
@@ -1203,12 +1270,14 @@ type EndpointAuthorizationTests() =
                 return Unchecked.defaultof<BranchDto>
         }
 
+    /// Builds create owner get parameters for route calls.
     let createOwnerGetParameters () =
         let parameters = Parameters.Owner.GetOwnerParameters()
         parameters.OwnerId <- ownerId
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create owner set name parameters for route calls.
     let createOwnerSetNameParameters () =
         let parameters = Parameters.Owner.SetOwnerNameParameters()
         parameters.OwnerId <- ownerId
@@ -1216,6 +1285,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create organization get parameters for route calls.
     let createOrganizationGetParameters () =
         let parameters = Parameters.Organization.GetOrganizationParameters()
         parameters.OwnerId <- ownerId
@@ -1223,6 +1293,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create organization set name parameters for route calls.
     let createOrganizationSetNameParameters () =
         let parameters = Parameters.Organization.SetOrganizationNameParameters()
         parameters.OwnerId <- ownerId
@@ -1231,6 +1302,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create repository get parameters for route calls.
     let createRepositoryGetParameters (repositoryId: string) =
         let parameters = Parameters.Repository.GetRepositoryParameters()
         parameters.OwnerId <- ownerId
@@ -1239,6 +1311,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create repository set visibility parameters for route calls.
     let createRepositorySetVisibilityParameters (repositoryId: string) =
         let parameters = Parameters.Repository.SetRepositoryVisibilityParameters()
         parameters.OwnerId <- ownerId
@@ -1248,6 +1321,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create work item parameters for route calls.
     let createWorkItemParameters (repositoryId: string) =
         let parameters = Parameters.WorkItem.CreateWorkItemParameters()
         parameters.OwnerId <- ownerId
@@ -1259,6 +1333,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create branch get parameters for route calls.
     let createBranchGetParameters (branch: BranchDto) =
         let parameters = Parameters.Branch.GetBranchParameters()
         parameters.OwnerId <- ownerId
@@ -1269,6 +1344,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create branch annotate parameters for route calls.
     let createBranchAnnotateParameters (branch: BranchDto) =
         let parameters = Parameters.Branch.AnnotateParameters()
         parameters.OwnerId <- ownerId
@@ -1283,6 +1359,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create branch commit parameters for route calls.
     let createBranchCommitParameters (branch: BranchDto) =
         let parameters = Parameters.Branch.CreateReferenceParameters()
         parameters.OwnerId <- ownerId
@@ -1296,6 +1373,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create branch enable commit parameters for route calls.
     let createBranchEnableCommitParameters (branch: BranchDto) =
         let parameters = Parameters.Branch.EnableFeatureParameters()
         parameters.OwnerId <- ownerId
@@ -1307,6 +1385,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create download parameters for route calls.
     let createDownloadParameters (repositoryId: string) =
         let parameters = Parameters.Storage.GetDownloadUriParameters()
         parameters.OwnerId <- ownerId
@@ -1316,6 +1395,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create upload parameters for route calls.
     let createUploadParameters (repositoryId: string) =
         let parameters = Parameters.Storage.GetUploadUriParameters()
         parameters.OwnerId <- ownerId
@@ -1330,6 +1410,7 @@ type EndpointAuthorizationTests() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Verifies the allow anonymous endpoints return success scenario.
     [<Test>]
     member _.AllowAnonymousEndpointsReturnSuccess() =
         task {
@@ -1351,6 +1432,7 @@ type EndpointAuthorizationTests() =
             Assert.That(providerLoginResponse.StatusCode, Is.AnyOf(HttpStatusCode.OK, HttpStatusCode.Redirect, HttpStatusCode.NotFound))
         }
 
+    /// Verifies the metrics endpoint requires system admin scenario.
     [<Test>]
     member _.MetricsEndpointRequiresSystemAdmin() =
         task {
@@ -1367,6 +1449,7 @@ type EndpointAuthorizationTests() =
             Assert.That(adminResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the owner endpoints require authorization scenario.
     [<Test>]
     member _.OwnerEndpointsRequireAuthorization() =
         task {
@@ -1406,6 +1489,7 @@ type EndpointAuthorizationTests() =
             Assert.That(allowedSet.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the organization endpoints require authorization scenario.
     [<Test>]
     member _.OrganizationEndpointsRequireAuthorization() =
         task {
@@ -1445,6 +1529,7 @@ type EndpointAuthorizationTests() =
             Assert.That(allowedSet.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the repository endpoints require authorization scenario.
     [<Test>]
     member _.RepositoryEndpointsRequireAuthorization() =
         task {
@@ -1485,6 +1570,7 @@ type EndpointAuthorizationTests() =
             Assert.That(allowedSet.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the work create requires repository write scenario.
     [<Test>]
     member _.WorkCreateRequiresRepositoryWrite() =
         task {
@@ -1515,6 +1601,7 @@ type EndpointAuthorizationTests() =
             Assert.That(allowedResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the branch endpoints require authorization scenario.
     [<Test>]
     member _.BranchEndpointsRequireAuthorization() =
         task {
@@ -1580,6 +1667,7 @@ type EndpointAuthorizationTests() =
             Assert.That(allowedCommit.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the storage endpoints require path authorization scenario.
     [<Test>]
     member _.StorageEndpointsRequirePathAuthorization() =
         task {

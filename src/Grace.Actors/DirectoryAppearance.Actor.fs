@@ -17,12 +17,17 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for directory appearance keys, proxies, state, or workflow transitions.
 module DirectoryAppearance =
 
+    /// Wraps directory appearance dto records exchanged by actor queries or projections.
     type DirectoryAppearanceDto() =
+        /// Stores the sorted appearance set tracked by this actor state.
         member val public Appearances = SortedSet<Appearance>() with get, set
+        /// Stores the repository id that scopes this actor state.
         member val public RepositoryId: RepositoryId = RepositoryId.Empty with get, set
 
+    /// Implements the Orleans grain for directory appearance actor.
     type DirectoryAppearanceActor
         (
             [<PersistentState(StateName.DirectoryAppearance, Constants.GraceActorStorage)>] state: IPersistentState<SortedSet<Appearance>>
@@ -35,6 +40,7 @@ module DirectoryAppearance =
 
         let directoryAppearanceDto = DirectoryAppearanceDto()
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -43,6 +49,7 @@ module DirectoryAppearance =
 
         interface IDirectoryAppearanceActor with
 
+            /// Adds an appearance entry to this DirectoryAppearance actor's sorted set.
             member this.Add appearance correlationId =
                 task {
                     let wasAdded = directoryAppearanceDto.Appearances.Add(appearance)
@@ -51,6 +58,7 @@ module DirectoryAppearance =
                 }
                 :> Task
 
+            /// Removes an appearance entry from this DirectoryAppearance actor's sorted set.
             member this.Remove appearance correlationId =
                 task {
                     let wasRemoved = directoryAppearanceDto.Appearances.Remove(appearance)
@@ -76,8 +84,10 @@ module DirectoryAppearance =
                 }
                 :> Task
 
+            /// Checks whether this DirectoryAppearance actor has recorded a matching appearance.
             member this.Contains appearance correlationId =
                 directoryAppearanceDto.Appearances.Contains(appearance)
                 |> returnTask
 
+            /// Returns the sorted appearances tracked by this DirectoryAppearance actor.
             member this.Appearances correlationId = directoryAppearanceDto.Appearances |> returnTask

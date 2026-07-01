@@ -11,8 +11,10 @@ open System
 open System.Net
 open System.Net.Http
 
+/// Groups shared helpers for webhook test helpers.
 module private WebhookTestHelpers =
 
+    /// Restarts grace server to verify durability across process restarts.
     let restartGraceServerAsync () =
         let state =
             match App with
@@ -32,6 +34,7 @@ module private WebhookTestHelpers =
 
         AspireTestHost.restartGraceServerAsync state
 
+    /// Builds a deterministic authenticated client for integration setup fixture for the server integration webhook assertions.
     let createAuthenticatedClient (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
@@ -64,6 +67,7 @@ module private WebhookTestHelpers =
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
+    /// Builds rule parameters for route calls.
     let ruleParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Webhook.CreateWebhookRuleParameters()
         parameters.OwnerId <- ownerId
@@ -92,12 +96,14 @@ module private WebhookTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds update rule parameters for route calls.
     let updateRuleParameters repositoryId branchId ruleId =
         let parameters = ruleParameters repositoryId branchId
         parameters.WebhookRuleId <- ruleId
         parameters.Name <- $"updated-{Guid.NewGuid():N}"
         parameters
 
+    /// Builds list rule parameters for route calls.
     let listRuleParameters repositoryId branchId =
         let parameters = Parameters.Webhook.ListWebhookRulesParameters()
         parameters.OwnerId <- ownerId
@@ -107,6 +113,7 @@ module private WebhookTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds list delivery parameters for route calls.
     let listDeliveryParameters repositoryId branchId ruleId =
         let parameters = Parameters.Webhook.ListWebhookDeliveriesParameters()
         parameters.OwnerId <- ownerId
@@ -117,6 +124,7 @@ module private WebhookTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds show delivery parameters for route calls.
     let showDeliveryParameters repositoryId branchId deliveryId =
         let parameters = Parameters.Webhook.ShowWebhookDeliveryParameters()
         parameters.OwnerId <- ownerId
@@ -127,6 +135,7 @@ module private WebhookTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds a deterministic rule for integration setup fixture for the server integration webhook assertions.
     let createRuleAsync (client: HttpClient) repositoryId branchId =
         task {
             let! createResponse = client.PostAsync("/webhook/rule/create", createJsonContent (ruleParameters repositoryId branchId))
@@ -135,6 +144,7 @@ module private WebhookTestHelpers =
             return! deserializeContent<WebhookRule> createResponse
         }
 
+    /// Asserts rule matches scope for integration responses.
     let assertRuleMatchesScope (repositoryId: string) (branchId: string) (rule: WebhookRule) =
         Assert.That(rule.Class, Is.EqualTo(nameof WebhookRule))
         Assert.That(rule.Scope.OwnerId, Is.EqualTo(Guid.Parse(ownerId)))
@@ -145,12 +155,15 @@ module private WebhookTestHelpers =
         Assert.That(rule.EventVersion, Is.EqualTo(1))
         Assert.That(rule.SigningSecretVersion, Is.EqualTo("test-secret-v1"))
 
+/// Covers webhook API scenarios.
 [<NonParallelizable>]
 type WebhookApiIntegrationTests() =
 
+    /// Resets shared test state before each integration test.
     [<SetUp>]
     member _.SetUp() = WebhookStore.clearForTests ()
 
+    /// Verifies the rule lifecycle and delivery query happy path scenario.
     [<Test>]
     member _.RuleLifecycleAndDeliveryQueryHappyPath() =
         task {
@@ -267,6 +280,7 @@ type WebhookApiIntegrationTests() =
             Assert.That(deleted.Status, Is.EqualTo(WebhookRuleStatus.Deleted))
         }
 
+    /// Verifies the webhook rule and HTTP observable deliveries are process local across restart scenario.
     [<Test>]
     [<NonParallelizable>]
     member _.WebhookRuleAndHttpObservableDeliveriesAreProcessLocalAcrossRestart() =
@@ -347,6 +361,7 @@ type WebhookApiIntegrationTests() =
             )
         }
 
+    /// Verifies the create rejects unsafe public URL scenario.
     [<Test>]
     member _.CreateRejectsUnsafePublicUrl() =
         task {
@@ -365,6 +380,7 @@ type WebhookApiIntegrationTests() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the rule list returns only requested authorized scope scenario.
     [<Test>]
     member _.RuleListReturnsOnlyRequestedAuthorizedScope() =
         task {
@@ -399,6 +415,7 @@ type WebhookApiIntegrationTests() =
             )
         }
 
+    /// Verifies the stored scope blocks body scope spoofing for rule and delivery show scenario.
     [<Test>]
     member _.StoredScopeBlocksBodyScopeSpoofingForRuleAndDeliveryShow() =
         task {
@@ -450,6 +467,7 @@ type WebhookApiIntegrationTests() =
             Assert.That(deliveryShowResponse.StatusCode, Is.EqualTo(HttpStatusCode.Forbidden))
         }
 
+    /// Verifies the approval notification delivery is not webhook delivery surface scenario.
     [<Test>]
     member _.ApprovalNotificationDeliveryIsNotWebhookDeliverySurface() =
         task {

@@ -9,11 +9,13 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains repository helpers.
 module Repository =
 
     /// The state held in the database when creating a physical deletion reminder for a repository.
     type PhysicalDeletionReminderState = { DeleteReason: DeleteReason; CorrelationId: CorrelationId }
 
+    /// Represents repository command.
     [<KnownType("GetKnownTypes")>]
     type RepositoryCommand =
         | Create of
@@ -46,6 +48,7 @@ module Repository =
         | DeletePhysical
         | Undelete
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryCommand>()
 
     /// Defines the events for the Repository actor.
@@ -81,6 +84,7 @@ module Repository =
         | PhysicalDeleted
         | Undeleted
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryEventType>()
 
     /// Record that holds the event type and metadata for a Repository event.
@@ -126,6 +130,7 @@ module Repository =
             DeleteReason: DeleteReason
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof RepositoryDto

@@ -7,10 +7,13 @@ open NUnit.Framework
 open System
 open System.Text
 
+/// Contains tests covering manifest validation shared behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ManifestValidationSharedTests() =
+    /// Verifies that bytes.
     static member private Bytes(value: string) = Encoding.UTF8.GetBytes(value)
 
+    /// Verifies that expect encoded ok.
     static member private ExpectEncodedOk(result: Result<ContentBlockFormat.EncodedContentBlock, ContentBlockFormat.ContentBlockFormatError>) =
         match result with
         | Ok value -> value
@@ -18,11 +21,14 @@ type ManifestValidationSharedTests() =
             Assert.Fail($"Expected Ok but got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Verifies that content block payload.
     static member private ContentBlockPayload physicalOffset bytes : ContentBlockFormat.EncodedContentBlock =
         ContentBlockFormat.encode [ ContentBlockFormat.createChunk physicalOffset bytes ]
         |> ManifestValidationSharedTests.ExpectEncodedOk
 
+    /// Verifies that build manifest.
     static member private BuildManifest chunkingSuiteId bytes (blockPayloads: ContentBlockFormat.EncodedContentBlock array) =
+        /// Tracks offset changes so this scenario can assert the resulting side effect explicitly.
         let mutable offset = 0L
 
         let blocks =
@@ -44,8 +50,10 @@ type ManifestValidationSharedTests() =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Verifies that payload reference.
     static member private PayloadReference(block: ContentBlockFormat.EncodedContentBlock) = ManifestValidation.createBlockPayload block.Address block.Payload
 
+    /// Verifies that valid manifest reconstructs bytes and validates stable address.
     [<Test>]
     member _.ValidManifestReconstructsBytesAndValidatesStableAddress() =
         let alpha = ManifestValidationSharedTests.Bytes "alpha logical range"
@@ -75,6 +83,7 @@ type ManifestValidationSharedTests() =
             Assert.That(ContentAddress.isValidAddress (manifest.ManifestAddress), Is.True)
         | Error error -> Assert.Fail($"Expected valid manifest but got {error}.")
 
+    /// Verifies that invalid manifest invariants are rejected.
     [<Test>]
     member _.InvalidManifestInvariantsAreRejected() =
         let alpha = ManifestValidationSharedTests.Bytes "alpha"
@@ -92,6 +101,7 @@ type ManifestValidationSharedTests() =
                 ManifestValidationSharedTests.PayloadReference betaBlock
             ]
 
+        /// Exercises with address coverage for the types manifest Validation contract.
         let withAddress manifest = { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
         let unordered =
@@ -154,6 +164,7 @@ type ManifestValidationSharedTests() =
             | Error error -> Assert.That(error, Is.EqualTo(expectedError), $"{name}")
             | Ok _ -> Assert.Fail($"Expected {name} manifest to be rejected.")
 
+    /// Verifies that malformed manifest fields return validation errors.
     [<Test>]
     member _.MalformedManifestFieldsReturnValidationErrors() =
         let bytes = ManifestValidationSharedTests.Bytes "payload"
@@ -205,8 +216,10 @@ type ManifestValidationSharedTests() =
             | Error error -> Assert.That(error, Is.EqualTo(expectedError), $"{name}")
             | Ok _ -> Assert.Fail($"Expected {name} manifest to be rejected.")
 
+    /// Verifies that fs check reconstruction and address properties hold.
     [<Test>]
     member _.FsCheckReconstructionAndAddressPropertiesHold() =
+        /// Defines the property assertion used to explore generated inputs for the types manifest Validation invariant.
         let property (NonNegativeInt requestedLength) =
             let length = Math.Min(requestedLength, 256 * 1024)
             let bytes = Array.init length (fun index -> byte ((index * 31 + length) % 251))

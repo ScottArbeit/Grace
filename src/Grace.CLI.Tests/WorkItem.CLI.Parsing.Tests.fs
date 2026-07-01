@@ -5,12 +5,14 @@ open Grace.CLI
 open NUnit.Framework
 open System
 
+/// Groups work item command parsing coverage for the CLI test project.
 [<Parallelizable(ParallelScope.All)>]
 module WorkItemCommandParsingTests =
     let private ownerId = Guid.NewGuid()
     let private organizationId = Guid.NewGuid()
     let private repositoryId = Guid.NewGuid()
 
+    /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
             args
@@ -23,10 +25,12 @@ module WorkItemCommandParsingTests =
                 repositoryId.ToString()
             |]
 
+    /// Asserts that parses without errors matches the expected contract.
     let private assertParsesWithoutErrors (args: string array) =
         let parseResult = GraceCommand.rootCommand.Parse(args)
         parseResult.Errors.Count |> should equal 0
 
+    /// Builds attach args for test scenarios.
     let private buildAttachArgs (noun: string) (attachmentType: string) (workItemIdentifier: string) (extraArgs: string array) =
         [|
             noun
@@ -36,6 +40,7 @@ module WorkItemCommandParsingTests =
             yield! extraArgs
         |]
 
+    /// Builds attachments args for test scenarios.
     let private buildAttachmentsArgs (noun: string) (verb: string) (workItemIdentifier: string) (extraArgs: string array) =
         [|
             noun
@@ -45,6 +50,7 @@ module WorkItemCommandParsingTests =
             yield! extraArgs
         |]
 
+    /// Verifies that workitem create parses.
     [<Test>]
     let ``workitem create parses`` () =
         assertParsesWithoutErrors (
@@ -54,6 +60,7 @@ module WorkItemCommandParsingTests =
                        "Test work" |]
         )
 
+    /// Verifies that work alias still parses.
     [<Test>]
     let ``work alias still parses`` () =
         assertParsesWithoutErrors (
@@ -63,6 +70,7 @@ module WorkItemCommandParsingTests =
                        "Alias still works" |]
         )
 
+    /// Verifies that all work item command aliases parse create.
     [<TestCase("workitem")>]
     [<TestCase("work")>]
     [<TestCase("work-item")>]
@@ -75,6 +83,7 @@ module WorkItemCommandParsingTests =
                        "Alias command" |]
         )
 
+    /// Verifies that workitem link ref parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "40")>]
     [<TestCase("workitem", "9e4c0f72-9b4f-4f28-8d8f-d7d73ec4f6fd")>]
     [<TestCase("wi", "41")>]
@@ -88,6 +97,7 @@ module WorkItemCommandParsingTests =
                        Guid.NewGuid().ToString() |]
         )
 
+    /// Verifies that workitem link prset parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "42")>]
     [<TestCase("workitem", "f4b59cad-8d03-4a39-b1ff-8bcaf3e609d6")>]
     [<TestCase("wi", "43")>]
@@ -101,6 +111,7 @@ module WorkItemCommandParsingTests =
                        Guid.NewGuid().ToString() |]
         )
 
+    /// Verifies that workitem attach parses with file text and stdin modes.
     [<TestCase("workitem", "summary")>]
     [<TestCase("workitem", "prompt")>]
     [<TestCase("workitem", "notes")>]
@@ -132,6 +143,7 @@ module WorkItemCommandParsingTests =
         assertParsesWithoutErrors textArgs
         assertParsesWithoutErrors stdinArgs
 
+    /// Verifies that workitem links list parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "44")>]
     [<TestCase("workitem", "02f8563a-8508-4fdb-a55f-3a326d2be3e0")>]
     [<TestCase("work", "45")>]
@@ -144,6 +156,7 @@ module WorkItemCommandParsingTests =
                        workItemIdentifier |]
         )
 
+    /// Verifies that workitem attachments list parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "52")>]
     [<TestCase("workitem", "9dfdb7a5-27f6-4fd8-95cf-f5e4f2b22803")>]
     [<TestCase("work", "53")>]
@@ -154,6 +167,7 @@ module WorkItemCommandParsingTests =
             |> withIds
         )
 
+    /// Verifies that workitem attachments show parses with type and latest options.
     [<TestCase("workitem", "summary", "54", true)>]
     [<TestCase("workitem", "prompt", "36f74308-b75c-4a2a-bf2f-fe3e2036b232", false)>]
     [<TestCase("work", "notes", "55", true)>]
@@ -177,6 +191,7 @@ module WorkItemCommandParsingTests =
             |> withIds
         )
 
+    /// Verifies that workitem attachments download parses with artifact id and output file.
     [<TestCase("workitem", "56")>]
     [<TestCase("workitem", "f4cf5f70-f4ff-461f-8f2d-5be9734b5b7f")>]
     [<TestCase("work-item", "57")>]
@@ -196,6 +211,7 @@ module WorkItemCommandParsingTests =
             |> withIds
         )
 
+    /// Verifies that workitem links remove ref parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "46")>]
     [<TestCase("workitem", "f4bc1e7f-5d7a-4f54-a80f-e2d36dc19374")>]
     [<TestCase("wi", "47")>]
@@ -209,6 +225,7 @@ module WorkItemCommandParsingTests =
                        Guid.NewGuid().ToString() |]
         )
 
+    /// Verifies that workitem links remove prset parses for guid and numeric work item identifiers.
     [<TestCase("workitem", "48")>]
     [<TestCase("workitem", "8b684baf-3fe4-4829-b2e8-a67d8c63d1b6")>]
     [<TestCase("work-item", "49")>]
@@ -222,6 +239,7 @@ module WorkItemCommandParsingTests =
                        Guid.NewGuid().ToString() |]
         )
 
+    /// Verifies that workitem links remove artifact type aliases parse for guid and numeric work item identifiers.
     [<TestCase("workitem", "summary", "50")>]
     [<TestCase("workitem", "prompt", "6a635cbe-19ce-4e5f-a0fd-f1c1d1d468ea")>]
     [<TestCase("wi", "notes", "51")>]
@@ -241,6 +259,7 @@ module WorkItemCommandParsingTests =
                        workItemIdentifier |]
         )
 
+    /// Verifies that work link artifact command is unavailable.
     [<Test>]
     let ``work link artifact command is unavailable`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "work"; "link"; "artifact" |])
@@ -253,6 +272,7 @@ module WorkItemCommandParsingTests =
 
         Assert.That(hasArtifactError, Is.True)
 
+    /// Verifies that workitem attachments show rejects invalid type values during parse.
     [<Test>]
     let ``workitem attachments show rejects invalid type values during parse`` () =
         let parseResult =
@@ -267,6 +287,7 @@ module WorkItemCommandParsingTests =
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
+    /// Verifies that workitem attachments download requires artifact id and output file options.
     [<Test>]
     let ``workitem attachments download requires artifact id and output file options`` () =
         let parseResult =
@@ -279,6 +300,7 @@ module WorkItemCommandParsingTests =
 
         Assert.That(parseResult.Errors.Count, Is.GreaterThan(0))
 
+    /// Verifies that workitem links remove summary parses numeric work item.
     [<Test>]
     let ``workitem links remove summary parses numeric work item`` () =
         assertParsesWithoutErrors (

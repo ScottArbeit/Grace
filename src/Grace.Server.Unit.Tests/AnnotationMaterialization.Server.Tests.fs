@@ -15,11 +15,13 @@ open System.Text
 open System.Threading
 open System.Threading.Tasks
 
+/// Covers annotation Materialization Server behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type AnnotationMaterializationServerTests() =
 
     let correlationId = "corr-annotation-materialization"
 
+    /// Builds sha256 Hex test data for the server unit annotation Materialization scenarios in this file.
     let sha256Hex (bytes: byte array) =
         SHA256.HashData(bytes)
         |> Convert.ToHexString
@@ -27,6 +29,7 @@ type AnnotationMaterializationServerTests() =
 
     let textBytes (text: string) = Encoding.UTF8.GetBytes text
 
+    /// Builds gzip Bytes test data for the server unit annotation Materialization scenarios in this file.
     let gzipBytes (bytes: byte array) =
         use compressed = new MemoryStream()
         use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
@@ -36,6 +39,7 @@ type AnnotationMaterializationServerTests() =
 
     let fileVersion relativePath isBinary (bytes: byte array) = FileVersion.Create relativePath (sha256Hex bytes) String.Empty isBinary (int64 bytes.Length)
 
+    /// Builds whole File Reader From test data for the server unit annotation Materialization scenarios in this file.
     let wholeFileReaderFrom (objects: IDictionary<string, byte array>) : AnnotationMaterialization.ObjectPayloadReader =
         fun objectKey correlationId _ ->
             task {
@@ -47,6 +51,7 @@ type AnnotationMaterializationServerTests() =
     let failingWholeFileReader: AnnotationMaterialization.ObjectPayloadReader =
         fun objectKey correlationId _ -> task { return Error(GraceError.Create $"whole-file reader should not be called for {objectKey}" correlationId) }
 
+    /// Builds placement For test data for the server unit annotation Materialization scenarios in this file.
     let placementFor storagePoolId address =
         {
             StorageAccountName = $"account-{storagePoolId}"
@@ -55,6 +60,7 @@ type AnnotationMaterializationServerTests() =
             ETag = Some $"etag-{address}"
         }
 
+    /// Builds metadata For test data for the server unit annotation Materialization scenarios in this file.
     let metadataFor storagePoolId (block: ContentBlock) placement =
         { ContentBlockMetadata.Empty with
             StoragePoolId = storagePoolId
@@ -96,6 +102,7 @@ type AnnotationMaterializationServerTests() =
                 | false, _ -> return Error(GraceError.Create $"missing placement object {placement.ObjectKey}" correlationId)
             }
 
+    /// Builds expect Ok test data for the server unit annotation Materialization scenarios in this file.
     let expectOk result =
         match result with
         | Ok value -> value
@@ -103,11 +110,13 @@ type AnnotationMaterializationServerTests() =
             Assert.Fail($"Expected materialization to succeed, got {error.Error}.")
             Unchecked.defaultof<AnnotationMaterialization.MaterializedTextContent>
 
+    /// Builds expect Error Contains test data for the server unit annotation Materialization scenarios in this file.
     let expectErrorContains expected result =
         match result with
         | Ok _ -> Assert.Fail("Expected materialization to fail.")
         | Error error -> Assert.That(error.Error, Does.Contain(expected))
 
+    /// Exercises these tests by encoding Block coverage for the server unit annotation Materialization scenario.
     let encodeBlock bytes =
         match ContentBlockFormat.encode [ ContentBlockFormat.createChunk 0L bytes ] with
         | Ok block -> block
@@ -115,6 +124,7 @@ type AnnotationMaterializationServerTests() =
             Assert.Fail($"Expected test ContentBlock to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Builds manifest For With Storage Pool test data for the server unit annotation Materialization scenarios in this file.
     let manifestForWithStoragePool storagePoolId (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
         let manifest =
             FileManifest.Create(
@@ -132,6 +142,7 @@ type AnnotationMaterializationServerTests() =
 
     let manifestFor bytes block = manifestForWithStoragePool (StoragePoolId "pool-annotation") bytes block
 
+    /// Builds manifest File test data for the server unit annotation Materialization scenarios in this file.
     let manifestFile relativePath bytes =
         let block = encodeBlock bytes
         let manifest = manifestFor bytes block
@@ -139,6 +150,7 @@ type AnnotationMaterializationServerTests() =
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion, block, manifest
 
+    /// Builds materialize With Readers test data for the server unit annotation Materialization scenarios in this file.
     let materializeWithReaders wholeFileReader metadataResolver contentBlockReader fileVersion =
         AnnotationMaterialization.materializeTextWithReaders
             wholeFileReader
@@ -149,13 +161,16 @@ type AnnotationMaterializationServerTests() =
             CancellationToken.None
         |> fun task -> task.GetAwaiter().GetResult()
 
+    /// Builds materialize Whole File test data for the server unit annotation Materialization scenarios in this file.
     let materializeWholeFile reader fileVersion =
         AnnotationMaterialization.materializeTextWithObjectReader reader fileVersion correlationId CancellationToken.None
         |> fun task -> task.GetAwaiter().GetResult()
 
+    /// Builds materialize Manifest test data for the server unit annotation Materialization scenarios in this file.
     let materializeManifest metadata objects readPlacements fileVersion =
         materializeWithReaders failingWholeFileReader (metadataResolverFrom metadata) (contentBlockReaderFrom objects readPlacements) fileVersion
 
+    /// Verifies that whole File Content Materializes Exact Utf8 Text.
     [<Test>]
     member _.WholeFileContentMaterializesExactUtf8Text() =
         let bytes = textBytes "line one\nline two\n"
@@ -171,6 +186,7 @@ type AnnotationMaterializationServerTests() =
         Assert.That(result.Text, Is.EqualTo("line one\nline two\n"))
         Assert.That(result.Bytes = bytes, Is.True)
 
+    /// Verifies that whole File Content Materializes Gzip Compressed Utf8 Text.
     [<Test>]
     member _.WholeFileContentMaterializesGzipCompressedUtf8Text() =
         let bytes = textBytes "gzip line one\ngzip line two\n"
@@ -186,6 +202,7 @@ type AnnotationMaterializationServerTests() =
         Assert.That(result.Text, Is.EqualTo("gzip line one\ngzip line two\n"))
         Assert.That(result.Bytes = bytes, Is.True)
 
+    /// Verifies that manifest Backed Content Materializes Exact Utf8 Text From Stored Placement.
     [<Test>]
     member _.ManifestBackedContentMaterializesExactUtf8TextFromStoredPlacement() =
         let bytes = textBytes "manifest line one\nmanifest line two\n"
@@ -212,6 +229,7 @@ type AnnotationMaterializationServerTests() =
         Assert.That(readPlacements, Has.Count.EqualTo(1))
         Assert.That(snd readPlacements[0], Is.EqualTo(placement))
 
+    /// Verifies that manifest Backed Content Rejects Missing Finalized Placement Evidence.
     [<Test>]
     member _.ManifestBackedContentRejectsMissingFinalizedPlacementEvidence() =
         let bytes = textBytes "manifest placement evidence"
@@ -225,6 +243,7 @@ type AnnotationMaterializationServerTests() =
 
         Assert.That(readPlacements, Is.Empty)
 
+    /// Verifies that manifest Backed Content Rejects Blank Stored Pool.
     [<Test>]
     member _.ManifestBackedContentRejectsBlankStoredPool() =
         let bytes = textBytes "manifest blank pool"
@@ -241,6 +260,7 @@ type AnnotationMaterializationServerTests() =
 
         Assert.That(readPlacements, Is.Empty)
 
+    /// Verifies that manifest Backed Content Rejects Wrong Pool Metadata.
     [<Test>]
     member _.ManifestBackedContentRejectsWrongPoolMetadata() =
         let bytes = textBytes "manifest wrong pool"
@@ -257,6 +277,7 @@ type AnnotationMaterializationServerTests() =
 
         Assert.That(readPlacements, Is.Empty)
 
+    /// Verifies that manifest Backed Content Rejects Incomplete Stored Placement.
     [<Test>]
     member _.ManifestBackedContentRejectsIncompleteStoredPlacement() =
         let bytes = textBytes "manifest incomplete placement"
@@ -272,6 +293,7 @@ type AnnotationMaterializationServerTests() =
 
         Assert.That(readPlacements, Is.Empty)
 
+    /// Verifies that manifest Backed Content Returns Stored Placement Read Errors.
     [<Test>]
     member _.ManifestBackedContentReturnsStoredPlacementReadErrors() =
         let bytes = textBytes "manifest missing stored blob"
@@ -287,6 +309,7 @@ type AnnotationMaterializationServerTests() =
 
         Assert.That(readPlacements, Has.Count.EqualTo(1))
 
+    /// Verifies that materialization Rejects Mismatched File Blake3 When Present.
     [<Test>]
     member _.MaterializationRejectsMismatchedFileBlake3WhenPresent() =
         let bytes = textBytes "manifest blake3 payload"
@@ -302,6 +325,7 @@ type AnnotationMaterializationServerTests() =
         materializeManifest metadata objects readPlacements target
         |> expectErrorContains "FileVersion.Blake3Hash"
 
+    /// Verifies that materialization Allows Legacy Empty File Blake3.
     [<Test>]
     member _.MaterializationAllowsLegacyEmptyFileBlake3() =
         let bytes = textBytes "legacy manifest payload"
@@ -320,6 +344,7 @@ type AnnotationMaterializationServerTests() =
 
         Assert.That(result.Text, Is.EqualTo("legacy manifest payload"))
 
+    /// Verifies that binary Target Is Rejected Before Storage Read.
     [<Test>]
     member _.BinaryTargetIsRejectedBeforeStorageRead() =
         let bytes = textBytes "binary flag wins"
@@ -329,6 +354,7 @@ type AnnotationMaterializationServerTests() =
         materializeWholeFile reader target
         |> expectErrorContains "is binary"
 
+    /// Verifies that undecodable Utf8 Target Is Rejected.
     [<Test>]
     member _.UndecodableUtf8TargetIsRejected() =
         let bytes = [| 0xffuy; 0xfeuy; 0xfduy |]
@@ -339,6 +365,7 @@ type AnnotationMaterializationServerTests() =
         materializeWholeFile (wholeFileReaderFrom objects) target
         |> expectErrorContains "not valid UTF-8"
 
+    /// Verifies that too Large Target Is Rejected Before Storage Read.
     [<Test>]
     member _.TooLargeTargetIsRejectedBeforeStorageRead() =
         let target =
@@ -355,6 +382,7 @@ type AnnotationMaterializationServerTests() =
         materializeWholeFile reader target
         |> expectErrorContains "too large"
 
+    /// Verifies that missing Or Unreadable Content Is Returned As Materialization Error.
     [<Test>]
     member _.MissingOrUnreadableContentIsReturnedAsMaterializationError() =
         let bytes = textBytes "missing"
@@ -364,6 +392,7 @@ type AnnotationMaterializationServerTests() =
         materializeWholeFile (wholeFileReaderFrom objects) target
         |> expectErrorContains "missing object"
 
+    /// Verifies that invalid Manifest Reconstruction Is Rejected Clearly.
     [<Test>]
     member _.InvalidManifestReconstructionIsRejectedClearly() =
         let bytes = textBytes "manifest payload"

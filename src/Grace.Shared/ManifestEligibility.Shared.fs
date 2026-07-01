@@ -5,7 +5,9 @@ open System
 open System.IO
 open System.IO.Compression
 
+/// Contains manifest eligibility helpers.
 module ManifestEligibility =
+    /// Normalizes normalized scan bytes.
     let private normalizedScanBytes (policy: ManifestEligibilityPolicy) contentLength = Math.Min(Math.Max(policy.BinaryScanBytes, 0), contentLength)
 
     /// Detects binary content by scanning only the configured prefix for a NUL byte.

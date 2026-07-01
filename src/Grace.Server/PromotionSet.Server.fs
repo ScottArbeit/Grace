@@ -18,11 +18,14 @@ open System
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Contains Grace Server promotion set behavior and supporting helpers.
 module PromotionSet =
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> PromotionSetParameters> = 'T -> ValueTask<Result<unit, QueueError>> array
 
     let activitySource = new ActivitySource("PromotionSet")
 
+    /// Treats `new` as an empty promotion-set id and otherwise requires a valid GUID.
     let private parsePromotionSetIdOrNew (rawPromotionSetId: string) =
         if String.IsNullOrWhiteSpace(rawPromotionSetId) then
             Ok(Guid.NewGuid())
@@ -37,6 +40,7 @@ module PromotionSet =
             else
                 Error QueueError.InvalidPromotionSetId
 
+    /// Validates validate promotion pointers inputs before server processing continues.
     let private validatePromotionPointers (promotionPointers: PromotionPointer list) =
         if promotionPointers.IsEmpty then
             Some "At least one promotion pointer is required."
@@ -54,6 +58,7 @@ module PromotionSet =
 
     let private approvalSubject = "promotion"
 
+    /// Implements approval scope from promotion set for the server request pipeline.
     let private approvalScopeFromPromotionSet (promotionSet: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         { ApprovalScope.Default with
             OwnerId = promotionSet.OwnerId
@@ -66,6 +71,7 @@ module PromotionSet =
             ApprovalPolicyVersion = Some policy.Version
         }
 
+    /// Implements policy snapshot for the server request pipeline.
     let private policySnapshot (policy: ApprovalPolicy) : PromotionSetApprovalPolicySnapshot =
         { PromotionSetApprovalPolicySnapshot.Default with
             ApprovalPolicyId = policy.ApprovalPolicyId
@@ -79,6 +85,7 @@ module PromotionSet =
             TimeoutSeconds = policy.TimeoutSeconds
         }
 
+    /// Implements matching approval policies for the server request pipeline.
     let private matchingApprovalPolicies ownerId organizationId repositoryId targetBranchId : PromotionSetApprovalPolicySnapshot list =
         let scope =
             { ApprovalScope.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetBranchId = targetBranchId }
@@ -90,12 +97,15 @@ module PromotionSet =
         |> Seq.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
         |> Seq.toList
 
+    /// Represents approval policy snapshot resolver used by Grace Server APIs and background services.
     type ApprovalPolicySnapshotResolver() =
         interface Grace.Actors.IApprovalPolicySnapshotResolver with
+            /// Loads approval policies that apply to the promotion set before a promotion apply command is issued.
             member _.GetCurrentApprovalPoliciesForPromotionApply(ownerId, organizationId, repositoryId, targetBranchId, _correlationId) =
                 matchingApprovalPolicies ownerId organizationId repositoryId targetBranchId
                 |> Task.FromResult
 
+    /// Implements approval summary from request for the server request pipeline.
     let internal approvalSummaryFromRequest
         (promotionSet: PromotionSetDto)
         (policy: PromotionSetApprovalPolicySnapshot)
@@ -104,6 +114,7 @@ module PromotionSet =
         =
         let baseSummary = PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt
 
+        /// Implements policy summary for the server request pipeline.
         let policySummary state reason =
             { baseSummary with
                 State = state
@@ -142,12 +153,14 @@ module PromotionSet =
             | ApprovalRequestStatus.Cancelled -> policySummary PromotionSetApprovalState.Stale (Some "Approval request was cancelled.")
             | ApprovalRequestStatus.Superseded -> policySummary PromotionSetApprovalState.Stale (Some "Approval request was superseded.")
 
+    /// Implements multiple policies approval summary for the server request pipeline.
     let private multiplePoliciesApprovalSummary (promotionSet: PromotionSetDto) =
         { (PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt) with
             State = PromotionSetApprovalState.Stale
             Reason = Some "Multiple enabled approval policies match promotion apply scope; apply requires exactly one."
         }
 
+    /// Implements invalid policy approval summary for the server request pipeline.
     let private invalidPolicyApprovalSummary (promotionSet: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         { (PromotionSetApprovalSummary.NotRequired promotionSet.PromotionSetId promotionSet.TargetBranchId promotionSet.StepsComputationAttempt) with
             State = PromotionSetApprovalState.Stale
@@ -156,6 +169,7 @@ module PromotionSet =
             Reason = Some "Approval policy is invalid for apply because RequiredResponder is blank or policy identity is invalid."
         }
 
+    /// Implements derive approval summary for the server request pipeline.
     let internal deriveApprovalSummary (promotionSet: PromotionSetDto) correlationId =
         task {
             let matchingPolicies =
@@ -199,6 +213,7 @@ module PromotionSet =
                 | Option.None -> return approvalSummaryFromRequest promotionSet policy Option.None
         }
 
+    /// Coordinates process command processing for Grace Server.
     let private processCommand<'T when 'T :> PromotionSetParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -247,6 +262,7 @@ module PromotionSet =
                 return! context |> result400BadRequest graceError
         }
 
+    /// Coordinates process get processing for Grace Server.
     let private processGet (context: HttpContext) (parameters: GetPromotionSetParameters) (promotionSetId: PromotionSetId) =
         task {
             let graceIds = getGraceIds context
@@ -268,6 +284,7 @@ module PromotionSet =
             return! context |> result200Ok graceReturnValue
         }
 
+    /// Coordinates process get events processing for Grace Server.
     let private processGetEvents (context: HttpContext) (parameters: GetPromotionSetEventsParameters) (promotionSetId: PromotionSetId) =
         task {
             let graceIds = getGraceIds context
@@ -303,6 +320,7 @@ module PromotionSet =
                         context
                         |> result400BadRequest (GraceError.Create (QueueError.getErrorMessage validationError) (getCorrelationId context))
                 | Ok promotionSetId ->
+                    /// Implements validations for the server request pipeline.
                     let validations (_: CreatePromotionSetParameters) =
                         [|
                             Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
@@ -331,6 +349,7 @@ module PromotionSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: GetPromotionSetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
@@ -361,6 +380,7 @@ module PromotionSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: GetPromotionSetEventsParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
@@ -395,6 +415,7 @@ module PromotionSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: UpdatePromotionSetInputPromotionsParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
@@ -421,6 +442,7 @@ module PromotionSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: RecomputePromotionSetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
@@ -448,6 +470,7 @@ module PromotionSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: ApplyPromotionSetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
@@ -475,6 +498,7 @@ module PromotionSet =
                 parameters.RepositoryId <- graceIds.RepositoryIdString
                 parameters.PromotionSetId <- $"{routePromotionSetId}"
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: ResolvePromotionSetConflictsParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId
@@ -535,6 +559,7 @@ module PromotionSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: DeletePromotionSetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.PromotionSetId QueueError.InvalidPromotionSetId

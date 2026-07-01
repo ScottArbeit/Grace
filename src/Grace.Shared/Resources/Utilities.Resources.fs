@@ -2,6 +2,7 @@ namespace Grace.Shared.Resources
 
 open Grace.Shared.Resources.en_US
 
+/// Contains utilities helpers.
 module Utilities =
 
     /// Retrieves the localized version of a system resource string.

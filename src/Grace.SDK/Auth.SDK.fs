@@ -11,8 +11,10 @@ open System.Net.Http.Headers
 open System.Net.Http.Json
 open System.Threading.Tasks
 
+/// Converts non-success HTTP responses into Grace errors while preserving route and correlation context.
 module ResponseErrors =
 
+    /// Formats the HTTP status code and reason phrase used when a server error body is empty.
     let private statusDescription (response: HttpResponseMessage) =
         let reason =
             if String.IsNullOrWhiteSpace response.ReasonPhrase then
@@ -22,6 +24,7 @@ module ResponseErrors =
 
         $"{int response.StatusCode} {reason}"
 
+    /// Reads a failed response body as a serialized GraceError, falling back to a plain-text GraceError.
     let fromResponse (correlationId: string) (route: string) (response: HttpResponseMessage) =
         task {
             let! responseBody = response.Content.ReadAsStringAsync()
@@ -35,16 +38,21 @@ module ResponseErrors =
                 | _ -> return GraceError.Create responseBody correlationId
         }
 
+/// Manages optional bearer-token injection for SDK HTTP clients and authentication discovery calls.
 module Auth =
 
+    /// Callback used by host applications to supply an access token just before an SDK HTTP call.
     type TokenProvider = unit -> Task<string option>
 
     let mutable private tokenProvider: TokenProvider option = None
 
+    /// Installs the process-wide token callback used by subsequent SDK requests.
     let setTokenProvider (provider: TokenProvider) = tokenProvider <- Some provider
 
+    /// Removes the process-wide token callback so SDK requests are sent without bearer auth.
     let clearTokenProvider () = tokenProvider <- None
 
+    /// Asks the configured token callback for a bearer token and suppresses provider failures.
     let tryGetAccessToken () =
         task {
             match tokenProvider with
@@ -56,6 +64,7 @@ module Auth =
                 | _ -> return None
         }
 
+    /// Adds a bearer Authorization header when the token callback returns a non-empty token.
     let addAuthorizationHeader (httpClient: HttpClient) =
         task {
             let! tokenOpt = tryGetAccessToken ()
@@ -66,6 +75,7 @@ module Auth =
             | _ -> ()
         }
 
+    /// Fetches the server-advertised OIDC client configuration from the authentication endpoint.
     let getOidcClientConfig (parameters: Grace.Shared.Parameters.Common.CommonParameters) =
         task {
             let correlationId = ensureNonEmptyCorrelationId parameters.CorrelationId

@@ -8,6 +8,7 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains policy helpers.
 module Policy =
     /// The Id of the policy snapshot (hash of contents + parser version).
     type PolicySnapshotId = Sha256Hash
@@ -60,6 +61,7 @@ module Policy =
         | Continue
         | QuarantinePromotionSet
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<QueueFailureAction>()
 
     /// Queue-related policy configuration.
@@ -96,6 +98,7 @@ module Policy =
             CreatedAt: Instant
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof PolicySnapshot
@@ -137,6 +140,7 @@ module Policy =
         | CreateSnapshot of policySnapshot: PolicySnapshot
         | Acknowledge of policySnapshotId: PolicySnapshotId * acknowledgedBy: UserId * note: string option
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PolicyCommand>()
 
     /// Defines the events for the Policy actor.
@@ -145,6 +149,7 @@ module Policy =
         | SnapshotCreated of policySnapshot: PolicySnapshot
         | Acknowledged of policySnapshotId: PolicySnapshotId * acknowledgedBy: UserId * note: string option
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PolicyEventType>()
 
     /// Record that holds the event type and metadata for a Policy event.

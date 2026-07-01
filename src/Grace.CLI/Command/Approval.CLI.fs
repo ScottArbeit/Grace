@@ -16,7 +16,9 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the approval command parser, handlers, and output helpers.
 module ApprovalCommand =
+    /// Defines the options parsed by the approval command handlers.
     module private Options =
         let policyId =
             new Option<string>(
@@ -204,18 +206,22 @@ module ApprovalCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Reads target branch data needed by the command workflow without changing remote state.
     let private targetBranch (parseResult: ParseResult) =
         let value = parseResult.GetValue(Options.targetBranchId)
         if value = BranchId.Empty then String.Empty else value.ToString()
 
+    /// Coordinates url safety behavior for this CLI command path.
     let private urlSafety allowUnsafe =
         if allowUnsafe then
             OutboundUrlSafety.LocalUnsafeDevOnly
         else
             OutboundUrlSafety.PublicHttps
 
+    /// Coordinates nullable timeout behavior for this CLI command path.
     let private nullableTimeout seconds = if seconds <= 0 then Nullable<int>() else Nullable<int>(seconds)
 
+    /// Adds options or child commands to a command definition.
     let private addPolicyScope (parameters: #Grace.Shared.Parameters.Approval.ApprovalPolicyParameters) (graceIds: GraceIds) (parseResult: ParseResult) =
         parameters.OwnerId <- graceIds.OwnerIdString
         parameters.OwnerName <- graceIds.OwnerName
@@ -227,6 +233,7 @@ module ApprovalCommand =
         parameters.CorrelationId <- graceIds.CorrelationId
         parameters
 
+    /// Adds options or child commands to a command definition.
     let private addRequestScope (parameters: #Grace.Shared.Parameters.Approval.ApprovalRequestParameters) (graceIds: GraceIds) (parseResult: ParseResult) =
         parameters.OwnerId <- graceIds.OwnerIdString
         parameters.OwnerName <- graceIds.OwnerName
@@ -238,8 +245,10 @@ module ApprovalCommand =
         parameters.CorrelationId <- graceIds.CorrelationId
         parameters
 
+    /// Coordinates approval command text behavior for this CLI command path.
     let internal approvalCommandText (requestId: ApprovalRequestId) = $"grace approval request approve --request {requestId}"
 
+    /// Renders approval summary results only when the selected output mode includes human-readable console text.
     let internal renderApprovalSummary (parseResult: ParseResult) (summary: PromotionSetApprovalSummary) =
         if
             not (parseResult |> json)
@@ -312,6 +321,7 @@ module ApprovalCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders pending approval results only when the selected output mode includes human-readable console text.
     let internal renderPendingApproval (parseResult: ParseResult) (summary: PromotionSetApprovalSummary) =
         if
             not (parseResult |> json)
@@ -320,6 +330,7 @@ module ApprovalCommand =
             AnsiConsole.MarkupLine("[yellow]Promotion set apply is waiting for approval.[/]")
             renderApprovalSummary parseResult summary
 
+    /// Renders approval policy results only when the selected output mode includes human-readable console text.
     let internal renderApprovalPolicy (parseResult: ParseResult) (policy: ApprovalPolicy) =
         if
             not (parseResult |> json)
@@ -354,6 +365,7 @@ module ApprovalCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders approval policies results only when the selected output mode includes human-readable console text.
     let internal renderApprovalPolicies (parseResult: ParseResult) (policies: ApprovalPolicy seq) =
         if
             not (parseResult |> json)
@@ -379,6 +391,7 @@ module ApprovalCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders approval request results only when the selected output mode includes human-readable console text.
     let internal renderApprovalRequest (parseResult: ParseResult) (request: ApprovalRequest) =
         if
             not (parseResult |> json)
@@ -414,6 +427,7 @@ module ApprovalCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders approval requests results only when the selected output mode includes human-readable console text.
     let internal renderApprovalRequests (parseResult: ParseResult) (requests: ApprovalRequest seq) =
         if
             not (parseResult |> json)
@@ -442,6 +456,7 @@ module ApprovalCommand =
 
             AnsiConsole.Write(table)
 
+    /// Executes a reusable command workflow.
     let private execute action render =
         task {
             try
@@ -456,6 +471,7 @@ module ApprovalCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" String.Empty)
         }
 
+    /// Copies parsed CLI values into the policy parameter object passed to the handler.
     let private createPolicyParameters (parseResult: ParseResult) =
         let allowUnsafe = parseResult.GetValue(Options.allowUnsafeLocal)
 
@@ -476,6 +492,7 @@ module ApprovalCommand =
         parameters.OnTimeout <- parseResult.GetValue(Options.onTimeout)
         parameters
 
+    /// Carries the parsed values consumed by the update policy command handler.
     let private updatePolicyParameters (parseResult: ParseResult) =
         let allowUnsafe = parseResult.GetValue(Options.allowUnsafeLocal)
 
@@ -496,6 +513,7 @@ module ApprovalCommand =
         parameters.OnTimeout <- parseResult.GetValue(Options.onTimeout)
         parameters
 
+    /// Routes the create policy command from parsed options through validation, the SDK call, and result rendering.
     let private createPolicyHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = createPolicyParameters parseResult
@@ -505,6 +523,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalPolicy.Create parameters) (renderApprovalPolicy parseResult)
 
+    /// Routes the list policy command from parsed options through validation, the SDK call, and result rendering.
     let private listPolicyHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -515,6 +534,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalPolicy.List parameters) (renderApprovalPolicies parseResult)
 
+    /// Routes the show policy command from parsed options through validation, the SDK call, and result rendering.
     let private showPolicyHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = Grace.Shared.Parameters.Approval.ShowApprovalPolicyParameters(ApprovalPolicyId = parseResult.GetValue(Options.policyId))
@@ -524,6 +544,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalPolicy.Show parameters) (renderApprovalPolicy parseResult)
 
+    /// Routes the update policy command from parsed options through validation, the SDK call, and result rendering.
     let private updatePolicyHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = updatePolicyParameters parseResult
@@ -533,6 +554,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalPolicy.Update parameters) (renderApprovalPolicy parseResult)
 
+    /// Routes the simple policy command from parsed options through validation, the SDK call, and result rendering.
     let private simplePolicyHandler makeParameters sdkCall parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = makeParameters (parseResult.GetValue(Options.policyId))
@@ -542,6 +564,7 @@ module ApprovalCommand =
 
         execute (fun () -> sdkCall parameters) (renderApprovalPolicy parseResult)
 
+    /// Routes the evaluate policy command from parsed options through validation, the SDK call, and result rendering.
     let private evaluatePolicyHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -552,6 +575,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalPolicy.Evaluate parameters) (renderApprovalPolicies parseResult)
 
+    /// Routes the list request command from parsed options through validation, the SDK call, and result rendering.
     let private listRequestHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -562,6 +586,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalRequest.List parameters) (renderApprovalRequests parseResult)
 
+    /// Routes the show request command from parsed options through validation, the SDK call, and result rendering.
     let private showRequestHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = Grace.Shared.Parameters.Approval.ShowApprovalRequestParameters(ApprovalRequestId = parseResult.GetValue(Options.requestId))
@@ -571,6 +596,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalRequest.Show parameters) (renderApprovalRequest parseResult)
 
+    /// Routes the approve request command from parsed options through validation, the SDK call, and result rendering.
     let private approveRequestHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -592,6 +618,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalRequest.Approve parameters) (renderApprovalRequest parseResult)
 
+    /// Routes the reject request command from parsed options through validation, the SDK call, and result rendering.
     let private rejectRequestHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -613,6 +640,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalRequest.Reject parameters) (renderApprovalRequest parseResult)
 
+    /// Routes the history request command from parsed options through validation, the SDK call, and result rendering.
     let private historyRequestHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = Grace.Shared.Parameters.Approval.ApprovalRequestHistoryParameters(ApprovalRequestId = parseResult.GetValue(Options.requestId))
@@ -622,6 +650,7 @@ module ApprovalCommand =
 
         execute (fun () -> Grace.SDK.ApprovalRequest.History parameters) (renderApprovalRequests parseResult)
 
+    /// Runs the wait request flow with an injected service function so tests can exercise the command without the real SDK call.
     let internal waitRequestWith
         (showRequest: Grace.Shared.Parameters.Approval.ShowApprovalRequestParameters -> Task<GraceResult<ApprovalRequest>>)
         parseResult
@@ -664,20 +693,25 @@ module ApprovalCommand =
             | None -> return Error(GraceError.Create "Approval request wait did not fetch a request." graceIds.CorrelationId)
         }
 
+    /// Routes the wait request command from parsed options through validation, the SDK call, and result rendering.
     let private waitRequestHandler parseResult = waitRequestWith Grace.SDK.ApprovalRequest.Show parseResult
 
+    /// Models action values passed between the parser and approval handlers.
     type Action<'T>(handler: ParseResult -> Task<GraceResult<'T>>) =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous action action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = handler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Coordinates action behavior for this CLI command path.
     let private action<'T> (handler: ParseResult -> Task<GraceResult<'T>>) = Action<'T>(handler)
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

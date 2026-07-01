@@ -20,6 +20,7 @@ open Grace.Types
 open System.Net.Http
 open Grace.Shared.Validation
 
+/// Covers repository scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type Repository() =
 
@@ -28,6 +29,7 @@ type Repository() =
             .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
             .CreateLogger("RepositoryTests")
 
+    /// Grants repository admin needed by authorization-sensitive tests.
     let grantRepositoryAdminAsync repositoryId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -45,6 +47,7 @@ type Repository() =
             response.EnsureSuccessStatusCode() |> ignore
         }
 
+    /// Builds a deterministic repository for integration setup fixture for the server integration repository assertions.
     let createRepositoryAsync () =
         task {
             let repositoryId = $"{Guid.NewGuid()}"
@@ -61,6 +64,7 @@ type Repository() =
             return repositoryId
         }
 
+    /// Gets repository from the running test server.
     let getRepositoryAsync repositoryId =
         task {
             let parameters = Parameters.Repository.GetRepositoryParameters()
@@ -78,8 +82,10 @@ type Repository() =
             return returnValue.ReturnValue
         }
 
+    /// Exposes test context for test diagnostics.
     member val public TestContext = TestContext.CurrentContext with get, set
 
+    /// Verifies the set description with valid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithValidValues() =
@@ -106,6 +112,7 @@ type Repository() =
             Assert.That(stored.Description, Is.EqualTo(expectedDescription))
         }
 
+    /// Verifies the set description with invalid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithInvalidValues() =
@@ -122,6 +129,7 @@ type Repository() =
             Assert.That(content, Does.Contain("is not a valid Guid."))
         }
 
+    /// Verifies the set description with empty description scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithEmptyDescription() =
@@ -159,6 +167,7 @@ type Repository() =
             Assert.That(stored.Description, Is.EqualTo(baseline))
         }
 
+    /// Verifies the set save days with valid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSaveDaysWithValidValues() =
@@ -178,6 +187,7 @@ type Repository() =
             Assert.That(stored.SaveDays, Is.EqualTo(parameters.SaveDays))
         }
 
+    /// Verifies the set save days with invalid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSaveDaysWithInvalidValues() =
@@ -195,6 +205,7 @@ type Repository() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidSaveDaysValue))
         }
 
+    /// Verifies the set checkpoint days with valid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetCheckpointDaysWithValidValues() =
@@ -214,6 +225,7 @@ type Repository() =
             Assert.That(stored.CheckpointDays, Is.EqualTo(parameters.CheckpointDays))
         }
 
+    /// Verifies the set checkpoint days with invalid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetCheckpointDaysWithInvalidValues() =
@@ -231,6 +243,7 @@ type Repository() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidCheckpointDaysValue))
         }
 
+    /// Verifies the get branches with valid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.GetBranchesWithValidValues() =
@@ -246,6 +259,7 @@ type Repository() =
             Assert.That(content.Length, Is.GreaterThan(0))
         }
 
+    /// Verifies the get branches with invalid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.GetBranchesWithInvalidValues() =
@@ -261,6 +275,7 @@ type Repository() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidOwnerId))
         }
 
+    /// Verifies the set status with valid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetStatusWithValidValues() =
@@ -278,6 +293,7 @@ type Repository() =
             Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
+    /// Verifies the set status with invalid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetStatusWithInvalidValues() =
@@ -294,6 +310,7 @@ type Repository() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidOrganizationId))
         }
 
+    /// Verifies the set status with empty status scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetStatusWithEmptyStatus() =
@@ -311,6 +328,7 @@ type Repository() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage RepositoryError.InvalidRepositoryStatus))
         }
 
+    /// Verifies the set visibility with valid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetVisibilityWithValidValues() =
@@ -333,6 +351,7 @@ type Repository() =
             Assert.That(stored.RepositoryType, Is.EqualTo(RepositoryType.Public))
         }
 
+    /// Verifies the set visibility with invalid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetVisibilityWithInvalidValues() =

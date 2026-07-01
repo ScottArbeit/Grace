@@ -6,6 +6,7 @@ open NodaTime
 open Orleans
 open System.Runtime.Serialization
 
+/// Contains authorization helpers.
 module Authorization =
 
     /// Internal principal identifier.
@@ -18,6 +19,7 @@ module Authorization =
         | Group
         | Service
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PrincipalType>()
 
     /// Identifies a principal (user, group, or service).
@@ -39,6 +41,7 @@ module Authorization =
         | [<Id 3u>] Repository of OwnerId * OrganizationId * RepositoryId
         | [<Id 4u>] Branch of OwnerId * OrganizationId * RepositoryId * BranchId
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<Scope>()
 
     /// Resource targeted by an authorization check.
@@ -51,6 +54,7 @@ module Authorization =
         | [<Id 4u>] Branch of OwnerId * OrganizationId * RepositoryId * BranchId
         | [<Id 5u>] Path of OwnerId * OrganizationId * RepositoryId * RelativePath
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<Resource>()
 
     /// Operation requested on a resource.
@@ -79,6 +83,7 @@ module Authorization =
         | WebhookManage
         | WebhookDeliveryRead
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<Operation>()
 
     /// Unique identifier for a role.
@@ -120,6 +125,7 @@ module Authorization =
         | [<Id 0u>] Allowed of string
         | [<Id 1u>] Denied of string
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PermissionCheckResult>()
 
     /// Commands for managing role assignments.
@@ -129,6 +135,7 @@ module Authorization =
         | [<Id 1u>] RevokeRole of Principal * RoleId
         | [<Id 2u>] ListAssignments of Principal option
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<AccessControlCommand>()
 
     /// Commands for managing repository path permissions.
@@ -138,4 +145,5 @@ module Authorization =
         | [<Id 1u>] RemovePathPermission of RelativePath
         | [<Id 2u>] ListPathPermissions of RelativePath option
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryPermissionCommand>()

@@ -9,12 +9,16 @@ open Grace.Types.Common
 open System
 open System.Threading.Tasks
 
+/// Defines the contract for igrace permission evaluator.
 type IGracePermissionEvaluator =
+    /// Defines the check async operation for implementers.
     abstract member CheckAsync:
         principalSet: Principal list * effectiveClaims: Set<string> * operation: Operation * resource: Resource -> Task<PermissionCheckResult>
 
+/// Contains Grace Server permission evaluator defaults behavior and supporting helpers.
 module PermissionEvaluatorDefaults =
 
+    /// Loads RBAC assignments for the exact scope being evaluated.
     let getAssignmentsForScope (scope: Scope, correlationId: CorrelationId) =
         task {
             let scopeKey = AccessControl.getScopeKey scope
@@ -22,12 +26,14 @@ module PermissionEvaluatorDefaults =
             return! actorProxy.GetAssignments None correlationId
         }
 
+    /// Loads repository path permissions when the authorization resource targets a repository path.
     let getPathPermissionsForRepository (repositoryId: RepositoryId, correlationId: CorrelationId) =
         task {
             let actorProxy = Extensions.ActorProxy.RepositoryPermission.CreateActorProxy repositoryId correlationId
             return! actorProxy.GetPathPermissions None correlationId
         }
 
+/// Represents grace permission evaluator used by Grace Server APIs and background services.
 type GracePermissionEvaluator
     (
         getAssignmentsForScope: Scope * CorrelationId -> Task<RoleAssignment list>,
@@ -37,6 +43,7 @@ type GracePermissionEvaluator
     new() = GracePermissionEvaluator(PermissionEvaluatorDefaults.getAssignmentsForScope, PermissionEvaluatorDefaults.getPathPermissionsForRepository)
 
     interface IGracePermissionEvaluator with
+        /// Evaluates principals, scoped role assignments, and path permissions for one authorization decision.
         member _.CheckAsync(principalSet, effectiveClaims, operation, resource) =
             task {
                 try

@@ -17,7 +17,9 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the queue command parser, handlers, and output helpers.
 module QueueCommand =
+    /// Defines the options parsed by the queue command handlers.
     module private Options =
         let promotionSetId =
             new Option<string>(
@@ -124,6 +126,7 @@ module QueueCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Tries to map parse guid and returns a GraceError instead of throwing on unsupported input.
     let private tryParseGuid (value: string) (error: QueueError) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
@@ -134,6 +137,7 @@ module QueueCommand =
         else
             Ok parsed
 
+    /// Tries to map parse work item id and returns a GraceError instead of throwing on unsupported input.
     let private tryParseWorkItemId (value: string) (parseResult: ParseResult) =
         let mutable parsedGuid = Guid.Empty
 
@@ -155,6 +159,7 @@ module QueueCommand =
             else
                 Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemId) (getCorrelationId parseResult))
 
+    /// Resolves branch by name from command options, configuration, or local state.
     let private resolveBranchByName (parseResult: ParseResult) (graceIds: GraceIds) (branchName: string) =
         task {
             let parameters =
@@ -174,6 +179,7 @@ module QueueCommand =
             | Ok returnValue -> return Ok returnValue.ReturnValue.BranchId
         }
 
+    /// Resolves target branch id from command options, configuration, or local state.
     let private resolveTargetBranchId (parseResult: ParseResult) (graceIds: GraceIds) =
         task {
             let branchRaw =
@@ -199,6 +205,7 @@ module QueueCommand =
                 return Error(GraceError.Create (QueueError.getErrorMessage QueueError.InvalidTargetBranchId) (getCorrelationId parseResult))
         }
 
+    /// Resolves policy snapshot id from command options, configuration, or local state.
     let private resolvePolicySnapshotId (parseResult: ParseResult) (graceIds: GraceIds) (targetBranchId: Guid) =
         task {
             let rawPolicySnapshotId =
@@ -229,6 +236,7 @@ module QueueCommand =
                     | _ -> return Ok String.Empty
         }
 
+    /// Writes queue status data through the CLI output contract.
     let private writeQueueStatus (parseResult: ParseResult) (queue: PromotionQueue) =
         if
             not (parseResult |> json)
@@ -261,6 +269,7 @@ module QueueCommand =
 
             AnsiConsole.Write(table)
 
+    /// Routes the status command from parsed options through validation, the SDK call, and result rendering.
     let private statusHandler (parseResult: ParseResult) =
         task {
             try
@@ -295,15 +304,18 @@ module QueueCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the status command by binding ParseResult values to the SDK request and CLI output contract.
     type Status() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = statusHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the pause command from parsed options through validation, the SDK call, and result rendering.
     let private pauseHandler (parseResult: ParseResult) =
         task {
             try
@@ -340,15 +352,18 @@ module QueueCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the pause command by binding ParseResult values to the SDK request and CLI output contract.
     type Pause() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous pause action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = pauseHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the resume command from parsed options through validation, the SDK call, and result rendering.
     let private resumeHandler (parseResult: ParseResult) =
         task {
             try
@@ -385,15 +400,18 @@ module QueueCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the resume command by binding ParseResult values to the SDK request and CLI output contract.
     type Resume() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous resume action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = resumeHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Builds command objects or parameters for execution.
     let private buildEnqueueParameters (graceIds: GraceIds) (targetBranchId: Guid) (promotionSetId: Guid) (workItemId: string) (policySnapshotId: string) =
         Parameters.Queue.EnqueueParameters(
             TargetBranchId = targetBranchId.ToString(),
@@ -409,6 +427,7 @@ module QueueCommand =
             CorrelationId = graceIds.CorrelationId
         )
 
+    /// Routes the enqueue handler command from parsed options through validation, the SDK call, and result rendering.
     let private enqueueHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -453,6 +472,7 @@ module QueueCommand =
                             return result
         }
 
+    /// Routes the enqueue command from parsed options through validation, the SDK call, and result rendering.
     let private enqueueHandler (parseResult: ParseResult) =
         task {
             try
@@ -461,15 +481,18 @@ module QueueCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the enqueue command by binding ParseResult values to the SDK request and CLI output contract.
     type Enqueue() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enqueue action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = enqueueHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the dequeue command from parsed options through validation, the SDK call, and result rendering.
     let private dequeueHandler (parseResult: ParseResult) =
         task {
             try
@@ -512,9 +535,11 @@ module QueueCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the dequeue command by binding ParseResult values to the SDK request and CLI output contract.
     type Dequeue() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous dequeue action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = dequeueHandler parseResult
@@ -522,6 +547,7 @@ module QueueCommand =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName
@@ -531,6 +557,7 @@ module QueueCommand =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
 
+        /// Adds options or child commands to a command definition.
         let addBranchOptions (command: Command) =
             command
             |> addOption Options.branch

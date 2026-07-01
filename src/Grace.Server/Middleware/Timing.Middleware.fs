@@ -17,8 +17,10 @@ open System.Collections.Generic
 /// This middleware should be the second in order, after CorrelationIdMiddleware. This will ensure that the CorrelationId is set before we start recording timings.
 type TimingMiddleware(next: RequestDelegate) =
 
+    /// Measures selected requests and logs elapsed server processing time.
     member this.Invoke(context: HttpContext) =
         task {
+            /// Determines whether interesting.
             let isInteresting path =
                 match path with
                 | "/metrics"

@@ -6,9 +6,11 @@ open NodaTime
 open NUnit.Framework
 open System.Collections.Generic
 
+/// Contains tests covering event metadata types behavior.
 [<TestFixture>]
 type EventMetadataTypesTests() =
 
+    /// Verifies that new leaves client type unset for internal metadata.
     [<Test>]
     member _.NewLeavesClientTypeUnsetForInternalMetadata() =
         let metadata = EventMetadata.New "corr-internal" "GraceSystem"
@@ -17,6 +19,7 @@ type EventMetadataTypesTests() =
         Assert.That(metadata.Principal, Is.EqualTo("GraceSystem"))
         Assert.That(metadata.ClientType, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
 
+    /// Verifies that client type round trips through grace json serialization.
     [<Test>]
     member _.ClientTypeRoundTripsThroughGraceJsonSerialization() =
         let metadata =

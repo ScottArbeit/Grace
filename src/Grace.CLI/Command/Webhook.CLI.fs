@@ -16,7 +16,9 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the webhook command parser, handlers, and output helpers.
 module WebhookCommand =
+    /// Defines the options parsed by the webhook command handlers.
     module private Options =
         let webhookId =
             new Option<string>(
@@ -190,18 +192,22 @@ module WebhookCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Coordinates no value behavior for this CLI command path.
     let private noValue (value: string) = if String.IsNullOrWhiteSpace value then String.Empty else value
 
+    /// Reads target branch data needed by the command workflow without changing remote state.
     let private targetBranch (parseResult: ParseResult) =
         let value = parseResult.GetValue(Options.targetBranchId)
         if value = BranchId.Empty then String.Empty else value.ToString()
 
+    /// Coordinates url safety behavior for this CLI command path.
     let private urlSafety allowUnsafe =
         if allowUnsafe then
             OutboundUrlSafety.LocalUnsafeDevOnly
         else
             OutboundUrlSafety.PublicHttps
 
+    /// Adds options or child commands to a command definition.
     let private addScope (parameters: #Grace.Shared.Parameters.Webhook.WebhookRuleParameters) (graceIds: GraceIds) (parseResult: ParseResult) =
         parameters.OwnerId <- graceIds.OwnerIdString
         parameters.OwnerName <- graceIds.OwnerName
@@ -213,6 +219,7 @@ module WebhookCommand =
         parameters.CorrelationId <- graceIds.CorrelationId
         parameters
 
+    /// Adds options or child commands to a command definition.
     let private addDeliveryScope (parameters: #Grace.Shared.Parameters.Webhook.WebhookDeliveryParameters) (graceIds: GraceIds) (parseResult: ParseResult) =
         parameters.OwnerId <- graceIds.OwnerIdString
         parameters.OwnerName <- graceIds.OwnerName
@@ -224,6 +231,7 @@ module WebhookCommand =
         parameters.CorrelationId <- graceIds.CorrelationId
         parameters
 
+    /// Renders webhook rule results only when the selected output mode includes human-readable console text.
     let internal renderWebhookRule (parseResult: ParseResult) (rule: WebhookRule) =
         if
             not (parseResult |> json)
@@ -253,6 +261,7 @@ module WebhookCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders webhook rules results only when the selected output mode includes human-readable console text.
     let internal renderWebhookRules (parseResult: ParseResult) (rules: WebhookRule seq) =
         if
             not (parseResult |> json)
@@ -276,6 +285,7 @@ module WebhookCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders webhook delivery results only when the selected output mode includes human-readable console text.
     let internal renderWebhookDelivery (parseResult: ParseResult) (delivery: WebhookDelivery) =
         if
             not (parseResult |> json)
@@ -326,6 +336,7 @@ module WebhookCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders webhook deliveries results only when the selected output mode includes human-readable console text.
     let internal renderWebhookDeliveries (parseResult: ParseResult) (deliveries: WebhookDelivery seq) =
         if
             not (parseResult |> json)
@@ -355,6 +366,7 @@ module WebhookCommand =
 
             AnsiConsole.Write(table)
 
+    /// Executes a reusable command workflow.
     let private execute action render =
         task {
             try
@@ -369,6 +381,7 @@ module WebhookCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" String.Empty)
         }
 
+    /// Routes the create command from parsed options through validation, the SDK call, and result rendering.
     let private createHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let allowUnsafe = parseResult.GetValue(Options.allowUnsafeLocal)
@@ -399,6 +412,7 @@ module WebhookCommand =
         addScope parameters graceIds parseResult |> ignore
         execute (fun () -> Grace.SDK.WebhookRule.Create parameters) (renderWebhookRule parseResult)
 
+    /// Routes the list command from parsed options through validation, the SDK call, and result rendering.
     let private listHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -407,12 +421,14 @@ module WebhookCommand =
         addScope parameters graceIds parseResult |> ignore
         execute (fun () -> Grace.SDK.WebhookRule.List parameters) (renderWebhookRules parseResult)
 
+    /// Routes the show command from parsed options through validation, the SDK call, and result rendering.
     let private showHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = Grace.Shared.Parameters.Webhook.ShowWebhookRuleParameters(WebhookRuleId = parseResult.GetValue(Options.webhookId))
         addScope parameters graceIds parseResult |> ignore
         execute (fun () -> Grace.SDK.WebhookRule.Show parameters) (renderWebhookRule parseResult)
 
+    /// Routes the update command from parsed options through validation, the SDK call, and result rendering.
     let private updateHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let allowUnsafe = parseResult.GetValue(Options.allowUnsafeLocal)
@@ -444,12 +460,14 @@ module WebhookCommand =
         addScope parameters graceIds parseResult |> ignore
         execute (fun () -> Grace.SDK.WebhookRule.Update parameters) (renderWebhookRule parseResult)
 
+    /// Routes the simple rule command from parsed options through validation, the SDK call, and result rendering.
     let private simpleRuleHandler makeParameters sdkCall parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
         let parameters = makeParameters (parseResult.GetValue(Options.webhookId))
         addScope parameters graceIds parseResult |> ignore
         execute (fun () -> sdkCall parameters) (renderWebhookRule parseResult)
 
+    /// Routes the test command from parsed options through validation, the SDK call, and result rendering.
     let private testHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -464,6 +482,7 @@ module WebhookCommand =
         addScope parameters graceIds parseResult |> ignore
         execute (fun () -> Grace.SDK.WebhookRule.Test parameters) (renderWebhookDelivery parseResult)
 
+    /// Routes the deliveries command from parsed options through validation, the SDK call, and result rendering.
     let private deliveriesHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -481,6 +500,7 @@ module WebhookCommand =
 
         execute (fun () -> Grace.SDK.WebhookDelivery.List parameters) (renderWebhookDeliveries parseResult)
 
+    /// Routes the delivery show command from parsed options through validation, the SDK call, and result rendering.
     let private deliveryShowHandler parseResult =
         let graceIds = parseResult |> getNormalizedIdsAndNames
 
@@ -491,18 +511,22 @@ module WebhookCommand =
 
         execute (fun () -> Grace.SDK.WebhookDelivery.Show parameters) (renderWebhookDelivery parseResult)
 
+    /// Models action values passed between the parser and webhook handlers.
     type Action<'T>(handler: ParseResult -> Task<GraceResult<'T>>) =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous action action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = handler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Coordinates action behavior for this CLI command path.
     let private action<'T> (handler: ParseResult -> Task<GraceResult<'T>>) = Action<'T>(handler)
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

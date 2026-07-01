@@ -5,9 +5,11 @@ open Grace.CLI
 open NUnit.Framework
 open System
 
+/// Groups command parsing coverage for the CLI test project.
 [<TestFixture>]
 [<NonParallelizable>]
 module CommandParsingTests =
+    /// Runs the supplied action with environment variable applied.
     let private withEnvironmentVariable (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
 
@@ -17,6 +19,7 @@ module CommandParsingTests =
         finally
             Environment.SetEnvironmentVariable(name, original)
 
+    /// Verifies that resolve invocation source prefers explicit source over environment.
     [<Test>]
     let ``resolveInvocationSource prefers explicit source over environment`` () =
         withEnvironmentVariable Common.SourceEnvironmentVariableName (Some "env-source") (fun () ->
@@ -35,6 +38,7 @@ module CommandParsingTests =
             Common.resolveInvocationSource parseResult
             |> should equal (Some "explicit-source"))
 
+    /// Verifies that resolve invocation source falls back to environment.
     [<Test>]
     let ``resolveInvocationSource falls back to environment`` () =
         withEnvironmentVariable Common.SourceEnvironmentVariableName (Some "env-source") (fun () ->
@@ -44,6 +48,7 @@ module CommandParsingTests =
             Common.resolveInvocationSource parseResult
             |> should equal (Some "env-source"))
 
+    /// Verifies that history show accepts source filter option.
     [<Test>]
     let ``history show accepts source filter option`` () =
         let parseResult =
@@ -58,6 +63,7 @@ module CommandParsingTests =
 
         parseResult.Errors.Count |> should equal 0
 
+    /// Verifies that history search accepts source filter option.
     [<Test>]
     let ``history search accepts source filter option`` () =
         let parseResult =
@@ -69,6 +75,7 @@ module CommandParsingTests =
 
         parseResult.Errors.Count |> should equal 0
 
+    /// Builds grant role args test data used to exercise CLI program behavior.
     let private grantRoleArgs roleId =
         [|
             "authorize"
@@ -81,6 +88,7 @@ module CommandParsingTests =
             roleId
         |]
 
+    /// Builds revoke role args test data used to exercise CLI program behavior.
     let private revokeRoleArgs roleId =
         [|
             "authorize"
@@ -93,8 +101,10 @@ module CommandParsingTests =
             roleId
         |]
 
+    /// Builds revoke role args with scope test data used to exercise CLI program behavior.
     let private revokeRoleArgsWithScope roleId scopeArgs = Array.append (revokeRoleArgs roleId) scopeArgs
 
+    /// Verifies that authorize role commands accept canonical role ids.
     [<TestCase("SystemAdmin")>]
     [<TestCase("SystemOperator")>]
     [<TestCase("SystemReader")>]
@@ -120,6 +130,7 @@ module CommandParsingTests =
         let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs roleId)
         revokeParseResult.Errors.Count |> should equal 0
 
+    /// Verifies that authorize grant role rejects stale short role ids.
     [<TestCase("OrgAdmin")>]
     [<TestCase("OrgContributor")>]
     [<TestCase("OrgReader")>]
@@ -133,6 +144,7 @@ module CommandParsingTests =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs roleId)
         grantParseResult.Errors.Count |> should equal 1
 
+    /// Verifies that authorize revoke role allows stale role ids when explicit scope is supplied.
     [<TestCase("OrgAdmin")>]
     [<TestCase("ApprovalResponder")>]
     let ``authorize revoke role allows stale role ids when explicit scope is supplied`` roleId =
@@ -154,6 +166,7 @@ module CommandParsingTests =
         | Ok scopeKind -> scopeKind |> should equal "repository"
         | Error error -> Assert.Fail($"Expected stale role revoke scope derivation to succeed, but got {error}.")
 
+    /// Verifies that authorize revoke role rejects stale role ids without explicit scope.
     [<TestCase("OrgAdmin")>]
     [<TestCase("ApprovalResponder")>]
     let ``authorize revoke role rejects stale role ids without explicit scope`` roleId =
@@ -164,6 +177,7 @@ module CommandParsingTests =
         | Ok scopeKind -> Assert.Fail($"Expected stale role revoke without explicit scope to fail, but got {scopeKind}.")
         | Error error -> error.Error |> should contain "explicit scope"
 
+    /// Verifies that authorize grant and revoke derive scope from role without scope option.
     [<Test>]
     let ``authorize grant and revoke derive scope from role without scope option`` () =
         let grantParseResult = GraceCommand.rootCommand.Parse(grantRoleArgs "RepositoryReader")
@@ -172,6 +186,7 @@ module CommandParsingTests =
         let revokeParseResult = GraceCommand.rootCommand.Parse(revokeRoleArgs "RepositoryReader")
         revokeParseResult.Errors.Count |> should equal 0
 
+    /// Verifies that authorize grant no longer accepts explicit scope option.
     [<Test>]
     let ``authorize grant no longer accepts explicit scope option`` () =
         let parseResult =
@@ -186,11 +201,13 @@ module CommandParsingTests =
         parseResult.Errors.Count
         |> should be (greaterThan 0)
 
+    /// Verifies that authenticate command group accepts authn alias.
     [<Test>]
     let ``authenticate command group accepts authn alias`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "authn"; "status" |])
         parseResult.Errors.Count |> should equal 0
 
+    /// Verifies that authorize command group accepts authz alias.
     [<Test>]
     let ``authorize command group accepts authz alias`` () =
         let parseResult =
@@ -201,11 +218,13 @@ module CommandParsingTests =
 
         parseResult.Errors.Count |> should equal 0
 
+    /// Verifies that authorize show command parses through authz alias.
     [<Test>]
     let ``authorize show command parses through authz alias`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "authz"; "show" |])
         parseResult.Errors.Count |> should equal 0
 
+    /// Verifies that authorize can command parses user oriented repo and path checks.
     [<Test>]
     let ``authorize can command parses user oriented repo and path checks`` () =
         let readRepo = GraceCommand.rootCommand.Parse([| "authz"; "can"; "read"; "repo" |])
@@ -225,6 +244,7 @@ module CommandParsingTests =
 
         pathRead.Errors.Count |> should equal 0
 
+    /// Verifies that old auth and access command groups are not accepted.
     [<TestCase("auth", "status")>]
     [<TestCase("access", "list-roles")>]
     let ``old auth and access command groups are not accepted`` commandGroup commandName =
@@ -254,13 +274,16 @@ open System.Net
 open System.Net.Http
 open System.Text.Json
 
+/// Groups help does not read config coverage for the CLI test project.
 [<NonParallelizable>]
 module HelpDoesNotReadConfigTests =
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Runs with captured output for test scenarios.
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -274,6 +297,7 @@ module HelpDoesNotReadConfigTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Runs with captured stdout and stderr for test scenarios.
     let private runWithCapturedStdoutAndStderr (args: string array) =
         use standardOutWriter = new StringWriter()
         use standardErrorWriter = new StringWriter()
@@ -291,6 +315,7 @@ module HelpDoesNotReadConfigTests =
             Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
 
+    /// Parses json output for test assertions.
     let private parseJsonOutput (output: string) =
         output
             .TrimStart()
@@ -299,6 +324,7 @@ module HelpDoesNotReadConfigTests =
 
         JsonDocument.Parse(output)
 
+    /// Asserts that json error output matches the expected contract.
     let private assertJsonErrorOutput (standardOut: string) =
         use document = parseJsonOutput standardOut
         let rootElement = document.RootElement
@@ -316,6 +342,7 @@ module HelpDoesNotReadConfigTests =
 
         error
 
+    /// Asserts that grace envelope matches the expected contract.
     let private assertGraceEnvelope (output: string) =
         use document = parseJsonOutput output
         let rootElement = document.RootElement
@@ -334,6 +361,7 @@ module HelpDoesNotReadConfigTests =
 
         rootElement.Clone()
 
+    /// Asserts that grace error envelope on clean streams matches the expected contract.
     let private assertGraceErrorEnvelopeOnCleanStreams (standardOut: string) (standardError: string) =
         standardError |> should equal String.Empty
         let error = assertJsonErrorOutput standardOut
@@ -345,6 +373,7 @@ module HelpDoesNotReadConfigTests =
 
         error
 
+    /// Runs the supplied action with file backup applied.
     let private withFileBackup (path: string) (action: unit -> unit) =
         let directory = Path.GetDirectoryName(path)
 
@@ -365,6 +394,7 @@ module HelpDoesNotReadConfigTests =
             elif File.Exists(path) then
                 File.Delete(path)
 
+    /// Captures stdout and stderr produced by the action.
     let private captureStdoutAndStderr (action: unit -> unit) =
         use standardOutWriter = new StringWriter()
         use standardErrorWriter = new StringWriter()
@@ -382,11 +412,14 @@ module HelpDoesNotReadConfigTests =
             Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
 
+    /// Captures output produced by the action.
     let private captureOutput (action: unit -> unit) =
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, _ = captureStdoutAndStderr action
         standardOut
 
 
+    /// Runs the supplied action with temp dir applied.
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-cli-tests-{Guid.NewGuid():N}")
         Directory.CreateDirectory(tempDir) |> ignore
@@ -405,11 +438,13 @@ module HelpDoesNotReadConfigTests =
                 with
                 | _ -> ()
 
+    /// Writes invalid config needed by the test scenario.
     let private writeInvalidConfig (root: string) =
         let graceDir = Path.Combine(root, ".grace")
         Directory.CreateDirectory(graceDir) |> ignore
         File.WriteAllText(Path.Combine(graceDir, "graceconfig.json"), "not json")
 
+    /// Writes valid config needed by the test scenario.
     let private writeValidConfig (root: string) (ownerId: Guid) (orgId: Guid) (repoId: Guid) (branchId: Guid) =
         let graceDir = Path.Combine(root, ".grace")
         Directory.CreateDirectory(graceDir) |> ignore
@@ -421,6 +456,7 @@ module HelpDoesNotReadConfigTests =
         let json = serialize config
         File.WriteAllText(Path.Combine(graceDir, "graceconfig.json"), json)
 
+    /// Writes valid config with deterministic ids needed by the test scenario.
     let private writeValidConfigWithDeterministicIds (root: string) =
         writeValidConfig
             root
@@ -429,6 +465,7 @@ module HelpDoesNotReadConfigTests =
             (Guid.Parse("33333333-3333-3333-3333-333333333333"))
             (Guid.Parse("44444444-4444-4444-4444-444444444444"))
 
+    /// Verifies that authz show explicit repository scope does not include configured branch.
     [<Test>]
     let ``authz show explicit repository scope does not include configured branch`` () =
         withTempDir (fun root ->
@@ -472,6 +509,7 @@ module HelpDoesNotReadConfigTests =
 
             graceIds.HasBranch |> should equal false)
 
+    /// Verifies that authz show explicit owner scope does not include configured child ids.
     [<Test>]
     let ``authz show explicit owner scope does not include configured child ids`` () =
         withTempDir (fun root ->
@@ -510,6 +548,7 @@ module HelpDoesNotReadConfigTests =
             graceIds.HasRepository |> should equal false
             graceIds.HasBranch |> should equal false)
 
+    /// Verifies that authorize revoke role rejects stale role ids with only configured scope.
     [<Test>]
     let ``authorize revoke role rejects stale role ids with only configured scope`` () =
         withTempDir (fun root ->
@@ -537,6 +576,7 @@ module HelpDoesNotReadConfigTests =
             | Ok scopeKind -> Assert.Fail($"Expected stale role revoke with only configured scope to fail, but got {scopeKind}.")
             | Error error -> error.Error |> should contain "explicit scope")
 
+    /// Verifies that authz can explicit owner scope does not include configured child ids.
     [<Test>]
     let ``authz can explicit owner scope does not include configured child ids`` () =
         withTempDir (fun root ->
@@ -577,6 +617,7 @@ module HelpDoesNotReadConfigTests =
             graceIds.HasRepository |> should equal false
             graceIds.HasBranch |> should equal false)
 
+    /// Verifies that authz can explicit organization scope does not include configured repository or branch.
     [<Test>]
     let ``authz can explicit organization scope does not include configured repository or branch`` () =
         withTempDir (fun root ->
@@ -616,6 +657,7 @@ module HelpDoesNotReadConfigTests =
             graceIds.HasRepository |> should equal false
             graceIds.HasBranch |> should equal false)
 
+    /// Verifies that authz can explicit repository scope does not include configured branch.
     [<Test>]
     let ``authz can explicit repository scope does not include configured branch`` () =
         withTempDir (fun root ->
@@ -654,6 +696,7 @@ module HelpDoesNotReadConfigTests =
             graceIds.BranchId |> should equal BranchId.Empty
             graceIds.HasBranch |> should equal false)
 
+    /// Verifies that authz can explicit branch scope keeps configured parent ids.
     [<Test>]
     let ``authz can explicit branch scope keeps configured parent ids`` () =
         withTempDir (fun root ->
@@ -691,6 +734,7 @@ module HelpDoesNotReadConfigTests =
             graceIds.BranchId
             |> should equal requestedBranchId)
 
+    /// Verifies that authz can config only branch scope keeps configured branch id.
     [<Test>]
     let ``authz can config-only branch scope keeps configured branch id`` () =
         withTempDir (fun root ->
@@ -715,6 +759,7 @@ module HelpDoesNotReadConfigTests =
             graceIds.RepositoryId |> should equal repositoryId
             graceIds.BranchId |> should equal branchId)
 
+    /// Adds lifecycle headers to the test fixture.
     let private addLifecycleHeaders
         (response: HttpResponseMessage)
         (status: string)
@@ -741,6 +786,7 @@ module HelpDoesNotReadConfigTests =
         response.Headers.TryAddWithoutValidation(Constants.SdkLifecycleUpdateUrlHeaderKey, updateUrl)
         |> ignore
 
+    /// Builds lifecycle properties test data used to exercise CLI program behavior.
     let private lifecycleProperties status =
         use response = new HttpResponseMessage(HttpStatusCode.OK)
 
@@ -750,11 +796,13 @@ module HelpDoesNotReadConfigTests =
         | Some diagnostics -> ClientIdentity.lifecycleDiagnosticsToProperties diagnostics
         | None -> Dictionary<string, obj>()
 
+    /// Verifies that help works with invalid config.
     [<Test>]
     let ``help works with invalid config`` () =
         withTempDir (fun root ->
             writeInvalidConfig root
 
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, _ =
                 runWithCapturedOutput [| "authorize"
                                          "grant-role"
@@ -762,9 +810,11 @@ module HelpDoesNotReadConfigTests =
 
             exitCode |> should equal 0)
 
+    /// Verifies that help works without config.
     [<Test>]
     let ``help works without config`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, _ =
                 runWithCapturedOutput [| "authorize"
                                          "grant-role"
@@ -772,9 +822,11 @@ module HelpDoesNotReadConfigTests =
 
             exitCode |> should equal 0)
 
+    /// Verifies that help shows symbolic defaults.
     [<Test>]
     let ``help shows symbolic defaults`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "authorize"
                                          "grant-role"
@@ -796,9 +848,11 @@ module HelpDoesNotReadConfigTests =
 
             output |> should contain "[default: new NanoId]")
 
+    /// Verifies that create help rewrites empty guid defaults.
     [<Test>]
     let ``create help rewrites empty guid defaults`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "repository"
                                          "create"
@@ -817,9 +871,11 @@ module HelpDoesNotReadConfigTests =
             output
             |> should not' (contain "00000000-0000-0000-0000-0000000000000"))
 
+    /// Verifies that schema emits registry derived json without requiring config.
     [<Test>]
     let ``schema emits registry-derived json without requiring config`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "repository"
                                          "init"
@@ -871,9 +927,11 @@ module HelpDoesNotReadConfigTests =
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that examples emit registry derived json and ignore output mode.
     [<Test>]
     let ``examples emit registry-derived json and ignore output mode`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "--output"
                                          "Json"
@@ -904,9 +962,11 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "Signed out.")
 
+    /// Verifies that root login alias emits schema introspection.
     [<Test>]
     let ``root login alias emits schema introspection`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "login"
                                          "--schema" |]
@@ -925,9 +985,11 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "authenticate.login")
 
+    /// Verifies that root login alias preserves preceding global options for schema introspection.
     [<Test>]
     let ``root login alias preserves preceding global options for schema introspection`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "--output"
                                          "Json"
@@ -948,9 +1010,11 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "authenticate.login")
 
+    /// Verifies that root logout alias preserves preceding global options for examples introspection.
     [<Test>]
     let ``root logout alias preserves preceding global options for examples introspection`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "--output"
                                          "Json"
@@ -971,9 +1035,11 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "authenticate.logout")
 
+    /// Verifies that examples for missing dto metadata emit explicit unsupported document.
     [<Test>]
     let ``examples for missing dto metadata emit explicit unsupported document`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "workitem"
                                          "show"
@@ -1004,9 +1070,11 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "workitem.show")
 
+    /// Verifies that nested command schema resolves full command id.
     [<Test>]
     let ``nested command schema resolves full command id`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "workitem"
                                          "attach"
@@ -1027,6 +1095,7 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should equal "workitem.attach.summary")
 
+    /// Verifies that root output json is honored for nested commands before config errors.
     [<Test>]
     let ``root output json is honored for nested commands before config errors`` () =
         let cases =
@@ -1053,6 +1122,7 @@ module HelpDoesNotReadConfigTests =
         for commandArgs in cases do
             withTempDir (fun _ ->
                 let args = Array.append [| "--output"; "Json" |] commandArgs
+                /// Verifies that the CLI program scenario exits with the expected process status.
                 let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args
 
                 exitCode |> should equal -1
@@ -1069,9 +1139,11 @@ module HelpDoesNotReadConfigTests =
                 standardOut
                 |> should not' (contain "Grace Version Control System"))
 
+    /// Verifies that root schema emits json parse error envelope.
     [<Test>]
     let ``root schema emits json parse error envelope`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output = runWithCapturedOutput [| "--schema" |]
 
             exitCode |> should equal -1
@@ -1087,9 +1159,11 @@ module HelpDoesNotReadConfigTests =
                 .GetString()
             |> should not' (equal String.Empty))
 
+    /// Verifies that schema and examples together emit json error envelope.
     [<Test>]
     let ``schema and examples together emit json error envelope`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "repository"
                                          "init"
@@ -1104,9 +1178,11 @@ module HelpDoesNotReadConfigTests =
             rootElement.GetProperty("Error").GetString()
             |> should equal "--schema and --examples cannot be used together.")
 
+    /// Verifies that schema with unknown option emits json parse error envelope.
     [<Test>]
     let ``schema with unknown option emits json parse error envelope`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "repository"
                                          "init"
@@ -1121,9 +1197,11 @@ module HelpDoesNotReadConfigTests =
             rootElement.GetProperty("Error").GetString()
             |> should contain "Unrecognized command or argument")
 
+    /// Verifies that schema with invalid output emits json parse error envelope.
     [<Test>]
     let ``schema with invalid output emits json parse error envelope`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "--output"
                                          "Bogus"
@@ -1139,11 +1217,13 @@ module HelpDoesNotReadConfigTests =
             rootElement.GetProperty("Error").GetString()
             |> should contain "Bogus")
 
+    /// Verifies that render output json success writes one stdout document and no stderr.
     [<Test>]
     let ``renderOutput json success writes one stdout document and no stderr`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-json-success"
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok returnValue)
@@ -1167,8 +1247,10 @@ module HelpDoesNotReadConfigTests =
 
         standardOut |> should not' (contain "Elapsed:")
 
+    /// Verifies that alias list json emits grace envelope.
     [<Test>]
     let ``alias list json emits Grace envelope`` () =
+        /// Verifies that the CLI program scenario exits with the expected process status.
         let exitCode, output =
             runWithCapturedOutput [| "--output"
                                      "Json"
@@ -1188,8 +1270,10 @@ module HelpDoesNotReadConfigTests =
 
         output |> should not' (contain "Grace command")
 
+    /// Verifies that history show json emits grace envelope.
     [<Test>]
     let ``history show json emits Grace envelope`` () =
+        /// Verifies that the CLI program scenario exits with the expected process status.
         let exitCode, output =
             runWithCapturedOutput [| "--output"
                                      "Json"
@@ -1209,8 +1293,10 @@ module HelpDoesNotReadConfigTests =
         returnValue.GetProperty("Count").GetInt32()
         |> should be (greaterThanOrEqualTo 0)
 
+    /// Verifies that history show json select failure returns nonzero error envelope.
     [<Test>]
     let ``history show json select failure returns nonzero error envelope`` () =
+        /// Verifies that the CLI program scenario exits with the expected process status.
         let exitCode, standardOut, standardError =
             runWithCapturedStdoutAndStderr [| "--output"
                                               "Json"
@@ -1228,8 +1314,10 @@ module HelpDoesNotReadConfigTests =
         error
         |> should contain "--select path 'NonExistent' was not found"
 
+    /// Verifies that history search json emits grace envelope.
     [<Test>]
     let ``history search json emits Grace envelope`` () =
+        /// Verifies that the CLI program scenario exits with the expected process status.
         let exitCode, output =
             runWithCapturedOutput [| "--output"
                                      "Json"
@@ -1249,8 +1337,10 @@ module HelpDoesNotReadConfigTests =
             .ValueKind
         |> should equal JsonValueKind.Array
 
+    /// Verifies that history search json select failure returns nonzero error envelope.
     [<Test>]
     let ``history search json select failure returns nonzero error envelope`` () =
+        /// Verifies that the CLI program scenario exits with the expected process status.
         let exitCode, standardOut, standardError =
             runWithCapturedStdoutAndStderr [| "--output"
                                               "Json"
@@ -1269,8 +1359,10 @@ module HelpDoesNotReadConfigTests =
         error
         |> should contain "--select path 'NonExistent' was not found"
 
+    /// Verifies that history validation error json emits grace error envelope.
     [<Test>]
     let ``history validation error json emits Grace error envelope`` () =
+        /// Verifies that the CLI program scenario exits with the expected process status.
         let exitCode, output =
             runWithCapturedOutput [| "--output"
                                      "Json"
@@ -1289,6 +1381,7 @@ module HelpDoesNotReadConfigTests =
             .GetString()
         |> should equal "Limit must be positive."
 
+    /// Verifies that history on off and delete json emit grace envelopes.
     [<Test>]
     let ``history on off and delete json emit Grace envelopes`` () =
         let userConfigPath = UserConfiguration.getUserConfigurationPath ()
@@ -1296,6 +1389,7 @@ module HelpDoesNotReadConfigTests =
 
         withFileBackup userConfigPath (fun () ->
             withFileBackup historyPath (fun () ->
+                /// Builds on exit code test data used to exercise CLI program behavior.
                 let onExitCode, onOutput =
                     runWithCapturedOutput [| "--output"
                                              "Json"
@@ -1305,6 +1399,7 @@ module HelpDoesNotReadConfigTests =
                 onExitCode |> should equal 0
                 assertGraceEnvelope onOutput |> ignore
 
+                /// Builds off exit code test data used to exercise CLI program behavior.
                 let offExitCode, offOutput =
                     runWithCapturedOutput [| "--output"
                                              "Json"
@@ -1316,6 +1411,7 @@ module HelpDoesNotReadConfigTests =
 
                 File.WriteAllText(historyPath, String.Empty)
 
+                /// Builds delete exit code test data used to exercise CLI program behavior.
                 let deleteExitCode, deleteOutput =
                     runWithCapturedOutput [| "--output"
                                              "Json"
@@ -1325,11 +1421,13 @@ module HelpDoesNotReadConfigTests =
                 deleteExitCode |> should equal 0
                 assertGraceEnvelope deleteOutput |> ignore))
 
+    /// Verifies that connect json validation error emits clean grace envelope.
     [<Test>]
     let ``connect json validation error emits clean Grace envelope`` () =
         withTempDir (fun root ->
             writeValidConfigWithDeterministicIds root
 
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1343,9 +1441,11 @@ module HelpDoesNotReadConfigTests =
             assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
             |> should contain "Repository shortcut must be in the form")
 
+    /// Verifies that directory version get zip file json validation error emits clean grace envelope.
     [<Test>]
     let ``directory version get zip file json validation error emits clean Grace envelope`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1359,12 +1459,14 @@ module HelpDoesNotReadConfigTests =
             assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
             |> should contain "graceconfig.json")
 
+    /// Verifies that repository init json invalid directory emits clean grace envelope.
     [<Test>]
     let ``repository init json invalid directory emits clean Grace envelope`` () =
         withTempDir (fun root ->
             writeValidConfigWithDeterministicIds root
             let missingDirectory = Path.Combine(root, "missing")
 
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1378,6 +1480,7 @@ module HelpDoesNotReadConfigTests =
             assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
             |> should contain "directory")
 
+    /// Verifies that repository init no output dto renders absent observability as null.
     [<Test>]
     let ``repository init no output DTO renders absent observability as null`` () =
         let parseResult =
@@ -1394,6 +1497,7 @@ module HelpDoesNotReadConfigTests =
         let output: Common.LocalOutputDto.RepositoryInitDto =
             { Message = "Initialized repository."; DirectoryCount = None; FileCount = None; TotalFileSize = None; RootSha256Hash = None }
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok(GraceReturnValue.Create output "corr-repository-init"))
@@ -1427,11 +1531,13 @@ module HelpDoesNotReadConfigTests =
             .ValueKind
         |> should equal JsonValueKind.Null
 
+    /// Verifies that review report show json validation error emits clean grace envelope.
     [<Test>]
     let ``review report show json validation error emits clean Grace envelope`` () =
         withTempDir (fun root ->
             writeValidConfigWithDeterministicIds root
 
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1446,11 +1552,13 @@ module HelpDoesNotReadConfigTests =
             assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
             |> should contain "CandidateId must be a valid non-empty Guid")
 
+    /// Verifies that review report export json validation error emits clean grace envelope.
     [<Test>]
     let ``review report export json validation error emits clean Grace envelope`` () =
         withTempDir (fun root ->
             writeValidConfigWithDeterministicIds root
 
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1469,11 +1577,13 @@ module HelpDoesNotReadConfigTests =
             assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
             |> should contain "CandidateId must be a valid non-empty Guid")
 
+    /// Verifies that workitem attachments download json validation error emits clean grace envelope.
     [<Test>]
     let ``workitem attachments download json validation error emits clean Grace envelope`` () =
         withTempDir (fun root ->
             writeValidConfigWithDeterministicIds root
 
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1491,6 +1601,7 @@ module HelpDoesNotReadConfigTests =
             assertGraceErrorEnvelopeOnCleanStreams standardOut standardError
             |> should contain "work item ID is invalid")
 
+    /// Verifies that select option makes command json oriented.
     [<Test>]
     let ``select option makes command json-oriented`` () =
         let parseResult =
@@ -1510,11 +1621,13 @@ module HelpDoesNotReadConfigTests =
         Common.tryGetSelect parseResult
         |> should equal (Some "Value")
 
+    /// Verifies that render output select writes selected scalar json only.
     [<Test>]
     let ``renderOutput select writes selected scalar json only`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok"; Other = "hidden" |} "corr-select-success"
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok returnValue)
@@ -1523,6 +1636,7 @@ module HelpDoesNotReadConfigTests =
         standardError |> should equal String.Empty
         standardOut.Trim() |> should equal "\"ok\""
 
+    /// Verifies that render output select success suppresses lifecycle warnings.
     [<Test>]
     let ``renderOutput select success suppresses lifecycle warnings`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
@@ -1531,6 +1645,7 @@ module HelpDoesNotReadConfigTests =
         returnValue.enhance (lifecycleProperties "deprecated")
         |> ignore
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok returnValue)
@@ -1542,6 +1657,7 @@ module HelpDoesNotReadConfigTests =
         standardOut
         |> should not' (contain "This Grace client version is deprecated.")
 
+    /// Verifies that render output select writes selected object and collection json.
     [<Test>]
     let ``renderOutput select writes selected object and collection json`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Container.Items" |])
@@ -1560,6 +1676,7 @@ module HelpDoesNotReadConfigTests =
                 |}
                 "corr-select-collection"
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok returnValue)
@@ -1578,11 +1695,13 @@ module HelpDoesNotReadConfigTests =
         rootElement[ 1 ].GetProperty("Name").GetString()
         |> should equal "two"
 
+    /// Verifies that render output select writes null json.
     [<Test>]
     let ``renderOutput select writes null json`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
         let returnValue = GraceReturnValue.Create {| Value = (null: string) |} "corr-select-null"
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok returnValue)
@@ -1591,11 +1710,13 @@ module HelpDoesNotReadConfigTests =
         standardError |> should equal String.Empty
         standardOut.Trim() |> should equal "null"
 
+    /// Verifies that render output select missing property emits json error.
     [<Test>]
     let ``renderOutput select missing property emits json error`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Missing" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-missing"
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok returnValue)
@@ -1614,11 +1735,13 @@ module HelpDoesNotReadConfigTests =
             .GetString()
         |> should equal "corr-select-missing"
 
+    /// Verifies that render output select scalar traversal emits json error.
     [<Test>]
     let ``renderOutput select scalar traversal emits json error`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value.Name" |])
         let returnValue = GraceReturnValue.Create {| Value = "ok" |} "corr-select-scalar"
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Ok returnValue)
@@ -1629,6 +1752,7 @@ module HelpDoesNotReadConfigTests =
         assertJsonErrorOutput standardOut
         |> should contain "cannot read 'Name'"
 
+    /// Verifies that render output select leaves error envelope unprojected.
     [<Test>]
     let ``renderOutput select leaves error envelope unprojected`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--select"; "Value" |])
@@ -1637,6 +1761,7 @@ module HelpDoesNotReadConfigTests =
         error.enhance (lifecycleProperties "unsupported")
         |> ignore
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Error error)
@@ -1653,14 +1778,17 @@ module HelpDoesNotReadConfigTests =
         standardOut
         |> should not' (contain "This Grace client version is no longer supported.")
 
+        /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
         let mutable returnValue = Unchecked.defaultof<JsonElement>
 
         rootElement.TryGetProperty("ReturnValue", &returnValue)
         |> should equal false
 
+    /// Verifies that invalid select grammar does not invoke command.
     [<Test>]
     let ``invalid select grammar does not invoke command`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "connect"
                                                   "--select"
@@ -1675,9 +1803,11 @@ module HelpDoesNotReadConfigTests =
             File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
             |> should equal false)
 
+    /// Verifies that valid select on unsupported command is json error without invoking command.
     [<Test>]
     let ``valid select on unsupported command is json error without invoking command`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "history"
                                                   "run"
@@ -1693,11 +1823,13 @@ module HelpDoesNotReadConfigTests =
             File.Exists(Path.Combine(root, ".grace", "graceconfig.json"))
             |> should equal false)
 
+    /// Verifies that render output json error writes grace error envelope with shared field names.
     [<Test>]
     let ``renderOutput json error writes GraceError envelope with shared field names`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "--output"; "Json" |])
         let error = GraceError.Create "central writer error" "corr-json-error"
 
+        /// Builds standard out test data used to exercise CLI program behavior.
         let standardOut, standardError =
             captureStdoutAndStderr (fun () ->
                 Common.renderOutput parseResult (Error error)
@@ -1716,6 +1848,7 @@ module HelpDoesNotReadConfigTests =
             .GetString()
         |> should equal "corr-json-error"
 
+        /// Tracks camel Case Correlation Id changes so this scenario can assert the resulting side effect explicitly.
         let mutable camelCaseCorrelationId = Unchecked.defaultof<JsonElement>
 
         rootElement.TryGetProperty("correlationId", &camelCaseCorrelationId)
@@ -1724,9 +1857,11 @@ module HelpDoesNotReadConfigTests =
         Constants.JsonSerializerOptions.PropertyNamingPolicy
         |> should equal null
 
+    /// Verifies that missing config in json mode emits one error document on stdout.
     [<Test>]
     let ``missing config in json mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1744,9 +1879,11 @@ module HelpDoesNotReadConfigTests =
 
             standardOut |> should not' (contain "Elapsed:"))
 
+    /// Verifies that missing config in json equals mode emits one error document on stdout.
     [<Test>]
     let ``missing config in json equals mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output=Json"
                                                   "branch"
@@ -1758,9 +1895,11 @@ module HelpDoesNotReadConfigTests =
             assertJsonErrorOutput standardOut
             |> should contain "graceconfig.json")
 
+    /// Verifies that missing config in mixed case json equals mode emits one error document on stdout.
     [<Test>]
     let ``missing config in mixed-case json equals mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--OUTPUT=Json"
                                                   "branch"
@@ -1772,9 +1911,11 @@ module HelpDoesNotReadConfigTests =
             assertJsonErrorOutput standardOut
             |> should contain "graceconfig.json")
 
+    /// Verifies that earlier non json output token does not mask later json intent.
     [<Test>]
     let ``earlier non-json output token does not mask later json intent`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Normal"
@@ -1787,9 +1928,11 @@ module HelpDoesNotReadConfigTests =
 
             assertJsonErrorOutput standardOut |> ignore)
 
+    /// Verifies that malformed split output option does not mask later long json intent.
     [<Test>]
     let ``malformed split output option does not mask later long json intent`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "--output"
@@ -1802,9 +1945,11 @@ module HelpDoesNotReadConfigTests =
 
             assertJsonErrorOutput standardOut |> ignore)
 
+    /// Verifies that malformed split output option does not mask later short json intent.
     [<Test>]
     let ``malformed split output option does not mask later short json intent`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "-o"
                                                   "-o"
@@ -1817,9 +1962,11 @@ module HelpDoesNotReadConfigTests =
 
             assertJsonErrorOutput standardOut |> ignore)
 
+    /// Verifies that parse error in json mode emits one error document on stdout.
     [<Test>]
     let ``parse error in json mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1836,9 +1983,11 @@ module HelpDoesNotReadConfigTests =
             rootElement.GetProperty("Error").GetString()
             |> should contain "Unrecognized command or argument")
 
+    /// Verifies that parse error in json equals mode emits one error document on stdout.
     [<Test>]
     let ``parse error in json equals mode emits one error document on stdout`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output=Json"
                                                   "repository"
@@ -1851,9 +2000,11 @@ module HelpDoesNotReadConfigTests =
             assertJsonErrorOutput standardOut
             |> should contain "Unrecognized command or argument")
 
+    /// Verifies that short equals json output spelling emits json error envelope.
     [<Test>]
     let ``short equals json output spelling emits json error envelope`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "-o=Json"
                                                   "repository"
@@ -1865,9 +2016,11 @@ module HelpDoesNotReadConfigTests =
 
             assertJsonErrorOutput standardOut |> ignore)
 
+    /// Verifies that lowercase json value is rejected with json error envelope.
     [<Test>]
     let ``lowercase json value is rejected with json error envelope`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output=json"
                                                   "repository"
@@ -1879,11 +2032,13 @@ module HelpDoesNotReadConfigTests =
             assertJsonErrorOutput standardOut
             |> should contain "json")
 
+    /// Verifies that catch all exception in json mode emits one error document on stdout.
     [<Test>]
     let ``catch all exception in json mode emits one error document on stdout`` () =
         withTempDir (fun root ->
             writeInvalidConfig root
 
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1909,9 +2064,11 @@ module HelpDoesNotReadConfigTests =
 
             standardOut |> should not' (contain "Exception:"))
 
+    /// Verifies that missing config in human mode remains human oriented.
     [<Test>]
     let ``missing config in human mode remains human oriented`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, standardOut, _ =
                 runWithCapturedStdoutAndStderr [| "branch"
                                                   "get" |]
@@ -1925,6 +2082,7 @@ module HelpDoesNotReadConfigTests =
 
             standardOut |> should contain "graceconfig.json")
 
+    /// Verifies that verbose parse result shows resolved ids.
     [<Test>]
     let ``verbose parse result shows resolved ids`` () =
         withTempDir (fun root ->
@@ -1944,6 +2102,7 @@ module HelpDoesNotReadConfigTests =
             output |> should contain $"{repoId}"
             output |> should contain $"{branchId}")
 
+    /// Verifies that get normalized ids and names falls back to config ids.
     [<Test>]
     let ``getNormalizedIdsAndNames falls back to config ids`` () =
         withTempDir (fun root ->
@@ -1972,8 +2131,10 @@ open Spectre.Console
 open System
 open System.IO
 
+/// Groups root help grouping coverage for the CLI test project.
 [<NonParallelizable>]
 module RootHelpGroupingTests =
+    /// Exercises private behavior.
     type private GroupedHelpExpectation = { Args: string array; Headings: string list }
 
     let private groupedHelpExpectations =
@@ -2019,11 +2180,13 @@ module RootHelpGroupingTests =
             }
         ]
 
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Runs with captured output for test scenarios.
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -2037,6 +2200,7 @@ module RootHelpGroupingTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Runs the supplied action with file backup applied.
     let private withFileBackup (path: string) (action: unit -> unit) =
         let backupPath = path + ".testbackup"
         let hadExisting = File.Exists(path)
@@ -2052,6 +2216,7 @@ module RootHelpGroupingTests =
             elif File.Exists(path) then
                 File.Delete(path)
 
+    /// Runs the supplied action with grace user file backups applied.
     let private withGraceUserFileBackups (action: unit -> unit) =
         let configPath = UserConfiguration.getUserConfigurationPath ()
         let historyPath = HistoryStorage.getHistoryFilePath ()
@@ -2059,6 +2224,7 @@ module RootHelpGroupingTests =
 
         withFileBackup configPath (fun () -> withFileBackup historyPath (fun () -> withFileBackup lockPath action))
 
+    /// Builds slice between test data used to exercise CLI program behavior.
     let private sliceBetween (text: string) (startText: string) (endText: string) =
         let startIndex = text.IndexOf(startText, StringComparison.Ordinal)
         let endIndex = text.IndexOf(endText, StringComparison.Ordinal)
@@ -2068,9 +2234,11 @@ module RootHelpGroupingTests =
         else
             text
 
+    /// Verifies that root help groups commands.
     [<Test>]
     let ``root help groups commands`` () =
         withGraceUserFileBackups (fun () ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output = runWithCapturedOutput [||]
             exitCode |> should equal 0
 
@@ -2122,9 +2290,11 @@ module RootHelpGroupingTests =
             administration
             |> should not' (contain $"{Environment.NewLine}    access "))
 
+    /// Verifies that subcommand help is not grouped.
     [<Test>]
     let ``subcommand help is not grouped`` () =
         withGraceUserFileBackups (fun () ->
+            /// Verifies that the CLI program scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "branch"
                                          "-h" |]
@@ -2143,10 +2313,12 @@ module RootHelpGroupingTests =
 
             output |> should not' (contain "Local utilities:"))
 
+    /// Verifies that selected command helps are grouped.
     [<Test>]
     let ``selected command helps are grouped`` () =
         withGraceUserFileBackups (fun () ->
             for expectation in groupedHelpExpectations do
+                /// Verifies that the CLI program scenario exits with the expected process status.
                 let exitCode, output = runWithCapturedOutput expectation.Args
                 exitCode |> should equal 0
 
@@ -2162,9 +2334,11 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 
+/// Groups client identity coverage for the CLI test project.
 [<NonParallelizable>]
 module ClientIdentityTests =
 
+    /// Verifies that configure sdk client identity stamps cli client type with assembly file version.
     [<Test>]
     let ``configureSdkClientIdentity stamps CLI client type with assembly file version`` () =
         Grace.SDK.ClientIdentity.clear ()
@@ -2183,6 +2357,7 @@ module ClientIdentityTests =
         finally
             Grace.SDK.ClientIdentity.clear ()
 
+    /// Verifies that configured sdk client identity adds grace client headers.
     [<Test>]
     let ``configured SDK client identity adds Grace client headers`` () =
         Grace.SDK.ClientIdentity.clear ()

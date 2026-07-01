@@ -10,6 +10,7 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// SDK entry point for directory-version lookup and content traversal endpoints.
 type DirectoryVersion() =
     /// Retrieves a DirectoryVersion instance.
     static member public Get(parameters: GetParameters) =

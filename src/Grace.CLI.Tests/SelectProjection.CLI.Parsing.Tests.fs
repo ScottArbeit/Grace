@@ -5,11 +5,14 @@ open Grace.CLI
 open NUnit.Framework
 open System.Text.Json
 
+/// Groups select projection parsing coverage for the CLI test project.
 [<TestFixture>]
 module SelectProjectionParsingTests =
 
+    /// Parses representative arguments through the production CLI parser for CLI select Projection CLI assertions.
     let private parse selector = SelectProjection.tryParse "corr-select-parse" selector
 
+    /// Verifies that accepted simple property paths parse.
     [<TestCase("Value")>]
     [<TestCase("Owner.Name")>]
     [<TestCase("_links.Self")>]
@@ -19,6 +22,7 @@ module SelectProjectionParsingTests =
         | Ok _ -> ()
         | Error error -> Assert.Fail(error.Error)
 
+    /// Verifies that metadata paths are rejected.
     [<TestCase("Properties.CorrelationId")>]
     [<TestCase("properties.CorrelationId")>]
     [<TestCase("CorrelationId")>]
@@ -31,6 +35,7 @@ module SelectProjectionParsingTests =
             error.Error
             |> should contain "cannot read envelope metadata"
 
+    /// Verifies that malformed expression selectors are rejected.
     [<TestCase("")>]
     [<TestCase(" ")>]
     [<TestCase("Value ")>]
@@ -49,6 +54,7 @@ module SelectProjectionParsingTests =
             error.CorrelationId
             |> should equal "corr-select-parse"
 
+    /// Verifies that comma separated multi path selectors are rejected in v1.
     [<Test>]
     let ``comma-separated multi-path selectors are rejected in V1`` () =
         match parse "Value,Name" with
@@ -57,6 +63,7 @@ module SelectProjectionParsingTests =
             error.Error
             |> should contain "supports only dot-separated ReturnValue property names"
 
+    /// Verifies that project returns selected nested property.
     [<Test>]
     let ``project returns selected nested property`` () =
         match parse "Container.Value" with

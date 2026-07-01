@@ -9,6 +9,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Contains tests covering reference dto behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ReferenceDtoTests() =
 
@@ -23,6 +24,7 @@ type ReferenceDtoTests() =
     let rootSha256Hash = Sha256Hash "root-sha256"
     let rootBlake3Hash = Blake3Hash "root-blake3"
 
+    /// Builds a deterministic metadata fixture for the types reference assertions.
     let createMetadata principal timestamp =
         {
             Timestamp = timestamp
@@ -32,6 +34,7 @@ type ReferenceDtoTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Builds a deterministic created event fixture for the types reference assertions.
     let createdEvent principal =
         {
             Event =
@@ -51,6 +54,7 @@ type ReferenceDtoTests() =
             Metadata = createMetadata principal timestamp
         }
 
+    /// Verifies that created event with principal populates created by.
     [<Test>]
     member _.CreatedEventWithPrincipalPopulatesCreatedBy() =
         let updated = ReferenceDto.UpdateDto (createdEvent "alice@example.test") ReferenceDto.Default
@@ -61,11 +65,13 @@ type ReferenceDtoTests() =
         Assert.That(updated.CreatedBy, Is.EqualTo(Some "alice@example.test"))
         Assert.That(updated.CreatedAt, Is.EqualTo(timestamp))
 
+    /// Verifies that default reference dto uses explicit empty blake3 for legacy replay boundary.
     [<Test>]
     member _.DefaultReferenceDtoUsesExplicitEmptyBlake3ForLegacyReplayBoundary() =
         Assert.That(ReferenceDto.Default.Sha256Hash, Is.EqualTo(Sha256Hash String.Empty))
         Assert.That(ReferenceDto.Default.Blake3Hash, Is.EqualTo(Blake3Hash String.Empty))
 
+    /// Verifies that default and blank created principal keep created by missing.
     [<Test>]
     member _.DefaultAndBlankCreatedPrincipalKeepCreatedByMissing() =
         let updated = ReferenceDto.UpdateDto (createdEvent " ") ReferenceDto.Default
@@ -73,6 +79,7 @@ type ReferenceDtoTests() =
         Assert.That(ReferenceDto.Default.CreatedBy, Is.EqualTo(Option.None))
         Assert.That(updated.CreatedBy, Is.EqualTo(Option.None))
 
+    /// Verifies that json serialization writes nullable created by.
     [<Test>]
     member _.JsonSerializationWritesNullableCreatedBy() =
         let withCreator = ReferenceDto.UpdateDto (createdEvent "alice@example.test") ReferenceDto.Default
@@ -87,6 +94,7 @@ type ReferenceDtoTests() =
         let roundTripWithoutCreator = deserialize<ReferenceDto> withoutCreatorJson
         Assert.That(roundTripWithoutCreator.CreatedBy, Is.EqualTo(Option.None))
 
+    /// Verifies that update events do not overwrite created by.
     [<Test>]
     member _.UpdateEventsDoNotOverwriteCreatedBy() =
         let created = ReferenceDto.UpdateDto (createdEvent "alice@example.test") ReferenceDto.Default

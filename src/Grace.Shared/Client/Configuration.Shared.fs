@@ -12,13 +12,14 @@ open System.Text.Json
 open System.Text.Json.Serialization
 open System.Runtime.InteropServices
 
+/// Contains configuration helpers.
 module Configuration =
 
     let writeNewConfiguration = false
 
-    /// The global, client-side configuration object for Grace.
     // GraceConfiguration is implemented as a class, rather than a record, to allow for less brittle JSON serialization and deserialization of the configuration file.
     // Records don't handle missing values well during deserialization.
+    /// Represents grace configuration.
     type GraceConfiguration() =
         /// The OwnerId of the current repository.
         member val public OwnerId: OwnerId = OwnerId.Empty with get, set
@@ -86,10 +87,12 @@ module Configuration =
         [<JsonIgnore(Condition = JsonIgnoreCondition.Always)>]
         member val public IsPopulated = false with get, set
 
+        /// Returns the display representation for this value.
         override this.ToString() = serialize this
 
     let mutable private graceConfiguration = GraceConfiguration()
 
+    /// Writes the repository Grace configuration JSON to the specified config file path.
     let saveConfigFile graceConfigurationFilePath (graceConfiguration: GraceConfiguration) =
         try
             let json = serialize graceConfiguration
@@ -97,6 +100,7 @@ module Configuration =
         with
         | ex -> printfn $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
 
+    /// Walks upward from the current directory to locate the repository Grace configuration file.
     let private findGraceConfigurationFile () =
         try
             let mutable currentDirectory = DirectoryInfo(Environment.CurrentDirectory)
@@ -132,11 +136,13 @@ module Configuration =
         | :? System.IO.IOException as ex -> Error $"Exception while parsing directory paths: {ex.Message}"
         | ex -> Error $"Exception: {ex.Message}"
 
+    /// Reports whether a Grace configuration file can be found from the current directory.
     let configurationFileExists () =
         match findGraceConfigurationFile () with
         | Ok _ -> true
         | Error _ -> false
 
+    /// Parses configuration file.
     let private parseConfigurationFile graceConfigurationFilePath =
         try
             // Read configuration into a stream from file path specified by graceConfigurationFilePath
@@ -154,6 +160,7 @@ module Configuration =
         with
         | ex -> Error $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
 
+    /// Gets grace ignore entries.
     let private getGraceIgnoreEntries graceIgnorePath =
         if File.Exists(graceIgnorePath) then
             File.ReadAllLines(graceIgnorePath)
@@ -169,6 +176,7 @@ module Configuration =
         else
             Array.empty
 
+    /// Splits .graceignore entries into file and directory ignore patterns on a loaded configuration.
     let private populateGraceIgnoreFields (graceConfiguration: GraceConfiguration) graceIgnoreEntries =
         graceConfiguration.GraceIgnoreEntries <- graceIgnoreEntries
 
@@ -181,6 +189,7 @@ module Configuration =
             |> Array.where (fun graceIgnoreLine -> pathContainsSeparator graceIgnoreLine)
             |> Array.map (fun graceIgnoreLine -> $"*{graceIgnoreLine}")
 
+    /// Derives root, .grace, object-cache, and directory-version cache paths from the config file location.
     let private populateConfigurationPaths (graceConfigurationFilePath: string) (graceConfiguration: GraceConfiguration) =
         let graceConfigurationDirectory = Path.GetDirectoryName(graceConfigurationFilePath)
 
@@ -200,6 +209,7 @@ module Configuration =
 
         graceConfiguration
 
+    /// Loads ignore entries and derived paths, then marks the repository configuration as populated.
     let private populateDerivedFields graceConfigurationFilePath graceConfiguration =
         let graceConfiguration = populateConfigurationPaths graceConfigurationFilePath graceConfiguration
         let graceIgnoreFullPath = (Path.Combine(graceConfiguration.RootDirectory, Constants.GraceIgnoreFileName))
@@ -211,6 +221,7 @@ module Configuration =
         graceConfiguration.IsPopulated <- true
         graceConfiguration
 
+    /// Represents grace ignore inspection.
     type GraceIgnoreInspection =
         {
             Path: string
@@ -221,18 +232,22 @@ module Configuration =
             ErrorMessage: string option
         }
 
+    /// Represents the grace configuration inspection contract.
     type GraceConfigurationInspection = { Path: string; RootDirectory: string; Configuration: GraceConfiguration; Ignore: GraceIgnoreInspection }
 
+    /// Represents grace configuration inspection error.
     type GraceConfigurationInspectionError =
         | ConfigurationFileNotFound of string
         | ConfigurationFileMalformed of path: string * message: string
 
+    /// Attempts to get grace ignore entries.
     let private tryGetGraceIgnoreEntries graceIgnorePath =
         try
             Ok(getGraceIgnoreEntries graceIgnorePath)
         with
         | ex -> Error $"Exception: {ex.Message}{Environment.NewLine}Stack trace: {ex.StackTrace}"
 
+    /// Reads .graceignore from a repository root and returns parsed file, directory, and error details.
     let inspectGraceIgnore rootDirectory =
         let graceIgnorePath = Path.Combine(rootDirectory, Constants.GraceIgnoreFileName)
         let exists = File.Exists(graceIgnorePath)
@@ -255,6 +270,7 @@ module Configuration =
             ErrorMessage = errorMessage
         }
 
+    /// Attempts to inspect current directory configuration.
     let tryInspectCurrentDirectoryConfiguration () =
         match findGraceConfigurationFile () with
         | Error errorMessage -> Error(ConfigurationFileNotFound errorMessage)
@@ -269,6 +285,7 @@ module Configuration =
 
                 Ok { Path = graceConfigurationFilePath; RootDirectory = configuration.RootDirectory; Configuration = configuration; Ignore = ignore }
 
+    /// Builds default configuration file from the validated inputs used by this contract.
     let private createDefaultConfigurationFile () =
         let graceConfigurationFilePath = Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)
 
@@ -279,10 +296,12 @@ module Configuration =
         saveConfigFile graceConfigurationFilePath newConfiguration
         graceConfigurationFilePath, newConfiguration
 
+    /// Checks whether cached configuration still belongs to the current working directory tree.
     let private isCurrentDirectoryWithinRoot (rootDirectory: string) =
         if String.IsNullOrWhiteSpace rootDirectory then
             false
         else
+            /// Normalizes normalize.
             let normalize (path: string) =
                 Path
                     .GetFullPath(path)
@@ -294,6 +313,7 @@ module Configuration =
 
             normalizedCurrent.StartsWith(normalizedRoot, StringComparison.OrdinalIgnoreCase)
 
+    /// Gets grace configuration.
     let private getGraceConfiguration () =
         if graceConfiguration.IsPopulated
            && isCurrentDirectoryWithinRoot graceConfiguration.RootDirectory then
@@ -328,6 +348,7 @@ module Configuration =
     /// The current configuration of Grace in this repository.
     let Current () = getGraceConfiguration ()
 
+    /// Marks cached repository configuration as stale so the next read reloads it from disk.
     let resetConfiguration () = graceConfiguration.IsPopulated <- false
 
     /// Saves the Grace configuration file after updates. Makes a backup of the previous version of the file.
@@ -344,6 +365,7 @@ module Configuration =
 
         graceConfiguration <- newConfiguration
 
+    /// Contains colors helpers.
     module Colors =
         let themes =
             if configurationFileExists () then

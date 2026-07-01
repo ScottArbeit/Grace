@@ -3,12 +3,15 @@ namespace Grace.Shared.Parameters
 open Grace.Shared.Parameters.Common
 open System
 
+/// Contains review helpers.
 module Review =
+    /// Contains candidate identity modes helpers.
     [<RequireQualifiedAccess>]
     module CandidateIdentityModes =
         [<Literal>]
         let DirectPromotionSetProjection = "DirectPromotionSetProjection"
 
+    /// Contains projection source states helpers.
     [<RequireQualifiedAccess>]
     module ProjectionSourceStates =
         [<Literal>]

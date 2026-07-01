@@ -9,13 +9,16 @@ open Spectre.Console
 open System
 open System.IO
 
+/// Groups connect coverage for the CLI test project.
 [<NonParallelizable>]
 module ConnectTests =
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Runs with captured output for test scenarios.
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -29,6 +32,7 @@ module ConnectTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Runs the supplied action with temp dir applied.
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-cli-tests-{Guid.NewGuid():N}")
         Directory.CreateDirectory(tempDir) |> ignore
@@ -46,17 +50,21 @@ module ConnectTests =
                 with
                 | _ -> ()
 
+    /// Gets grace config path needed by the test scenario.
     let private getGraceConfigPath root = Path.Combine(root, ".grace", "graceconfig.json")
 
+    /// Verifies that connect creates config when missing.
     [<Test>]
     let ``connect creates config when missing`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI connect scenario exits with the expected process status.
             let exitCode, _ = runWithCapturedOutput [| "connect" |]
             exitCode |> should equal -1
 
             File.Exists(getGraceConfigPath root)
             |> should equal true)
 
+    /// Verifies that connect skip decision requires matching blake3 when remote has one.
     [<Test>]
     let ``connect skip decision requires matching blake3 when remote has one`` () =
         let remoteFile =
@@ -74,6 +82,7 @@ module ConnectTests =
         Connect.existingFileMatchesRemoteVersion (Sha256Hash "shared-sha") (Blake3Hash "remote-blake3") remoteFile
         |> should equal true
 
+    /// Verifies that connect skip decision keeps legacy empty blake3 remote compatible.
     [<Test>]
     let ``connect skip decision keeps legacy empty blake3 remote compatible`` () =
         let remoteFile = FileVersion.Create (RelativePath "legacy-sha-only.txt") (Sha256Hash "legacy-sha") String.Empty false 10L

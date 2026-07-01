@@ -9,6 +9,7 @@ open System
 /// Checks the incoming request for an X-Correlation-Id header. If there's no CorrelationId header, it generates one and adds it to the response headers.
 type CorrelationIdMiddleware(next: RequestDelegate) =
 
+    /// Ensures each request has a correlation id available in headers and `HttpContext.Items`.
     member this.Invoke(context: HttpContext) =
 
         // -----------------------------------------------------------------------------------------------------

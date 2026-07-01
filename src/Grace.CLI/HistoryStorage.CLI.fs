@@ -14,6 +14,7 @@ open System.Text.Json
 open System.Text.RegularExpressions
 open System.Threading
 
+/// Groups the history storage command parser, handlers, and output helpers.
 module HistoryStorage =
 
     [<Literal>]
@@ -24,8 +25,10 @@ module HistoryStorage =
         options.WriteIndented <- false
         options
 
+    /// Defines structured data exchanged by CLI helpers.
     type Redaction = { kind: string; name: string; argIndex: int; originalLength: int option; placeholder: string }
 
+    /// Models history entry values passed between the parser and history storage handlers.
     type HistoryEntry =
         {
             id: Guid
@@ -45,8 +48,10 @@ module HistoryStorage =
             source: string option
         }
 
+    /// Defines structured data exchanged by CLI helpers.
     type ReadResult = { Entries: HistoryEntry list; CorruptCount: int }
 
+    /// Models record input values passed between the parser and history storage handlers.
     type RecordInput =
         {
             argvOriginal: string array
@@ -73,24 +78,29 @@ module HistoryStorage =
             750
         |]
 
+    /// Reads history file path from ParseResult, local configuration, or Grace ids.
     let getHistoryFilePath () =
         let userGraceDir = UserConfiguration.getUserGraceDirectory ()
         Path.Combine(userGraceDir, "history.jsonl")
 
+    /// Reads history lock path from ParseResult, local configuration, or Grace ids.
     let getHistoryLockPath () =
         let userGraceDir = UserConfiguration.getUserGraceDirectory ()
         Path.Combine(userGraceDir, "history.lock")
 
+    /// Ensures required command context is present.
     let private ensureHistoryDirectory () =
         UserConfiguration.ensureUserGraceDirectory ()
         |> ignore
 
+    /// Reads grace version from ParseResult, local configuration, or Grace ids.
     let private getGraceVersion () =
         try
             BuildInfo.current().InformationalVersion
         with
         | _ -> Constants.CurrentConfigurationVersion
 
+    /// Tries to map acquire lock and returns a GraceError instead of throwing on unsupported input.
     let private tryAcquireLock () =
         ensureHistoryDirectory ()
         let lockPath = getHistoryLockPath ()
@@ -107,6 +117,7 @@ module HistoryStorage =
 
         acquired
 
+    /// Shapes local command-history with history lock data for persistence or display.
     let private withHistoryLock (onLocked: unit -> 'T) (onFailure: unit -> 'T) =
         match tryAcquireLock () with
         | Some stream ->
@@ -116,6 +127,7 @@ module HistoryStorage =
                 stream.Dispose()
         | None -> onFailure ()
 
+    /// Shapes local command-history quote arg data for persistence or display.
     let private quoteArg (arg: string) =
         if String.IsNullOrEmpty(arg) then
             "\"\""
@@ -124,8 +136,10 @@ module HistoryStorage =
         else
             arg
 
+    /// Builds command objects or parameters for execution.
     let buildCommandLine (argv: string array) = argv |> Array.map quoteArg |> String.concat " "
 
+    /// Tries to map find repo root and returns a GraceError instead of throwing on unsupported input.
     let tryFindRepoRoot (startDirectory: string) =
         try
             let mutable current = DirectoryInfo(startDirectory)
@@ -143,6 +157,7 @@ module HistoryStorage =
         with
         | _ -> None
 
+    /// Tries to map parse duration and returns a GraceError instead of throwing on unsupported input.
     let tryParseDuration (value: string) =
         if String.IsNullOrWhiteSpace(value) then
             Error "Duration cannot be empty."
@@ -161,6 +176,7 @@ module HistoryStorage =
                 | _ -> Error "Duration must end with s, m, h, or d."
             | _ -> Error "Duration must be a number followed by s, m, h, or d."
 
+    /// Tries to map get repo name and returns a GraceError instead of throwing on unsupported input.
     let private tryGetRepoName (repoRoot: string option) =
         match repoRoot with
         | Some root when not <| String.IsNullOrWhiteSpace(root) ->
@@ -171,10 +187,12 @@ module HistoryStorage =
             | _ -> None
         | _ -> None
 
+    /// Evaluates has git metadata against parsed options and command state.
     let private hasGitMetadata (repoRoot: string) =
         let gitPath = Path.Combine(repoRoot, ".git")
         Directory.Exists(gitPath) || File.Exists(gitPath)
 
+    /// Tries to map get git branch and returns a GraceError instead of throwing on unsupported input.
     let private tryGetGitBranch (repoRoot: string option) =
         match repoRoot with
         | Some root when
@@ -219,6 +237,7 @@ module HistoryStorage =
             | _ -> None
         | _ -> None
 
+    /// Builds command objects or parameters for execution.
     let private buildSensitiveOptionSet (historyConfig: UserConfiguration.HistoryConfiguration) =
         let names = HashSet<string>(StringComparer.InvariantCultureIgnoreCase)
 
@@ -231,6 +250,7 @@ module HistoryStorage =
 
         names
 
+    /// Builds command objects or parameters for execution.
     let private buildRegexes (patterns: string array) =
         let regexes = ResizeArray<Regex>()
 
@@ -251,6 +271,7 @@ module HistoryStorage =
 
         regexes |> Seq.toList
 
+    /// Shapes local command-history redact options data for persistence or display.
     let private redactOptions (args: string array) (sensitiveOptions: HashSet<string>) =
         let redactions = ResizeArray<Redaction>()
         let redacted = Array.copy args
@@ -299,6 +320,7 @@ module HistoryStorage =
 
         redacted, redactions |> Seq.toList
 
+    /// Shapes local command-history apply regex redactions data for persistence or display.
     let private applyRegexRedactions (args: string array) (regexes: Regex list) =
         let redactions = ResizeArray<Redaction>()
         let redacted = Array.copy args
@@ -330,6 +352,7 @@ module HistoryStorage =
 
         redacted, redactions |> Seq.toList
 
+    /// Shapes local command-history redact arguments data for persistence or display.
     let redactArguments (args: string array) (historyConfig: UserConfiguration.HistoryConfiguration) =
         if isNull args then
             Array.empty, List.empty
@@ -341,6 +364,7 @@ module HistoryStorage =
             let fullyRedacted, regexRedactions = applyRegexRedactions redactedAfterOptions regexes
             fullyRedacted, (optionRedactions @ regexRedactions)
 
+    /// Reads history entries data needed by the CLI workflow.
     let readHistoryEntries () =
         ensureHistoryDirectory ()
         let path = getHistoryFilePath ()
@@ -384,12 +408,14 @@ module HistoryStorage =
 
             result
 
+    /// Writes history entries data through the CLI output contract.
     let private writeHistoryEntries (entries: HistoryEntry list) =
         ensureHistoryDirectory ()
         let historyPath = getHistoryFilePath ()
         let tempPath = historyPath + ".tmp"
         let backupPath = historyPath + ".bak"
 
+        /// Tries to map delete file and returns a GraceError instead of throwing on unsupported input.
         let tryDeleteFile (path: string) =
             let mutable attempts = 0
             let mutable deleted = false
@@ -438,6 +464,7 @@ module HistoryStorage =
 
         if not replaced then tryDeleteFile tempPath
 
+    /// Shapes local command-history prune if needed data for persistence or display.
     let private pruneIfNeeded (historyConfig: UserConfiguration.HistoryConfiguration) =
         let historyPath = getHistoryFilePath ()
         let fileInfo = FileInfo(historyPath)
@@ -492,6 +519,7 @@ module HistoryStorage =
 
         readResult
 
+    /// Records append history entry information in the local command-history store.
     let private appendHistoryEntry (entry: HistoryEntry) (historyConfig: UserConfiguration.HistoryConfiguration) =
         ensureHistoryDirectory ()
         let historyPath = getHistoryFilePath ()
@@ -506,6 +534,7 @@ module HistoryStorage =
 
         pruneIfNeeded historyConfig |> ignore
 
+    /// Tries to map get top level command and returns a GraceError instead of throwing on unsupported input.
     let private tryGetTopLevelCommand (tokens: string array) =
         if isNull tokens || tokens.Length = 0 then
             None
@@ -516,6 +545,7 @@ module HistoryStorage =
                 else
                     StringComparison.InvariantCulture
 
+            /// Evaluates is option with value against parsed options and command state.
             let isOptionWithValue (token: string) =
                 token.Equals(OptionName.Output, comparison)
                 || token.Equals("-o", comparison)
@@ -523,6 +553,7 @@ module HistoryStorage =
                 || token.Equals("-c", comparison)
                 || token.Equals(OptionName.Source, comparison)
 
+            /// Shapes local command-history rec data for persistence or display.
             let rec loop index =
                 if index >= tokens.Length then
                     None
@@ -539,10 +570,12 @@ module HistoryStorage =
 
             loop 0
 
+    /// Normalizes Grace ids for source option by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeSourceOption (value: string option) =
         value
         |> Option.bind (fun source -> if String.IsNullOrWhiteSpace(source) then None else Some(source.Trim()))
 
+    /// Records should record information in the local command-history store.
     let shouldRecord (input: RecordInput) (historyConfig: UserConfiguration.HistoryConfiguration) =
         if not historyConfig.Enabled then
             false
@@ -561,6 +594,7 @@ module HistoryStorage =
             else
                 true
 
+    /// Records record invocation information in the local command-history store.
     let recordInvocation (input: RecordInput) =
         let loadResult = UserConfiguration.loadUserConfiguration ()
 
@@ -597,10 +631,12 @@ module HistoryStorage =
 
             Some(entry, loadResult.Configuration.History)
 
+    /// Tries to map record invocation and returns a GraceError instead of throwing on unsupported input.
     let tryRecordInvocation (input: RecordInput) =
         match recordInvocation input with
         | None -> ()
         | Some (entry, historyConfig) ->
+            /// Shapes local command-history on failure data for persistence or display.
             let onFailure () = Console.Error.WriteLine("Grace history: failed to acquire history lock; skipping history recording.")
 
             withHistoryLock
@@ -609,7 +645,9 @@ module HistoryStorage =
                     ())
                 onFailure
 
+    /// Clears inherited history values so explicitly scoped access commands do not target child resources accidentally.
     let clearHistory () =
+        /// Shapes local command-history on failure data for persistence or display.
         let onFailure () = Error "Grace history: failed to acquire history lock."
 
         withHistoryLock
@@ -629,6 +667,7 @@ module HistoryStorage =
                 Ok removedCount)
             onFailure
 
+    /// Evaluates is destructive against parsed options and command state.
     let isDestructive (commandLine: string) (historyConfig: UserConfiguration.HistoryConfiguration) =
         let patterns = historyConfig.DestructiveTokenRegexes
         let regexes = buildRegexes patterns

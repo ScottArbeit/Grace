@@ -5,6 +5,7 @@ open Grace.Types.Common
 open System
 open System.Collections.Generic
 
+/// Contains repository helpers.
 module Repository =
 
     /// Parameters for many endpoints in the /repository path.
@@ -106,6 +107,7 @@ module Repository =
         member val public Force = false with get, set
         member val public DeleteReason = String.Empty with get, set
 
+    /// Represents enable promotion type parameters.
     type EnablePromotionTypeParameters() =
         inherit RepositoryParameters()
         member val public Enabled = false with get, set

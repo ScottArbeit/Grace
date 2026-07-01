@@ -14,23 +14,28 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for manifest contribution workflow keys, proxies, state, or workflow transitions.
 module ManifestContributionWorkflow =
 
+    /// Coordinates primary key logic for the ManifestContributionWorkflow actor.
     let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
+    /// Maps a ManifestContributionWorkflow command case to the operation name used in idempotency and diagnostics.
     let commandName command =
         match command with
         | ManifestContributionWorkflowCommand.Start _ -> "Start"
         | ManifestContributionWorkflowCommand.RecordRangeSucceeded _ -> "RecordRangeSucceeded"
         | ManifestContributionWorkflowCommand.RecordRangeFailed _ -> "RecordRangeFailed"
 
+    /// Extracts the client operation id that lets command retries match previously emitted events.
     let operationId command =
         match command with
         | ManifestContributionWorkflowCommand.Start (operationId, _, _, _, _, _) -> operationId
         | ManifestContributionWorkflowCommand.RecordRangeSucceeded (operationId, _, _, _, _) -> operationId
         | ManifestContributionWorkflowCommand.RecordRangeFailed (operationId, _, _, _, _, _) -> operationId
 
+    /// Coordinates start command payload logic for the ManifestContributionWorkflow actor.
     let private startCommandPayload operationId repositoryId storagePoolId manifestAddress direction ranges =
         {
             OperationId = operationId
@@ -41,9 +46,11 @@ module ManifestContributionWorkflow =
             Ranges = ranges
         }
 
+    /// Coordinates progress command payload logic for the ManifestContributionWorkflow actor.
     let private progressCommandPayload operationId repositoryId storagePoolId manifestAddress range =
         { OperationId = operationId; RepositoryId = repositoryId; StoragePoolId = storagePoolId; ManifestAddress = manifestAddress; Range = range }
 
+    /// Coordinates failure command payload logic for the ManifestContributionWorkflow actor.
     let private failureCommandPayload operationId repositoryId storagePoolId manifestAddress range message =
         {
             OperationId = operationId
@@ -54,22 +61,26 @@ module ManifestContributionWorkflow =
             Message = message
         }
 
+    /// Coordinates event operation id logic for the ManifestContributionWorkflow actor.
     let private eventOperationId workflowEvent =
         match workflowEvent.Event with
         | ManifestContributionWorkflowEventType.WorkflowStarted start -> start.OperationId
         | ManifestContributionWorkflowEventType.RangeSucceeded progress -> progress.OperationId
         | ManifestContributionWorkflowEventType.RangeFailed failure -> failure.OperationId
 
+    /// Coordinates event command name logic for the ManifestContributionWorkflow actor.
     let private eventCommandName workflowEvent =
         match workflowEvent.Event with
         | ManifestContributionWorkflowEventType.WorkflowStarted _ -> "Start"
         | ManifestContributionWorkflowEventType.RangeSucceeded _ -> "RecordRangeSucceeded"
         | ManifestContributionWorkflowEventType.RangeFailed _ -> "RecordRangeFailed"
 
+    /// Coordinates ranges equal logic for the ManifestContributionWorkflow actor.
     let private rangesEqual left right =
         Array.length left = Array.length right
         && Seq.forall2 (=) left right
 
+    /// Coordinates start matches logic for the ManifestContributionWorkflow actor.
     let private startMatches (existing: StartManifestContributionWorkflow) (candidate: StartManifestContributionWorkflow) =
         existing.RepositoryId = candidate.RepositoryId
         && existing.StoragePoolId = candidate.StoragePoolId
@@ -77,6 +88,7 @@ module ManifestContributionWorkflow =
         && existing.Direction = candidate.Direction
         && rangesEqual existing.Ranges candidate.Ranges
 
+    /// Coordinates event matches command logic for the ManifestContributionWorkflow actor.
     let private eventMatchesCommand workflowEvent command =
         match workflowEvent.Event, command with
         | ManifestContributionWorkflowEventType.WorkflowStarted existing,
@@ -90,24 +102,30 @@ module ManifestContributionWorkflow =
             existing = failureCommandPayload operationId repositoryId storagePoolId manifestAddress range message
         | _ -> false
 
+    /// Attempts to find applied operation and returns no value when the required invariant is not met.
     let private tryFindAppliedOperation (events: seq<ManifestContributionWorkflowEvent>) operationId =
         events
         |> Seq.tryFind (fun workflowEvent -> eventOperationId workflowEvent = operationId)
 
+    /// Applies events changes to the ManifestContributionWorkflow actor state.
     let private applyEvents (events: ManifestContributionWorkflowEvent list) (workflow: ManifestContributionWorkflowDto) =
         events
         |> List.fold (fun current event -> ManifestContributionWorkflowDto.UpdateDto event current) workflow
 
+    /// Coordinates pending ranges logic for the ManifestContributionWorkflow actor.
     let pendingRanges (workflow: ManifestContributionWorkflowDto) =
         workflow.Ranges
         |> Array.filter (fun range -> not (workflow.CompletedRanges.ContainsKey range))
 
+    /// Checks whether blocks unsafe deletion is true for the ManifestContributionWorkflow actor state.
     let blocksUnsafeDeletion (workflow: ManifestContributionWorkflowDto) range =
         workflow.LifecycleState = ManifestContributionWorkflowLifecycleState.InProgress
         && pendingRanges workflow |> Array.exists ((=) range)
 
+    /// Checks whether the contribution range belongs to the active workflow.
     let private isKnownRange (workflow: ManifestContributionWorkflowDto) range = workflow.Ranges |> Array.exists ((=) range)
 
+    /// Coordinates target mismatch logic for the ManifestContributionWorkflow actor.
     let private targetMismatch (workflow: ManifestContributionWorkflowDto) (repositoryId: RepositoryId) storagePoolId (manifestAddress: ManifestAddress) =
         (workflow.RepositoryId <> RepositoryId.Empty
          && workflow.RepositoryId <> repositoryId)
@@ -116,16 +134,19 @@ module ManifestContributionWorkflow =
         || (not (String.IsNullOrWhiteSpace workflow.ManifestAddress)
             && workflow.ManifestAddress <> manifestAddress)
 
+    /// Coordinates expected primary key mismatch logic for the ManifestContributionWorkflow actor.
     let private expectedPrimaryKeyMismatch expectedPrimaryKey (repositoryId: RepositoryId) storagePoolId (manifestAddress: ManifestAddress) =
         match expectedPrimaryKey with
         | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId storagePoolId manifestAddress, StringComparison.Ordinal))
         | None -> false
 
+    /// Coordinates active count delta logic for the ManifestContributionWorkflow actor.
     let private activeCountDelta direction =
         match direction with
         | ManifestContributionDirection.Increment -> 1
         | ManifestContributionDirection.Decrement -> -1
 
+    /// Coordinates ok decision logic for the ManifestContributionWorkflow actor.
     let private okDecision workflow operationId events intents wasReplay message =
         Ok
             {
@@ -137,8 +158,10 @@ module ManifestContributionWorkflow =
                 Message = message
             }
 
+    /// Coordinates grace error logic for the ManifestContributionWorkflow actor.
     let private graceError correlationId message = GraceError.Create message correlationId
 
+    /// Validates range before the operation continues.
     let private validateRange correlationId (range: ManifestContributionWorkflowRange) =
         if String.IsNullOrWhiteSpace range.StoragePoolId then
             Some(graceError correlationId "ManifestContributionWorkflow range requires a non-empty StoragePoolId.")
@@ -151,6 +174,7 @@ module ManifestContributionWorkflow =
         else
             None
 
+    /// Validates start range before the operation continues.
     let private validateStartRange correlationId storagePoolId range =
         match validateRange correlationId range with
         | Some error -> Some error
@@ -162,6 +186,7 @@ module ManifestContributionWorkflow =
             )
         | None -> None
 
+    /// Checks whether the workflow start request repeats a contribution range.
     let private hasDuplicateRanges (ranges: ManifestContributionWorkflowRange array) =
         let seen = HashSet<ManifestContributionWorkflowRange>()
 
@@ -285,8 +310,10 @@ module ManifestContributionWorkflow =
 
                             okDecision workflow operationId [ workflowEvent ] [] false "Manifest contribution workflow range failure recorded."
 
+    /// Validates a ManifestContributionWorkflow command and derives the events needed for a state transition.
     let decideCommand events workflow command metadata = decideCommandForKey None events workflow command metadata
 
+    /// Implements the Orleans grain for manifest contribution workflow actor.
     type ManifestContributionWorkflowActor
         (
             [<PersistentState(StateName.ManifestContributionWorkflow, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<List<ManifestContributionWorkflowEvent>>
@@ -295,6 +322,7 @@ module ManifestContributionWorkflow =
 
         let log = loggerFactory.CreateLogger("ManifestContributionWorkflow.Actor")
         let mutable workflow = ManifestContributionWorkflowDto.Default
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -307,6 +335,7 @@ module ManifestContributionWorkflow =
 
             Task.CompletedTask
 
+        /// Replays persisted ManifestContributionWorkflow events into an in-memory state snapshot.
         member private this.ApplyEvents(events: ManifestContributionWorkflowEvent list) =
             task {
                 state.State.AddRange(events)
@@ -315,11 +344,13 @@ module ManifestContributionWorkflow =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this ManifestContributionWorkflow actor state.
             member this.GetRepositoryId correlationId =
                 this.correlationId <- correlationId
                 workflow.RepositoryId |> returnTask
 
         interface IManifestContributionWorkflowActor with
+            /// Reports whether this ManifestContributionWorkflow actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -328,24 +359,29 @@ module ManifestContributionWorkflow =
                  && not (String.IsNullOrWhiteSpace workflow.ManifestAddress))
                 |> returnTask
 
+            /// Returns the current ManifestContributionWorkflow actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 workflow |> returnTask
 
+            /// Returns pending ranges data from the ManifestContributionWorkflow actor state or related storage.
             member this.GetPendingRanges correlationId =
                 this.correlationId <- correlationId
                 pendingRanges workflow |> returnTask
 
+            /// Checks whether blocks unsafe deletion is true for the ManifestContributionWorkflow actor state.
             member this.BlocksUnsafeDeletion range correlationId =
                 this.correlationId <- correlationId
                 blocksUnsafeDeletion workflow range |> returnTask
 
+            /// Returns the persisted ManifestContributionWorkflow event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<ManifestContributionWorkflowEvent>)
                 |> returnTask
 
+            /// Coordinates start logic for the ManifestContributionWorkflow actor.
             member this.Start operationId repositoryId storagePoolId manifestAddress direction ranges metadata =
                 task {
                     return!
@@ -355,6 +391,7 @@ module ManifestContributionWorkflow =
                             metadata
                 }
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 task {
                     this.correlationId <- metadata.CorrelationId

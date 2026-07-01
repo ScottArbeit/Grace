@@ -18,11 +18,14 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for validation result keys, proxies, state, or workflow transitions.
 module ValidationResult =
+    /// Checks whether the request correlation id already appears in persisted events.
     let internal hasDuplicateCorrelationId (events: seq<ValidationResultEvent>) (metadata: EventMetadata) =
         events
         |> Seq.exists (fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
 
+    /// Implements the Orleans grain for validation result actor.
     type ValidationResultActor
         (
             [<PersistentState(StateName.ValidationResult, Constants.GraceActorStorage)>] state: IPersistentState<List<ValidationResultEvent>>
@@ -35,6 +38,7 @@ module ValidationResult =
         let mutable currentCommand = String.Empty
         let mutable validationResult = ValidationResultDto.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -48,6 +52,7 @@ module ValidationResult =
 
             Task.CompletedTask
 
+        /// Applies one persisted ValidationResult event to this activation's in-memory state.
         member private this.ApplyEvent(validationResultEvent: ValidationResultEvent) =
             task {
                 let correlationId = validationResultEvent.Metadata.CorrelationId
@@ -89,9 +94,11 @@ module ValidationResult =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this ValidationResult actor state.
             member this.GetRepositoryId correlationId = validationResult.RepositoryId |> returnTask
 
         interface IValidationResultActor with
+            /// Reports whether this ValidationResult actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -99,6 +106,7 @@ module ValidationResult =
                 <| validationResult.ValidationResultId.Equals(ValidationResultId.Empty)
                 |> returnTask
 
+            /// Returns the current ValidationResult actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
 
@@ -108,13 +116,16 @@ module ValidationResult =
                     Some validationResult
                 |> returnTask
 
+            /// Returns the persisted ValidationResult event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 state.State :> IReadOnlyList<ValidationResultEvent>
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (validationResultCommand: ValidationResultCommand) (eventMetadata: EventMetadata) =
                     task {
                         if hasDuplicateCorrelationId state.State eventMetadata then
@@ -124,6 +135,7 @@ module ValidationResult =
                             | ValidationResultCommand.Record _ -> return Ok validationResultCommand
                     }
 
+                /// Runs ValidationResult command decisions, applies emitted events, and persists the result.
                 let processCommand (validationResultCommand: ValidationResultCommand) (eventMetadata: EventMetadata) =
                     task {
                         let eventType =

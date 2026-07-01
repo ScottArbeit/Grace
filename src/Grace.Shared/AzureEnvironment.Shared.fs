@@ -3,14 +3,18 @@ namespace Grace.Shared
 open System
 open System.Collections.Generic
 
+/// Contains azure environment helpers.
 module AzureEnvironment =
 
+    /// Represents the storage endpoints contract.
     type StorageEndpoints = { BlobEndpoint: Uri; QueueEndpoint: Uri; TableEndpoint: Uri; AccountName: string; ConnectionString: string option }
 
+    /// Attempts to get env.
     let private tryGetEnv (name: string) =
         let value = Environment.GetEnvironmentVariable(name)
         if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
+    /// Parses connection string.
     let private parseConnectionString (value: string option) =
         let dictionary = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 
@@ -28,6 +32,7 @@ module AzureEnvironment =
 
             dictionary
 
+    /// Attempts to get value.
     let private tryGetValue key (dictionary: Dictionary<string, string>) =
         match dictionary.TryGetValue(key) with
         | true, value when not (String.IsNullOrWhiteSpace value) -> Some(value.Trim())
@@ -61,6 +66,7 @@ module AzureEnvironment =
         useManagedIdentity
         && serviceBusConnectionStringValue.IsNone
 
+    /// Gets storage account name.
     let private getStorageAccountName () =
         tryGetEnv Constants.EnvironmentVariables.AzureStorageAccountName
         |> Option.orElse (tryGetValue "AccountName" storageSegments)
@@ -70,15 +76,18 @@ module AzureEnvironment =
                 invalidOp "Azure Storage account name must be provided via grace__azure_storage__account_name when using a managed identity."
             | None -> Constants.DefaultObjectStorageAccount
 
+    /// Gets storage endpoint suffix.
     let private getStorageEndpointSuffix () =
         tryGetEnv Constants.EnvironmentVariables.AzureStorageEndpointSuffix
         |> Option.orElse (tryGetValue "EndpointSuffix" storageSegments)
         |> Option.defaultValue "core.windows.net"
 
+    /// Ensures configured Azure endpoint values are absolute URIs before clients use them.
     let private ensureUri (value: string) =
         let trimmed = value.Trim().TrimEnd('/')
         Uri(trimmed, UriKind.Absolute)
 
+    /// Builds storage uri.
     let private buildStorageUri service endpointKey =
         match tryGetValue endpointKey storageSegments with
         | Some endpoint -> ensureUri (endpoint)
@@ -102,6 +111,7 @@ module AzureEnvironment =
 
     let cosmosConnectionString = cosmosConnectionStringValue
 
+    /// Attempts to get cosmos endpoint uri.
     let tryGetCosmosEndpointUri () =
         tryGetEnv Constants.EnvironmentVariables.AzureCosmosDBEndpoint
         |> Option.map ensureUri
@@ -110,8 +120,10 @@ module AzureEnvironment =
             |> Option.map ensureUri
         )
 
+    /// Attempts to get service bus connection string.
     let tryGetServiceBusConnectionString () = serviceBusConnectionStringValue
 
+    /// Normalizes service bus namespace.
     let private normalizeServiceBusNamespace (value: string) =
         let trimmed = value.Trim()
 
@@ -128,6 +140,7 @@ module AzureEnvironment =
         else
             $"{normalizedNamespace}.servicebus.windows.net"
 
+    /// Attempts to get service bus fully qualified namespace.
     let tryGetServiceBusFullyQualifiedNamespace () =
         match tryGetEnv Constants.EnvironmentVariables.AzureServiceBusNamespace with
         | Some value -> Some(normalizeServiceBusNamespace value)

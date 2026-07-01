@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.PromotionSet
 open System
 
+/// Contains promotion set helpers.
 module PromotionSet =
     /// Base parameters for promotion-set endpoints.
     type PromotionSetParameters() =

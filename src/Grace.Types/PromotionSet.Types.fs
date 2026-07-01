@@ -15,8 +15,10 @@ open System.Text
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Contains promotion set helpers.
 module PromotionSet =
 
+    /// Represents promotion set status.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type PromotionSetStatus =
         | Ready
@@ -25,8 +27,10 @@ module PromotionSet =
         | Failed
         | Blocked
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PromotionSetStatus>()
 
+    /// Represents steps computation status.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type StepsComputationStatus =
         | NotComputed
@@ -34,8 +38,10 @@ module PromotionSet =
         | Computed
         | ComputeFailed
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<StepsComputationStatus>()
 
+    /// Represents step conflict status.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type StepConflictStatus =
         | NoConflicts
@@ -43,22 +49,28 @@ module PromotionSet =
         | BlockedPendingReview
         | Failed
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<StepConflictStatus>()
 
+    /// Represents conflict resolution method.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ConflictResolutionMethod =
         | None
         | ModelSuggested
         | ManualOverride
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionMethod>()
 
+    /// Represents the conflict resolution outcome contract.
     [<GenerateSerializer>]
     type ConflictResolutionOutcome = { ModelResolution: string; Confidence: float; Accepted: bool option }
 
+    /// Represents the conflict hunk contract.
     [<GenerateSerializer>]
     type ConflictHunk = { StartLine: int; EndLine: int; OursContent: string; TheirsContent: string }
 
+    /// Represents conflict analysis.
     [<GenerateSerializer>]
     type ConflictAnalysis =
         {
@@ -68,12 +80,15 @@ module PromotionSet =
             ResolutionMethod: ConflictResolutionMethod
         }
 
+    /// Represents the conflict resolution decision contract.
     [<GenerateSerializer>]
     type ConflictResolutionDecision = { FilePath: string; Accepted: bool; OverrideContentArtifactId: ArtifactId option }
 
+    /// Represents the promotion pointer contract.
     [<GenerateSerializer>]
     type PromotionPointer = { BranchId: BranchId; ReferenceId: ReferenceId; DirectoryVersionId: DirectoryVersionId }
 
+    /// Represents promotion set approval policy snapshot.
     [<CLIMutable; GenerateSerializer>]
     type PromotionSetApprovalPolicySnapshot =
         {
@@ -88,6 +103,7 @@ module PromotionSet =
             TimeoutSeconds: int option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 ApprovalPolicyId = Guid.Empty
@@ -101,6 +117,7 @@ module PromotionSet =
                 TimeoutSeconds = Option.None
             }
 
+    /// Represents promotion set step.
     [<GenerateSerializer>]
     type PromotionSetStep =
         {
@@ -115,6 +132,7 @@ module PromotionSet =
             ConflictStatus: StepConflictStatus
         }
 
+    /// Represents promotion set dto.
     [<GenerateSerializer>]
     type PromotionSetDto =
         {
@@ -139,6 +157,7 @@ module PromotionSet =
             DeleteReason: DeleteReason
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof PromotionSetDto
@@ -162,6 +181,7 @@ module PromotionSet =
                 DeleteReason = String.Empty
             }
 
+    /// Represents promotion set command.
     [<KnownType("GetKnownTypes")>]
     type PromotionSetCommand =
         | CreatePromotionSet of
@@ -176,8 +196,10 @@ module PromotionSet =
         | Apply of approvalPolicies: PromotionSetApprovalPolicySnapshot list
         | DeleteLogical of force: bool * deleteReason: DeleteReason
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PromotionSetCommand>()
 
+    /// Represents promotion set event type.
     [<KnownType("GetKnownTypes")>]
     type PromotionSetEventType =
         | Created of promotionSetId: PromotionSetId * ownerId: OwnerId * organizationId: OrganizationId * repositoryId: RepositoryId * targetBranchId: BranchId
@@ -191,11 +213,15 @@ module PromotionSet =
         | ApplyFailed of reason: string
         | LogicalDeleted of force: bool * deleteReason: DeleteReason
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PromotionSetEventType>()
 
+    /// Represents the promotion set event contract.
     type PromotionSetEvent = { Event: PromotionSetEventType; Metadata: EventMetadata }
 
+    /// Contains promotion set dto helpers.
     module PromotionSetDto =
+        /// Carries optional promotion-set fields that can be patched without replacing the full promotion set.
         let UpdateDto (promotionSetEvent: PromotionSetEvent) (currentDto: PromotionSetDto) =
             let updatedDto, shouldUpdateComputationTimestamp =
                 match promotionSetEvent.Event with
@@ -285,24 +311,34 @@ module PromotionSet =
 
             { updatedDto with OnBehalfOf = onBehalfOf; UpdatedAt = Some promotionSetEvent.Metadata.Timestamp; StepsComputationUpdatedAt = computationUpdatedAt }
 
+/// Contains promotion set conflict model helpers.
 module PromotionSetConflictModel =
 
+    /// Represents the conflict resolution model request contract.
     [<CLIMutable>]
     type ConflictResolutionModelRequest = { FilePath: string; BaseContent: string option; OursContent: string option; TheirsContent: string option }
 
+    /// Represents the conflict resolution model response contract.
     [<CLIMutable>]
     type ConflictResolutionModelResponse = { ProposedContent: string option; ShouldDelete: bool; Confidence: float; Explanation: string option }
 
+    /// Represents i conflict resolution model provider.
     type IConflictResolutionModelProvider =
+        /// Identifies the conflict-resolution provider in diagnostics and result metadata.
         abstract member ProviderName: string
+        /// Requests a model-backed conflict-resolution proposal for the supplied file contents.
         abstract member SuggestResolution: ConflictResolutionModelRequest -> Task<Result<ConflictResolutionModelResponse, string>>
 
+    /// Represents the open router settings contract.
     type OpenRouterSettings = { ApiBase: string; ApiKeyEnvVar: string; Model: string; RequestHeaders: Dictionary<string, string> option }
 
+    /// Represents the promotion set models settings contract.
     type PromotionSetModelsSettings = { Provider: string; OpenRouter: OpenRouterSettings }
 
+    /// Converts option.
     let private toOption (value: string) = if String.IsNullOrWhiteSpace value then Option.None else Option.Some value
 
+    /// Caps file content included in model prompts so conflict-resolution requests stay within a bounded size.
     let private truncateForPrompt (content: string option) =
         let maxLength = 12000
 
@@ -312,6 +348,7 @@ module PromotionSetConflictModel =
             elif text.Length <= maxLength then text
             else text[.. (maxLength - 1)])
 
+    /// Builds prompt.
     let private buildPrompt (request: ConflictResolutionModelRequest) =
         let baseContent =
             truncateForPrompt request.BaseContent
@@ -355,6 +392,7 @@ module PromotionSetConflictModel =
             |]
         )
 
+    /// Attempts to extract json payload.
     let private tryExtractJsonPayload (content: string) =
         if String.IsNullOrWhiteSpace content then
             Option.None
@@ -372,6 +410,7 @@ module PromotionSetConflictModel =
                 else
                     Option.None
 
+    /// Attempts to get property.
     let private tryGetProperty (name: string) (jsonElement: JsonElement) =
         let mutable propertyElement = Unchecked.defaultof<JsonElement>
 
@@ -380,6 +419,7 @@ module PromotionSetConflictModel =
         else
             Option.None
 
+    /// Attempts to parse model response.
     let tryParseModelResponse (content: string) =
         match tryExtractJsonPayload content with
         | Option.None -> Error "Model response did not contain a JSON payload."
@@ -435,11 +475,15 @@ module PromotionSetConflictModel =
             with
             | ex -> Error $"Failed to parse model response JSON: {ex.Message}"
 
+    /// Represents null conflict resolution model provider.
     type NullConflictResolutionModelProvider() =
         interface IConflictResolutionModelProvider with
+            /// Identifies the conflict-resolution provider in diagnostics and result metadata.
             member _.ProviderName = "none"
+            /// Requests a model-backed conflict-resolution proposal for the supplied file contents.
             member _.SuggestResolution _ = Task.FromResult(Error "Conflict resolution model provider is not configured.")
 
+    /// Represents open router conflict resolution model provider.
     type OpenRouterConflictResolutionModelProvider(settings: OpenRouterSettings) =
         let httpClient = new HttpClient()
 
@@ -452,8 +496,10 @@ module PromotionSetConflictModel =
         let requestUri = Uri($"{apiBase}/chat/completions")
 
         interface IConflictResolutionModelProvider with
+            /// Identifies the conflict-resolution provider in diagnostics and result metadata.
             member _.ProviderName = "OpenRouter"
 
+            /// Requests a model-backed conflict-resolution proposal for the supplied file contents.
             member _.SuggestResolution(request: ConflictResolutionModelRequest) =
                 task {
                     let apiKey = Environment.GetEnvironmentVariable(settings.ApiKeyEnvVar)
@@ -519,6 +565,7 @@ module PromotionSetConflictModel =
                         | ex -> return Error $"Conflict resolution model request failed: {ex.Message}"
                 }
 
+    /// Attempts to get settings.
     let private tryGetSettings (configuration: IConfiguration) =
         if isNull configuration then
             Option.None
@@ -556,6 +603,7 @@ module PromotionSetConflictModel =
                             }
                     }
 
+    /// Builds provider from the validated inputs used by this contract.
     let createProvider (configuration: IConfiguration) =
         match tryGetSettings configuration with
         | Option.Some settings when not <| String.IsNullOrWhiteSpace settings.Provider ->

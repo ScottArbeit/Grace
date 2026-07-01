@@ -7,14 +7,17 @@ open NodaTime
 open NUnit.Framework
 open Orleans
 
+/// Contains tests covering content block metadata types behavior.
 [<TestFixture>]
 type ContentBlockMetadataTypesTests() =
 
     let timestamp = Instant.FromUtc(2026, 5, 24, 15, 0)
 
+    /// Exercises range coverage for the types content Block Metadata contract.
     let range ordinalStart ordinalCount physicalOffset physicalLength =
         { OrdinalStart = ordinalStart; OrdinalCount = ordinalCount; ActiveManifestCount = 1; PhysicalOffset = physicalOffset; PhysicalLength = physicalLength }
 
+    /// Exercises metadata coverage for the types content Block Metadata contract.
     let metadata ranges =
         {
             Class = nameof ContentBlockMetadata
@@ -39,6 +42,7 @@ type ContentBlockMetadataTypesTests() =
             UpdatedAt = timestamp
         }
 
+    /// Verifies that content block metadata command cases have stable serializer ids.
     [<Test>]
     member _.ContentBlockMetadataCommandCasesHaveStableSerializerIds() =
         let actual =
@@ -65,6 +69,7 @@ type ContentBlockMetadataTypesTests() =
             )
         )
 
+    /// Verifies that find range evidence backtracks across alternate contiguous chains.
     [<Test>]
     member _.FindRangeEvidenceBacktracksAcrossAlternateContiguousChains() =
         let lowerOffsetPartial = range 0 4 0L 400L
@@ -87,6 +92,7 @@ type ContentBlockMetadataTypesTests() =
         Assert.That(synthesized, Has.Length.EqualTo(1))
         Assert.That(synthesized[0].PhysicalOffset, Is.EqualTo(completeFirst.PhysicalOffset))
 
+    /// Verifies that find ranges prefers active contiguous evidence over inactive exact range.
     [<Test>]
     member _.FindRangesPrefersActiveContiguousEvidenceOverInactiveExactRange() =
         let inactiveExact = { range 0 8 0L 800L with ActiveManifestCount = 0 }
@@ -119,6 +125,7 @@ type ContentBlockMetadataTypesTests() =
             )
         )
 
+    /// Verifies that find range evidence uses stored covering range for later query window.
     [<Test>]
     member _.FindRangeEvidenceUsesStoredCoveringRangeForLaterQueryWindow() =
         let inactiveExact = { range 256 256 8192L 512L with ActiveManifestCount = 0 }
@@ -147,6 +154,7 @@ type ContentBlockMetadataTypesTests() =
         Assert.That(claimed.Value.ActiveManifestCount, Is.EqualTo(1))
         Assert.That(claimed.Value.PhysicalOffset, Is.EqualTo(512L))
 
+    /// Verifies that find range evidence does not invent variable chunk boundaries.
     [<Test>]
     member _.FindRangeEvidenceDoesNotInventVariableChunkBoundaries() =
         let activeCoveringRange = range 0 2 0L (1024L + 65536L)

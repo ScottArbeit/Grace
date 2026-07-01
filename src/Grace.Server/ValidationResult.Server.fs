@@ -18,13 +18,17 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Contains Grace Server validation result behavior and supporting helpers.
 module ValidationResult =
     let activitySource = new ActivitySource("ValidationResult")
 
+    /// Implements has promotion set scope for the server request pipeline.
     let internal hasPromotionSetScope (promotionSetId: string) = not (String.IsNullOrWhiteSpace promotionSetId)
 
+    /// Validates is valid steps computation attempt inputs before server processing continues.
     let internal isValidStepsComputationAttempt (stepsComputationAttempt: int) = stepsComputationAttempt > 0
 
+    /// Reads the authenticated principal name for validation-result audit metadata.
     let private getPrincipal (context: HttpContext) =
         if
             isNull context.User
@@ -35,8 +39,10 @@ module ValidationResult =
         else
             context.User.Identity.Name
 
+    /// Accepts absent validation scope identifiers while rejecting malformed non-empty GUID values.
     let private parseOptionalGuid (rawValue: string) = if String.IsNullOrWhiteSpace(rawValue) then None else Some(Guid.Parse(rawValue))
 
+    /// Implements validations for record for the server request pipeline.
     let internal validationsForRecord (parameters: RecordValidationResultParameters) =
         [|
             (if String.IsNullOrWhiteSpace(parameters.ValidationResultId) then

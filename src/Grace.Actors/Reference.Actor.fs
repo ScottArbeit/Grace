@@ -27,8 +27,10 @@ open System.Collections.Generic
 open System.Globalization
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for reference keys, proxies, state, or workflow transitions.
 module Reference =
 
+    /// Wraps manifest save contribution plan records exchanged by actor queries or projections.
     type ManifestSaveContributionPlan =
         {
             RepositoryId: RepositoryId
@@ -38,20 +40,25 @@ module Reference =
             WorkflowRanges: ManifestContributionWorkflowRange array
         }
 
+    /// Coordinates manifest contribution operation id logic for the Reference actor.
     let private manifestContributionOperationId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         RepositoryContentCounterOperationId $"reference:{referenceId:N}:{storagePoolId}:{manifestAddress}"
 
+    /// Coordinates repository content counter primary key logic for the Reference actor.
     let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
+    /// Coordinates manifest contribution workflow primary key logic for the Reference actor.
     let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
+    /// Coordinates counter command direction logic for the Reference actor.
     let private counterCommandDirection command =
         match command with
         | RepositoryContentCounterCommand.AddReference _ -> ManifestContributionDirection.Increment
         | RepositoryContentCounterCommand.RemoveReference _ -> ManifestContributionDirection.Decrement
 
+    /// Coordinates workflow operation id logic for the Reference actor.
     let private workflowOperationId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) direction =
         match direction with
         | ManifestContributionDirection.Increment ->
@@ -59,6 +66,7 @@ module Reference =
         | ManifestContributionDirection.Decrement ->
             ManifestContributionWorkflowOperationId $"reference-expiry:{referenceId:N}:{storagePoolId}:{manifestAddress}:fanout"
 
+    /// Coordinates workflow ranges for manifest logic for the Reference actor.
     let private workflowRangesForManifest (manifest: FileManifest) =
         let storagePoolId = manifest.StoragePoolId
         let seenContentBlocks = HashSet<ContentBlockAddress>()
@@ -75,6 +83,7 @@ module Reference =
 
         ranges.ToArray()
 
+    /// Coordinates workflow start command for plan logic for the Reference actor.
     let private workflowStartCommandForPlan plan =
         let direction = counterCommandDirection plan.CounterCommand
 
@@ -108,6 +117,7 @@ module Reference =
                 WorkflowRanges = workflowRangesForManifest manifest
             })
 
+    /// Plans plan manifest save boundary for directory versions work for the Reference actor workflow.
     let planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId (directoryVersions: DirectoryVersion seq) correlationId =
         let directoryVersionArray = directoryVersions |> Seq.toArray
         let manifestReferences = ResizeArray<DirectoryVersion.ManifestReferenceForSaveBoundary>()
@@ -126,6 +136,7 @@ module Reference =
         | Some graceError -> Error graceError
         | None -> Ok(planManifestReferences repositoryId referenceId manifestReferences)
 
+    /// Validates recursive directory versions complete before the operation continues.
     let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersions: DirectoryVersion seq) correlationId =
         let directoryVersionArray = directoryVersions |> Seq.toArray
 
@@ -158,14 +169,17 @@ module Reference =
                 )
             | None -> Ok directoryVersionArray
 
+    /// Plans plan manifest save boundary for recursive directory versions work for the Reference actor workflow.
     let planManifestSaveBoundaryForRecursiveDirectoryVersions repositoryId referenceId rootDirectoryVersionId directoryVersions correlationId =
         match validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId directoryVersions correlationId with
         | Error graceError -> Error graceError
         | Ok completeDirectoryVersions -> planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId completeDirectoryVersions correlationId
 
+    /// Plans plan manifest save boundary work for the Reference actor workflow.
     let planManifestSaveBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
         planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
 
+    /// Plans plan manifest save expiry boundary for directory versions work for the Reference actor workflow.
     let planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId directoryVersions correlationId =
         match planManifestSaveBoundaryForDirectoryVersions repositoryId referenceId directoryVersions correlationId with
         | Error graceError -> Error graceError
@@ -181,9 +195,11 @@ module Reference =
                 })
             |> Ok
 
+    /// Plans plan manifest save expiry boundary work for the Reference actor workflow.
     let planManifestSaveExpiryBoundary repositoryId referenceId (directoryVersion: DirectoryVersion) correlationId =
         planManifestSaveExpiryBoundaryForDirectoryVersions repositoryId referenceId [ directoryVersion ] correlationId
 
+    /// Coordinates should apply manifest expiry boundary logic for the Reference actor.
     let shouldApplyManifestExpiryBoundary (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
         && referenceDto.ReferenceType = ReferenceType.Save
@@ -232,6 +248,7 @@ module Reference =
                 return Ok []
         }
 
+    /// Validates reference root directory version hashes before the operation continues.
     let validateReferenceRootDirectoryVersionHashes correlationId repositoryId directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
         let rootRelativePath = directoryVersion.RelativePath
 
@@ -327,6 +344,7 @@ module Reference =
             | _ -> return referenceEvent, false
         }
 
+    /// Builds command matches reference data needed by the Reference actor.
     let internal createCommandMatchesReference (referenceDto: ReferenceDto) command =
         match command with
         | Create (referenceId, ownerId, organizationId, repositoryId, branchId, directoryId, sha256Hash, blake3Hash, referenceType, referenceText, links) ->
@@ -344,6 +362,7 @@ module Reference =
             && (referenceDto.Links |> Seq.toArray) = (links |> Seq.toArray)
         | _ -> false
 
+    /// Attempts to create manifest contribution start and returns no value when the required invariant is not met.
     let tryCreateManifestContributionStart plan intent =
         match intent with
         | RepositoryContentCounterIntent.IncrementManifestReferenceCount (repositoryId, storagePoolId, manifestAddress) when
@@ -362,11 +381,13 @@ module Reference =
             Some(workflowStartCommandForPlan plan)
         | _ -> None
 
+    /// Coordinates counter command operation id logic for the Reference actor.
     let private counterCommandOperationId command =
         match command with
         | RepositoryContentCounterCommand.AddReference (operationId, _, _, _)
         | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> Some operationId
 
+    /// Coordinates command crossed zero logic for the Reference actor.
     let private commandCrossedZero operationId command events =
         let mutable referenceCount = 0L
         let mutable crossedZero = false
@@ -390,6 +411,7 @@ module Reference =
 
         crossedZero
 
+    /// Attempts to create manifest contribution start for counter decision and returns no value when the required invariant is not met.
     let tryCreateManifestContributionStartForCounterDecision plan (decision: RepositoryContentCounterDecision) events =
         let startFromIntent =
             decision.Intents
@@ -404,6 +426,7 @@ module Reference =
             | Some _ -> None
         | None -> None
 
+    /// Builds repository content counter actor data needed by the Reference actor.
     let private createRepositoryContentCounterActor repositoryId storagePoolId manifestAddress correlationId =
         let grain =
             orleansClient.CreateActorProxyWithCorrelationId<IRepositoryContentCounterActor>(
@@ -418,6 +441,7 @@ module Reference =
         memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
         grain
 
+    /// Builds manifest contribution workflow actor data needed by the Reference actor.
     let private createManifestContributionWorkflowActor repositoryId storagePoolId manifestAddress correlationId =
         let grain =
             orleansClient.CreateActorProxyWithCorrelationId<IManifestContributionWorkflowActor>(
@@ -432,6 +456,7 @@ module Reference =
         memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
         grain
 
+    /// Applies manifest contribution boundary changes to the Reference actor state.
     let private applyManifestContributionBoundary (plans: ManifestSaveContributionPlan list) (metadata: EventMetadata) =
         task {
             let planArray = plans |> List.toArray
@@ -473,6 +498,7 @@ module Reference =
             | None -> return Ok()
         }
 
+    /// Implements the Orleans grain for reference actor.
     type ReferenceActor([<PersistentState(StateName.Reference, Constants.GraceActorStorage)>] state: IPersistentState<List<ReferenceEvent>>) =
         inherit Grain()
 
@@ -484,6 +510,7 @@ module Reference =
 
         let mutable referenceDto = ReferenceDto.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -492,6 +519,7 @@ module Reference =
 
                 logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
+                /// Returns directory version data from the Reference actor state or related storage.
                 let getDirectoryVersion repositoryId directoryId correlationId =
                     task {
                         let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
@@ -616,6 +644,7 @@ module Reference =
                             )
                 }
 
+        /// Applies one persisted Reference event to this activation's in-memory state.
         member private this.ApplyEvent(referenceEvent: ReferenceEvent) =
             task {
                 let correlationId = referenceEvent.Metadata.CorrelationId
@@ -739,9 +768,11 @@ module Reference =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this Reference actor state.
             member this.GetRepositoryId correlationId = referenceDto.RepositoryId |> returnTask
 
         interface IReferenceActor with
+            /// Reports whether this Reference actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -749,19 +780,24 @@ module Reference =
                 <| referenceDto.ReferenceId.Equals(ReferenceDto.Default.ReferenceId)
                 |> returnTask
 
+            /// Returns the current Reference actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 referenceDto |> returnTask
 
+            /// Returns reference type data from the Reference actor state or related storage.
             member this.GetReferenceType correlationId =
                 this.correlationId <- correlationId
                 referenceDto.ReferenceType |> returnTask
 
+            /// Reports whether this Reference actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
                 referenceDto.DeletedAt.IsSome |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: ReferenceCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
@@ -792,9 +828,12 @@ module Reference =
                                 | None -> return Error(GraceError.Create (getErrorMessage ReferenceError.ReferenceIdDoesNotExist) metadata.CorrelationId)
                     }
 
+                /// Runs Reference command decisions, applies emitted events, and persists the result.
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
+                    /// Coordinates applies manifest boundary logic for the Reference actor.
                     let appliesManifestBoundary referenceType = referenceType = ReferenceType.Save
 
+                    /// Applies reference manifest boundary changes to the Reference actor state.
                     let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType =
                         task {
                             if not (appliesManifestBoundary referenceType) then
@@ -816,6 +855,7 @@ module Reference =
                                 | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
 
+                    /// Applies reference manifest expiry boundary changes to the Reference actor state.
                     let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType =
                         task {
                             if not (appliesManifestBoundary referenceType) then
@@ -837,6 +877,7 @@ module Reference =
                                 | Ok plans -> return! applyManifestContributionBoundary plans metadata
                         }
 
+                    /// Coordinates existing reference return value logic for the Reference actor.
                     let existingReferenceReturnValue () =
                         (GraceReturnValue.Create referenceDto metadata.CorrelationId)
                             .enhance(nameof RepositoryId, referenceDto.RepositoryId)
@@ -863,6 +904,7 @@ module Reference =
                                 )
                             )
 
+                    /// Validates root directory version hashes before the operation continues.
                     let validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash =
                         task {
                             let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
@@ -926,6 +968,7 @@ module Reference =
                                     | AddLink link -> return Ok(LinkAdded link)
                                     | RemoveLink link -> return Ok(LinkRemoved link)
                                     | DeleteLogical (force, deleteReason) ->
+                                        /// Reads branch logical-delete retention days from event metadata when the caller supplied it.
                                         let tryGetLogicalDeleteDaysFromMetadata () =
                                             match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
                                             | true, value ->

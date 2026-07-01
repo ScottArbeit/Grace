@@ -34,6 +34,7 @@ open System.IO.Compression
 open System.Threading.Tasks
 open Grace.Actors.Extensions
 
+/// Groups Orleans actor helpers for diff keys, proxies, state, or workflow transitions.
 module Diff =
 
     type private VersionHashIdentity = { Sha256Hash: Sha256Hash; Blake3Hash: Blake3Hash }
@@ -96,6 +97,7 @@ module Diff =
             return differences
         }
 
+    /// Implements the Orleans grain for diff actor.
     type DiffActor([<PersistentState(StateName.Diff, Constants.GraceDiffStorage)>] state: IPersistentState<DiffDto>) =
         inherit Grain()
 
@@ -108,6 +110,7 @@ module Diff =
         /// Deconstructs a Diff actor primary key from the current compact format or the legacy D-format key.
         let deconstructActorId (primaryKey: string) = ActorProxy.Diff.ParsePrimaryKey primaryKey
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         /// Builds a ServerGraceIndex from a root DirectoryId.
@@ -215,6 +218,7 @@ module Diff =
                             )
                 }
 
+            /// Computes a diff artifact and stores the resulting diff text for later retrieval.
             member this.Compute correlationId : Task<GraceResult<string>> =
                 this.correlationId <- correlationId
 
@@ -416,6 +420,7 @@ module Diff =
                             )
                 }
 
+            /// Returns the diff text previously computed by this diff actor.
             member this.GetDiff correlationId =
                 task {
                     this.correlationId <- correlationId

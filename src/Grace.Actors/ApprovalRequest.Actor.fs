@@ -17,8 +17,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for approval request keys, proxies, state, or workflow transitions.
 module ApprovalRequest =
 
+    /// Coordinates command name logic for the ApprovalRequest actor.
     let private commandName command =
         match command with
         | ApprovalRequestCommand.Create _ -> "Create"
@@ -27,12 +29,15 @@ module ApprovalRequest =
         | ApprovalRequestCommand.Cancel -> "Cancel"
         | ApprovalRequestCommand.Supersede _ -> "Supersede"
 
+    /// Applies events changes to the ApprovalRequest actor state.
     let private applyEvents (events: ApprovalRequestEvent list) (request: ApprovalRequest) =
         events
         |> List.fold (fun current event -> ApprovalRequest.UpdateDto event current) request
 
+    /// Coordinates grace error logic for the ApprovalRequest actor.
     let private graceError correlationId message = GraceError.Create message correlationId
 
+    /// Compares create-request fields to detect idempotent approval-request retries.
     let private createdRequestMatches (existing: ApprovalRequest) (candidate: ApprovalRequest) =
         existing.ApprovalPolicyId = candidate.ApprovalPolicyId
         && existing.ApprovalPolicyVersion = candidate.ApprovalPolicyVersion
@@ -40,15 +45,18 @@ module ApprovalRequest =
         && existing.Scope = candidate.Scope
         && existing.RequiredResponder = candidate.RequiredResponder
 
+    /// Coordinates decision matches logic for the ApprovalRequest actor.
     let private decisionMatches (existing: ApprovalRequestDecision) (candidate: ApprovalRequestDecision) =
         existing.Decision = candidate.Decision
         && existing.DecidedBy = candidate.DecidedBy
         && existing.Reason = candidate.Reason
         && existing.ClientDecisionId = candidate.ClientDecisionId
 
+    /// Coordinates ok logic for the ApprovalRequest actor.
     let private ok (request: ApprovalRequest) (events: ApprovalRequestEvent list) wasReplay message =
         Ok { Request = applyEvents events request; Events = events; WasIdempotentReplay = wasReplay; Message = message }
 
+    /// Validates a ApprovalRequest command and derives the events needed for a state transition.
     let decideCommand (request: ApprovalRequest) (command: ApprovalRequestCommand) (metadata: EventMetadata) =
         let exists =
             request.ApprovalRequestId
@@ -128,11 +136,13 @@ module ApprovalRequest =
                 let event: ApprovalRequestEvent = { Event = ApprovalRequestEventType.Superseded supersededByApprovalRequestId; Metadata = metadata }
                 ok request [ event ] false "Approval request superseded."
 
+    /// Implements the Orleans grain for approval request actor.
     type ApprovalRequestActor([<PersistentState(StateName.ApprovalRequest, GraceActorStorage)>] state: IPersistentState<List<ApprovalRequestEvent>>) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("ApprovalRequest.Actor")
         let mutable request = Grace.Types.Webhooks.ApprovalRequest.Default
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -147,6 +157,7 @@ module ApprovalRequest =
 
             Task.CompletedTask
 
+        /// Replays persisted ApprovalRequest events into an in-memory state snapshot.
         member private this.ApplyEvents(events: ApprovalRequestEvent list) =
             task {
                 if isNull state.State then state.State <- List<ApprovalRequestEvent>()
@@ -163,6 +174,7 @@ module ApprovalRequest =
                     index <- index + 1
             }
 
+        /// Runs ApprovalRequest command decisions, applies emitted events, and persists the result.
         member private this.ProcessCommand (command: ApprovalRequestCommand) (metadata: EventMetadata) =
             task {
                 this.correlationId <- metadata.CorrelationId
@@ -199,11 +211,13 @@ module ApprovalRequest =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this ApprovalRequest actor state.
             member this.GetRepositoryId correlationId =
                 this.correlationId <- correlationId
                 request.Scope.RepositoryId |> returnTask
 
         interface IApprovalRequestActor with
+            /// Reports whether this ApprovalRequest actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -211,6 +225,7 @@ module ApprovalRequest =
                  <> ApprovalRequestId.Empty)
                 |> returnTask
 
+            /// Returns the current ApprovalRequest actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
 
@@ -220,6 +235,7 @@ module ApprovalRequest =
                     Some request
                 |> returnTask
 
+            /// Serializes the current ApprovalRequest actor state snapshot as JSON.
             member this.GetJson correlationId =
                 this.correlationId <- correlationId
 
@@ -229,12 +245,14 @@ module ApprovalRequest =
                     Some(serialize request)
                 |> returnTask
 
+            /// Returns the persisted ApprovalRequest event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<ApprovalRequestEvent>)
                 |> returnTask
 
+            /// Serializes the approval-request event history and current state as JSON.
             member this.GetHistoryJson correlationId =
                 this.correlationId <- correlationId
 
@@ -247,8 +265,10 @@ module ApprovalRequest =
                 |> serialize
                 |> returnTask
 
+            /// Builds the stable Orleans grain key used to address a ApprovalRequest actor.
             member this.Create request metadata = this.ProcessCommand (ApprovalRequestCommand.Create request) metadata
 
+            /// Creates an approval request using server-generated request and operation identifiers.
             member this.CreateGenerated
                 (
                     approvalRequestId,
@@ -290,8 +310,10 @@ module ApprovalRequest =
 
                 this.ProcessCommand (ApprovalRequestCommand.Create request) metadata
 
+            /// Records an approval decision through the request actor idempotency path.
             member this.RecordDecision decision metadata = this.ProcessCommand (ApprovalRequestCommand.RecordDecision decision) metadata
 
+            /// Records an approval decision using a generated decision id when the caller omitted one.
             member this.RecordDecisionGenerated(decision, decidedBy, reason, clientDecisionId, metadata) =
                 match decision with
                 | value when String.Equals(value, nameof ApprovalDecision.Approve, StringComparison.OrdinalIgnoreCase) ->
@@ -321,8 +343,10 @@ module ApprovalRequest =
                     |> Error
                     |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata = this.ProcessCommand command metadata
 
+    /// Implements the Orleans grain for approval request index actor.
     type ApprovalRequestIndexActor
         (
             [<PersistentState(StateName.ApprovalRequestIndex, GraceActorStorage)>] state: IPersistentState<List<ApprovalRequestIndexEvent>>
@@ -332,6 +356,7 @@ module ApprovalRequest =
         let mutable requestIds = HashSet<ApprovalRequestId>()
         let mutable requests = Dictionary<ApprovalRequestId, ApprovalRequest>()
         let mutable requestJsonById = Dictionary<ApprovalRequestId, string>()
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override _.OnActivateAsync(ct) =
@@ -366,6 +391,7 @@ module ApprovalRequest =
 
             Task.CompletedTask
 
+        /// Adds an approval request id to the scope index if it is not already tracked.
         member private this.AddRequestCore (approvalRequestId: ApprovalRequestId) (eventMetadata: EventMetadata) =
             task {
                 this.correlationId <- eventMetadata.CorrelationId
@@ -386,6 +412,7 @@ module ApprovalRequest =
                     return Ok returnValue
             }
 
+        /// Registers an approval request in the scope index while preserving retry idempotency.
         member private this.RegisterRequestCore (request: ApprovalRequest) (eventMetadata: EventMetadata) =
             task {
                 this.correlationId <- eventMetadata.CorrelationId
@@ -414,6 +441,7 @@ module ApprovalRequest =
             }
 
         interface IApprovalRequestIndexActor with
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 task {
                     this.correlationId <- metadata.CorrelationId
@@ -422,10 +450,13 @@ module ApprovalRequest =
                     | ApprovalRequestIndexCommand.AddRequest approvalRequestId -> return! this.AddRequestCore approvalRequestId metadata
                 }
 
+            /// Adds an existing approval request id to the approval-scope index.
             member this.AddRequest(approvalRequestId, eventMetadata) = this.AddRequestCore approvalRequestId eventMetadata
 
+            /// Registers an approval request object with the approval-scope index.
             member this.RegisterRequest(request, eventMetadata) = this.RegisterRequestCore request eventMetadata
 
+            /// Registers an approval request in the scope index using generated metadata.
             member this.RegisterGeneratedRequest
                 (
                     approvalRequestId,
@@ -467,6 +498,7 @@ module ApprovalRequest =
 
                 this.RegisterRequestCore request eventMetadata
 
+            /// Loads an approval request from its id through the scoped index.
             member this.GetRequest approvalRequestId correlationId =
                 this.correlationId <- correlationId
 
@@ -475,6 +507,7 @@ module ApprovalRequest =
                 | _ -> None
                 |> returnTask
 
+            /// Loads an approval request from the index and serializes it as JSON.
             member this.GetRequestJson approvalRequestId correlationId =
                 this.correlationId <- correlationId
 
@@ -483,6 +516,7 @@ module ApprovalRequest =
                 | _ -> None
                 |> returnTask
 
+            /// Returns the ApprovalRequest records tracked by this actor.
             member this.List correlationId =
                 this.correlationId <- correlationId
                 requestIds |> Seq.toArray |> returnTask

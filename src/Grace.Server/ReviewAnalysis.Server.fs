@@ -11,24 +11,30 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Contains Grace Server review analysis behavior and supporting helpers.
 module ReviewAnalysis =
+    /// Represents cached triage used by Grace Server APIs and background services.
     type CachedTriage = { Result: ReviewModels.TriageResult; Receipt: AnalysisReceipt }
 
     let triagePromptTemplateVersion = "v1"
     let deepPromptTemplateVersion = "v1"
     let private moreContextMarker = "NEED_MORE_CONTEXT"
 
+    /// Implements hash string for the server request pipeline.
     let private hashString (value: string) =
         let bytes = Encoding.UTF8.GetBytes(value)
         let hashBytes = SHA256.HashData(bytes)
         Sha256Hash(byteArrayToString hashBytes)
 
+    /// Implements compute evidence hash for the server request pipeline.
     let private computeEvidenceHash (riskProfile: DeterministicRiskProfile) (evidenceSummary: EvidenceSetSummary) =
         hashString (serialize (riskProfile, evidenceSummary))
 
+    /// Keys review triage cache entries by policy snapshot, evidence hash, model id, and prompt version.
     let private buildCacheKey (policySnapshotId: PolicySnapshotId) (evidenceHash: Sha256Hash) (modelId: string) (promptVersion: string) =
         $"{policySnapshotId}|{evidenceHash}|{modelId}|{promptVersion}"
 
+    /// Gets try get cached triage data needed by the server flow.
     let private tryGetCachedTriage (cache: IMemoryCache) (cacheKey: string) =
         let mutable cached: obj = null
 
@@ -37,10 +43,12 @@ module ReviewAnalysis =
         else
             None
 
+    /// Implements store cached triage for the server request pipeline.
     let private storeCachedTriage (cache: IMemoryCache) (cacheKey: string) (cached: CachedTriage) =
         cache.Set(cacheKey, cached, MemoryCacheEntryOptions(AbsoluteExpirationRelativeToNow = Nullable(TimeSpan.FromHours(12.0))))
         |> ignore
 
+    /// Implements run triage for the server request pipeline.
     let runTriage
         (provider: ReviewModels.IReviewModelProvider)
         (policySnapshot: PolicySnapshot)
@@ -82,13 +90,16 @@ module ReviewAnalysis =
                 return triageResult, receipt
         }
 
+    /// Represents cached deep review used by Grace Server APIs and background services.
     type CachedDeepReview = { Notes: ReviewNotes; Receipts: AnalysisReceipt list }
 
+    /// Implements requires more context for the server request pipeline.
     let private requiresMoreContext (notes: ReviewNotes) =
         not (String.IsNullOrWhiteSpace notes.Summary)
         && notes.Summary.IndexOf(moreContextMarker, StringComparison.OrdinalIgnoreCase)
            >= 0
 
+    /// Implements run deep review for the server request pipeline.
     let runDeepReview
         (provider: ReviewModels.IReviewModelProvider)
         (policySnapshot: PolicySnapshot)

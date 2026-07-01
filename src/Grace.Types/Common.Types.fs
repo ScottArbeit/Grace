@@ -19,6 +19,7 @@ open Microsoft.Extensions.ObjectPool
 open System.Text.Json.Serialization
 open MessagePack
 
+/// Contains common helpers.
 module Common =
 
     // Domain nouns
@@ -39,8 +40,10 @@ module Common =
     type ClientType =
         | CLI of Version: string
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ClientType>()
 
     /// The reason given for deleting a branch or reference.
@@ -167,26 +170,33 @@ module Common =
     /// The versioned chunking suite used for a manifest-backed file.
     type ChunkingSuiteId = string
 
+    /// Represents storage account name.
     type StorageAccountName = string
+    /// Represents storage connection string.
     type StorageConnectionString = string
+    /// Represents storage container name.
     type StorageContainerName = string
 
     /// A Uri for a file in object storage that has a shared access signature (SAS) token.
     type UriWithSharedAccessSignature = Uri
 
+    /// Represents user id.
     type UserId = string
 
     /// The result of a single validation check.
     type ValidationResult<'T> = ValueTask<Result<unit, 'T>>
 
+    /// Represents line endings.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type LineEndings =
         | CrLf
         | Cr
         | PlatformDependent
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<LineEndings>()
 
+    /// Represents object storage provider.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ObjectStorageProvider =
         | AWSS3
@@ -194,8 +204,10 @@ module Common =
         | GoogleCloudStorage
         | Unknown // Not calling it None because that really belongs to Option.
 
+        /// Selects Azure Blob Storage as the default object-store provider for new Grace configuration.
         static member DefaultObjectStorageProvider = ObjectStorageProvider.AzureBlobStorage
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ObjectStorageProvider>()
 
     /// Indicates what database is being used for Actor state storage.
@@ -205,33 +217,43 @@ module Common =
         | MongoDB
         | Unknown // Not calling it None because that really belongs to Option.
         // etc.
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ActorStateStorageProvider>()
 
+    /// Represents owner type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type OwnerType =
         | Public
         | Private
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OwnerType>()
 
+    /// Represents organization type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type OrganizationType =
         | Public
         | Private
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OrganizationType>()
 
+    /// Represents search visibility.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type SearchVisibility =
         | Visible
         | NotVisible
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<SearchVisibility>()
 
     /// Defines the different types of references that can exist in a branch.
@@ -245,10 +267,13 @@ module Common =
         | External
         | Rebase
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
+        /// Parses a configured object-store provider name, accepting known names case-insensitively.
         static member FromString s = discriminatedUnionFromString<ReferenceType> s
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReferenceType>()
 
     // Records
@@ -264,8 +289,10 @@ module Common =
             Properties: Dictionary<string, string>
         }
 
+        /// Returns the display representation for this value.
         override this.ToString() = serialize this
 
+        /// Initializes the value with a fresh identifier while preserving the supplied domain fields.
         static member New correlationId principal =
             {
                 Timestamp = getCurrentInstant ()
@@ -290,6 +317,7 @@ module Common =
             BinaryScanBytes: int
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { Class = nameof ManifestEligibilityPolicy; ThresholdBytes = 1024L * 1024L; BinaryScanBytes = 8 * 1024 }
 
     /// A content block is an inert CAS contract shell for a contiguous byte range inside manifest-backed file content.
@@ -306,9 +334,11 @@ module Common =
             Size: int64
         }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create(address: ContentBlockAddress, offset: int64, size: int64) =
             { Class = "ContentBlock"; Address = address; Offset = offset; Size = size }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = ContentBlock.Create(String.Empty, 0L, 0L)
 
     /// A file manifest is a CAS contract shell for content assembled from one or more content blocks.
@@ -335,6 +365,7 @@ module Common =
             StoragePoolId: StoragePoolId
         }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             (
                 manifestAddress: ManifestAddress,
@@ -354,6 +385,7 @@ module Common =
                 StoragePoolId = storagePoolId
             }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             (
                 manifestAddress: ManifestAddress,
@@ -364,11 +396,14 @@ module Common =
             ) =
             FileManifest.Create(manifestAddress, chunkingSuiteId, fileContentHash, size, StoragePoolId "default", blocks)
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create(manifestAddress: ManifestAddress, size: int64, blocks: ContentBlock list) =
             FileManifest.Create(manifestAddress, ChunkingSuiteId String.Empty, FileContentHash String.Empty, size, blocks)
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = FileManifest.Create(String.Empty, 0L, [])
 
+        /// Compares the domain identity fields that define whether two values refer to the same Grace object.
         override this.Equals(other: obj) =
             match other with
             | :? FileManifest as otherManifest ->
@@ -382,6 +417,7 @@ module Common =
                 && Seq.forall2 (=) this.Blocks otherManifest.Blocks
             | _ -> false
 
+        /// Computes a hash code from the same domain identity fields used by equality.
         override this.GetHashCode() =
             let mutable hashCode = HashCode()
             hashCode.Add(this.Class)
@@ -413,8 +449,10 @@ module Common =
             Manifest: FileManifest option
         }
 
+        /// Classifies the object as whole-file content rather than a manifest or content block.
         static member WholeFileContent = { Class = "FileContentReference"; ReferenceType = FileContentReferenceType.WholeFileContent; Manifest = None }
 
+        /// Classifies the object as a file manifest that references content blocks.
         static member FileManifest manifest =
             { Class = "FileContentReference"; ReferenceType = FileContentReferenceType.FileManifest; Manifest = Some manifest }
 
@@ -452,6 +490,7 @@ module Common =
         [<Key(7)>]
         member val ContentReference: FileContentReference = FileContentReference.WholeFileContent with get, set
 
+        /// Builds a content-addressed value carrying both BLAKE3 and SHA-256 hashes for compatibility checks.
         static member CreateWithHashes
             //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
@@ -474,6 +513,7 @@ module Common =
             fileVersion.ContentReference <- FileContentReference.WholeFileContent
             fileVersion
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
@@ -484,6 +524,7 @@ module Common =
             =
             FileVersion.CreateWithHashes relativePath sha256Hash (Blake3Hash String.Empty) blobUri isBinary size
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = FileVersion.Create String.Empty String.Empty String.Empty false 0L
 
         /// Converts a FileVersion to a LocalFileVersion.
@@ -498,6 +539,7 @@ module Common =
         [<IgnoreMember>]
         member this.RelativeDirectory = getRelativeDirectory $"{this.RelativePath}" ""
 
+        /// Compares the domain identity fields that define whether two values refer to the same Grace object.
         override this.Equals(other: obj) =
             match other with
             | :? FileVersion as otherFileVersion ->
@@ -512,6 +554,7 @@ module Common =
                 && this.ContentReference = otherFileVersion.ContentReference
             | _ -> false
 
+        /// Computes a hash code from the same domain identity fields used by equality.
         override this.GetHashCode() =
             let mutable hashCode = HashCode()
             hashCode.Add(this.Class)
@@ -553,6 +596,7 @@ module Common =
             LastWriteTimeUtc: DateTime
         }
 
+        /// Builds a content-addressed value carrying both BLAKE3 and SHA-256 hashes for compatibility checks.
         static member CreateWithHashes
             //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
@@ -577,6 +621,7 @@ module Common =
                 LastWriteTimeUtc = lastWriteTimeUtc
             }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             //(repositoryId: RepositoryId)
             (relativePath: RelativePath)
@@ -646,10 +691,13 @@ module Common =
         [<Key(11)>]
         member val HashesValidated: bool = false with get, set
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<DirectoryVersion>()
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = DirectoryVersion()
 
+        /// Builds a content-addressed value carrying both BLAKE3 and SHA-256 hashes for compatibility checks.
         static member CreateWithHashes
             (directoryVersionId: DirectoryVersionId)
             (ownerId: OwnerId)
@@ -678,6 +726,7 @@ module Common =
             directoryVersion.HashesValidated <- false
             directoryVersion
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             (directoryVersionId: DirectoryVersionId)
             (ownerId: OwnerId)
@@ -701,6 +750,7 @@ module Common =
                 files
                 size
 
+        /// Projects a directory-version DTO into the local index shape cached by Grace clients.
         member this.ToLocalDirectoryVersion lastWriteTimeUtc =
             LocalDirectoryVersion.CreateWithHashes
                 this.DirectoryVersionId
@@ -718,6 +768,7 @@ module Common =
                 this.Size
                 lastWriteTimeUtc
 
+        /// Compares the domain identity fields that define whether two values refer to the same Grace object.
         override this.Equals(other: obj) =
             match other with
             | :? DirectoryVersion as otherDirectoryVersion ->
@@ -736,6 +787,7 @@ module Common =
                 && this.HashesValidated = otherDirectoryVersion.HashesValidated
             | _ -> false
 
+        /// Computes a hash code from the same domain identity fields used by equality.
         override this.GetHashCode() =
             let mutable hashCode = HashCode()
             hashCode.Add(this.Class)
@@ -802,8 +854,10 @@ module Common =
         [<Key(11)>]
         member val LastWriteTimeUtc: DateTime = DateTime.UtcNow with get, set
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = LocalDirectoryVersion()
 
+        /// Builds a content-addressed value carrying both BLAKE3 and SHA-256 hashes for compatibility checks.
         static member CreateWithHashes
             (directoryVersionId: DirectoryVersionId)
             (ownerId: OwnerId)
@@ -833,6 +887,7 @@ module Common =
             directoryVersion.LastWriteTimeUtc <- lastWriteTimeUtc
             directoryVersion
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             (directoryVersionId: DirectoryVersionId)
             (ownerId: OwnerId)
@@ -876,6 +931,7 @@ module Common =
                     .ToList())
                 this.Size
 
+        /// Compares the domain identity fields that define whether two values refer to the same Grace object.
         override this.Equals(other: obj) =
             match other with
             | :? LocalDirectoryVersion as otherDirectoryVersion ->
@@ -894,6 +950,7 @@ module Common =
                 && this.LastWriteTimeUtc = otherDirectoryVersion.LastWriteTimeUtc
             | _ -> false
 
+        /// Computes a hash code from the same domain identity fields used by equality.
         override this.GetHashCode() =
             let mutable hashCode = HashCode()
             hashCode.Add(this.Class)
@@ -921,6 +978,7 @@ module Common =
         | Directory of DirectoryVersion
         | File of FileVersion
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<DirectoryEntry>()
 
         /// Converts a DirectoryEntry to a LocalDirectoryEntry.
@@ -934,6 +992,7 @@ module Common =
         | LocalDirectory of LocalDirectoryVersion
         | LocalFile of LocalFileVersion
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<LocalDirectoryEntry>()
 
         /// Converts a LocalDirectoryEntry to a DirectoryEntry.
@@ -948,6 +1007,7 @@ module Common =
         | Private
         | Public
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryType>()
 
     /// Specifies the current operational status of a repository.
@@ -958,6 +1018,7 @@ module Common =
         | Closed
         | Deleted
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryStatus>()
 
     // /// Defines the type of the list of validations used in server endpoints.
@@ -973,6 +1034,7 @@ module Common =
         | NoAccess
         | NotSet
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<DirectoryPermission>()
 
     /// Defines the kinds of links that can exist between references.
@@ -982,6 +1044,7 @@ module Common =
         | IncludedInPromotionSet of PromotionSetId
         | PromotionSetTerminal of PromotionSetId // Marks the final promotion in a promotion set.
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReferenceLinkType>()
 
     /// Defines the permissions granted to a group defined by a claim.
@@ -1026,9 +1089,10 @@ module Common =
         /// Checks if the ExceptionObject is set to the default value.
         member this.IsDefault() = this = ExceptionObject.Default
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { Message = String.Empty; StackTrace = String.Empty; InnerException = None }
 
-        /// Creates an ExceptionObject from a .NET Exception.
+        /// Builds an ExceptionObject from a .NET Exception from the validated inputs used by this contract.
         static member Create(ex: Exception) =
             {
                 Message = ex.Message
@@ -1049,9 +1113,11 @@ module Common =
             Properties: Dictionary<string, obj>
         }
 
+        /// Builds an exception response that preserves caller-supplied diagnostic metadata.
         static member CreateWithMetadata<'T> (returnValue: 'T) (correlationId: string) (properties: Dictionary<string, obj>) =
             { ReturnValue = returnValue; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create<'T> (returnValue: 'T) (correlationId: string) =
             GraceReturnValue.CreateWithMetadata returnValue correlationId (Dictionary<string, obj>())
 
@@ -1076,6 +1142,7 @@ module Common =
 
             this
 
+        /// Returns the display representation for this value.
         override this.ToString() =
             // Breaking out the Properties because Dictionary<> doesn't have a good ToString() method.
             let output =
@@ -1098,6 +1165,7 @@ module Common =
             Properties: Dictionary<string, obj>
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Exception = ExceptionObject.Default
@@ -1107,6 +1175,7 @@ module Common =
                 Properties = new Dictionary<string, obj>()
             }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create (error: string) (correlationId: string) =
             {
                 Exception = ExceptionObject.Default
@@ -1116,6 +1185,7 @@ module Common =
                 Properties = new Dictionary<string, obj>()
             }
 
+        /// Builds a response that preserves exception details alongside the operation metadata.
         static member CreateWithException (ex: Exception) (error: string) (correlationId: string) =
             {
                 Exception = ExceptionObject.Create(ex)
@@ -1125,6 +1195,7 @@ module Common =
                 Properties = new Dictionary<string, obj>()
             }
 
+        /// Builds an exception response that preserves caller-supplied diagnostic metadata.
         static member CreateWithMetadata (ex: Exception) (error: string) (correlationId: string) (properties: Dictionary<string, obj>) =
             { Exception = ExceptionObject.Create(ex); Error = error; EventTime = getCurrentInstant (); CorrelationId = correlationId; Properties = properties }
 
@@ -1144,6 +1215,7 @@ module Common =
 
             this
 
+        /// Returns the display representation for this value.
         override this.ToString() =
             let sb = stringBuilderPool.Get()
 
@@ -1169,8 +1241,10 @@ module Common =
         | Directory
         | File
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<FileSystemEntryType>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Specifies whether a change detected in a diff is an add, change, or delete.
@@ -1180,8 +1254,10 @@ module Common =
         | Change
         | Delete
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<DifferenceType>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// A file system difference is a change detected (at a file level) in a diff. It specifies the type of change (add, change, or delete), the type of file system entry (directory or file), and the relative path of the entry.
@@ -1193,9 +1269,11 @@ module Common =
             RelativePath: RelativePath
         }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create differenceType fileSystemEntryType relativePath =
             { DifferenceType = differenceType; FileSystemEntryType = fileSystemEntryType; RelativePath = relativePath }
 
+    /// Represents the upload metadata contract.
     [<GenerateSerializer>]
     type UploadMetadata = { RelativePath: RelativePath; BlobUriWithSasToken: Uri; Sha256Hash: Sha256Hash }
 
@@ -1226,6 +1304,7 @@ module Common =
             RootDirectoryBlake3Hash: Blake3Hash
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Index = GraceIndex()
@@ -1244,6 +1323,7 @@ module Common =
             Index: GraceIndex
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { Index = GraceIndex() }
 
     /// Holds the results of a diff between two versions of a file.
@@ -1261,6 +1341,7 @@ module Common =
             SideBySideNew: List<DiffPiece []>
         }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             (relativePath: RelativePath)
             (fileSha1: Sha256Hash)
@@ -1284,13 +1365,16 @@ module Common =
                 SideBySideNew = sideBySideNew
             }
 
+    /// Represents promotion type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type PromotionType =
         | SingleStep
         | Complex
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PromotionType>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Defines how promotions are handled for a branch.
@@ -1300,8 +1384,10 @@ module Common =
         | GroupOnly // Promotions to this branch must go through a promotion group.
         | Hybrid // Promotions can be grouped by default, with an opt-out flag.
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<BranchPromotionMode>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Defines the conflict resolution policy for a repository.
@@ -1310,8 +1396,10 @@ module Common =
         | NoConflicts of unit // Any conflict blocks recomputation/apply.
         | ConflictsAllowed of float32 // Conflicts allowed if model confidence >= threshold (0.0 to 1.0).
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ConflictResolutionPolicy>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Holds the entity Id's involved in an API call. It's populated in ValidateIds.Middleware.fs.
@@ -1336,6 +1424,7 @@ module Common =
             HasBranch: bool
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 OwnerId = OwnerId.Empty
@@ -1357,6 +1446,7 @@ module Common =
                 HasBranch = false
             }
 
+        /// Returns the display representation for this value.
         override this.ToString() = serialize this
 
     /// Defines the different types of reminders used in Grace.
@@ -1371,8 +1461,10 @@ module Common =
         /// DeleteZipFile reminders are used to remind the DirectoryVersion actor to delete the directory version contents .zip file after the time set in the repository has expired.
         | DeleteZipFile
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReminderTypes>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Defines the different statuses of a reminder.
@@ -1387,8 +1479,10 @@ module Common =
         /// The reminder has been cancelled.
         | Cancelled
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReminderStatus>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Defines the different statuses of a .zip file.
@@ -1398,8 +1492,10 @@ module Common =
         | Creating
         | Exists
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReminderStatus>()
 
+    /// Represents the appearance contract.
     [<GenerateSerializer>]
     type Appearance = { Root: DirectoryVersionId; Parent: DirectoryVersionId; Created: Instant }
 
@@ -1410,8 +1506,10 @@ module Common =
         | Latest
         | Edge
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ServerApiVersions>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Supported outbound pub-sub providers for Grace.
@@ -1423,8 +1521,10 @@ module Common =
         | AwsSqs
         | GoogleCloudPubSub
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<GracePubSubSystem>()
 
+        /// Returns the display representation for this value.
         override this.ToString() = getDiscriminatedUnionFullName this
 
     /// Settings for Azure Service Bus pub-sub integration.
@@ -1446,4 +1546,5 @@ module Common =
             AzureServiceBus: AzureServiceBusPubSubSettings option
         }
 
+        /// Represents the normalized empty instance used before persisted state or caller input contributes values.
         static member Empty: GracePubSubSettings = { System = GracePubSubSystem.UnknownPubSubProvider; AzureServiceBus = None }

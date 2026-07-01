@@ -5,8 +5,10 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 
+/// Contains tests covering storage keys shared behavior.
 [<Parallelizable(ParallelScope.All)>]
 type StorageKeysSharedTests() =
+    /// Verifies that whole file content object key matches existing blob key shape.
     [<Test>]
     member _.WholeFileContentObjectKeyMatchesExistingBlobKeyShape() =
         let fileVersion =
@@ -21,6 +23,7 @@ type StorageKeysSharedTests() =
 
         Assert.That(key, Is.EqualTo("src/Grace.Server/Storage.Server.fs/Storage.Server_0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef.fs"))
 
+    /// Verifies that whole file content object key includes blake3 when present.
     [<Test>]
     member _.WholeFileContentObjectKeyIncludesBlake3WhenPresent() =
         let fileVersion =
@@ -36,6 +39,7 @@ type StorageKeysSharedTests() =
 
         Assert.That(key, Is.EqualTo("src/Grace.Server/Storage.Server.fs/Storage.Server_shared-sha256_first-blake3.fs"))
 
+    /// Verifies that whole file content object key preserves extensionless blob key shape.
     [<Test>]
     member _.WholeFileContentObjectKeyPreservesExtensionlessBlobKeyShape() =
         let fileVersion = FileVersion.Create "Dockerfile" "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789" "" false 2048L
@@ -44,6 +48,7 @@ type StorageKeysSharedTests() =
 
         Assert.That(key, Is.EqualTo("Dockerfile/Dockerfile_abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"))
 
+    /// Verifies that whole file content object key includes blake3 for extensionless files when present.
     [<Test>]
     member _.WholeFileContentObjectKeyIncludesBlake3ForExtensionlessFilesWhenPresent() =
         let fileVersion =
@@ -53,6 +58,7 @@ type StorageKeysSharedTests() =
 
         Assert.That(key, Is.EqualTo("Dockerfile/Dockerfile_shared-sha256_first-blake3"))
 
+    /// Verifies that whole file content object key separates same sha256 different blake3.
     [<Test>]
     member _.WholeFileContentObjectKeySeparatesSameSha256DifferentBlake3() =
         let first =
@@ -63,6 +69,7 @@ type StorageKeysSharedTests() =
 
         Assert.That(StorageKeys.wholeFileContentObjectKey first, Is.Not.EqualTo(StorageKeys.wholeFileContentObjectKey second))
 
+    /// Verifies that content block object key uses four level digest fanout.
     [<Test>]
     member _.ContentBlockObjectKeyUsesFourLevelDigestFanout() =
         let address = ContentBlockAddress "ab34cd567f43aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -73,6 +80,7 @@ type StorageKeysSharedTests() =
         Assert.That(firstKey, Is.EqualTo("cas/content/ab/34/cd/56/ab34cd567f43aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
         Assert.That(secondKey, Is.EqualTo(firstKey))
 
+    /// Verifies that content block object key normalizes uppercase digest.
     [<Test>]
     member _.ContentBlockObjectKeyNormalizesUppercaseDigest() =
         let address = ContentBlockAddress "AB34CD567F43AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA"
@@ -81,6 +89,7 @@ type StorageKeysSharedTests() =
 
         Assert.That(key, Is.EqualTo("cas/content/ab/34/cd/56/ab34cd567f43aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"))
 
+    /// Verifies that content block object key does not use legacy flat or typed address shapes.
     [<Test>]
     member _.ContentBlockObjectKeyDoesNotUseLegacyFlatOrTypedAddressShapes() =
         let digest = "ab34cd567f43aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
@@ -94,6 +103,7 @@ type StorageKeysSharedTests() =
         Assert.That(key, Does.Not.Contain("content-blocks"))
         Assert.That(key, Does.Not.Contain("block-blake3"))
 
+    /// Verifies that content block object key rejects malformed or unsupported addresses.
     [<TestCase("block-blake3-ab34cd567f43aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")>]
     [<TestCase("ab34cd")>]
     [<TestCase("ab34cd567f43aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaz")>]
@@ -106,6 +116,7 @@ type StorageKeysSharedTests() =
         )
         |> ignore
 
+    /// Verifies that manifest object key depends only on manifest address.
     [<Test>]
     member _.ManifestObjectKeyDependsOnlyOnManifestAddress() =
         let address = ManifestAddress "manifest-blake3-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
@@ -116,6 +127,7 @@ type StorageKeysSharedTests() =
         Assert.That(firstKey, Is.EqualTo("cas/file-manifests/manifest-blake3-bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"))
         Assert.That(secondKey, Is.EqualTo(firstKey))
 
+    /// Verifies that content block metadata object key depends only on content block address.
     [<Test>]
     member _.ContentBlockMetadataObjectKeyDependsOnlyOnContentBlockAddress() =
         let address = ContentBlockAddress "block-blake3-cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"

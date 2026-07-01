@@ -70,13 +70,17 @@ open System.Security.Cryptography.X509Certificates
 open Microsoft.IdentityModel.Tokens
 open System.Security.Claims
 
+/// Contains Grace Server application behavior and supporting helpers.
 module Application =
 
+    /// Represents cosmos warmup used by Grace Server APIs and background services.
     type CosmosWarmup(cosmosClient: CosmosClient, log: ILogger<CosmosWarmup>) =
         interface IHostedService with
+            /// Starts the host service after configuration bootstrap has completed.
             member _.StartAsync(ct: CancellationToken) : Task =
                 log.LogInformation("Waiting for Cosmos DB emulator to be ready...")
 
+                /// Implements rec for the server request pipeline.
                 let rec loop i =
                     task {
                         if i > 120 || ct.IsCancellationRequested then
@@ -96,10 +100,12 @@ module Application =
 
                 loop 1 :> Task
 
+            /// Stops the host service during graceful server shutdown.
             member _.StopAsync(_ct: CancellationToken) : Task = Task.CompletedTask
 
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
+    /// Represents startup used by Grace Server APIs and background services.
     type Startup(configuration: IConfiguration) =
 
         do
@@ -119,16 +125,19 @@ module Application =
                 )
                 .InformationalVersion
 
+        /// Implements repository resource from context for the server request pipeline.
         let repositoryResourceFromContext (context: HttpContext) =
             task {
                 let graceIds = Services.getGraceIds context
                 return Resource.Repository(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId)
             }
 
+        /// Implements artifact repository permission from query for the server request pipeline.
         let artifactRepositoryPermissionFromQuery (context: HttpContext) =
             task {
                 let correlationId = Services.getCorrelationId context
 
+                /// Gets try get query guid data needed by the server flow.
                 let tryGetQueryGuid queryParameterName =
                     match context.Request.Query.TryGetValue queryParameterName with
                     | true, values when
@@ -154,24 +163,28 @@ module Application =
                 | _, _, Error error -> return Error error
             }
 
+        /// Implements owner resource from context for the server request pipeline.
         let ownerResourceFromContext (context: HttpContext) =
             task {
                 let graceIds = Services.getGraceIds context
                 return Resource.Owner graceIds.OwnerId
             }
 
+        /// Implements organization resource from context for the server request pipeline.
         let organizationResourceFromContext (context: HttpContext) =
             task {
                 let graceIds = Services.getGraceIds context
                 return Resource.Organization(graceIds.OwnerId, graceIds.OrganizationId)
             }
 
+        /// Implements branch resource from context for the server request pipeline.
         let branchResourceFromContext (context: HttpContext) =
             task {
                 let graceIds = Services.getGraceIds context
                 return Resource.Branch(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, graceIds.BranchId)
             }
 
+        /// Implements upload path resources from context for the server request pipeline.
         let uploadPathResourcesFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -185,6 +198,7 @@ module Application =
                 return StorageAuthorizationResources.uploadMetadataResources graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
+        /// Builds authorization resources for issuing upload URIs.
         let uploadUriResourcesFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -198,6 +212,7 @@ module Application =
                 return StorageAuthorizationResources.uploadUriResources graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
+        /// Implements download path resource from context for the server request pipeline.
         let downloadPathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -211,6 +226,7 @@ module Application =
                 return StorageAuthorizationResources.downloadUriResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
+        /// Implements annotate path resource from context for the server request pipeline.
         let annotatePathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -231,14 +247,17 @@ module Application =
                     return Ok(Operation.PathRead, Resource.Path(graceIds.OwnerId, graceIds.OrganizationId, graceIds.RepositoryId, normalizedPath))
             }
 
+        /// Implements invalid content block address error for the server request pipeline.
         let invalidContentBlockAddressError correlationId =
             GraceError.Create "ContentBlockAddress must be a 64-character hexadecimal BLAKE3 value." correlationId
 
+        /// Validates validate content block address for resource inputs before server processing continues.
         let validateContentBlockAddressForResource correlationId contentBlockAddress =
             match ContentAddress.tryNormalizeBlake3Address contentBlockAddress with
             | Some normalizedAddress -> Ok normalizedAddress
             | None -> Error(invalidContentBlockAddressError correlationId)
 
+        /// Implements content block upload path resource from context for the server request pipeline.
         let contentBlockUploadPathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -262,6 +281,7 @@ module Application =
                         )
             }
 
+        /// Implements content block download path resource from context for the server request pipeline.
         let contentBlockDownloadPathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -290,6 +310,7 @@ module Application =
                     | Ok resource -> return Ok(Operation.PathRead, resource)
             }
 
+        /// Implements upload session path resource from context for the server request pipeline.
         let uploadSessionPathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -303,10 +324,13 @@ module Application =
                 return StorageAuthorizationResources.uploadSessionResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }
 
+        /// Handles the Grace Server compose handlers request.
         let composeHandlers (first: HttpHandler) (second: HttpHandler) : HttpHandler = fun next context -> first (second next) context
 
+        /// Handles the Grace Server require system admin request.
         let requireSystemAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.SystemAdmin (fun _ -> task { return Resource.System })
 
+        /// Handles the Grace Server require system operate or admin request.
         let requireSystemOperateOrAdmin: HttpHandler =
             AuthorizationMiddleware.requiresAnyPermission
                 [
@@ -315,8 +339,10 @@ module Application =
                 ]
                 (fun _ -> task { return Resource.System })
 
+        /// Handles the Grace Server require owner admin request.
         let requireOwnerAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OwnerAdmin ownerResourceFromContext
 
+        /// Handles the Grace Server require owner write or admin request.
         let requireOwnerWriteOrAdmin: HttpHandler =
             AuthorizationMiddleware.requiresAnyPermission
                 [
@@ -325,10 +351,13 @@ module Application =
                 ]
                 ownerResourceFromContext
 
+        /// Handles the Grace Server require owner read request.
         let requireOwnerRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OwnerRead ownerResourceFromContext
 
+        /// Handles the Grace Server require organization admin request.
         let requireOrganizationAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OrganizationAdmin organizationResourceFromContext
 
+        /// Handles the Grace Server require organization write or admin request.
         let requireOrganizationWriteOrAdmin: HttpHandler =
             AuthorizationMiddleware.requiresAnyPermission
                 [
@@ -337,10 +366,13 @@ module Application =
                 ]
                 organizationResourceFromContext
 
+        /// Handles the Grace Server require organization read request.
         let requireOrganizationRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.OrganizationRead organizationResourceFromContext
 
+        /// Handles the Grace Server require repository admin request.
         let requireRepositoryAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepositoryAdmin repositoryResourceFromContext
 
+        /// Handles the Grace Server require repository write or admin request.
         let requireRepositoryWriteOrAdmin: HttpHandler =
             AuthorizationMiddleware.requiresAnyPermission
                 [
@@ -349,14 +381,19 @@ module Application =
                 ]
                 repositoryResourceFromContext
 
+        /// Handles the Grace Server require repository read request.
         let requireRepositoryRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepositoryRead repositoryResourceFromContext
 
+        /// Handles the Grace Server require repository write request.
         let requireRepositoryWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.RepositoryWrite repositoryResourceFromContext
 
+        /// Handles the Grace Server require artifact repository read request.
         let requireArtifactRepositoryRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved artifactRepositoryPermissionFromQuery
 
+        /// Handles the Grace Server require branch admin request.
         let requireBranchAdmin: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.BranchAdmin branchResourceFromContext
 
+        /// Handles the Grace Server require branch write or admin request.
         let requireBranchWriteOrAdmin: HttpHandler =
             AuthorizationMiddleware.requiresAnyPermission
                 [
@@ -365,10 +402,13 @@ module Application =
                 ]
                 branchResourceFromContext
 
+        /// Handles the Grace Server require branch read request.
         let requireBranchRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.BranchRead branchResourceFromContext
 
+        /// Handles the Grace Server require branch write request.
         let requireBranchWrite: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.BranchWrite branchResourceFromContext
 
+        /// Implements approval policy resource from context for the server request pipeline.
         let approvalPolicyResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -381,6 +421,7 @@ module Application =
                 return ApprovalCommon.resourceFromApprovalScope scope
             }
 
+        /// Implements approval request list resource from context for the server request pipeline.
         let approvalRequestListResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -393,6 +434,7 @@ module Application =
                 return ApprovalCommon.resourceFromApprovalScope scope
             }
 
+        /// Implements webhook rule resource from context for the server request pipeline.
         let webhookRuleResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -405,6 +447,7 @@ module Application =
                 return WebhookCommon.resourceFromWebhookScope scope
             }
 
+        /// Implements webhook delivery list resource from context for the server request pipeline.
         let webhookDeliveryListResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
@@ -417,78 +460,105 @@ module Application =
                 return WebhookCommon.resourceFromWebhookScope scope
             }
 
+        /// Handles the Grace Server require approval policy manage request.
         let requireApprovalPolicyManage: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.ApprovalPolicyManage approvalPolicyResourceFromContext
 
+        /// Handles the Grace Server require approval policy show request.
         let requireApprovalPolicyShow: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.ShowApprovalPolicyParameters>
 
+        /// Handles the Grace Server require approval policy update request.
         let requireApprovalPolicyUpdate: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.UpdateApprovalPolicyParameters>
 
+        /// Handles the Grace Server require approval policy enable request.
         let requireApprovalPolicyEnable: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.EnableApprovalPolicyParameters>
 
+        /// Handles the Grace Server require approval policy disable request.
         let requireApprovalPolicyDisable: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.DisableApprovalPolicyParameters>
 
+        /// Handles the Grace Server require approval policy delete request.
         let requireApprovalPolicyDelete: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalPolicy.resolveStoredPolicyForManage<Approval.DeleteApprovalPolicyParameters>
 
+        /// Handles the Grace Server require approval request read request.
         let requireApprovalRequestRead: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.ApprovalRequestRead approvalRequestListResourceFromContext
 
+        /// Handles the Grace Server require approval request show request.
         let requireApprovalRequestShow: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRead<Approval.ShowApprovalRequestParameters>
 
+        /// Handles the Grace Server require approval request history request.
         let requireApprovalRequestHistory: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRead<Approval.ApprovalRequestHistoryParameters>
 
+        /// Handles the Grace Server require approval request approve request.
         let requireApprovalRequestApprove: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRespond<Approval.ApproveApprovalRequestParameters>
 
+        /// Handles the Grace Server require approval request reject request.
         let requireApprovalRequestReject: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved ApprovalRequest.resolveStoredRequestForRespond<Approval.RejectApprovalRequestParameters>
 
+        /// Handles the Grace Server require webhook rule manage request.
         let requireWebhookRuleManage: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.WebhookManage webhookRuleResourceFromContext
 
+        /// Handles the Grace Server require webhook rule show request.
         let requireWebhookRuleShow: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.ShowWebhookRuleParameters>
 
+        /// Handles the Grace Server require webhook rule update request.
         let requireWebhookRuleUpdate: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.UpdateWebhookRuleParameters>
 
+        /// Handles the Grace Server require webhook rule enable request.
         let requireWebhookRuleEnable: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.EnableWebhookRuleParameters>
 
+        /// Handles the Grace Server require webhook rule disable request.
         let requireWebhookRuleDisable: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.DisableWebhookRuleParameters>
 
+        /// Handles the Grace Server require webhook rule delete request.
         let requireWebhookRuleDelete: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.DeleteWebhookRuleParameters>
 
+        /// Handles the Grace Server require webhook rule test request.
         let requireWebhookRuleTest: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved WebhookRule.resolveStoredRuleForManage<Webhook.TestWebhookRuleParameters>
 
+        /// Handles the Grace Server require webhook delivery read request.
         let requireWebhookDeliveryRead: HttpHandler =
             AuthorizationMiddleware.requiresPermission Operation.WebhookDeliveryRead webhookDeliveryListResourceFromContext
 
+        /// Handles the Grace Server require webhook delivery show request.
         let requireWebhookDeliveryShow: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved WebhookDelivery.resolveStoredDeliveryForRead<Webhook.ShowWebhookDeliveryParameters>
 
+        /// Handles the Grace Server require path write request.
         let requirePathWrite: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadPathResourcesFromContext
 
+        /// Handles the Grace Server require path write for upload uri request.
         let requirePathWriteForUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
 
+        /// Handles the Grace Server require path read request.
         let requirePathRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathRead downloadPathResourceFromContext
 
+        /// Handles the Grace Server require annotate path read request.
         let requireAnnotatePathRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved annotatePathResourceFromContext
 
+        /// Handles the Grace Server require path write for content block upload uri request.
         let requirePathWriteForContentBlockUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved contentBlockUploadPathResourceFromContext
 
+        /// Handles the Grace Server require path read for content block download uri request.
         let requirePathReadForContentBlockDownloadUri: HttpHandler =
             AuthorizationMiddleware.requiresPermissionResolved contentBlockDownloadPathResourceFromContext
 
+        /// Handles the Grace Server require path write for upload session request.
         let requirePathWriteForUploadSession: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathWrite uploadSessionPathResourceFromContext
 
         let activeAgentSessionsByAgentKey = ConcurrentDictionary<string, AgentSessionInfo>()
@@ -496,6 +566,7 @@ module Application =
         let agentSessionOperationCache = ConcurrentDictionary<string, AgentSessionOperationResult>()
         let bootstrappedAgentKeys = ConcurrentDictionary<string, byte>()
 
+        /// Parses try parse guid input into the server model.
         let tryParseGuid (value: string) =
             let mutable parsed = Guid.Empty
 
@@ -506,6 +577,7 @@ module Application =
             else
                 Option.None
 
+        /// Resolves resolve repository id data from request or repository state.
         let resolveRepositoryId (graceIds: GraceIds) (repositoryIdFromParameters: string) =
             if graceIds.RepositoryId <> RepositoryId.Empty then
                 graceIds.RepositoryId
@@ -514,14 +586,17 @@ module Application =
                 |> tryParseGuid
                 |> Option.defaultValue RepositoryId.Empty
 
+        /// Normalizes normalize operation id data for stable server comparisons.
         let normalizeOperationId (operationId: string) (operationName: string) (correlationId: CorrelationId) =
             if String.IsNullOrWhiteSpace operationId then
                 $"{operationName}-{correlationId}"
             else
                 operationId.Trim()
 
+        /// Normalizes normalize session source data for stable server comparisons.
         let normalizeSessionSource (source: string) = if String.IsNullOrWhiteSpace source then "cli" else source.Trim()
 
+        /// Converts server authentication data into agent key.
         let toAgentKey (repositoryId: RepositoryId) (agentId: string) =
             if repositoryId = RepositoryId.Empty
                || String.IsNullOrWhiteSpace agentId then
@@ -529,15 +604,18 @@ module Application =
             else
                 $"{repositoryId:N}:{agentId.Trim().ToLowerInvariant()}"
 
+        /// Normalizes normalize replay identity data for stable server comparisons.
         let normalizeReplayIdentity (identity: string) =
             if String.IsNullOrWhiteSpace identity then
                 "unknown"
             else
                 identity.Trim().ToLowerInvariant()
 
+        /// Converts server authentication data into replay key.
         let toReplayKey (repositoryId: RepositoryId) (identity: string) (operationId: string) =
             $"{repositoryId:N}|{normalizeReplayIdentity identity}|{normalizeReplayIdentity operationId}"
 
+        /// Writes agent session parameters from grace ids onto the current response or server state.
         let setAgentSessionParametersFromGraceIds (graceIds: GraceIds) (parameters: Common.AgentSessionParameters) =
             if graceIds.OwnerId <> OwnerId.Empty then
                 parameters.OwnerId <- graceIds.OwnerIdString
@@ -551,9 +629,11 @@ module Application =
                 parameters.RepositoryId <- graceIds.RepositoryIdString
                 parameters.RepositoryName <- $"{graceIds.RepositoryName}"
 
+        /// Captures the persisted agent-session result, including operation id and idempotent replay status.
         let createOperationResult (session: AgentSessionInfo) (message: string) (operationId: string) (wasReplay: bool) =
             { AgentSessionOperationResult.Default with Session = session; Message = message; OperationId = operationId; WasIdempotentReplay = wasReplay }
 
+        /// Adds repository and request-supplied scope identifiers to the event metadata for an agent-session command.
         let buildAgentSessionMetadata
             (context: HttpContext)
             (repositoryId: RepositoryId)
@@ -581,6 +661,7 @@ module Application =
 
             metadata
 
+        /// Implements emit agent session event for the server request pipeline.
         let emitAgentSessionEvent
             (context: HttpContext)
             (eventType: AutomationEventType)
@@ -593,23 +674,27 @@ module Application =
                 | None -> ()
             }
 
+        /// Gets try get active session by agent key data needed by the server flow.
         let tryGetActiveSessionByAgentKey (agentKey: string) =
             match activeAgentSessionsByAgentKey.TryGetValue(agentKey) with
             | true, session when session.LifecycleState = AgentSessionLifecycleState.Active -> Some(agentKey, session)
             | _ -> Option.None
 
+        /// Attempts to remove session by agent key and returns an option or result instead of throwing.
         let tryRemoveSessionByAgentKey (agentKey: string) =
             let mutable removedSession = AgentSessionInfo.Default
 
             activeAgentSessionsByAgentKey.TryRemove(agentKey, &removedSession)
             |> ignore
 
+        /// Attempts to remove session lookup and returns an option or result instead of throwing.
         let tryRemoveSessionLookup (sessionId: string) =
             let mutable removedAgentKey = String.Empty
 
             activeAgentSessionsBySessionId.TryRemove(sessionId, &removedAgentKey)
             |> ignore
 
+        /// Resolves try resolve active session data from request or repository state.
         let tryResolveActiveSession (repositoryId: RepositoryId) (agentId: string) (sessionId: string) (workItemIdOrNumber: string) =
             let repositoryPrefix = $"{repositoryId:N}:"
 
@@ -635,6 +720,7 @@ module Application =
             else
                 Option.None
 
+        /// Handles the Grace Server start agent session request.
         let startAgentSession: HttpHandler =
             fun (_next: HttpFunc) (context: HttpContext) ->
                 task {
@@ -734,6 +820,7 @@ module Application =
                                         |> Services.result200Ok (GraceReturnValue.Create operationResult correlationId)
                 }
 
+        /// Handles the Grace Server stop agent session request.
         let stopAgentSession: HttpHandler =
             fun (_next: HttpFunc) (context: HttpContext) ->
                 task {
@@ -846,6 +933,7 @@ module Application =
                                     |> Services.result200Ok (GraceReturnValue.Create operationResult correlationId)
                 }
 
+        /// Handles the Grace Server get agent session status request.
         let getAgentSessionStatus: HttpHandler =
             fun (_next: HttpFunc) (context: HttpContext) ->
                 task {
@@ -897,6 +985,7 @@ module Application =
                             |> Services.result200Ok (GraceReturnValue.Create result correlationId)
                 }
 
+        /// Handles the Grace Server get active agent session request.
         let getActiveAgentSession: HttpHandler =
             fun (_next: HttpFunc) (context: HttpContext) ->
                 task {
@@ -947,6 +1036,7 @@ module Application =
                             |> Services.result200Ok (GraceReturnValue.Create result correlationId)
                 }
 
+        /// Handles the Grace Server list active agent sessions request.
         let listActiveAgentSessions: HttpHandler =
             fun (_next: HttpFunc) (context: HttpContext) ->
                 task {
@@ -1701,6 +1791,7 @@ module Application =
         let mutable lastMetricsUpdateTime = Instant.MinValue
         let mutable threadCount = String.Empty
 
+        /// Implements enrich telemetry for the server request pipeline.
         let enrichTelemetry (activity: Activity) (request: HttpRequest) = //(eventName: string) (obj: Object) =
             let currentProcess = Process.GetCurrentProcess()
             let context = request.HttpContext
@@ -1727,6 +1818,7 @@ module Application =
                 .AddTag("enduser.is_authenticated", user.Identity.IsAuthenticated)
             |> ignore
 
+        /// Registers Grace services, authentication, Orleans, storage, and hosted background workers.
         member _.ConfigureServices(services: IServiceCollection) =
             let mutable configurationObj: obj = null
 
@@ -2022,6 +2114,7 @@ module Application =
         // List all services to the log.
         //services |> Seq.iter (fun service -> logToConsole $"Service: {service.ServiceType}.")
 
+        /// Builds the ASP.NET Core middleware and endpoint pipeline for Grace Server.
         member _.Configure(app: IApplicationBuilder, env: IWebHostEnvironment) =
             let blobServiceClient = Context.blobServiceClient
             let containers = blobServiceClient.GetBlobContainers()

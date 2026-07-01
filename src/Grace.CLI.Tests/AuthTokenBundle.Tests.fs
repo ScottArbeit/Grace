@@ -6,8 +6,10 @@ open NodaTime
 open NUnit.Framework
 open System.Text.Json
 
+/// Exercises auth token bundle behavior.
 [<Parallelizable(ParallelScope.All)>]
 type AuthTokenBundleTests() =
+    /// Verifies that token bundle round trips.
     [<Test>]
     member _.TokenBundleRoundTrips() =
         let now = Instant.FromUtc(2025, 12, 31, 0, 0)

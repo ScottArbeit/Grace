@@ -18,8 +18,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for validation set keys, proxies, state, or workflow transitions.
 module ValidationSet =
 
+    /// Implements the Orleans grain for validation set actor.
     type ValidationSetActor([<PersistentState(StateName.ValidationSet, Constants.GraceActorStorage)>] state: IPersistentState<List<ValidationSetEvent>>) =
         inherit Grain()
 
@@ -29,6 +31,7 @@ module ValidationSet =
         let mutable currentCommand = String.Empty
         let mutable validationSet = ValidationSetDto.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -42,6 +45,7 @@ module ValidationSet =
 
             Task.CompletedTask
 
+        /// Applies one persisted ValidationSet event to this activation's in-memory state.
         member private this.ApplyEvent(validationSetEvent: ValidationSetEvent) =
             task {
                 let correlationId = validationSetEvent.Metadata.CorrelationId
@@ -83,9 +87,11 @@ module ValidationSet =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this ValidationSet actor state.
             member this.GetRepositoryId correlationId = validationSet.RepositoryId |> returnTask
 
         interface IValidationSetActor with
+            /// Reports whether this ValidationSet actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -93,10 +99,12 @@ module ValidationSet =
                 <| validationSet.ValidationSetId.Equals(ValidationSetId.Empty)
                 |> returnTask
 
+            /// Reports whether this ValidationSet actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
                 validationSet.DeletedAt.IsSome |> returnTask
 
+            /// Returns the current ValidationSet actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
 
@@ -106,13 +114,16 @@ module ValidationSet =
                     Some validationSet
                 |> returnTask
 
+            /// Returns the persisted ValidationSet event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 state.State :> IReadOnlyList<ValidationSetEvent>
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (validationSetCommand: ValidationSetCommand) (eventMetadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = eventMetadata.CorrelationId) then
@@ -127,6 +138,7 @@ module ValidationSet =
                             | _ -> return Ok validationSetCommand
                     }
 
+                /// Runs ValidationSet command decisions, applies emitted events, and persists the result.
                 let processCommand (validationSetCommand: ValidationSetCommand) (eventMetadata: EventMetadata) =
                     task {
                         let eventType =

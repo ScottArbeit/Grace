@@ -26,13 +26,18 @@ open System.IO
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups the config command parser, handlers, and output helpers.
 module Config =
 
+    /// Executes the common parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type CommonParameters() =
         inherit ParameterBase()
+        /// Stores a parsed command value for handler execution.
         member val public Directory: string = "." with get, set
+        /// Stores a parsed command value for handler execution.
         member val public Overwrite: bool = false with get, set
 
+    /// Defines the options parsed by the config command handlers.
     module private Options =
         let directory =
             new Option<string>(
@@ -52,6 +57,7 @@ module Config =
                 DefaultValueFactory = (fun _ -> false)
             )
 
+    /// Coordinates common validations behavior for this CLI command path.
     let private CommonValidations parseResult =
         let ``Directory must be a valid path`` (parseResult: ParseResult) =
             let directory = parseResult.GetValue(Options.directory)
@@ -63,12 +69,14 @@ module Config =
 
         parseResult |> ``Directory must be a valid path``
 
+    /// Renders line results only when the selected output mode includes human-readable console text.
     let private renderLine (diffLine: DiffPiece) =
         if not <| diffLine.Position.HasValue then
             $"        {diffLine.Text.EscapeMarkup()}"
         else
             $"{diffLine.Position, 6:D}: {diffLine.Text.EscapeMarkup()}"
 
+    /// Reads markup from ParseResult, local configuration, or Grace ids.
     let private getMarkup (diffLine: DiffPiece) =
         if diffLine.Type = ChangeType.Deleted then
             Markup($"[{Colors.Deleted}]-{renderLine diffLine}[/]")
@@ -83,9 +91,11 @@ module Config =
         else
             Markup($"[{Colors.Important}] {diffLine.Text}[/]")
 
+    /// Executes the write parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type WriteParameters() =
         inherit CommonParameters()
 
+    /// Writes handler data through the CLI output contract.
     let writeHandler (parseResult: ParseResult) (parameters: WriteParameters) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -133,9 +143,11 @@ module Config =
             | Error error -> return (Error error)
         }
 
+    /// Executes the write command by binding ParseResult values to the SDK request and CLI output contract.
     type Write() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous write action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -187,6 +199,7 @@ module Config =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.directory

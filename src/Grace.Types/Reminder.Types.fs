@@ -14,8 +14,10 @@ open NodaTime
 open Orleans
 open System
 
+/// Contains reminder helpers.
 module Reminder =
 
+    /// Represents reminder state.
     [<GenerateSerializer>]
     type ReminderState =
         | EmptyReminderState
@@ -47,6 +49,7 @@ module Reminder =
             State: ReminderState
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof ReminderDto
@@ -63,7 +66,7 @@ module Reminder =
                 State = ReminderState.EmptyReminderState
             }
 
-        /// Creates a ReminderDto.
+        /// Builds a ReminderDto from the validated inputs used by this contract.
         static member Create actorName actorId ownerId organizationId repositoryId reminderType reminderTime state correlationId =
             {
                 Class = nameof ReminderDto
@@ -80,8 +83,11 @@ module Reminder =
                 State = state
             }
 
+        /// Returns the display representation for this value.
         override this.ToString() = serialize this
 
+    /// Represents reminder wrapper.
     type ReminderWrapper() =
         member val public Reminder: ReminderDto = ReminderDto.Default with get, set
+        /// Returns the display representation for this value.
         override this.ToString() = serialize this

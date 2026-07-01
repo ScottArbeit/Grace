@@ -7,9 +7,11 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Contains tests covering promotion set determinism behavior.
 [<Parallelizable(ParallelScope.All)>]
 type PromotionSetDeterminismTests() =
 
+    /// Builds a deterministic metadata fixture for the types promotion Set assertions.
     let createMetadata correlationId principal timestamp =
         {
             Timestamp = timestamp
@@ -19,6 +21,7 @@ type PromotionSetDeterminismTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Builds a deterministic promotion set dto fixture for the types promotion Set assertions.
     let createPromotionSetDto timestamp =
         let createdEvent: PromotionSetEvent =
             {
@@ -28,6 +31,7 @@ type PromotionSetDeterminismTests() =
 
         PromotionSetDto.UpdateDto createdEvent PromotionSetDto.Default
 
+    /// Verifies that input promotions updated resets computed state.
     [<Test>]
     member _.InputPromotionsUpdatedResetsComputedState() =
         let timestamp = Instant.FromUtc(2026, 2, 18, 8, 0)
@@ -62,6 +66,7 @@ type PromotionSetDeterminismTests() =
         Assert.That(updated.StepsComputationError.IsNone, Is.True)
         Assert.That(updated.StepsComputationAttempt, Is.EqualTo(3))
 
+    /// Verifies that steps updated increments attempt and clears blocked status.
     [<Test>]
     member _.StepsUpdatedIncrementsAttemptAndClearsBlockedStatus() =
         let timestamp = Instant.FromUtc(2026, 2, 18, 9, 0)

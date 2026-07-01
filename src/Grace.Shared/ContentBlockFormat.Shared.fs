@@ -37,6 +37,7 @@ module ContentBlockFormat =
     let private trailerMagic = Encoding.ASCII.GetBytes("GCB1META")
     let private footerMagic = Encoding.ASCII.GetBytes("GCB1END!")
 
+    /// Represents content block format error.
     type ContentBlockFormatError =
         | NullChunkSequence
         | NullPayload
@@ -50,54 +51,70 @@ module ContentBlockFormat =
         | ChunkAddressMismatch of index: int * expected: ChunkAddress * actual: ChunkAddress
         | ContentBlockAddressMismatch of expected: ContentBlockAddress * actual: ContentBlockAddress
 
+    /// Represents the content block input chunk contract.
     type ContentBlockInputChunk = { PhysicalOffset: int64; Bytes: byte array }
 
+    /// Represents the content block chunk contract.
     type ContentBlockChunk = { PhysicalOffset: int64; LogicalOffset: int64; Length: int; Address: ChunkAddress; Bytes: byte array }
 
+    /// Represents the encoded content block contract.
     type EncodedContentBlock = { Address: ContentBlockAddress; Payload: byte array; Chunks: ContentBlockChunk array }
 
+    /// Represents the decoded content block contract.
     type DecodedContentBlock = { Address: ContentBlockAddress; Payload: byte array; Chunks: ContentBlockChunk array }
 
+    /// Copies a payload range and records its BLAKE3 chunk address for block encoding.
     let createChunk physicalOffset bytes = { PhysicalOffset = physicalOffset; Bytes = bytes }
 
+    /// Copies the requested byte range so encoded chunks cannot alias the caller buffer.
     let private copyRange (bytes: byte array) offset length =
         let copy = Array.zeroCreate<byte> length
         Array.Copy(bytes, offset, copy, 0, length)
         copy
 
+    /// Computes the BLAKE3 address for a byte payload.
     let private hashBytes (bytes: byte array) =
         ContentAddress.computeBlake3Hex bytes
         |> Convert.FromHexString
 
+    /// Converts payload bytes into the lowercase BLAKE3 chunk address used in block metadata.
     let private bytesToChunkAddress (bytes: byte array) =
         Convert.ToHexString(bytes).ToLowerInvariant()
         |> ChunkAddress
 
+    /// Writes a UInt16 field in the content-block binary format.
     let private writeUInt16 (stream: MemoryStream) value =
         let bytes = Array.zeroCreate<byte> 2
         BinaryPrimitives.WriteUInt16LittleEndian(bytes, value)
         stream.Write(bytes, 0, bytes.Length)
 
+    /// Writes a UInt32 field in the content-block binary format.
     let private writeUInt32 (stream: MemoryStream) value =
         let bytes = Array.zeroCreate<byte> 4
         BinaryPrimitives.WriteUInt32LittleEndian(bytes, value)
         stream.Write(bytes, 0, bytes.Length)
 
+    /// Writes an Int64 field in the content-block binary format.
     let private writeInt64 (stream: MemoryStream) value =
         let bytes = Array.zeroCreate<byte> 8
         BinaryPrimitives.WriteInt64LittleEndian(bytes, value)
         stream.Write(bytes, 0, bytes.Length)
 
+    /// Reads a UInt16 field from the content-block binary format.
     let private readUInt16 (bytes: byte array) offset = BinaryPrimitives.ReadUInt16LittleEndian(ReadOnlySpan<byte>(bytes, offset, 2))
 
+    /// Reads a UInt32 field from the content-block binary format.
     let private readUInt32 (bytes: byte array) offset = BinaryPrimitives.ReadUInt32LittleEndian(ReadOnlySpan<byte>(bytes, offset, 4))
 
+    /// Reads an Int64 field from the content-block binary format.
     let private readInt64 (bytes: byte array) offset = BinaryPrimitives.ReadInt64LittleEndian(ReadOnlySpan<byte>(bytes, offset, 8))
 
+    /// Compares byte sequences when verifying encoded payload integrity.
     let private sequenceEqual (expected: byte array) (actual: byte array) =
         expected.Length = actual.Length
         && Array.forall2 (=) expected actual
 
+    /// Builds trailer.
     let private buildTrailer (chunks: ContentBlockChunk array) =
         use stream = new MemoryStream()
 
@@ -115,6 +132,7 @@ module ContentBlockFormat =
 
         stream.ToArray()
 
+    /// Builds footer.
     let private buildFooter (trailer: byte array) =
         use stream = new MemoryStream()
 
@@ -125,6 +143,7 @@ module ContentBlockFormat =
         stream.Write(footerMagic, 0, footerMagic.Length)
         stream.ToArray()
 
+    /// Converts metadata.
     let private toMetadata (chunks: ContentBlockInputChunk array) =
         let mutable logicalOffset = 0L
         let metadata = ResizeArray<ContentBlockChunk>()
@@ -154,6 +173,7 @@ module ContentBlockFormat =
         | Some error -> Error error
         | None -> Ok(metadata.ToArray())
 
+    /// Serializes a content block header and chunk payloads into the Grace binary block format.
     let encode (chunks: ContentBlockInputChunk seq) =
         if isNull (box chunks) then
             Error NullChunkSequence
@@ -182,6 +202,7 @@ module ContentBlockFormat =
 
                     Ok({ Address = address; Payload = payload; Chunks = metadata }: EncodedContentBlock)
 
+    /// Parses trailer.
     let private parseTrailer (trailer: byte array) =
         if trailer.Length < TrailerHeaderLength then
             Error InvalidTrailer
@@ -224,6 +245,7 @@ module ContentBlockFormat =
 
                             Ok records
 
+    /// Parses the Grace binary block format and verifies chunk hashes before returning decoded chunks.
     let decode (payload: byte array) =
         if isNull payload then
             Error NullPayload
@@ -302,12 +324,14 @@ module ContentBlockFormat =
 
                                 Ok({ Address = address; Payload = copyRange payload 0 trailerStart; Chunks = chunks }: DecodedContentBlock)
 
+    /// Validates address.
     let validateAddress expectedAddress decodedBlock =
         if expectedAddress = decodedBlock.Address then
             Ok()
         else
             Error(ContentBlockAddressMismatch(expectedAddress, decodedBlock.Address))
 
+    /// Validates payload address.
     let validatePayloadAddress expectedAddress payload =
         decode payload
         |> Result.bind (validateAddress expectedAddress)

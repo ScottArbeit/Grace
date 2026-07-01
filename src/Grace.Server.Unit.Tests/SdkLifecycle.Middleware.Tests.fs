@@ -10,18 +10,22 @@ open System.IO
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Covers sdk Lifecycle Policy behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type SdkLifecyclePolicyTests() =
 
+    /// Builds identity test data for the server unit sdk Lifecycle Middleware scenarios in this file.
     let identity (clientType: string option) (clientVersion: string option) : SdkLifecyclePolicy.ClientIdentity =
         { ClientType = clientType; ClientVersion = clientVersion }
 
+    /// Verifies that supported Cli Version Continues Without Lifecycle Headers.
     [<Test>]
     member _.SupportedCliVersionContinuesWithoutLifecycleHeaders() =
         let decision = SdkLifecyclePolicy.decide (identity (Some "CLI") (Some "0.2.0"))
 
         Assert.That(decision, Is.EqualTo(SdkLifecyclePolicy.Continue))
 
+    /// Verifies that deprecated Cli Version Continues With Lifecycle Headers.
     [<Test>]
     member _.DeprecatedCliVersionContinuesWithLifecycleHeaders() =
         let decision = SdkLifecyclePolicy.decide (identity (Some "CLI") (Some "0.1.2.3"))
@@ -35,6 +39,7 @@ type SdkLifecyclePolicyTests() =
             Assert.That(headers.UpdateUrl, Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
         | other -> Assert.Fail($"Expected deprecated lifecycle headers, got {other}.")
 
+    /// Verifies that unsupported Cli Version Rejects With Structured Client Details.
     [<Test>]
     member _.UnsupportedCliVersionRejectsWithStructuredClientDetails() =
         let decision = SdkLifecyclePolicy.decide (identity (Some "cli") (Some "0.0.9"))
@@ -50,6 +55,7 @@ type SdkLifecyclePolicyTests() =
             Assert.That(unsupportedClient.Message, Does.Contain("no longer supported"))
         | other -> Assert.Fail($"Expected unsupported lifecycle rejection, got {other}.")
 
+    /// Verifies that missing Unknown And Malformed Client Identity Continues.
     [<Test>]
     member _.MissingUnknownAndMalformedClientIdentityContinues() =
         let cases =
@@ -64,11 +70,13 @@ type SdkLifecyclePolicyTests() =
         for case in cases do
             Assert.That(SdkLifecyclePolicy.decide case, Is.EqualTo(SdkLifecyclePolicy.Continue))
 
+/// Covers sdk Lifecycle Middleware behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type SdkLifecycleMiddlewareTests() =
 
     let getHeader (context: DefaultHttpContext) headerName = context.Response.Headers[ headerName ].ToString()
 
+    /// Constructs context fixtures used by the server unit sdk Lifecycle Middleware assertions.
     let createContext (clientType: string option) (clientVersion: string option) =
         let context = DefaultHttpContext()
         context.Response.Body <- new MemoryStream()
@@ -84,6 +92,7 @@ type SdkLifecycleMiddlewareTests() =
 
         context
 
+    /// Builds response Body test data for the server unit sdk Lifecycle Middleware scenarios in this file.
     let responseBody (context: DefaultHttpContext) =
         context.Response.Body.Seek(0L, SeekOrigin.Begin)
         |> ignore
@@ -91,6 +100,7 @@ type SdkLifecycleMiddlewareTests() =
         use reader = new StreamReader(context.Response.Body, leaveOpen = true)
         reader.ReadToEnd()
 
+    /// Verifies that deprecated Cli Version Adds Lifecycle Headers And Invokes Next.
     [<Test>]
     member _.DeprecatedCliVersionAddsLifecycleHeadersAndInvokesNext() =
         task {
@@ -117,6 +127,7 @@ type SdkLifecycleMiddlewareTests() =
             Assert.That(getHeader context Constants.SdkLifecycleUpdateUrlHeaderKey, Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
         }
 
+    /// Verifies that deprecated Cli Version Adds Lifecycle Headers To Failing Response.
     [<Test>]
     member _.DeprecatedCliVersionAddsLifecycleHeadersToFailingResponse() =
         task {
@@ -141,6 +152,7 @@ type SdkLifecycleMiddlewareTests() =
             Assert.That(responseBody context, Is.EqualTo("downstream validation failed"))
         }
 
+    /// Verifies that unsupported Cli Version Returns Upgrade Required Grace Error Without Invoking Next.
     [<Test>]
     member _.UnsupportedCliVersionReturnsUpgradeRequiredGraceErrorWithoutInvokingNext() =
         task {
@@ -190,6 +202,7 @@ type SdkLifecycleMiddlewareTests() =
             Assert.That(error.Properties[ "updateUrl" ].ToString(), Is.EqualTo(SdkLifecyclePolicy.CliUpdateUrl))
         }
 
+    /// Verifies that unknown Missing And Malformed Client Identity Does Not Block Raw Clients.
     [<Test>]
     member _.UnknownMissingAndMalformedClientIdentityDoesNotBlockRawClients() =
         task {

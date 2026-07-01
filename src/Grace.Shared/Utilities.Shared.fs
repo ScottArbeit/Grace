@@ -25,21 +25,27 @@ open Microsoft.Extensions.ObjectPool
 
 #nowarn "9"
 
+/// Contains combinators helpers.
 module Combinators =
+    /// Applies the success or error continuation for a Result value.
     let either okFunc errorFunc graceResult =
         match graceResult with
         | Result.Ok s -> okFunc s
         | Result.Error f -> errorFunc f
 
+    /// Wraps a value in a successful Result.
     let ok x = Result.Ok x
+    /// Wraps a value in a failed Result.
     let error x = Result.Error x
 
+    /// Chains a Result-producing function only when the previous result succeeded.
     let bind f = either f error
 
     let (>>=) x f = bind f x
 
     let (>=>) s1 s2 = s1 >> bind s2
 
+/// Contains utilities helpers.
 module Utilities =
     let memoryCacheOptions = MemoryCacheOptions(TrackStatistics = false, TrackLinkedCacheEntries = false, ExpirationScanFrequency = TimeSpan.FromSeconds(30.0))
     let memoryCache: IMemoryCache = new MemoryCache(memoryCacheOptions)
@@ -48,8 +54,10 @@ module Utilities =
     type StringBuilderPooledObjectPolicy() =
         inherit PooledObjectPolicy<StringBuilder>()
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         override _.Create() = new StringBuilder()
 
+        /// Wraps a value in the computation expression without adding validation errors.
         override _.Return(sb: StringBuilder) =
             sb.Clear() |> ignore
             true
@@ -161,6 +169,7 @@ module Utilities =
         let (case, _) = FSharpValue.GetUnionFields(x, discriminatedUnionType)
         $"{case.Name}"
 
+    /// Creates the CLR default value for a supplied type.
     let defaultForType (t: Type) : obj = if t.IsValueType then Activator.CreateInstance t else null
 
     /// Converts a string into the corresponding case of a discriminated union type.
@@ -425,14 +434,16 @@ module Utilities =
             innerException: string
         }
 
+        /// Returns the display representation for this value.
         override this.ToString() =
             match this.innerException with
             | null -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}"
             | innerEx -> $"Exception: {this.``exception``}{Environment.NewLine}{Environment.NewLine}Inner exception: {this.innerException}{Environment.NewLine}"
 
-        /// Creates an ExceptionResponse instance from an Exception-based instance.
+        /// Builds an ExceptionResponse instance from an Exception-based instance from the validated inputs used by this contract.
         static member Create(ex: Exception) =
             //#if DEBUG
+            /// Extracts the most useful exception message available to callers.
             let exceptionMessage (ex: Exception) =
                 $"Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}Stack trace:{Environment.NewLine}{ex.StackTrace}{Environment.NewLine}"
 
@@ -443,6 +454,7 @@ module Utilities =
     //        {|message = $"Internal server error, and, yes, it's been logged. The correlationId is in the X-Correlation-Id header."|}
     //#endif
 
+    /// Flattens a nested ValueTask so callers await a single asynchronous result.
     let flattenValueTask (valueTask: ValueTask<ValueTask<'T>>) =
         if valueTask.IsCompleted then
             valueTask.Result
@@ -523,9 +535,8 @@ module Utilities =
         elif isBinary then "application/octet-stream"
         else "application/text"
 
-    /// Creates a Span<`T> on the stack to minimize heap usage and GC. This is an F# implementation of the C# keyword `stackalloc`.
-    /// This should be used for smaller allocations, as the stack has ~1MB size.
     // Borrowed with appreciation from https://bartoszsypytkowski.com/writing-high-performance-f-code/.
+    /// Allocates a stack buffer for small temporary spans.
     let inline stackalloc<'a when 'a: unmanaged> (length: int) : Span<'a> =
         let p =
             NativePtr.stackalloc<'a> length
@@ -535,7 +546,7 @@ module Utilities =
 
     let propertyLookupByType = ConcurrentDictionary<Type, PropertyInfo array>()
 
-    /// Creates a dictionary from the property names and values of a set of parameters.
+    /// Builds a dictionary from the property names and values of a set of parameters from the validated inputs used by this contract.
     let getParametersAsDictionary<'T> (obj: 'T) =
         let mutable properties = Array.Empty<PropertyInfo>()
 

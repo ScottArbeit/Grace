@@ -24,22 +24,32 @@ open Spectre.Console.Rendering
 open Spectre.Console.Json
 open System.Text.RegularExpressions
 
+/// Groups the common command parser, handlers, and output helpers.
 module Common =
 
     let mutable private renderedLifecycleWarnings = HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
+    /// Clears process-local lifecycle warning suppression so tests and repeated invocations can render warnings again.
     let resetLifecycleWarningSuppression () = renderedLifecycleWarnings <- HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
+    /// Executes the parameter base command by binding ParseResult values to the SDK request and CLI output contract.
     type ParameterBase() =
+        /// Stores a parsed command value for handler execution.
         member val public CorrelationId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public Json: bool = false with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OutputFormat: string = String.Empty with get, set
 
+    /// Groups the common command parser, handlers, and output helpers.
     module LocalOutputDto =
+        /// Defines structured data exchanged by CLI helpers.
         type AliasListItemDto = { Alias: string; CommandPath: string array; Command: string }
 
+        /// Defines structured data exchanged by CLI helpers.
         type AliasListDto = { Aliases: AliasListItemDto array; Count: int }
 
+        /// Models history entry dto values passed between the parser and common handlers.
         type HistoryEntryDto =
             {
                 Id: Guid
@@ -57,12 +67,16 @@ module Common =
                 RedactionCount: int
             }
 
+        /// Defines structured data exchanged by CLI helpers.
         type HistoryEntriesDto = { Entries: HistoryEntryDto array; Count: int; CorruptCount: int }
 
+        /// Defines structured data exchanged by CLI helpers.
         type HistoryRecordingDto = { Enabled: bool }
 
+        /// Defines structured data exchanged by CLI helpers.
         type HistoryDeleteDto = { Deleted: bool; Removed: int }
 
+        /// Models repository init dto values passed between the parser and common handlers.
         type RepositoryInitDto =
             {
                 Message: string
@@ -72,6 +86,7 @@ module Common =
                 RootSha256Hash: string option
             }
 
+        /// Models connect dto values passed between the parser and common handlers.
         type ConnectDto =
             {
                 OwnerId: Guid
@@ -86,10 +101,13 @@ module Common =
                 RetrievedDefaultBranch: bool
             }
 
+        /// Defines structured data exchanged by CLI helpers.
         type ReviewReportExportDto = { CandidateId: string; Format: string; OutputFile: string; BytesWritten: int64 }
 
+        /// Defines structured data exchanged by CLI helpers.
         type MaintenanceStatsDto = { DirectoryCount: int; FileCount: int; TotalFileSize: int64; RootSha256Hash: string option; RootBlake3Hash: string option }
 
+        /// Models maintenance list contents file dto values passed between the parser and common handlers.
         type MaintenanceListContentsFileDto =
             {
                 RelativePath: string
@@ -100,6 +118,7 @@ module Common =
                 LastWriteTimeUtc: DateTime
             }
 
+        /// Models maintenance list contents directory dto values passed between the parser and common handlers.
         type MaintenanceListContentsDirectoryDto =
             {
                 RelativePath: string
@@ -111,14 +130,19 @@ module Common =
                 Files: MaintenanceListContentsFileDto array
             }
 
+        /// Defines structured data exchanged by CLI helpers.
         type MaintenanceListContentsDto = { Summary: MaintenanceStatsDto; Directories: MaintenanceListContentsDirectoryDto array }
 
+        /// Defines structured data exchanged by CLI helpers.
         type MaintenanceIgnoreEntriesDto = { DirectoryEntries: string array; FileEntries: string array }
 
+        /// Defines structured data exchanged by CLI helpers.
         type MaintenanceScanDifferenceDto = { DifferenceType: string; FileSystemEntryType: string; RelativePath: string }
 
+        /// Defines structured data exchanged by CLI helpers.
         type MaintenanceScanDirectoryVersionDto = { DirectoryVersionId: Guid; RelativePath: string; Sha256Hash: string; Blake3Hash: string }
 
+        /// Models maintenance scan dto values passed between the parser and common handlers.
         type MaintenanceScanDto =
             {
                 DifferenceCount: int
@@ -127,12 +151,16 @@ module Common =
                 NewDirectoryVersions: MaintenanceScanDirectoryVersionDto array
             }
 
+        /// Defines structured data exchanged by CLI helpers.
         type DoctorCheckDto = { Id: string; Category: string; Title: string; Description: string; DefaultEnabled: bool; SupportsOffline: bool }
 
+        /// Defines structured data exchanged by CLI helpers.
         type DoctorCheckResultDto = { Id: string; Category: string; Title: string; Status: string; Severity: string; Summary: string }
 
+        /// Defines structured data exchanged by CLI helpers.
         type DoctorSummaryDto = { Total: int; Ok: int; Warning: int; Failed: int; Skipped: int }
 
+        /// Models doctor report dto values passed between the parser and common handlers.
         type DoctorReportDto =
             {
                 ReportVersion: string
@@ -148,6 +176,7 @@ module Common =
                 Summary: DoctorSummaryDto
             }
 
+        /// Defines structured data exchanged by CLI helpers.
         type WatchResultDto = { Started: bool; Completed: bool; Message: string; RootDirectory: string; ServerUri: string; RepositoryId: Guid; BranchId: Guid }
 
     /// The output format for the command.
@@ -168,6 +197,7 @@ module Common =
     /// Gets the "... ago" text.
     let ago = ago Language
 
+    /// Defines the options parsed by the common command handlers.
     module Options =
         let correlationId =
             new Option<String>(
@@ -230,6 +260,7 @@ module Common =
                 Recursive = true
             )
 
+    /// Groups the common command parser, handlers, and output helpers.
     module HashOptions =
         [<Literal>]
         let MinimumVersionHashPrefixLength = 2
@@ -237,36 +268,43 @@ module Common =
         [<Literal>]
         let FullVersionHashLength = 64
 
+        /// Models version hash algorithm values passed between the parser and common handlers.
         type VersionHashAlgorithm =
             | Blake3
             | Sha256Compatibility
 
+        /// Models version hash lookup mode values passed between the parser and common handlers.
         type VersionHashLookupMode =
             | NoVersionHashLookup
             | Blake3VersionHashLookup of blake3HashPrefix: string
             | Sha256CompatibilityVersionHashLookup of sha256HashPrefix: string
             | PairedVersionHashLookup of sha256HashPrefix: string * blake3HashPrefix: string
 
+        /// Defines structured data exchanged by CLI helpers.
         type VersionHashDisplayMode = { FullHashes: bool; ShowSha256: bool; UsedDeprecatedFullSha: bool }
 
         [<Literal>]
         let MissingVersionHashText = "unavailable"
 
+        /// Centralizes shared CLI algorithm name behavior used across command modules.
         let private algorithmName algorithm =
             match algorithm with
             | Blake3 -> "BLAKE3"
             | Sha256Compatibility -> "SHA-256"
 
+        /// Normalizes short hash values used by hash-based version lookup and display options.
         let private shortHash (value: string) =
             if String.IsNullOrWhiteSpace value then MissingVersionHashText
             elif value.Length <= 8 then value
             else value.Substring(0, 8)
 
+        /// Formats version hash values into the text shown in Spectre.Console tables or command output.
         let formatVersionHash (hashDisplayMode: VersionHashDisplayMode) (value: string) =
             if String.IsNullOrWhiteSpace value then MissingVersionHashText
             elif hashDisplayMode.FullHashes then value
             else shortHash value
 
+        /// Formats version hash pair values into the text shown in Spectre.Console tables or command output.
         let formatVersionHashPair (hashDisplayMode: VersionHashDisplayMode) (blake3Hash: Blake3Hash) (sha256Hash: Sha256Hash) =
             let blake3Display = formatVersionHash hashDisplayMode $"{blake3Hash}"
 
@@ -276,6 +314,7 @@ module Common =
             else
                 blake3Display
 
+        /// Evaluates is hex against parsed options and command state.
         let private isHex value =
             value
             |> Seq.forall (fun c ->
@@ -283,6 +322,7 @@ module Common =
                 || (c >= 'a' && c <= 'f')
                 || (c >= 'A' && c <= 'F'))
 
+        /// Normalizes Grace ids for version hash prefix by keeping explicit scope values and clearing implicit child scopes.
         let normalizeVersionHashPrefix algorithm optionName (value: string) =
             let trimmed = if isNull value then String.Empty else value.Trim()
 
@@ -297,6 +337,7 @@ module Common =
             else
                 Ok(trimmed.ToLowerInvariant())
 
+        /// Adds options or child commands to a command definition.
         let addVersionHashValidator algorithm optionName (option: Option<string>) =
             option.Validators.Add (fun optionResult ->
                 let value = optionResult.GetValueOrDefault<string>()
@@ -307,14 +348,17 @@ module Common =
 
             option
 
+        /// Defines the sha256 hash option used by this command parser.
         let sha256HashOption description =
             new Option<string>(OptionName.Sha256Hash, [||], Required = false, Description = description, Arity = ArgumentArity.ExactlyOne)
             |> addVersionHashValidator Sha256Compatibility OptionName.Sha256Hash
 
+        /// Defines the blake3 hash option used by this command parser.
         let blake3HashOption description =
             new Option<string>(OptionName.Blake3Hash, [||], Required = false, Description = description, Arity = ArgumentArity.ExactlyOne)
             |> addVersionHashValidator Blake3 OptionName.Blake3Hash
 
+        /// Defines the shared explicit option value parser option used by multiple Grace commands.
         let private explicitOptionValue (optionName: string) algorithm (parseResult: ParseResult) =
             let result = parseResult.GetResult(optionName)
 
@@ -328,6 +372,7 @@ module Common =
                 | Ok normalized -> Some normalized
                 | Error _ -> None
 
+        /// Normalizes bind version hash lookup mode values used by hash-based version lookup and display options.
         let bindVersionHashLookupMode (parseResult: ParseResult) =
             let sha256Hash = explicitOptionValue OptionName.Sha256Hash Sha256Compatibility parseResult
             let blake3Hash = explicitOptionValue OptionName.Blake3Hash Blake3 parseResult
@@ -338,15 +383,19 @@ module Common =
             | None, Some blake3Hash -> Blake3VersionHashLookup blake3Hash
             | None, None -> NoVersionHashLookup
 
+        /// Reads sha256 compatibility hash prefix from ParseResult, local configuration, or Grace ids.
         let getSha256CompatibilityHashPrefix (parseResult: ParseResult) =
             explicitOptionValue OptionName.Sha256Hash Sha256Compatibility parseResult
             |> Option.defaultValue String.Empty
 
+        /// Reads blake3 hash prefix from ParseResult, local configuration, or Grace ids.
         let getBlake3HashPrefix (parseResult: ParseResult) =
             explicitOptionValue OptionName.Blake3Hash Blake3 parseResult
             |> Option.defaultValue String.Empty
 
+        /// Normalizes bind version hash display mode values used by hash-based version lookup and display options.
         let bindVersionHashDisplayMode (parseResult: ParseResult) =
+            /// Evaluates has option against parsed options and command state.
             let hasOption (optionName: string) = not <| isNull (parseResult.GetResult(optionName))
 
             let fullHashes =
@@ -396,8 +445,10 @@ module Common =
     [<Literal>]
     let SourceEnvironmentVariableName = "GRACE_SOURCE"
 
+    /// Normalizes Grace ids for source by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeSource (value: string) = if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim())
 
+    /// Tries to map get explicit source from parse result and returns a GraceError instead of throwing on unsupported input.
     let private tryGetExplicitSourceFromParseResult (parseResult: ParseResult) =
         if isNull parseResult then
             None
@@ -418,6 +469,7 @@ module Common =
                 with
                 | :? InvalidOperationException -> None
 
+    /// Resolves shared CLI resolve invocation source values from parse results, configuration, or Grace identifiers.
     let resolveInvocationSource (parseResult: ParseResult) =
         match tryGetExplicitSourceFromParseResult parseResult with
         | Some source -> Some source
@@ -425,6 +477,7 @@ module Common =
             Environment.GetEnvironmentVariable(SourceEnvironmentVariableName)
             |> normalizeSource
 
+    /// Groups the common command parser, handlers, and output helpers.
     module Validations =
         /// Checks that a given name option is a valid Grace name. If the option is not present, it does not return an error.
         let mustBeAValidGraceName<'T when 'T :> IErrorDiscriminatedUnion> (parseResult: ParseResult) (optionName: string) (error: 'T) =
@@ -539,6 +592,7 @@ module Common =
             else
                 Ok(parseResult)
 
+        /// Centralizes shared CLI common validations behavior used across command modules.
         let CommonValidations (parseResult: ParseResult) =
             parseResult
             |> ``OwnerName must be a valid Grace name``
@@ -593,6 +647,7 @@ module Common =
                 with
                 | :? InvalidOperationException -> None
 
+    /// Evaluates has select against parsed options and command state.
     let hasSelect parseResult = tryGetSelect parseResult |> Option.isSome
 
     /// Checks if the command should emit machine-readable JSON.
@@ -615,10 +670,13 @@ module Common =
     /// Checks if the output format from the command line is either Normal or Verbose; i.e. it has output.
     let hasOutput parseResult = parseResult |> normal || parseResult |> verbose
 
+    /// Centralizes shared CLI start progress task behavior used across command modules.
     let startProgressTask showOutput (t: ProgressTask) = if showOutput then t.StartTask()
 
+    /// Centralizes shared CLI set progress task value behavior used across command modules.
     let setProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Value <- value
 
+    /// Centralizes shared CLI increment progress task value behavior used across command modules.
     let incrementProgressTaskValue showOutput (value: float) (t: ProgressTask) = if showOutput then t.Increment(value)
 
     let emptyTask = ProgressTask(0, "Empty progress task", 0.0, autoStart = false)
@@ -638,10 +696,12 @@ module Common =
             OptionName.BranchName
         ]
 
+    /// Resolves shared CLI should show resolved values values from parse results, configuration, or Grace identifiers.
     let private shouldShowResolvedValues (parseResult: ParseResult) =
         resolvedValueOptionNames
         |> List.exists (isOptionPresent parseResult)
 
+    /// Tries to map build resolved values text and returns a GraceError instead of throwing on unsupported input.
     let private tryBuildResolvedValuesText (parseResult: ParseResult) =
         if
             isNull parseResult
@@ -654,8 +714,10 @@ module Common =
             let sb = stringBuilderPool.Get()
 
             try
+                /// Centralizes shared CLI append line behavior used across command modules.
                 let appendLine label value = sb.AppendLine($"{label}: {value}") |> ignore
 
+                /// Centralizes shared CLI append name behavior used across command modules.
                 let appendName label (value: string) = if not <| String.IsNullOrWhiteSpace(value) then appendLine label value
 
                 if graceIds.HasOwner then
@@ -691,6 +753,7 @@ module Common =
                     |> Seq.sortBy (fun option -> option.Name)
                     |> Seq.toIReadOnlyList
 
+                /// Tries to map get value and returns a GraceError instead of throwing on unsupported input.
                 let tryGetValue (option: Option) =
                     let result = parseResult.GetResult(option.Name)
 
@@ -735,10 +798,13 @@ module Common =
 
     let private redactedValue = "[redacted]"
 
+    /// Centralizes shared CLI redact scoped outbound url behavior used across command modules.
     let private redactScopedOutboundUrl (url: ScopedOutboundUrl) = { url with Url = redactedValue }
 
+    /// Centralizes shared CLI redact webhook rule behavior used across command modules.
     let private redactWebhookRule (rule: WebhookRule) = { rule with Url = redactScopedOutboundUrl rule.Url; SigningSecretVersion = redactedValue }
 
+    /// Centralizes shared CLI redact approval policy behavior used across command modules.
     let private redactApprovalPolicy (policy: ApprovalPolicy) =
         { policy with
             NotificationUrl =
@@ -746,6 +812,7 @@ module Common =
                 |> Option.map redactScopedOutboundUrl
         }
 
+    /// Centralizes shared CLI redact json return value behavior used across command modules.
     let private redactJsonReturnValue<'T> (returnValue: 'T) =
         match box returnValue with
         | :? WebhookRule as rule -> box (redactWebhookRule rule)
@@ -761,10 +828,13 @@ module Common =
             )
         | _ -> box returnValue
 
+    /// Writes json stdout data through the CLI output contract.
     let writeJsonStdout value = Console.Out.WriteLine(serialize value)
 
+    /// Writes json error stdout data through the CLI output contract.
     let writeJsonErrorStdout (error: GraceError) = writeJsonStdout error
 
+    /// Renders json return value results only when the selected output mode includes human-readable console text.
     let private renderJsonReturnValue (graceReturnValue: GraceReturnValue<'T>) =
         let output =
             {|
@@ -776,8 +846,10 @@ module Common =
 
         serialize output
 
+    /// Writes json return value stdout data through the CLI output contract.
     let writeJsonReturnValueStdout (graceReturnValue: GraceReturnValue<'T>) = Console.Out.WriteLine(renderJsonReturnValue graceReturnValue)
 
+    /// Tries to map render json selection and returns a GraceError instead of throwing on unsupported input.
     let private tryRenderJsonSelection (parseResult: ParseResult) (graceReturnValue: GraceReturnValue<'T>) =
         match tryGetSelect parseResult with
         | None -> None
@@ -793,6 +865,7 @@ module Common =
                 | Error error -> Some(Error error)
                 | Ok selected -> Some(Ok(SelectProjection.renderSelectedJson selected))
 
+    /// Tries to map get property and returns a GraceError instead of throwing on unsupported input.
     let private tryGetProperty (properties: Dictionary<string, obj>) key =
         if isNull properties then
             None
@@ -805,11 +878,13 @@ module Common =
                 Some($"{value}")
             | _ -> None
 
+    /// Evaluates is true property against parsed options and command state.
     let private isTrueProperty (properties: Dictionary<string, obj>) key =
         match tryGetProperty properties key with
         | Some value -> value.Equals("true", StringComparison.OrdinalIgnoreCase)
         | None -> false
 
+    /// Centralizes shared CLI sanitize lifecycle properties for human output behavior used across command modules.
     let private sanitizeLifecyclePropertiesForHumanOutput (properties: Dictionary<string, obj>) =
         let sanitized = Dictionary<string, obj>()
         let updateUrlIsHttps = isTrueProperty properties ClientIdentity.LifecycleUpdateUrlIsHttpsPropertyKey
@@ -827,11 +902,13 @@ module Common =
 
         sanitized
 
+    /// Centralizes shared CLI append if some behavior used across command modules.
     let private appendIfSome (lines: ResizeArray<string>) label value =
         match value with
         | Some value -> lines.Add($"{label}: {value}")
         | None -> ()
 
+    /// Tries to map build lifecycle warning and returns a GraceError instead of throwing on unsupported input.
     let private tryBuildLifecycleWarning (properties: Dictionary<string, obj>) =
         match tryGetProperty properties ClientIdentity.LifecycleStatusPropertyKey with
         | None -> None
@@ -876,6 +953,7 @@ module Common =
 
             Some(normalizedStatus, String.Join(Environment.NewLine, lines))
 
+    /// Renders lifecycle warning once results only when the selected output mode includes human-readable console text.
     let private renderLifecycleWarningOnce parseResult outputFormat properties =
         match outputFormat with
         | Json

@@ -22,8 +22,10 @@ open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 
+/// Contains Grace Server webhook dispatch behavior and supporting helpers.
 module WebhookDispatch =
 
+    /// Represents outbound webhook request used by Grace Server APIs and background services.
     type OutboundWebhookRequest =
         {
             DeliveryId: WebhookDeliveryId
@@ -34,14 +36,18 @@ module WebhookDispatch =
             PayloadJson: string
         }
 
+    /// Represents outbound webhook result used by Grace Server APIs and background services.
     type OutboundWebhookResult =
         | Succeeded of statusCode: int
         | TransientFailure of statusCode: int option * error: string
         | PermanentFailure of statusCode: int option * error: string
 
+    /// Defines the contract for ioutbound webhook transport.
     type IOutboundWebhookTransport =
+        /// Defines the send async operation for implementers.
         abstract member SendAsync: OutboundWebhookRequest * CancellationToken -> Task<OutboundWebhookResult>
 
+    /// Represents http outbound webhook transport used by Grace Server APIs and background services.
     type HttpOutboundWebhookTransport(configuration: IConfiguration, hostEnvironment: IHostEnvironment) =
         let handler = new HttpClientHandler()
 
@@ -49,6 +55,7 @@ module WebhookDispatch =
 
         let client = new HttpClient(handler, disposeHandler = true)
 
+        /// Computes classify status code data used by Grace Server.
         let classifyStatusCode (statusCode: HttpStatusCode) =
             let numericStatusCode = int statusCode
 
@@ -65,9 +72,11 @@ module WebhookDispatch =
                 PermanentFailure(Some numericStatusCode, $"HTTP {numericStatusCode}")
 
         interface IDisposable with
+            /// Releases the HTTP response object after a webhook send completes.
             member _.Dispose() = client.Dispose()
 
         interface IOutboundWebhookTransport with
+            /// Sends an outbound webhook request with the supplied content and cancellation token.
             member _.SendAsync(request, cancellationToken) =
                 task {
                     use message = new HttpRequestMessage(HttpMethod.Post, request.Url)
@@ -100,6 +109,7 @@ module WebhookDispatch =
                     | _ -> return classifyStatusCode response.StatusCode
                 }
 
+    /// Represents dispatch result used by Grace Server APIs and background services.
     type DispatchResult =
         {
             DeliveryCount: int
@@ -110,6 +120,7 @@ module WebhookDispatch =
 
         static member Empty = { DeliveryCount = 0; DeliveredCount = 0; FailedCount = 0; SkippedDuplicateCount = 0 }
 
+    /// Gets try get guid from metadata data needed by the server flow.
     let private tryGetGuidFromMetadata propertyName (metadata: EventMetadata) =
         match metadata.Properties.TryGetValue(propertyName) with
         | true, rawValue ->
@@ -118,16 +129,19 @@ module WebhookDispatch =
             | _ -> Option.None
         | _ -> Option.None
 
+    /// Gets try get promotion set id data needed by the server flow.
     let private tryGetPromotionSetId (metadata: EventMetadata) =
         match tryGetGuidFromMetadata (nameof PromotionSetId) metadata with
         | Option.Some promotionSetId -> Option.Some promotionSetId
         | Option.None -> tryGetGuidFromMetadata "ActorId" metadata
 
+    /// Gets try get target branch id data needed by the server flow.
     let private tryGetTargetBranchId (metadata: EventMetadata) =
         match tryGetGuidFromMetadata (nameof BranchId) metadata with
         | Option.Some branchId -> Option.Some branchId
         | Option.None -> tryGetGuidFromMetadata "TargetBranchId" metadata
 
+    /// Computes scope from metadata data used by Grace Server.
     let private scopeFromMetadata metadata =
         {
             OwnerId =
@@ -142,6 +156,7 @@ module WebhookDispatch =
             TargetBranchId = tryGetTargetBranchId metadata
         }
 
+    /// Creates the external webhook dispatch payload and dedupe key for promotion-set-applied events.
     let private tryCreatePromotionSetAppliedDispatchEvent (promotionSetEvent: PromotionSetEvent) =
         match promotionSetEvent.Event with
         | PromotionSetEventType.Applied terminalPromotionReferenceId ->
@@ -185,11 +200,13 @@ module WebhookDispatch =
             Option.Some(definition, scope, dedupeKey, serialize payload)
         | _ -> Option.None
 
+    /// Selects the external webhook event projection supported for a Grace domain event.
     let private tryCreateDispatchEvent graceEvent =
         match graceEvent with
         | GraceEvent.PromotionSetEvent promotionSetEvent -> tryCreatePromotionSetAppliedDispatchEvent promotionSetEvent
         | _ -> Option.None
 
+    /// Computes hmac sha256 hex data used by Grace Server.
     let private hmacSha256Hex (key: string) (material: byte array) =
         use hmac = new HMACSHA256(Encoding.UTF8.GetBytes key)
 
@@ -197,6 +214,7 @@ module WebhookDispatch =
         |> Array.map (fun value -> value.ToString("x2", CultureInfo.InvariantCulture))
         |> String.concat String.Empty
 
+    /// Implements headers for delivery for the server request pipeline.
     let private headersForDelivery (delivery: WebhookDelivery) (rule: WebhookRule) (payloadJson: string) (timestamp: string) =
         let payload = Encoding.UTF8.GetBytes payloadJson
         let signingInput = OutboundUrlSafety.Signing.createSigningInput $"{delivery.WebhookDeliveryId}" timestamp rule.SigningSecretVersion payload
@@ -213,6 +231,7 @@ module WebhookDispatch =
         )
         :> IReadOnlyDictionary<string, string>
 
+    /// Implements retry delay seconds for the server request pipeline.
     let private retryDelaySeconds attemptCount (policy: WebhookRetryPolicy) =
         if policy.InitialDelaySeconds <= 0 then
             0
@@ -237,6 +256,7 @@ module WebhookDispatch =
             "token"
         |]
 
+    /// Computes redact sensitive query values data used by Grace Server.
     let private redactSensitiveQueryValues (value: string) =
         Regex.Replace(
             value,
@@ -244,6 +264,7 @@ module WebhookDispatch =
             "${1}REDACTED"
         )
 
+    /// Computes redact sensitive assignments data used by Grace Server.
     let private redactSensitiveAssignments (value: string) =
         sensitiveErrorKeys
         |> Array.fold
@@ -253,6 +274,7 @@ module WebhookDispatch =
                 Regex.Replace(current, pattern, "${1}${2}REDACTED"))
             value
 
+    /// Computes sanitize persisted error data used by Grace Server.
     let private sanitizePersistedError (value: string) =
         if String.IsNullOrWhiteSpace value then
             String.Empty
@@ -261,11 +283,13 @@ module WebhookDispatch =
             |> redactSensitiveQueryValues
             |> redactSensitiveAssignments
 
+    /// Computes trim error data used by Grace Server.
     let private trimError (value: string) =
         let sanitized = sanitizePersistedError value
 
         if sanitized.Length <= 256 then sanitized else sanitized.Substring(0, 256)
 
+    /// Validates validate delivery url inputs before server processing continues.
     let private validateDeliveryUrl hostEnvironment configuration (rule: WebhookRule) =
         OutboundUrlSafety.validate
             hostEnvironment
@@ -276,6 +300,7 @@ module WebhookDispatch =
                 AcknowledgeUnsafeLocalDevelopment = rule.Url.Safety = OutboundUrlSafety.LocalUnsafeDevOnly
             }
 
+    /// Implements terminal delivery status for the server request pipeline.
     let private terminalDeliveryStatus attempts (policy: WebhookRetryPolicy) result =
         match result with
         | Succeeded statusCode -> WebhookDeliveryStatus.Succeeded, Option.Some statusCode, Option.None, Option.None
@@ -289,6 +314,7 @@ module WebhookDispatch =
 
             WebhookDeliveryStatus.RetryScheduled, statusCode, Option.Some(trimError error), Option.Some nextAttemptAt
 
+    /// Coordinates record validation failure processing for Grace Server.
     let private recordValidationFailure (logger: ILogger) (rule: WebhookRule) (delivery: WebhookDelivery) failure =
         let redactedUrl = OutboundUrlSafety.Redaction.redactUri rule.Url.Url
 
@@ -308,6 +334,7 @@ module WebhookDispatch =
             }
         |> ignore
 
+    /// Coordinates send delivery attempt processing for Grace Server.
     let private sendDeliveryAttempt
         (logger: ILogger)
         (transport: IOutboundWebhookTransport)
@@ -379,6 +406,7 @@ module WebhookDispatch =
             return updatedDelivery
         }
 
+    /// Coordinates deliver rule processing for Grace Server.
     let private deliverRule
         (logger: ILogger)
         (configuration: IConfiguration)
@@ -432,6 +460,7 @@ module WebhookDispatch =
                         return Choice1Of2 false
         }
 
+    /// Represents scheduled retry result used by Grace Server APIs and background services.
     type ScheduledRetryResult =
         {
             ProcessedCount: int
@@ -443,6 +472,7 @@ module WebhookDispatch =
 
         static member Empty = { ProcessedCount = 0; DeliveredCount = 0; FailedCount = 0; RescheduledCount = 0; SkippedCount = 0 }
 
+    /// Coordinates process scheduled retries async processing for Grace Server.
     let processScheduledRetriesAsync
         (logger: ILogger)
         (configuration: IConfiguration)
@@ -497,6 +527,7 @@ module WebhookDispatch =
             return result
         }
 
+    /// Coordinates dispatch committed event async processing for Grace Server.
     let dispatchCommittedEventAsync
         (logger: ILogger)
         (configuration: IConfiguration)
@@ -543,6 +574,7 @@ module WebhookDispatch =
                 return DispatchResult.Empty
         }
 
+    /// Coordinates drain scheduled retries once async processing for Grace Server.
     let drainScheduledRetriesOnceAsync
         (logger: ILogger)
         (configuration: IConfiguration)
@@ -553,6 +585,7 @@ module WebhookDispatch =
         =
         processScheduledRetriesAsync logger configuration hostEnvironment transport (getCurrentInstant ()) maxDeliveries cancellationToken
 
+/// Represents webhook retry hosted service used by Grace Server APIs and background services.
 type WebhookRetryHostedService
     (
         logger: ILogger<WebhookRetryHostedService>,
@@ -568,9 +601,11 @@ type WebhookRetryHostedService
     let pollInterval = TimeSpan.FromSeconds(float pollIntervalSeconds)
     let initialDelay = TimeSpan.FromSeconds(float initialDelaySeconds)
 
+    /// Internal entry point used by tests to execute one webhook dispatch pass with supplied dependencies.
     member internal _.DrainOnceAsync(cancellationToken: CancellationToken) =
         WebhookDispatch.drainScheduledRetriesOnceAsync logger configuration hostEnvironment transport maxDeliveriesPerTick cancellationToken
 
+    /// Runs the hosted webhook dispatcher loop until cancellation or host shutdown.
     override this.ExecuteAsync(stoppingToken: CancellationToken) =
         task {
             try

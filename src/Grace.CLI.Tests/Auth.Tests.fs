@@ -17,13 +17,16 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups auth coverage for the CLI test project.
 [<NonParallelizable>]
 module AuthTests =
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Runs with captured stdout and stderr for test scenarios.
     let private runWithCapturedStdoutAndStderr (args: string array) =
         use standardOutWriter = new StringWriter()
         use standardErrorWriter = new StringWriter()
@@ -41,11 +44,13 @@ module AuthTests =
             Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
 
+    /// Parses json output for test assertions.
     let private parseJsonOutput (output: string) =
         output
         |> (fun value -> value.Trim())
         |> JsonDocument.Parse
 
+    /// Runs the supplied action with env applied.
     let private withEnv (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
 
@@ -58,7 +63,9 @@ module AuthTests =
         finally
             Environment.SetEnvironmentVariable(name, original)
 
+    /// Runs the supplied action with cleared env applied.
     let private withClearedEnv names action =
+        /// Runs the authentication loop until the callback scenario completes or fails.
         let rec loop remaining =
             match remaining with
             | [] -> action ()
@@ -66,6 +73,7 @@ module AuthTests =
 
         loop names
 
+    /// Clears oidc env for isolated test execution.
     let private clearOidcEnv (action: unit -> unit) =
         withClearedEnv
             [
@@ -86,13 +94,16 @@ module AuthTests =
             ]
             action
 
+    /// Runs the scenario with authentication environment variables removed from the process context.
     let private withoutAuthEnv (action: unit -> unit) = clearOidcEnv (fun () -> withEnv Constants.EnvironmentVariables.GraceToken None action)
 
+    /// Runs the supplied action with single http response applied.
     let private withSingleHttpResponse (statusCode: int) (reasonPhrase: string) (body: string) (action: unit -> unit) =
         use listener = new TcpListener(IPAddress.Loopback, 0)
         use cancellation = new CancellationTokenSource()
         listener.Start()
 
+        /// Writes response needed by the test scenario.
         let writeResponse (client: TcpClient) =
             task {
                 use client = client
@@ -110,6 +121,7 @@ module AuthTests =
                     do! stream.WriteAsync(bodyBytes, 0, bodyBytes.Length)
             }
 
+        /// Hosts the loopback callback endpoint used by browser-based authentication scenarios.
         let rec serve () =
             task {
                 if not cancellation.IsCancellationRequested then
@@ -139,6 +151,7 @@ module AuthTests =
             if not (serverTask.Wait(TimeSpan.FromSeconds(5.0))) then
                 Assert.Fail("Timed out waiting for the test HTTP responder to stop.")
 
+    /// Asserts that auth status json matches the expected contract.
     let private assertAuthStatusJson (output: string) =
         use document = parseJsonOutput output
 
@@ -147,12 +160,15 @@ module AuthTests =
             .GetProperty("ReturnValue")
             .Clone()
 
+    /// Determines whether missing or null for test assertions.
     let private isMissingOrNull (root: JsonElement) (name: string) =
         match root.TryGetProperty(name) with
         | false, _ -> true
         | true, property -> property.ValueKind = JsonValueKind.Null
 
+    /// Asserts that boolean property matches the expected contract.
     let private assertBooleanProperty (root: JsonElement) (name: string) (expected: bool) =
+        /// Tracks property changes so this scenario can assert the resulting side effect explicitly.
         let mutable property = Unchecked.defaultof<JsonElement>
 
         root.TryGetProperty(name, &property)
@@ -164,6 +180,7 @@ module AuthTests =
 
         property.GetBoolean() |> should equal expected
 
+    /// Asserts that serialized auth status json matches the expected contract.
     let private assertSerializedAuthStatusJson (status: Auth.AuthStatusOutput) =
         use document =
             JsonSerializer.Serialize(status, Constants.JsonSerializerOptions)
@@ -171,6 +188,7 @@ module AuthTests =
 
         document.RootElement.Clone()
 
+    /// Builds the default authentication status context used by auth-status output assertions.
     let private defaultStatusContext now : Auth.AuthStatusContext =
         {
             GraceTokenPresent = false
@@ -189,6 +207,7 @@ module AuthTests =
             Now = now
         }
 
+    /// Verifies that try get access token returns error when auth is not configured.
     [<Test>]
     let ``tryGetAccessToken returns Error when auth is not configured`` () =
         clearOidcEnv (fun () ->
@@ -199,6 +218,7 @@ module AuthTests =
                 | Ok _ -> Assert.Fail("Expected Error for missing auth configuration.")
                 | Error _ -> ()))
 
+    /// Verifies that try get access token prefers grace token env var.
     [<Test>]
     let ``tryGetAccessToken prefers GRACE_TOKEN env var`` () =
         let token = PersonalAccessToken.formatToken "user-1" (Guid.NewGuid()) (Array.zeroCreate 32)
@@ -212,6 +232,7 @@ module AuthTests =
                 | Ok None -> Assert.Fail("Expected GRACE_TOKEN to be returned.")
                 | Error message -> Assert.Fail($"Unexpected error: {message}")))
 
+    /// Verifies that try get access token rejects invalid grace token.
     [<Test>]
     let ``tryGetAccessToken rejects invalid GRACE_TOKEN`` () =
         clearOidcEnv (fun () ->
@@ -222,12 +243,14 @@ module AuthTests =
                 | Ok _ -> Assert.Fail("Expected Error for invalid GRACE_TOKEN.")
                 | Error _ -> ()))
 
+    /// Verifies that auth status human output writes authenticated banner before active source.
     [<Test>]
     let ``auth status human output writes authenticated banner before active source`` () =
         let token = PersonalAccessToken.formatToken "user-1" (Guid.NewGuid()) (Array.zeroCreate 32)
 
         clearOidcEnv (fun () ->
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                /// Verifies that the CLI auth scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "authenticate"
                                                       "status" |]
@@ -255,12 +278,14 @@ module AuthTests =
 
                 normalized |> should not' (contain token)))
 
+    /// Verifies that auth status json emits structured authenticated return value.
     [<Test>]
     let ``auth status json emits structured authenticated return value`` () =
         let token = PersonalAccessToken.formatToken "user-1" (Guid.NewGuid()) (Array.zeroCreate 32)
 
         clearOidcEnv (fun () ->
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                /// Verifies that the CLI auth scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -304,9 +329,11 @@ module AuthTests =
                 isMissingOrNull returnValue "Subject"
                 |> should equal true))
 
+    /// Verifies that auth status json reports unauthenticated when no source is available.
     [<Test>]
     let ``auth status json reports unauthenticated when no source is available`` () =
         withoutAuthEnv (fun () ->
+            /// Verifies that the CLI auth scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -343,12 +370,14 @@ module AuthTests =
             assertBooleanProperty interactive "TokenPresent" false
             assertBooleanProperty interactive "SecureStoreAvailable" false)
 
+    /// Verifies that auth status json reports invalid grace token without leaking raw value.
     [<Test>]
     let ``auth status json reports invalid GRACE_TOKEN without leaking raw value`` () =
         let token = "not-a-pat-secret-value"
 
         clearOidcEnv (fun () ->
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                /// Verifies that the CLI auth scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -381,6 +410,7 @@ module AuthTests =
                     .GetArrayLength()
                 |> should be (greaterThan 0)))
 
+    /// Verifies that auth status json reports configured m2 m as unverified and unauthenticated.
     [<Test>]
     let ``auth status json reports configured M2M as unverified and unauthenticated`` () =
         let m2mSecret = "m2m-client-secret-value"
@@ -391,6 +421,7 @@ module AuthTests =
                     withEnv Constants.EnvironmentVariables.GraceAuthOidcAudience (Some "https://api.example.com") (fun () ->
                         withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId (Some "m2m-client-id") (fun () ->
                             withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret (Some m2mSecret) (fun () ->
+                                /// Verifies that the CLI auth scenario exits with the expected process status.
                                 let exitCode, standardOut, standardError =
                                     runWithCapturedStdoutAndStderr [| "--output"
                                                                       "Json"
@@ -429,6 +460,7 @@ module AuthTests =
                                 isMissingOrNull returnValue "Subject"
                                 |> should equal true))))))
 
+    /// Verifies that auth status json keeps stale interactive cache nested when grace token is active.
     [<Test>]
     let ``auth status json keeps stale interactive cache nested when GRACE_TOKEN is active`` () =
         let expiresAt = Instant.FromUtc(2024, 1, 1, 0, 0)
@@ -482,6 +514,7 @@ module AuthTests =
         interactive.GetProperty("Subject").GetString()
         |> should equal subject
 
+    /// Verifies that auth status json reports expired interactive cache as unauthenticated.
     [<Test>]
     let ``auth status json reports expired interactive cache as unauthenticated`` () =
         let expiresAt = Instant.FromUtc(2024, 1, 1, 0, 0)
@@ -524,6 +557,7 @@ module AuthTests =
             .GetString()
         |> should equal "2024-01-01T00:00:00Z"
 
+    /// Verifies that auth status json promotes fresh interactive cache details when interactive is active.
     [<Test>]
     let ``auth status json promotes fresh interactive cache details when interactive is active`` () =
         let now = Instant.FromUtc(2024, 1, 1, 0, 0)
@@ -560,10 +594,12 @@ module AuthTests =
         returnValue.GetProperty("Subject").GetString()
         |> should equal subject
 
+    /// Verifies that auth whoami reports empty unauthorized body without json parse exception.
     [<Test>]
     let ``auth whoami reports empty unauthorized body without json parse exception`` () =
         withoutAuthEnv (fun () ->
             withSingleHttpResponse 401 "Unauthorized" String.Empty (fun () ->
+                /// Verifies that the CLI auth scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Verbose"
@@ -582,6 +618,7 @@ module AuthTests =
 
                 standardError |> should equal String.Empty))
 
+    /// Verifies that auth token create reports empty unauthorized body without json parse exception.
     [<Test>]
     let ``auth token create reports empty unauthorized body without json parse exception`` () =
         let token = PersonalAccessToken.formatToken "user-1" (Guid.NewGuid()) (Array.zeroCreate 32)
@@ -589,6 +626,7 @@ module AuthTests =
         clearOidcEnv (fun () ->
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
                 withSingleHttpResponse 401 "Unauthorized" String.Empty (fun () ->
+                    /// Verifies that the CLI auth scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Verbose"

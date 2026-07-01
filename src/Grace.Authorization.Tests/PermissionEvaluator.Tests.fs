@@ -9,6 +9,7 @@ open NUnit.Framework
 open System
 open System.Threading.Tasks
 
+/// Contains tests covering permission evaluator behavior.
 [<Parallelizable(ParallelScope.All)>]
 type PermissionEvaluatorTests() =
 
@@ -18,16 +19,20 @@ type PermissionEvaluatorTests() =
     let repositoryId = Guid.Parse("33333333-3333-3333-3333-333333333333")
     let branchId = Guid.Parse("44444444-4444-4444-4444-444444444444")
 
+    /// Builds a deterministic assignment fixture for the authorization permission Evaluator assertions.
     let createAssignment scope roleId =
         { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
+    /// Exercises empty path permissions coverage for the authorization permission Evaluator contract.
     let emptyPathPermissions (_repositoryId: RepositoryId, _correlationId: CorrelationId) = Task.FromResult([])
 
+    /// Verifies that queries scopes for resource.
     [<Test>]
     member _.QueriesScopesForResource() =
         task {
             let capturedScopes = ResizeArray<Scope>()
 
+            /// Gets assignments for scope.
             let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) =
                 capturedScopes.Add scope
                 Task.FromResult([])
@@ -43,9 +48,11 @@ type PermissionEvaluatorTests() =
             Assert.That(capturedScopes, Is.EquivalentTo(expected))
         }
 
+    /// Verifies that unions assignments across scopes.
     [<Test>]
     member _.UnionsAssignmentsAcrossScopes() =
         task {
+            /// Gets assignments for scope.
             let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) =
                 match scope with
                 | Scope.Organization _ ->
@@ -68,11 +75,14 @@ type PermissionEvaluatorTests() =
             | Denied reason -> Assert.Fail($"Expected Allowed but got Denied: {reason}")
         }
 
+    /// Verifies that fetches path permissions only for path resources.
     [<Test>]
     member _.FetchesPathPermissionsOnlyForPathResources() =
         task {
+            /// Tracks path Permission Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable pathPermissionCalls = 0
 
+            /// Gets path permissions.
             let getPathPermissions (_repositoryId: RepositoryId, _correlationId: CorrelationId) =
                 pathPermissionCalls <- pathPermissionCalls + 1
                 Task.FromResult([])
@@ -96,9 +106,11 @@ type PermissionEvaluatorTests() =
             Assert.That(pathPermissionCalls, Is.EqualTo(1))
         }
 
+    /// Verifies that fails closed when role missing.
     [<Test>]
     member _.FailsClosedWhenRoleMissing() =
         task {
+            /// Gets assignments for scope.
             let getAssignmentsForScope (scope: Scope, _correlationId: CorrelationId) = Task.FromResult([ createAssignment scope "MissingRole" ])
 
             let evaluator = GracePermissionEvaluator(getAssignmentsForScope, emptyPathPermissions)

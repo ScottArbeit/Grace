@@ -7,10 +7,13 @@ open System
 open System.Buffers.Binary
 open System.Text
 
+/// Contains tests covering content block format shared behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ContentBlockFormatSharedTests() =
+    /// Verifies that bytes.
     static member private Bytes(value: string) = Encoding.UTF8.GetBytes(value)
 
+    /// Verifies that expect ok.
     static member private ExpectOk(result: Result<'T, ContentBlockFormat.ContentBlockFormatError>) =
         match result with
         | Ok value -> value
@@ -18,6 +21,7 @@ type ContentBlockFormatSharedTests() =
             Assert.Fail($"Expected Ok but got {error}.")
             Unchecked.defaultof<'T>
 
+    /// Verifies that rehash trailer footer.
     static member private RehashTrailerFooter(payload: byte array) =
         let footerStart = payload.Length - ContentBlockFormat.FooterLength
         let trailerLength = BinaryPrimitives.ReadUInt32LittleEndian(ReadOnlySpan<byte>(payload, footerStart, 4))
@@ -30,6 +34,7 @@ type ContentBlockFormatSharedTests() =
 
         Array.Copy(trailerHash, 0, payload, footerStart + 4, trailerHash.Length)
 
+    /// Verifies that payload roundtrips through compact v1 format.
     [<Test>]
     member _.PayloadRoundtripsThroughCompactV1Format() =
         let alpha = ContentBlockFormatSharedTests.Bytes "alpha chunk"
@@ -56,6 +61,7 @@ type ContentBlockFormatSharedTests() =
         Assert.That(decoded.Chunks[1].Length, Is.EqualTo(beta.Length))
         Assert.That(decoded.Chunks[1].Bytes = beta, Is.True)
 
+    /// Verifies that corrupt trailer is rejected.
     [<Test>]
     member _.CorruptTrailerIsRejected() =
         let encoded =
@@ -75,6 +81,7 @@ type ContentBlockFormatSharedTests() =
         | Error ContentBlockFormat.TrailerChecksumMismatch -> Assert.Pass()
         | result -> Assert.Fail($"Expected TrailerChecksumMismatch but got {result}.")
 
+    /// Verifies that chunk address mismatch is rejected.
     [<Test>]
     member _.ChunkAddressMismatchIsRejected() =
         let encoded =
@@ -88,6 +95,7 @@ type ContentBlockFormatSharedTests() =
         | Error (ContentBlockFormat.ChunkAddressMismatch (0, _, _)) -> Assert.Pass()
         | result -> Assert.Fail($"Expected ChunkAddressMismatch for chunk 0 but got {result}.")
 
+    /// Verifies that oversized trailer chunk count is rejected without throwing.
     [<Test>]
     member _.OversizedTrailerChunkCountIsRejectedWithoutThrowing() =
         let encoded =
@@ -111,6 +119,7 @@ type ContentBlockFormatSharedTests() =
         | Error ContentBlockFormat.InvalidTrailer -> Assert.Pass()
         | result -> Assert.Fail($"Expected InvalidTrailer but got {result}.")
 
+    /// Verifies that physical offsets do not change content block address.
     [<Test>]
     member _.PhysicalOffsetsDoNotChangeContentBlockAddress() =
         let alpha = ContentBlockFormatSharedTests.Bytes "alpha chunk"

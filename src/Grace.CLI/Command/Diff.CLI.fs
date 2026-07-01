@@ -35,8 +35,10 @@ open Spectre.Console
 open Spectre.Console.Rendering
 open Grace.Shared.Parameters.Storage
 
+/// Groups the diff command parser, handlers, and output helpers.
 module Diff =
 
+    /// Defines the options parsed by the diff command handlers.
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -171,6 +173,7 @@ module Diff =
         let tag =
             new Option<string>(OptionName.Tag, Required = true, Description = "The tag to compare the current version to.", Arity = ArgumentArity.ExactlyOne)
 
+    /// Coordinates sha256 validations behavior for this CLI command path.
     let private sha256Validations parseResult =
         let graceIds = getNormalizedIdsAndNames parseResult
 
@@ -204,12 +207,14 @@ module Diff =
         |> ``Sha256Hash1 must be a valid SHA-256 hash value``
         >>= ``Sha256Hash2 must be a valid SHA-256 hash value``
 
+    /// Renders line results only when the selected output mode includes human-readable console text.
     let private renderLine (diffLine: DiffPiece) =
         if not <| diffLine.Position.HasValue then
             $"        {diffLine.Text.EscapeMarkup()}"
         else
             $"{diffLine.Position, 6:D}: {diffLine.Text.EscapeMarkup()}"
 
+    /// Reads markup from ParseResult, local configuration, or Grace ids.
     let private getMarkup (diffLine: DiffPiece) =
         match diffLine.Type with
         | ChangeType.Deleted -> Markup($"[{Colors.Deleted}]-{renderLine diffLine}[/]")
@@ -220,8 +225,10 @@ module Diff =
         | _ -> Markup($"[{Colors.Important}] {diffLine.Text}[/]")
 
     let markupList = List<IRenderable>()
+    /// Adds options or child commands to a command definition.
     let addToOutput (markup: IRenderable) = markupList.Add markup
 
+    /// Renders inline diff results only when the selected output mode includes human-readable console text.
     let renderInlineDiff (inlineDiff: List<DiffPiece []>) =
         for i = 0 to inlineDiff.Count - 1 do
             for diffLine in inlineDiff[i] do
@@ -232,6 +239,7 @@ module Diff =
             else
                 addToOutput (Markup(String.Empty))
 
+    /// Formats print diff results data for Spectre.Console output.
     let printDiffResults (diffDto: DiffDto) =
         if diffDto.HasDifferences then
             addToOutput (Markup($"[{Colors.Important}]Differences found.[/]"))
@@ -272,11 +280,14 @@ module Diff =
         else
             addToOutput (Markup($"[{Colors.Highlighted}]No differences found.[/]"))
 
-    /// Creates the text output for a diff to the most recent specific ReferenceType.
+    /// Formats the diff summary against the latest reference of the requested type.
     type GetDiffByReferenceTypeParameters() =
+        /// Stores a parsed command value for handler execution.
         member val public BranchId = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public BranchName = BranchName String.Empty with get, set
 
+    /// Builds and runs the diff request for a specific reference type.
     let private diffToReferenceType (parseResult: ParseResult) (referenceType: ReferenceType) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -553,40 +564,52 @@ module Diff =
             | Error error -> return (Error error) |> renderOutput parseResult
         }
 
+    /// Executes the promotion handler command by binding ParseResult values to the SDK request and CLI output contract.
     type PromotionHandler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous promotion handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task { return! diffToReferenceType parseResult ReferenceType.Promotion }
 
+    /// Executes the commit handler command by binding ParseResult values to the SDK request and CLI output contract.
     type CommitHandler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous commit handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task { return! diffToReferenceType parseResult ReferenceType.Commit }
 
+    /// Executes the checkpoint handler command by binding ParseResult values to the SDK request and CLI output contract.
     type CheckpointHandler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous checkpoint handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task { return! diffToReferenceType parseResult ReferenceType.Checkpoint }
 
 
+    /// Executes the save handler command by binding ParseResult values to the SDK request and CLI output contract.
     type SaveHandler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous save handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task { return! diffToReferenceType parseResult ReferenceType.Save }
 
+    /// Executes the tag handler command by binding ParseResult values to the SDK request and CLI output contract.
     type TagHandler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous tag handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task { return! diffToReferenceType parseResult ReferenceType.Tag }
 
+    /// Executes the directory id handler command by binding ParseResult values to the SDK request and CLI output contract.
     type DirectoryIdHandler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous directory id handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -598,9 +621,11 @@ module Diff =
                 | Error error -> return (Error error) |> renderOutput parseResult
             }
 
+    /// Executes the sha handler command by binding ParseResult values to the SDK request and CLI output contract.
     type ShaHandler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous sha handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -793,9 +818,11 @@ module Diff =
                 | Error error -> return (Error error) |> renderOutput parseResult
             }
 
+    /// Executes the blake3 handler command by binding ParseResult values to the SDK request and CLI output contract.
     type Blake3Handler() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous blake3 handler action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -851,6 +878,7 @@ module Diff =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName
@@ -860,6 +888,7 @@ module Diff =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
 
+        /// Adds options or child commands to a command definition.
         let addBranchOptions (command: Command) =
             command
             |> addOption Options.branchName

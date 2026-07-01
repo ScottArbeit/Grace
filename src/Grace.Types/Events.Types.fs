@@ -15,6 +15,7 @@ open Grace.Types.Validation
 open Grace.Types.Artifact
 open Grace.Types.Webhooks
 
+/// Contains events helpers.
 module Events =
 
     /// A discriminated union that holds all of the possible events for Grace. Used for publishing events to graceEventStream.
@@ -36,8 +37,10 @@ module Events =
         | ArtifactEvent of Artifact.ArtifactEvent
         | ApprovalRequestEvent of Webhooks.ApprovalRequestEvent
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<GraceEvent>()
 
+        /// Returns the display representation for this value.
         override this.ToString() =
             match this with
             | OwnerEvent e -> serialize e

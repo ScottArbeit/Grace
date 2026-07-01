@@ -27,8 +27,10 @@ open System.Threading.Tasks
 open System.Collections.Generic
 open NodaTime
 
+/// Groups the maintenance command parser, handlers, and output helpers.
 module Maintenance =
 
+    /// Defines the options parsed by the maintenance command handlers.
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -110,6 +112,7 @@ module Maintenance =
                 DefaultValueFactory = (fun _ -> "*.*")
             )
 
+    /// Tries to map get root sha256 hash and returns a GraceError instead of throwing on unsupported input.
     let private tryGetRootSha256Hash (graceStatus: GraceStatus) =
         let rootHashFromIndex =
             graceStatus.Index.Values
@@ -125,6 +128,7 @@ module Maintenance =
         rootHashFromIndex
         |> Option.orElse rootHashFromStatusMeta
 
+    /// Tries to map get root blake3 hash and returns a GraceError instead of throwing on unsupported input.
     let private tryGetRootBlake3Hash (graceStatus: GraceStatus) =
         let rootHashFromIndex =
             graceStatus.Index.Values
@@ -140,16 +144,19 @@ module Maintenance =
         rootHashFromIndex
         |> Option.orElse rootHashFromStatusMeta
 
+    /// Reads short hash from ParseResult, local configuration, or Grace ids.
     let private getShortHash (sha256Hash: Sha256Hash) =
         if String.IsNullOrWhiteSpace(sha256Hash) then String.Empty
         elif sha256Hash.Length <= 8 then sha256Hash
         else sha256Hash.Substring(0, 8)
 
+    /// Writes root sha summary data through the CLI output contract.
     let private writeRootShaSummary (graceStatus: GraceStatus) =
         match tryGetRootSha256Hash graceStatus with
         | Some rootSha256Hash -> AnsiConsole.MarkupLine($"[{Colors.Highlighted}]Root SHA-256 hash: {getShortHash rootSha256Hash}[/]")
         | None -> AnsiConsole.MarkupLine($"[{Colors.Error}]Root SHA-256 hash: unavailable (root directory entry missing).[/]")
 
+    /// Converts command data into the required shape.
     let private toStatsDto (graceStatus: GraceStatus) : LocalOutputDto.MaintenanceStatsDto =
         let directoryCount = graceStatus.Index.Count
 
@@ -174,6 +181,7 @@ module Maintenance =
                 |> Option.map string
         }
 
+    /// Converts command data into the required shape.
     let private toListContentsDto listDirectories listFiles (graceStatus: GraceStatus) : LocalOutputDto.MaintenanceListContentsDto =
         let directories =
             if listDirectories then
@@ -212,6 +220,7 @@ module Maintenance =
 
         { Summary = toStatsDto graceStatus; Directories = directories }
 
+    /// Converts command data into the required shape.
     let private toScanDto (differences: List<FileSystemDifference>) (newDirectoryVersions: List<LocalDirectoryVersion>) : LocalOutputDto.MaintenanceScanDto =
         {
             DifferenceCount = differences.Count
@@ -237,10 +246,12 @@ module Maintenance =
                 |> Seq.toArray
         }
 
+    /// Renders local json results only when the selected output mode includes human-readable console text.
     let private renderLocalJson parseResult dto =
         Ok(GraceReturnValue.Create dto (getCorrelationId parseResult))
         |> renderOutput parseResult
 
+    /// Routes the update index command from parsed options through validation, the SDK call, and result rendering.
     let private updateIndexHandler (parseResult: ParseResult) =
         task {
             try
@@ -659,15 +670,19 @@ module Maintenance =
                 return -1
         }
 
+    /// Executes the update index command by binding ParseResult values to the SDK request and CLI output contract.
     type UpdateIndex() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous update index action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task { return! updateIndexHandler parseResult }
 
+    /// Executes the scan command by binding ParseResult values to the SDK request and CLI output contract.
     type Scan() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous scan action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -740,9 +755,11 @@ module Maintenance =
                     return 0
             }
 
+    /// Executes the stats command by binding ParseResult values to the SDK request and CLI output contract.
     type Stats() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous stats action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -763,9 +780,11 @@ module Maintenance =
                     return 0
             }
 
+    /// Executes the list contents command by binding ParseResult values to the SDK request and CLI output contract.
     type ListContents() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous list contents action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -836,9 +855,11 @@ module Maintenance =
                     return 0
             }
 
+    /// Executes the check ignore entries command by binding ParseResult values to the SDK request and CLI output contract.
     type CheckIgnoreEntries() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous check ignore entries action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 if parseResult |> verbose then printParseResult parseResult
@@ -869,6 +890,7 @@ module Maintenance =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

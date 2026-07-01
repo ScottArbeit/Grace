@@ -8,6 +8,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Contains tests covering path permissions behavior.
 [<Parallelizable(ParallelScope.All)>]
 type PathPermissionsTests() =
 
@@ -17,9 +18,11 @@ type PathPermissionsTests() =
 
     let principal = { PrincipalType = PrincipalType.User; PrincipalId = "user-1" }
 
+    /// Builds a deterministic assignment fixture for the authorization path Permissions assertions.
     let createAssignment scope roleId =
         { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
+    /// Verifies that normalizes path separators.
     [<Test>]
     member _.NormalizesPathSeparators() =
         let permissions = List<ClaimPermission>()
@@ -39,6 +42,7 @@ type PathPermissionsTests() =
         | Some (Denied reason) -> Assert.Fail($"Expected Allowed but got Denied: {reason}")
         | None -> Assert.Fail("Expected path permission to match normalized path.")
 
+    /// Verifies that weird paths do not throw and deny by default.
     [<Test>]
     member _.WeirdPathsDoNotThrowAndDenyByDefault() =
         let weirdPaths =

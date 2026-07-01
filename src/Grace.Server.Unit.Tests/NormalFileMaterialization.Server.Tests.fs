@@ -14,6 +14,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading
 
+/// Covers normal File Materialization Server behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type NormalFileMaterializationServerTests() =
 
@@ -21,6 +22,7 @@ type NormalFileMaterializationServerTests() =
 
     let bytes (text: string) = Encoding.UTF8.GetBytes text
 
+    /// Builds gunzip Bytes test data for the server unit normal File Materialization scenarios in this file.
     let gunzipBytes (payload: byte array) =
         use source = new MemoryStream(payload)
         use gzipStream = new GZipStream(source, CompressionMode.Decompress, leaveOpen = false)
@@ -28,16 +30,19 @@ type NormalFileMaterializationServerTests() =
         gzipStream.CopyTo(output)
         output.ToArray()
 
+    /// Builds looks Like Gzip test data for the server unit normal File Materialization scenarios in this file.
     let looksLikeGzip (payload: byte array) =
         payload.Length >= 2
         && payload[0] = 0x1fuy
         && payload[1] = 0x8buy
 
+    /// Builds sha256 Hex test data for the server unit normal File Materialization scenarios in this file.
     let sha256Hex (payload: byte array) =
         SHA256.HashData(payload)
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
+    /// Builds expect Encoded Ok test data for the server unit normal File Materialization scenarios in this file.
     let expectEncodedOk result =
         match result with
         | Ok value -> value
@@ -45,10 +50,12 @@ type NormalFileMaterializationServerTests() =
             Assert.Fail($"Expected ContentBlockFormat.encode Ok but got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Exercises these tests by encoding Block coverage for the server unit normal File Materialization scenario.
     let encodeBlock payload =
         ContentBlockFormat.encode [ ContentBlockFormat.createChunk 0L payload ]
         |> expectEncodedOk
 
+    /// Builds file Version test data for the server unit normal File Materialization scenarios in this file.
     let fileVersion (relativePath: string) (payload: byte array) =
         FileVersion.CreateWithHashes
             (RelativePath relativePath)
@@ -58,6 +65,7 @@ type NormalFileMaterializationServerTests() =
             true
             (int64 payload.Length)
 
+    /// Builds manifest For Blocks test data for the server unit normal File Materialization scenarios in this file.
     let manifestForBlocks (storagePoolId: StoragePoolId) (payload: byte array) (blocks: (ContentBlockFormat.EncodedContentBlock * int64 * int64) array) =
         let manifestBlocks =
             blocks
@@ -76,6 +84,7 @@ type NormalFileMaterializationServerTests() =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Builds manifest File test data for the server unit normal File Materialization scenarios in this file.
     let manifestFile (relativePath: string) (storagePoolId: StoragePoolId) (payload: byte array) =
         let block = encodeBlock payload
         let manifest = manifestForBlocks storagePoolId payload [| block, 0L, int64 payload.Length |]
@@ -83,6 +92,7 @@ type NormalFileMaterializationServerTests() =
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion, manifest, [| block |]
 
+    /// Builds placement For test data for the server unit normal File Materialization scenarios in this file.
     let placementFor (storagePoolId: StoragePoolId) (address: ContentBlockAddress) (objectKey: string) =
         {
             StorageAccountName = $"account-{storagePoolId}"
@@ -91,6 +101,7 @@ type NormalFileMaterializationServerTests() =
             ETag = Some $"etag-{address}"
         }
 
+    /// Builds metadata For test data for the server unit normal File Materialization scenarios in this file.
     let metadataFor (storagePoolId: StoragePoolId) (block: ContentBlock) (placement: ContentBlockStoragePlacement) =
         { ContentBlockMetadata.Empty with
             StoragePoolId = storagePoolId
@@ -145,6 +156,7 @@ type NormalFileMaterializationServerTests() =
                 | false, _ -> return Error(GraceError.Create $"missing placement object {placement.ObjectKey}" correlationId)
             }
 
+    /// Builds whole File Reader From test data for the server unit normal File Materialization scenarios in this file.
     let wholeFileReaderFrom (objects: IDictionary<string, byte array>) : NormalFileMaterialization.ObjectPayloadReader =
         fun objectKey correlationId _ ->
             task {
@@ -156,6 +168,7 @@ type NormalFileMaterializationServerTests() =
     let failingWholeFileReader: NormalFileMaterialization.ObjectPayloadReader =
         fun objectKey correlationId _ -> task { return Error(GraceError.Create $"whole-file reader should not be called for {objectKey}" correlationId) }
 
+    /// Builds writer To test data for the server unit normal File Materialization scenarios in this file.
     let writerTo (objects: IDictionary<string, byte array>) (writes: ResizeArray<string * byte array>) : NormalFileMaterialization.ObjectPayloadWriter =
         fun objectKey payload _ _ ->
             task {
@@ -164,6 +177,7 @@ type NormalFileMaterializationServerTests() =
                 return Ok()
             }
 
+    /// Builds materialize Bytes test data for the server unit normal File Materialization scenarios in this file.
     let materializeBytes wholeFileReader metadataResolver contentBlockReader fileVersion objectKey =
         NormalFileMaterialization.materializeBytesWithReaders
             wholeFileReader
@@ -175,6 +189,7 @@ type NormalFileMaterializationServerTests() =
             CancellationToken.None
         |> fun operation -> operation.GetAwaiter().GetResult()
 
+    /// Builds materialize For Download test data for the server unit normal File Materialization scenarios in this file.
     let materializeForDownload wholeFileReader writer metadataResolver contentBlockReader fileVersion objectKey =
         NormalFileMaterialization.materializeForDownloadWithReaders
             wholeFileReader
@@ -187,6 +202,7 @@ type NormalFileMaterializationServerTests() =
             CancellationToken.None
         |> fun operation -> operation.GetAwaiter().GetResult()
 
+    /// Builds expect Ok test data for the server unit normal File Materialization scenarios in this file.
     let expectOk result =
         match result with
         | Ok value -> value
@@ -194,11 +210,13 @@ type NormalFileMaterializationServerTests() =
             Assert.Fail($"Expected normal file materialization to succeed, got {error.Error}.")
             Unchecked.defaultof<byte array>
 
+    /// Builds expect Unit Ok test data for the server unit normal File Materialization scenarios in this file.
     let expectUnitOk result =
         match result with
         | Ok () -> ()
         | Error error -> Assert.Fail($"Expected normal file materialization to succeed, got {error.Error}.")
 
+    /// Builds expect Error Contains test data for the server unit normal File Materialization scenarios in this file.
     let expectErrorContains expected result =
         match result with
         | Ok _ -> Assert.Fail("Expected normal file materialization to fail.")
@@ -213,6 +231,7 @@ type NormalFileMaterializationServerTests() =
         =
         metadata[(manifest.StoragePoolId, manifest.ManifestAddress, block.Address)] <- metadataFor storagePoolId block placement
 
+    /// Verifies that whole File Content Materializes Repository Object Including Empty File.
     [<Test>]
     member _.WholeFileContentMaterializesRepositoryObjectIncludingEmptyFile() =
         let payload = Array.empty<byte>
@@ -236,6 +255,7 @@ type NormalFileMaterializationServerTests() =
         Assert.That(metadataRequests, Is.Empty)
         Assert.That(readPlacements, Is.Empty)
 
+    /// Verifies that manifest Backed Binary Normal Download Publishes Raw Bytes From Stored Placement.
     [<Test>]
     member _.ManifestBackedBinaryNormalDownloadPublishesRawBytesFromStoredPlacement() =
         let payload = bytes "manifest normal download bytes"
@@ -270,6 +290,7 @@ type NormalFileMaterializationServerTests() =
         Assert.That(metadataRequests, Has.Count.EqualTo(1))
         Assert.That((metadataRequests[0] = [| blocks[0].Address |]), Is.True)
 
+    /// Verifies that manifest Backed Non Binary Normal Download Publishes Gzip Payload For Whole File Compatibility.
     [<Test>]
     member _.ManifestBackedNonBinaryNormalDownloadPublishesGzipPayloadForWholeFileCompatibility() =
         let payload = bytes "manifest text download bytes\nline two\n"
@@ -304,6 +325,7 @@ type NormalFileMaterializationServerTests() =
         Assert.That(metadataRequests, Has.Count.EqualTo(1))
         Assert.That((metadataRequests[0] = [| blocks[0].Address |]), Is.True)
 
+    /// Verifies that manifest Backed Multi Block Download Batches Metadata And Reads Each Distinct Block Once.
     [<Test>]
     member _.ManifestBackedMultiBlockDownloadBatchesMetadataAndReadsEachDistinctBlockOnce() =
         let first = bytes "first block "
@@ -366,6 +388,7 @@ type NormalFileMaterializationServerTests() =
 
         Assert.That(((readPlacements |> Seq.map fst |> Seq.toArray) = expectedReadAddresses), Is.True)
 
+    /// Verifies that manifest Backed Normal Download Rejects Wrong Pool Metadata.
     [<Test>]
     member _.ManifestBackedNormalDownloadRejectsWrongPoolMetadata() =
         let payload = bytes "wrong pool"
@@ -388,6 +411,7 @@ type NormalFileMaterializationServerTests() =
 
         Assert.That(readPlacements, Is.Empty)
 
+    /// Verifies that manifest Backed Normal Download Rejects Missing Block Metadata.
     [<Test>]
     member _.ManifestBackedNormalDownloadRejectsMissingBlockMetadata() =
         let payload = bytes "missing metadata"
@@ -405,6 +429,7 @@ type NormalFileMaterializationServerTests() =
 
         Assert.That(readPlacements, Is.Empty)
 
+    /// Verifies that manifest Backed Normal Download Rejects Wrong Block Hash.
     [<Test>]
     member _.ManifestBackedNormalDownloadRejectsWrongBlockHash() =
         let payload = bytes "expected payload"
@@ -424,6 +449,7 @@ type NormalFileMaterializationServerTests() =
             "normal/wrong-hash.bin"
         |> expectErrorContains "Invalid manifest reconstruction"
 
+    /// Verifies that manifest Backed Normal Download Rejects Invalid Range Order.
     [<Test>]
     member _.ManifestBackedNormalDownloadRejectsInvalidRangeOrder() =
         let first = bytes "first"
@@ -461,6 +487,7 @@ type NormalFileMaterializationServerTests() =
             "normal/invalid-range.bin"
         |> expectErrorContains "BlockRangeOutOfOrder"
 
+    /// Verifies that manifest Backed Normal Download Rejects Size Mismatch.
     [<Test>]
     member _.ManifestBackedNormalDownloadRejectsSizeMismatch() =
         let payload = bytes "size mismatch"
@@ -476,6 +503,7 @@ type NormalFileMaterializationServerTests() =
             "normal/size-mismatch.bin"
         |> expectErrorContains "FileManifest.Size"
 
+    /// Verifies that manifest Backed Normal Download Rejects Stale Active Range Evidence.
     [<Test>]
     member _.ManifestBackedNormalDownloadRejectsStaleActiveRangeEvidence() =
         let payload = bytes "stale placement range"

@@ -8,8 +8,10 @@ open NodaTime
 open NUnit.Framework
 open System
 
+/// Groups history command coverage for the CLI test project.
 [<TestFixture>]
 module HistoryCommandTests =
+    /// Builds a deterministic entry for test scenarios fixture for the CLI history assertions.
     let private createEntry (offsetMinutes: float) (source: string option) (commandLine: string) : HistoryStorage.HistoryEntry =
         let timestamp = getCurrentInstant ()
         let offset = Duration.FromMinutes(offsetMinutes)
@@ -32,6 +34,7 @@ module HistoryCommandTests =
             source = source
         }
 
+    /// Verifies that filter entries applies case insensitive source filter.
     [<Test>]
     let ``filterEntries applies case insensitive source filter`` () =
         let entries =
@@ -46,6 +49,7 @@ module HistoryCommandTests =
         filtered.Length |> should equal 1
         filtered[0].source |> should equal (Some "codex")
 
+    /// Verifies that filter entries combines source and text filters.
     [<Test>]
     let ``filterEntries combines source and text filters`` () =
         let entries =

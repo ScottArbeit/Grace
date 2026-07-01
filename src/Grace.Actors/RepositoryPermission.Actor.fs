@@ -13,16 +13,20 @@ open Orleans.Runtime
 open System
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for repository permission keys, proxies, state, or workflow transitions.
 module RepositoryPermission =
 
     let ActorName = ActorName.RepositoryPermission
 
+    /// Stores durable state for repository permission state.
     [<GenerateSerializer>]
     type RepositoryPermissionState = { PathPermissions: PathPermission list }
 
+    /// Groups Orleans actor helpers for repository permission state keys, proxies, state, or workflow transitions.
     module RepositoryPermissionState =
         let Empty = { PathPermissions = [] }
 
+    /// Implements the Orleans grain for repository permission actor.
     type RepositoryPermissionActor
         (
             [<PersistentState(StateName.RepositoryPermission, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<RepositoryPermissionState>
@@ -38,6 +42,7 @@ module RepositoryPermission =
 
             Task.CompletedTask
 
+        /// Persists the updated RepositoryPermission actor state through the Orleans storage provider.
         member private this.SaveState() =
             task {
                 state.State <- permissionState
@@ -48,6 +53,7 @@ module RepositoryPermission =
                     do! DefaultAsyncRetryPolicy.ExecuteAsync(fun () -> state.WriteStateAsync())
             }
 
+        /// Stores upsert data in the RepositoryPermission actor state.
         member private this.Upsert (pathPermission: PathPermission) (metadata: EventMetadata) =
             task {
                 let normalizedPath = normalizeFilePath pathPermission.Path
@@ -64,6 +70,7 @@ module RepositoryPermission =
                 return Ok returnValue
             }
 
+        /// Removes an appearance entry from this RepositoryPermission actor's sorted set.
         member private this.Remove (path: RelativePath) (metadata: EventMetadata) =
             task {
                 let normalizedPath = normalizeFilePath path
@@ -79,6 +86,7 @@ module RepositoryPermission =
                 return Ok returnValue
             }
 
+        /// Returns the RepositoryPermission records tracked by this actor.
         member private this.List (pathFilter: RelativePath option) (metadata: EventMetadata) =
             task {
                 let filtered =
@@ -95,12 +103,14 @@ module RepositoryPermission =
             }
 
         interface IRepositoryPermissionActor with
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 match command with
                 | RepositoryPermissionCommand.UpsertPathPermission pathPermission -> this.Upsert pathPermission metadata
                 | RepositoryPermissionCommand.RemovePathPermission path -> this.Remove path metadata
                 | RepositoryPermissionCommand.ListPathPermissions path -> this.List path metadata
 
+            /// Returns path permissions data from the RepositoryPermission actor state or related storage.
             member this.GetPathPermissions pathFilter correlationId =
                 let filtered =
                     match pathFilter with

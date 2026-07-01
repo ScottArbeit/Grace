@@ -11,13 +11,16 @@ open System.Collections.Generic
 open System.IO
 
 module ContentBlockMetadataActor = Grace.Actors.ContentBlockMetadata
+
 module ContentBlockMetadataTypes = Grace.Types.ContentBlockMetadata
 
+/// Covers content Block Metadata Actor behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ContentBlockMetadataActorTests() =
 
     let timestamp = Instant.FromUtc(2026, 5, 24, 13, 0)
 
+    /// Constructs metadata fixtures used by the server unit content Block Metadata Actor assertions.
     let metadata correlationId =
         {
             Timestamp = timestamp
@@ -31,6 +34,7 @@ type ContentBlockMetadataActorTests() =
     let contentBlockAddress = ContentBlockAddress "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
     let contentBlockObjectKey = StorageKeys.contentBlockObjectKey contentBlockAddress
 
+    /// Builds placement For test data for the server unit content Block Metadata Actor scenarios in this file.
     let placementFor objectKey eTag =
         { StorageAccountName = "cas-account"; StorageContainerName = StorageContainerName "cas-container"; ObjectKey = objectKey; ETag = eTag }
 
@@ -38,6 +42,7 @@ type ContentBlockMetadataActorTests() =
 
     let reclaimableRange = { OrdinalStart = 8; OrdinalCount = 4; ActiveManifestCount = 0; PhysicalOffset = 1024L; PhysicalLength = 512L }
 
+    /// Builds record test data for the server unit content Block Metadata Actor scenarios in this file.
     let record ranges =
         {
             Class = nameof ContentBlockMetadata
@@ -52,6 +57,7 @@ type ContentBlockMetadataActorTests() =
             UpdatedAt = timestamp
         }
 
+    /// Builds record With Totals test data for the server unit content Block Metadata Actor scenarios in this file.
     let recordWithTotals ranges totalPhysicalBytes activePhysicalBytes updatedAt metadataVersion =
         { record ranges with
             TotalPhysicalBytes = totalPhysicalBytes
@@ -60,12 +66,15 @@ type ContentBlockMetadataActorTests() =
             MetadataVersion = metadataVersion
         }
 
+    /// Builds replace test data for the server unit content Block Metadata Actor scenarios in this file.
     let replace operationId expectedVersion ranges =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = record ranges }
 
+    /// Builds replace With Metadata test data for the server unit content Block Metadata Actor scenarios in this file.
     let replaceWithMetadata operationId expectedVersion metadata =
         ContentBlockMetadataCommand.ReplaceWholeRecord { OperationId = operationId; ExpectedMetadataVersion = expectedVersion; Metadata = metadata }
 
+    /// Builds merge With Placement test data for the server unit content Block Metadata Actor scenarios in this file.
     let mergeWithPlacement operationId placement ranges =
         ContentBlockMetadataCommand.MergePhysicalRanges
             {
@@ -85,11 +94,13 @@ type ContentBlockMetadataActorTests() =
 
     let merge operationId ranges = mergeWithObjectKey operationId contentBlockObjectKey ranges
 
+    /// Builds finalize Merge test data for the server unit content Block Metadata Actor scenarios in this file.
     let finalizeMerge operationId ranges =
         match merge operationId ranges with
         | ContentBlockMetadataCommand.MergePhysicalRanges merge -> ContentBlockMetadataCommand.MergePhysicalRanges { merge with IsFinalizeContribution = true }
         | command -> command
 
+    /// Builds merge With Preconditions test data for the server unit content Block Metadata Actor scenarios in this file.
     let mergeWithPreconditions operationId expectedVersion requireMissing expectedRanges ranges =
         match merge operationId ranges with
         | ContentBlockMetadataCommand.MergePhysicalRanges merge ->
@@ -97,6 +108,7 @@ type ContentBlockMetadataActorTests() =
                 { merge with ExpectedMetadataVersion = expectedVersion; RequireMissingMetadata = requireMissing; ExpectedRanges = expectedRanges }
         | command -> command
 
+    /// Builds compact test data for the server unit content Block Metadata Actor scenarios in this file.
     let compact operationId expectedMetadataVersion placement ranges context =
         ContentBlockMetadataCommand.CompactPhysicalRanges
             {
@@ -109,10 +121,12 @@ type ContentBlockMetadataActorTests() =
 
     let setChurnState operationId churnState = ContentBlockMetadataCommand.SetCompactionChurnState { OperationId = operationId; ChurnState = churnState }
 
+    /// Applies all inputs to drive the server unit content Block Metadata Actor state transition under test.
     let applyAll events current =
         events
         |> List.fold (fun state event -> ContentBlockMetadataDto.UpdateDto event state) current
 
+    /// Verifies that create Whole Record Stamps Version And Reports Active Presence.
     [<Test>]
     member _.CreateWholeRecordStampsVersionAndReportsActivePresence() =
         let result =
@@ -130,6 +144,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(presence, Is.EqualTo(ContentBlockRangePresence.Active))
         | Error error -> Assert.Fail($"Expected create to succeed, got {error.Error}.")
 
+    /// Verifies that stale Whole Record Update Is Rejected.
     [<Test>]
     member _.StaleWholeRecordUpdateIsRejected() =
         let created =
@@ -147,6 +162,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected stale whole-record update to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("MetadataVersion"))
 
+    /// Verifies that replace Whole Record Rejects Null Storage Placement As Grace Error.
     [<Test>]
     member _.ReplaceWholeRecordRejectsNullStoragePlacementAsGraceError() =
         let invalidRecord = { record [| activeRange |] with StoragePlacement = Unchecked.defaultof<ContentBlockStoragePlacement> }
@@ -162,6 +178,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected null storage placement to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
 
+    /// Verifies that replace Whole Record Rejects Blank Storage Placement Account As Grace Error.
     [<Test>]
     member _.ReplaceWholeRecordRejectsBlankStoragePlacementAccountAsGraceError() =
         let invalidRecord =
@@ -178,6 +195,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected blank storage account to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement.StorageAccountName is required."))
 
+    /// Verifies that range Presence Distinguishes Active Reclaimable And Absent Ranges.
     [<Test>]
     member _.RangePresenceDistinguishesActiveReclaimableAndAbsentRanges() =
         let metadata =
@@ -190,6 +208,7 @@ type ContentBlockMetadataActorTests() =
 
         Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 12; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Absent))
 
+    /// Verifies that range Gc Safety Retains Active Or Claimed Ranges And Reclaims Only Unclaimed Zero Active Ranges.
     [<Test>]
     member _.RangeGcSafetyRetainsActiveOrClaimedRangesAndReclaimsOnlyUnclaimedZeroActiveRanges() =
         let retainActive =
@@ -218,6 +237,7 @@ type ContentBlockMetadataActorTests() =
         Assert.That(reclaimZeroActive, Is.EqualTo(ContentBlockRangeGcSafety.Reclaimable))
         Assert.That(absent, Is.EqualTo(ContentBlockRangeGcSafety.Absent))
 
+    /// Verifies that compaction Candidate Selection Requires Threshold Age No Churn And Current Metadata Version.
     [<Test>]
     member _.CompactionCandidateSelectionRequiresThresholdAgeNoChurnAndCurrentMetadataVersion() =
         let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
@@ -283,6 +303,7 @@ type ContentBlockMetadataActorTests() =
 
         Assert.That(overflowSelection, Is.EqualTo(ContentBlockCompactionSelection.Selected))
 
+    /// Verifies that compact Physical Ranges Removes Reclaimable Bytes Without Changing Logical Reconstruction Identity.
     [<Test>]
     member _.CompactPhysicalRangesRemovesReclaimableBytesWithoutChangingLogicalReconstructionIdentity() =
         let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
@@ -352,6 +373,7 @@ type ContentBlockMetadataActorTests() =
             )
         | Error error -> Assert.Fail($"Expected compaction to succeed, got {error.Error}.")
 
+    /// Verifies that compact Physical Ranges Rejects Changed Logical Ranges And Stale Metadata Version.
     [<Test>]
     member _.CompactPhysicalRangesRejectsChangedLogicalRangesAndStaleMetadataVersion() =
         let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
@@ -405,6 +427,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected stale compaction to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata compaction rejected"))
 
+    /// Verifies that compact Physical Ranges Rejects Rewrite That Does Not Reduce Physical Bytes.
     [<Test>]
     member _.CompactPhysicalRangesRejectsRewriteThatDoesNotReducePhysicalBytes() =
         let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
@@ -440,6 +463,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected non-reducing compaction rewrite to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("Compacted ContentBlockMetadata must reduce TotalPhysicalBytes."))
 
+    /// Verifies that compact Physical Ranges Uses Actor Timestamp For Age Gate And Rejects Missing Candidate Context.
     [<Test>]
     member _.CompactPhysicalRangesUsesActorTimestampForAgeGateAndRejectsMissingCandidateContext() =
         let tooYoung = timestamp.Plus(Duration.FromHours(-23.0))
@@ -511,6 +535,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected missing CompactPhysicalRanges payload to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("requires a non-empty operation id"))
 
+    /// Verifies that compact Physical Ranges Ignores Caller Supplied Churn Flags.
     [<Test>]
     member _.CompactPhysicalRangesIgnoresCallerSuppliedChurnFlags() =
         let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
@@ -554,6 +579,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.StoragePlacement, Is.EqualTo(placement))
         | Error error -> Assert.Fail($"Expected caller-supplied churn flags to be ignored by actor compaction, got {error.Error}.")
 
+    /// Verifies that compact Physical Ranges Rejects Actor Owned Churn State.
     [<Test>]
     member _.CompactPhysicalRangesRejectsActorOwnedChurnState() =
         let oldEnough = timestamp.Plus(Duration.FromHours(-25.0))
@@ -610,6 +636,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected actor-owned churn state to reject compaction.")
         | Error error -> Assert.That(error.Error, Does.Contain("churn is active"))
 
+    /// Verifies that set Compaction Churn State Requires Metadata And Replays Idempotently.
     [<Test>]
     member _.SetCompactionChurnStateRequiresMetadataAndReplaysIdempotently() =
         let churnState = { ContentBlockCompactionChurnState.NoChurn with HasActiveUpload = true }
@@ -639,6 +666,7 @@ type ContentBlockMetadataActorTests() =
                 Assert.That(replayDecision.Metadata.MetadataVersion, Is.EqualTo(currentMetadata.MetadataVersion))
             | Error error -> Assert.Fail($"Expected churn state replay to succeed, got {error.Error}.")
 
+    /// Verifies that range Presence Aggregates Duplicate Ordinal Ranges As Active When Any Physical Copy Is Active.
     [<Test>]
     member _.RangePresenceAggregatesDuplicateOrdinalRangesAsActiveWhenAnyPhysicalCopyIsActive() =
         let activePhysicalCopy = { reclaimableRange with ActiveManifestCount = 1; PhysicalOffset = 2048L }
@@ -649,6 +677,7 @@ type ContentBlockMetadataActorTests() =
 
         Assert.That(ContentBlockMetadataTypes.rangePresence metadata { OrdinalStart = 8; OrdinalCount = 4 }, Is.EqualTo(ContentBlockRangePresence.Active))
 
+    /// Verifies that same Operation Id Is Idempotent Replay Without Version Bump.
     [<Test>]
     member _.SameOperationIdIsIdempotentReplayWithoutVersionBump() =
         let command = replace "op-create" None [| activeRange |]
@@ -667,6 +696,7 @@ type ContentBlockMetadataActorTests() =
             | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected create to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Creates Authoritative Metadata.
     [<Test>]
     member _.MergePhysicalRangesCreatesAuthoritativeMetadata() =
         let result = ContentBlockMetadataActor.decideCommand [] ContentBlockMetadataDto.Empty (merge "op-merge" [| reclaimableRange |]) (metadata "corr-merge")
@@ -685,6 +715,7 @@ type ContentBlockMetadataActorTests() =
             )
         | Error error -> Assert.Fail($"Expected physical range merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Rejects Null Storage Placement As Grace Error.
     [<Test>]
     member _.MergePhysicalRangesRejectsNullStoragePlacementAsGraceError() =
         let result =
@@ -698,6 +729,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected null storage placement to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("StoragePlacement is required."))
 
+    /// Verifies that merge Physical Ranges Rejects Existing Null Storage Placement As Grace Error.
     [<Test>]
     member _.MergePhysicalRangesRejectsExistingNullStoragePlacementAsGraceError() =
         let existing =
@@ -711,6 +743,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected null existing storage placement to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("Existing StoragePlacement is required."))
 
+    /// Verifies that merge Physical Ranges Rejects Physical End Overflow.
     [<Test>]
     member _.MergePhysicalRangesRejectsPhysicalEndOverflow() =
         let overflowingRange = { reclaimableRange with PhysicalOffset = Int64.MaxValue - 5L; PhysicalLength = 10L }
@@ -726,6 +759,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected physical range overflow to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ContentBlockMetadataRange.PhysicalOffset plus PhysicalLength must not exceed Int64.MaxValue."))
 
+    /// Verifies that merge Physical Ranges Rejects Active Physical Bytes Overflow.
     [<Test>]
     member _.MergePhysicalRangesRejectsActivePhysicalBytesOverflow() =
         let firstActiveRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = (Int64.MaxValue / 2L) + 1L }
@@ -748,6 +782,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected active physical byte overflow to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ActivePhysicalBytes cannot exceed Int64.MaxValue."))
 
+    /// Verifies that merge Physical Ranges Rejects Active Physical Bytes Greater Than Total Physical Bytes.
     [<Test>]
     member _.MergePhysicalRangesRejectsActivePhysicalBytesGreaterThanTotalPhysicalBytes() =
         let firstActiveRange = { OrdinalStart = 0; OrdinalCount = 1; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = 10L }
@@ -770,6 +805,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected active bytes greater than total bytes to be rejected.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ActivePhysicalBytes cannot exceed TotalPhysicalBytes."))
 
+    /// Verifies that merge Physical Ranges Adds Missing Ranges Without Duplicating Existing On Replay.
     [<Test>]
     member _.MergePhysicalRangesAddsMissingRangesWithoutDuplicatingExistingOnReplay() =
         let created =
@@ -806,6 +842,7 @@ type ContentBlockMetadataActorTests() =
             | Error error -> Assert.Fail($"Expected idempotent replay, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected append merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Adds Distinct Range Contribution To Active Count.
     [<Test>]
     member _.MergePhysicalRangesAddsDistinctRangeContributionToActiveCount() =
         let currentMetadata = record [| activeRange |]
@@ -828,6 +865,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.ActivePhysicalBytes, Is.EqualTo(activeRange.PhysicalLength))
         | Error error -> Assert.Fail($"Expected duplicate contribution merge to succeed, got {error.Error}.")
 
+    /// Verifies that finalize Merge Can Use Expected Range Evidence Without Freezing Metadata Version.
     [<Test>]
     member _.FinalizeMergeCanUseExpectedRangeEvidenceWithoutFreezingMetadataVersion() =
         let currentRange = { activeRange with ActiveManifestCount = 1 }
@@ -866,6 +904,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected changed expected-range evidence to fail closed.")
         | Error error -> Assert.That(error.Error, Does.Contain("expected range evidence is absent or changed"))
 
+    /// Verifies that finalize Merge Requires Exact Expected Range Evidence Instead Of Synthesized Window.
     [<Test>]
     member _.FinalizeMergeRequiresExactExpectedRangeEvidenceInsteadOfSynthesizedWindow() =
         let firstEvidence = { activeRange with OrdinalStart = 0; OrdinalCount = 4; ActiveManifestCount = 1; PhysicalOffset = 0L; PhysicalLength = 512L }
@@ -887,6 +926,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected synthesized contiguous expected-range evidence to fail closed.")
         | Error error -> Assert.That(error.Error, Does.Contain("expected range evidence is absent or changed"))
 
+    /// Verifies that merge Physical Ranges Preserves Existing Active Count For Single Non Finalize Range.
     [<Test>]
     member _.MergePhysicalRangesPreservesExistingActiveCountForSingleNonFinalizeRange() =
         let existingActive = { activeRange with ActiveManifestCount = 1 }
@@ -908,6 +948,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.ActivePhysicalBytes, Is.EqualTo(existingActive.PhysicalLength))
         | Error error -> Assert.Fail($"Expected single existing active repair merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Preserves Existing Active Counts For All Existing Non Finalize Ranges.
     [<Test>]
     member _.MergePhysicalRangesPreservesExistingActiveCountsForAllExistingNonFinalizeRanges() =
         let firstActive = { activeRange with ActiveManifestCount = 1 }
@@ -947,6 +988,7 @@ type ContentBlockMetadataActorTests() =
             )
         | Error error -> Assert.Fail($"Expected all-existing active repair merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Adds Multi Range Finalize Contributions To Existing Ranges.
     [<Test>]
     member _.MergePhysicalRangesAddsMultiRangeFinalizeContributionsToExistingRanges() =
         let currentMetadata =
@@ -983,6 +1025,7 @@ type ContentBlockMetadataActorTests() =
             )
         | Error error -> Assert.Fail($"Expected multi-range finalize contribution merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Preserves Existing Active Ranges When Generic Append Adds New Ranges.
     [<Test>]
     member _.MergePhysicalRangesPreservesExistingActiveRangesWhenGenericAppendAddsNewRanges() =
         let existingActive = { activeRange with ActiveManifestCount = 1 }
@@ -1005,6 +1048,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(0))
         | Error error -> Assert.Fail($"Expected mixed append merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Adds Mixed Finalize Contributions While Appending Missing Ranges.
     [<Test>]
     member _.MergePhysicalRangesAddsMixedFinalizeContributionsWhileAppendingMissingRanges() =
         let existingActive = { activeRange with ActiveManifestCount = 1 }
@@ -1033,6 +1077,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.Ranges[1].ActiveManifestCount, Is.EqualTo(1))
         | Error error -> Assert.Fail($"Expected mixed finalize contribution merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Reactivates Exact Reclaimable Range Without Finalize Contribution.
     [<Test>]
     member _.MergePhysicalRangesReactivatesExactReclaimableRangeWithoutFinalizeContribution() =
         let currentMetadata = record [| reclaimableRange |]
@@ -1054,6 +1099,7 @@ type ContentBlockMetadataActorTests() =
             )
         | Error error -> Assert.Fail($"Expected reclaimable repair merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Coalesces Duplicate Evidence Within One Command.
     [<Test>]
     member _.MergePhysicalRangesCoalescesDuplicateEvidenceWithinOneCommand() =
         let currentMetadata = record [| reclaimableRange |]
@@ -1073,6 +1119,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.Ranges[0].ActiveManifestCount, Is.EqualTo(1))
         | Error error -> Assert.Fail($"Expected duplicate evidence merge to succeed, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Rejects Stale Expected Metadata Version.
     [<Test>]
     member _.MergePhysicalRangesRejectsStaleExpectedMetadataVersion() =
         let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
@@ -1090,6 +1137,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected stale merge evidence to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("Stale ContentBlockMetadata merge rejected."))
 
+    /// Verifies that merge Physical Ranges Rejects Create When Missing Metadata Was Required But Record Exists.
     [<Test>]
     member _.MergePhysicalRangesRejectsCreateWhenMissingMetadataWasRequiredButRecordExists() =
         let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
@@ -1106,6 +1154,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected missing-metadata precondition to reject an existing record.")
         | Error error -> Assert.That(error.Error, Does.Contain("merge expected missing metadata"))
 
+    /// Verifies that merge Physical Ranges Rejects Missing Expected Range Evidence At Merge Time.
     [<Test>]
     member _.MergePhysicalRangesRejectsMissingExpectedRangeEvidenceAtMergeTime() =
         let currentMetadata = recordWithTotals [| activeRange |] activeRange.PhysicalLength activeRange.PhysicalLength timestamp 7L
@@ -1123,6 +1172,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected missing expected range evidence to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("expected range evidence is absent or changed"))
 
+    /// Verifies that merge Physical Ranges Allows Same Ordinal At Different Physical Offsets.
     [<Test>]
     member _.MergePhysicalRangesAllowsSameOrdinalAtDifferentPhysicalOffsets() =
         let relocatedRange = { activeRange with PhysicalOffset = 4096L; PhysicalLength = activeRange.PhysicalLength; ActiveManifestCount = 0 }
@@ -1146,6 +1196,7 @@ type ContentBlockMetadataActorTests() =
             Assert.That(decision.Metadata.TotalPhysicalBytes, Is.EqualTo(5120L))
         | Error error -> Assert.Fail($"Expected relocated physical range to merge, got {error.Error}.")
 
+    /// Verifies that merge Physical Ranges Rejects Storage Placement Object Key Changes.
     [<Test>]
     member _.MergePhysicalRangesRejectsStoragePlacementObjectKeyChanges() =
         let created =
@@ -1171,6 +1222,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected object key change to be rejected.")
         | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.ObjectKey mismatch"))
 
+    /// Verifies that merge Physical Ranges Rejects Storage Placement Account Changes For Same Object Key.
     [<Test>]
     member _.MergePhysicalRangesRejectsStoragePlacementAccountChangesForSameObjectKey() =
         let created =
@@ -1194,6 +1246,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected account change to be rejected for the same object key.")
         | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.StorageAccountName mismatch"))
 
+    /// Verifies that merge Physical Ranges Rejects Storage Placement Container Changes For Same Object Key.
     [<Test>]
     member _.MergePhysicalRangesRejectsStoragePlacementContainerChangesForSameObjectKey() =
         let created =
@@ -1217,6 +1270,7 @@ type ContentBlockMetadataActorTests() =
         | Ok _ -> Assert.Fail("Expected container change to be rejected for the same object key.")
         | Error error -> Assert.That(error.Error, Does.Contain("StoragePlacement.StorageContainerName mismatch"))
 
+    /// Verifies that metadata Actor Uses One Composite String Key And Does Not Introduce Chunk Actor State.
     [<Test>]
     member _.MetadataActorUsesOneCompositeStringKeyAndDoesNotIntroduceChunkActorState() =
         let key = ContentBlockMetadataActorKey.Create storagePoolId contentBlockAddress

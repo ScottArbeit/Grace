@@ -12,11 +12,14 @@ open Orleans.Runtime
 open System
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for work item number counter keys, proxies, state, or workflow transitions.
 module WorkItemNumberCounter =
 
+    /// Stores durable state for work item number counter state.
     [<CLIMutable>]
     type WorkItemNumberCounterState = { NextWorkItemNumber: WorkItemNumber }
 
+    /// Implements the Orleans grain for work item number counter actor.
     type WorkItemNumberCounterActor
         (
             [<PersistentState(StateName.WorkItemNumberCounter, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<WorkItemNumberCounterState>
@@ -27,6 +30,7 @@ module WorkItemNumberCounter =
 
         let log = loggerFactory.CreateLogger("WorkItemNumberCounter.Actor")
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -38,6 +42,7 @@ module WorkItemNumberCounter =
             Task.CompletedTask
 
         interface IWorkItemNumberCounterActor with
+            /// Allocates and persists the next repository-local work item number.
             member this.AllocateNext(correlationId: CorrelationId) =
                 task {
                     this.correlationId <- correlationId

@@ -19,32 +19,42 @@ open System.Security.Cryptography
 open System.Threading
 open System.Threading.Tasks
 
+/// Contains Grace Server normal file materialization behavior and supporting helpers.
 module internal NormalFileMaterialization =
 
+    /// Represents object payload reader used by Grace Server APIs and background services.
     type ObjectPayloadReader = string -> CorrelationId -> CancellationToken -> Task<Result<byte array, GraceError>>
 
+    /// Represents object payload writer used by Grace Server APIs and background services.
     type ObjectPayloadWriter = string -> byte array -> CorrelationId -> CancellationToken -> Task<Result<unit, GraceError>>
 
+    /// Represents content block metadata batch resolver used by Grace Server APIs and background services.
     type ContentBlockMetadataBatchResolver =
         FileManifest -> ContentBlockAddress array -> CorrelationId -> CancellationToken -> Task<Result<ContentBlockMetadata array, GraceError>>
 
+    /// Represents content block placement payload reader used by Grace Server APIs and background services.
     type ContentBlockPlacementPayloadReader =
         ContentBlockStoragePlacement -> ContentBlockAddress -> CorrelationId -> CancellationToken -> Task<Result<byte array, GraceError>>
 
+    /// Computes error data used by Grace Server.
     let private error correlationId message = GraceError.Create message correlationId
 
+    /// Computes copy bytes data used by Grace Server.
     let private copyBytes (bytes: byte array) =
         let copy = Array.zeroCreate<byte> bytes.Length
         Array.Copy(bytes, copy, bytes.Length)
         copy
 
+    /// Computes sha256 hex data used by Grace Server.
     let private sha256Hex (bytes: byte array) =
         SHA256.HashData(bytes)
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
+    /// Computes blake3 hex data used by Grace Server.
     let private blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
 
+    /// Implements gzip bytes for the server request pipeline.
     let private gzipBytes (bytes: byte array) =
         use compressed = new MemoryStream()
 
@@ -54,12 +64,14 @@ module internal NormalFileMaterialization =
 
         compressed.ToArray()
 
+    /// Implements complete content block storage placement for the server request pipeline.
     let private completeContentBlockStoragePlacement (placement: ContentBlockStoragePlacement) =
         not (isNull (box placement))
         && not (String.IsNullOrWhiteSpace placement.StorageAccountName)
         && not (String.IsNullOrWhiteSpace placement.StorageContainerName)
         && not (String.IsNullOrWhiteSpace placement.ObjectKey)
 
+    /// Validates validate file version shape inputs before server processing continues.
     let private validateFileVersionShape (fileVersion: FileVersion) correlationId =
         if isNull (box fileVersion) then
             Error(error correlationId "Normal file download FileVersion is required.")
@@ -70,6 +82,7 @@ module internal NormalFileMaterialization =
         else
             Ok()
 
+    /// Validates validate exact file bytes inputs before server processing continues.
     let private validateExactFileBytes (fileVersion: FileVersion) (bytes: byte array) correlationId =
         if isNull bytes then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' materialized null bytes.")
@@ -92,14 +105,17 @@ module internal NormalFileMaterialization =
         else
             Ok(copyBytes bytes)
 
+    /// Implements describe manifest validation error for the server request pipeline.
     let private describeManifestValidationError validationError = $"Invalid manifest reconstruction: {validationError}."
 
+    /// Validates validate manifest storage pool inputs before server processing continues.
     let private validateManifestStoragePool (fileVersion: FileVersion) (manifest: FileManifest) correlationId =
         if String.IsNullOrWhiteSpace manifest.StoragePoolId then
             Error(error correlationId $"Normal file download target '{fileVersion.RelativePath}' FileManifest StoragePoolId is required.")
         else
             Ok()
 
+    /// Implements manifest block addresses for the server request pipeline.
     let private manifestBlockAddresses (manifest: FileManifest) =
         let addresses = ResizeArray<ContentBlockAddress>()
         let seen = HashSet<ContentBlockAddress>()
@@ -120,6 +136,7 @@ module internal NormalFileMaterialization =
 
         addresses.ToArray()
 
+    /// Implements manifest blocks by address for the server request pipeline.
     let private manifestBlocksByAddress (manifest: FileManifest) =
         let blocks = Dictionary<ContentBlockAddress, ResizeArray<ContentBlock>>()
 
@@ -144,6 +161,7 @@ module internal NormalFileMaterialization =
 
         blocks
 
+    /// Implements has active physical range cover for the server request pipeline.
     let private hasActivePhysicalRangeCover expectedLength (metadata: ContentBlockMetadata) =
         if expectedLength <= 0L || isNull metadata.Ranges then
             false
@@ -181,6 +199,7 @@ module internal NormalFileMaterialization =
 
             not error && coveredLength = expectedLength
 
+    /// Validates validate manifest block metadata inputs before server processing continues.
     let private validateManifestBlockMetadata
         (fileVersion: FileVersion)
         (manifest: FileManifest)
@@ -232,6 +251,7 @@ module internal NormalFileMaterialization =
             else
                 Ok metadata.StoragePlacement
 
+    /// Implements materialize whole file bytes for the server request pipeline.
     let private materializeWholeFileBytes
         (fileVersion: FileVersion)
         (objectKey: string)
@@ -245,6 +265,7 @@ module internal NormalFileMaterialization =
             | Error readError -> return Error readError
         }
 
+    /// Implements manifest payloads for the server request pipeline.
     let private manifestPayloads
         (fileVersion: FileVersion)
         (manifest: FileManifest)
@@ -312,6 +333,7 @@ module internal NormalFileMaterialization =
                     | None -> return Ok(payloads.ToArray())
         }
 
+    /// Implements materialize manifest bytes for the server request pipeline.
     let private materializeManifestBytes
         (fileVersion: FileVersion)
         (manifest: FileManifest)
@@ -351,6 +373,7 @@ module internal NormalFileMaterialization =
                                 )
         }
 
+    /// Implements materialize bytes with readers for the server request pipeline.
     let materializeBytesWithReaders
         (readWholeFileObjectPayload: ObjectPayloadReader)
         (resolveContentBlockMetadata: ContentBlockMetadataBatchResolver)
@@ -388,6 +411,7 @@ module internal NormalFileMaterialization =
                         )
         }
 
+    /// Implements materialize for download with readers for the server request pipeline.
     let materializeForDownloadWithReaders
         (readWholeFileObjectPayload: ObjectPayloadReader)
         (writeWholeFileObjectPayload: ObjectPayloadWriter)
@@ -425,6 +449,7 @@ module internal NormalFileMaterialization =
                         )
         }
 
+    /// Implements azure object payload reader for the server request pipeline.
     let private azureObjectPayloadReader (repositoryDto: RepositoryDto) objectKey correlationId (cancellationToken: CancellationToken) =
         task {
             match repositoryDto.ObjectStorageProvider with
@@ -442,6 +467,7 @@ module internal NormalFileMaterialization =
                 return Error(error correlationId "Normal file content materialization cannot use an unknown object storage provider.")
         }
 
+    /// Implements azure object payload writer for the server request pipeline.
     let private azureObjectPayloadWriter (repositoryDto: RepositoryDto) objectKey (bytes: byte array) correlationId (cancellationToken: CancellationToken) =
         task {
             match repositoryDto.ObjectStorageProvider with
@@ -461,6 +487,7 @@ module internal NormalFileMaterialization =
                 return Error(error correlationId "Normal file content materialization cannot use an unknown object storage provider.")
         }
 
+    /// Implements azure content block placement payload reader for the server request pipeline.
     let private azureContentBlockPlacementPayloadReader
         (placement: ContentBlockStoragePlacement)
         (contentBlockAddress: ContentBlockAddress)
@@ -484,6 +511,7 @@ module internal NormalFileMaterialization =
                     )
         }
 
+    /// Implements finalized manifest metadata resolver for the server request pipeline.
     let private finalizedManifestMetadataResolver
         (repositoryDto: RepositoryDto)
         (authorizedScope: string)
@@ -529,7 +557,9 @@ module internal NormalFileMaterialization =
             | None -> return Ok(metadata.ToArray())
         }
 
+    /// Implements materialize for download for the server request pipeline.
     let materializeForDownload (repositoryDto: RepositoryDto) (authorizedScope: string) (fileVersion: FileVersion) objectKey correlationId cancellationToken =
+        /// Computes metadata resolver data used by Grace Server.
         let metadataResolver manifest contentBlockAddresses correlationId cancellationToken =
             finalizedManifestMetadataResolver repositoryDto authorizedScope manifest contentBlockAddresses correlationId cancellationToken
 

@@ -4,9 +4,12 @@ open Grace.Types.Policy
 open Grace.Types.Review
 open Grace.Types.Common
 
+/// Contains baseline drift helpers.
 module BaselineDrift =
+    /// Represents the baseline drift result contract.
     type BaselineDriftResult = { IsMeaningful: bool; AffectedPaths: RelativePath list; AffectedChapterIds: ChapterId list; AffectedFindingIds: FindingId list }
 
+    /// Compares baseline and working values and reports whether drift is present.
     let evaluate (policy: PolicySnapshot) (riskProfile: DeterministicRiskProfile) (chapters: Chapter list) (findings: Finding list) =
         let churnLines =
             riskProfile.Churn.LinesAdded

@@ -7,6 +7,7 @@ open global.NodaTime
 open Orleans
 open System
 
+/// Contains annotation helpers.
 module Annotation =
 
     [<Literal>]
@@ -15,20 +16,27 @@ module Annotation =
     [<Literal>]
     let MaximumMaxReferences = 5000
 
+    /// Represents annotation boundary id.
     type AnnotationBoundaryId = string
 
+    /// Represents annotation span id.
     type AnnotationSpanId = string
 
+    /// Represents annotation source reference id.
     type AnnotationSourceReferenceId = string
 
+    /// Represents annotation source row id.
     type AnnotationSourceRowId = string
 
+    /// Represents reference type name.
     type ReferenceTypeName = string
 
+    /// Names the public reference type carried in annotation filters and source rows.
     let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
 
     let private referenceTypeNames = listCases<ReferenceType> () |> Set.ofArray
 
+    /// Represents annotation line range.
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationLineRange =
         {
@@ -38,8 +46,10 @@ module Annotation =
             EndLine: int
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { StartLine = 1; EndLine = 1 }
 
+    /// Represents annotation line.
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationLine =
         {
@@ -49,8 +59,10 @@ module Annotation =
             Text: string
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { LineNumber = 1; Text = String.Empty }
 
+    /// Represents annotation source reference.
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationSourceReference =
         {
@@ -70,6 +82,7 @@ module Annotation =
             CreatedBy: string option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 SourceReferenceId = String.Empty
@@ -81,6 +94,7 @@ module Annotation =
                 CreatedBy = None
             }
 
+    /// Represents annotation source row.
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationSourceRow =
         {
@@ -94,8 +108,10 @@ module Annotation =
             LineRange: AnnotationLineRange
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { SourceRowId = String.Empty; SourceReferenceId = String.Empty; Path = String.Empty; LineRange = AnnotationLineRange.Default }
 
+    /// Represents annotation boundary.
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationBoundary =
         {
@@ -109,8 +125,10 @@ module Annotation =
             BoundaryKind: string
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { BoundaryId = String.Empty; LineRange = AnnotationLineRange.Default; SourceRowIds = Array.empty; BoundaryKind = String.Empty }
 
+    /// Represents annotation span.
     [<MessagePackObject; GenerateSerializer>]
     type AnnotationSpan =
         {
@@ -124,8 +142,10 @@ module Annotation =
             SourceRowIds: AnnotationSourceRowId array
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default = { SpanId = String.Empty; BoundaryId = String.Empty; LineRange = AnnotationLineRange.Default; SourceRowIds = Array.empty }
 
+    /// Represents branch annotation dto.
     [<MessagePackObject; GenerateSerializer>]
     type BranchAnnotationDto =
         {
@@ -155,6 +175,7 @@ module Annotation =
             SourceReferences: AnnotationSourceReference array
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof BranchAnnotationDto
@@ -171,6 +192,7 @@ module Annotation =
                 SourceReferences = Array.empty
             }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create
             (
                 requestedLineRange: AnnotationLineRange,
@@ -199,8 +221,10 @@ module Annotation =
                 SourceReferences = sourceReferences
             }
 
+    /// Appends a validation message only when the supplied condition is true.
     let private appendIf condition error errors = if condition then error :: errors else errors
 
+    /// Validates line range.
     let validateLineRange (lineRange: AnnotationLineRange) =
         []
         |> appendIf (lineRange.StartLine < 1) "StartLine must be greater than or equal to 1."
@@ -210,6 +234,7 @@ module Annotation =
             | [] -> Ok()
             | errors -> Error(List.rev errors)
 
+    /// Validates max references.
     let validateMaxReferences maxReferences =
         []
         |> appendIf (maxReferences < 1) "MaxReferences must be greater than or equal to 1."
@@ -218,16 +243,20 @@ module Annotation =
             | [] -> Ok()
             | errors -> Error(List.rev errors)
 
+    /// Checks whether a reference type name is outside the known annotation contract.
     let private isUnknownReferenceTypeName referenceTypeName = not (referenceTypeNames.Contains referenceTypeName)
 
+    /// Detects duplicate non-empty values in validation input.
     let private hasDuplicates values =
         values
         |> Seq.filter (String.IsNullOrWhiteSpace >> not)
         |> Seq.countBy id
         |> Seq.exists (fun (_, count) -> count > 1)
 
+    /// Detects blank values in validation input.
     let private hasBlanks values = values |> Seq.exists String.IsNullOrWhiteSpace
 
+    /// Collects validation messages for invalid annotation line ranges.
     let private collectRangeErrors label lineRange =
         match validateLineRange lineRange with
         | Ok () -> []
@@ -235,10 +264,12 @@ module Annotation =
             errors
             |> List.map (fun error -> $"{label}: {error}")
 
+    /// Checks whether one annotation range fully contains another.
     let private containsLineRange (outer: AnnotationLineRange) (inner: AnnotationLineRange) =
         inner.StartLine >= outer.StartLine
         && inner.EndLine <= outer.EndLine
 
+    /// Validates link integrity.
     let validateLinkIntegrity (annotation: BranchAnnotationDto) =
         let sourceReferenceIds =
             annotation.SourceReferences
@@ -442,6 +473,7 @@ module Annotation =
         | [] -> Ok()
         | errors -> Error errors
 
+    /// Validates validate.
     let validate (annotation: BranchAnnotationDto) =
         [
             match validateMaxReferences annotation.MaxReferences with

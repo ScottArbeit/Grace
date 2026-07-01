@@ -7,12 +7,14 @@ open NUnit.Framework
 open System
 open System.IO
 
+/// Groups agent command coverage for the CLI test project.
 [<NonParallelizable>]
 module AgentCommandTests =
     let private ownerId = Guid.NewGuid()
     let private organizationId = Guid.NewGuid()
     let private repositoryId = Guid.NewGuid()
 
+    /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
             args
@@ -25,15 +27,18 @@ module AgentCommandTests =
                 repositoryId.ToString()
             |]
 
+    /// Runs the supplied action with ids and silent applied.
     let private withIdsAndSilent (args: string array) =
         args
         |> Array.append [| "--output"; "Silent" |]
         |> withIds
 
+    /// Invokes the parsed CLI command for test scenarios.
     let private invoke (args: string array) =
         let parseResult = GraceCommand.rootCommand.Parse(args)
         parseResult.Invoke()
 
+    /// Runs the supplied action with temp dir applied.
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-agent-tests-{Guid.NewGuid():N}")
         Directory.CreateDirectory(tempDir) |> ignore
@@ -53,6 +58,7 @@ module AgentCommandTests =
                 with
                 | _ -> ()
 
+    /// Writes local state needed by the test scenario.
     let private writeLocalState (root: string) (agentId: Guid) (sessionId: string) (workItemId: string) =
         let graceDirectory = Path.Combine(root, ".grace")
 
@@ -78,6 +84,7 @@ module AgentCommandTests =
 
         File.WriteAllText(Path.Combine(graceDirectory, "agent-session-state.json"), json)
 
+    /// Verifies that agent add summary rejects invalid work item id.
     [<Test>]
     let ``agent add-summary rejects invalid work item id`` () =
         let missingSummary = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
@@ -94,6 +101,7 @@ module AgentCommandTests =
 
         exitCode |> should equal -1
 
+    /// Verifies that agent add summary rejects missing summary file.
     [<Test>]
     let ``agent add-summary rejects missing summary file`` () =
         let missingSummary = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
@@ -110,6 +118,7 @@ module AgentCommandTests =
 
         exitCode |> should equal -1
 
+    /// Verifies that agent add summary rejects prompt origin without prompt file.
     [<Test>]
     let ``agent add-summary rejects prompt-origin without prompt file`` () =
         let summaryPath = Path.Combine(Path.GetTempPath(), $"{Guid.NewGuid()}.md")
@@ -133,6 +142,7 @@ module AgentCommandTests =
         finally
             if File.Exists(summaryPath) then File.Delete(summaryPath)
 
+    /// Verifies that agent bootstrap succeeds without repository config.
     [<Test>]
     let ``agent bootstrap succeeds without repository config`` () =
         withTempDir (fun root ->
@@ -153,6 +163,7 @@ module AgentCommandTests =
             File.Exists(Path.Combine(root, ".grace", "agent-session-state.json"))
             |> should equal true)
 
+    /// Verifies that agent work start reports actionable missing config.
     [<Test>]
     let ``agent work start reports actionable missing config`` () =
         withTempDir (fun _ ->
@@ -167,6 +178,7 @@ module AgentCommandTests =
 
             exitCode |> should equal -1)
 
+    /// Verifies that agent work start rejects stale local state mismatch.
     [<Test>]
     let ``agent work start rejects stale local state mismatch`` () =
         withTempDir (fun root ->
@@ -183,6 +195,7 @@ module AgentCommandTests =
 
             exitCode |> should equal -1)
 
+    /// Verifies that agent work start handles idempotent local replay.
     [<Test>]
     let ``agent work start handles idempotent local replay`` () =
         withTempDir (fun root ->
@@ -199,6 +212,7 @@ module AgentCommandTests =
 
             exitCode |> should equal 0)
 
+    /// Verifies that agent work stop is idempotent when no active local session exists.
     [<Test>]
     let ``agent work stop is idempotent when no active local session exists`` () =
         withTempDir (fun _ ->
@@ -223,6 +237,7 @@ module AgentCommandTests =
 
             stopExitCode |> should equal 0)
 
+    /// Verifies that agent work status rejects stale session override.
     [<Test>]
     let ``agent work status rejects stale session override`` () =
         withTempDir (fun root ->

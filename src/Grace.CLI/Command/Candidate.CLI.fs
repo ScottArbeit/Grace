@@ -15,7 +15,9 @@ open System.CommandLine.Parsing
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the candidate command parser, handlers, and output helpers.
 module CandidateCommand =
+    /// Defines the options parsed by the candidate command handlers.
     module private Options =
         let candidateId =
             new Option<string>(
@@ -79,6 +81,7 @@ module CandidateCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Tries to map parse candidate id and returns a GraceError instead of throwing on unsupported input.
     let internal tryParseCandidateId (candidateId: string) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
@@ -89,6 +92,7 @@ module CandidateCommand =
         else
             Ok(parsed.ToString())
 
+    /// Builds command objects or parameters for execution.
     let internal buildCandidateProjectionParameters (graceIds: GraceIds) (candidateId: string) =
         Parameters.Review.CandidateProjectionParameters(
             CandidateId = candidateId,
@@ -101,6 +105,7 @@ module CandidateCommand =
             CorrelationId = graceIds.CorrelationId
         )
 
+    /// Builds command objects or parameters for execution.
     let internal buildCandidateGateRerunParameters (graceIds: GraceIds) (candidateId: string) (gate: string) =
         Parameters.Review.CandidateGateRerunParameters(
             CandidateId = candidateId,
@@ -114,6 +119,7 @@ module CandidateCommand =
             CorrelationId = graceIds.CorrelationId
         )
 
+    /// Renders candidate snapshot results only when the selected output mode includes human-readable console text.
     let private renderCandidateSnapshot (parseResult: ParseResult) (snapshot: Parameters.Review.CandidateProjectionSnapshotResult) =
         if
             not (parseResult |> json)
@@ -162,6 +168,7 @@ module CandidateCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders candidate required actions results only when the selected output mode includes human-readable console text.
     let private renderCandidateRequiredActions (parseResult: ParseResult) (result: Parameters.Review.CandidateRequiredActionsResult) =
         if
             not (parseResult |> json)
@@ -175,6 +182,7 @@ module CandidateCommand =
                 let diagnosticsText = String.Join(" | ", result.Diagnostics)
                 AnsiConsole.MarkupLine($"[yellow]Diagnostics:[/] {Markup.Escape(diagnosticsText)}")
 
+    /// Renders candidate attestations results only when the selected output mode includes human-readable console text.
     let private renderCandidateAttestations (parseResult: ParseResult) (result: Parameters.Review.CandidateAttestationsResult) =
         if
             not (parseResult |> json)
@@ -196,6 +204,7 @@ module CandidateCommand =
                 let diagnosticsText = String.Join(" | ", result.Diagnostics)
                 AnsiConsole.MarkupLine($"[yellow]Diagnostics:[/] {Markup.Escape(diagnosticsText)}")
 
+    /// Renders candidate action result results only when the selected output mode includes human-readable console text.
     let private renderCandidateActionResult (parseResult: ParseResult) (result: Parameters.Review.CandidateActionResult) =
         if
             not (parseResult |> json)
@@ -213,10 +222,12 @@ module CandidateCommand =
                 let diagnosticsText = String.Join(" | ", result.Diagnostics)
                 AnsiConsole.MarkupLine($"[yellow]Diagnostics:[/] {Markup.Escape(diagnosticsText)}")
 
+    /// Resolves candidate from parse result from command options, configuration, or local state.
     let private resolveCandidateFromParseResult (parseResult: ParseResult) =
         let candidateId = parseResult.GetValue(Options.candidateId)
         tryParseCandidateId candidateId parseResult
 
+    /// Reads handler from ParseResult, local configuration, or Grace ids.
     let private getHandler (parseResult: ParseResult) =
         task {
             try
@@ -238,15 +249,18 @@ module CandidateCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the get command by binding ParseResult values to the SDK request and CLI output contract.
     type Get() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = getHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the required actions command from parsed options through validation, the SDK call, and result rendering.
     let private requiredActionsHandler (parseResult: ParseResult) =
         task {
             try
@@ -268,15 +282,18 @@ module CandidateCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the required actions command by binding ParseResult values to the SDK request and CLI output contract.
     type RequiredActions() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous required actions action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = requiredActionsHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the attestations command from parsed options through validation, the SDK call, and result rendering.
     let private attestationsHandler (parseResult: ParseResult) =
         task {
             try
@@ -298,15 +315,18 @@ module CandidateCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the attestations command by binding ParseResult values to the SDK request and CLI output contract.
     type Attestations() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous attestations action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = attestationsHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the retry command from parsed options through validation, the SDK call, and result rendering.
     let private retryHandler (parseResult: ParseResult) =
         task {
             try
@@ -328,15 +348,18 @@ module CandidateCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the retry command by binding ParseResult values to the SDK request and CLI output contract.
     type Retry() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous retry action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = retryHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the cancel command from parsed options through validation, the SDK call, and result rendering.
     let private cancelHandler (parseResult: ParseResult) =
         task {
             try
@@ -358,15 +381,18 @@ module CandidateCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the cancel command by binding ParseResult values to the SDK request and CLI output contract.
     type Cancel() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous cancel action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = cancelHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the gate rerun command from parsed options through validation, the SDK call, and result rendering.
     let private gateRerunHandler (parseResult: ParseResult) =
         task {
             try
@@ -396,9 +422,11 @@ module CandidateCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the gate rerun command by binding ParseResult values to the SDK request and CLI output contract.
     type GateRerun() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous gate rerun action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = gateRerunHandler parseResult
@@ -406,6 +434,7 @@ module CandidateCommand =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

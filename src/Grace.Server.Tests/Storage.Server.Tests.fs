@@ -19,7 +19,9 @@ open System.Text
 open System.Text.Json
 open System.Net.Http.Headers
 
+/// Groups shared helpers for storage placement test helpers.
 module private StoragePlacementTestHelpers =
+    /// Defines fragment parameter behavior for the surrounding tests used by the server integration storage scenario.
     let private fragmentParameter (name: string) (uri: Uri) =
         uri
             .Fragment
@@ -35,6 +37,7 @@ module private StoragePlacementTestHelpers =
             else
                 None)
 
+    /// Defines content block placement from URI behavior for the surrounding tests used by the server integration storage scenario.
     let contentBlockPlacementFromUri (blobUriWithSasToken: Uri) eTag =
         let pathSegments =
             blobUriWithSasToken
@@ -80,18 +83,22 @@ module private StoragePlacementTestHelpers =
             ETag = eTag
         }
 
+/// Covers storage whole file compatibility scenarios.
 [<NonParallelizable>]
 type StorageWholeFileCompatibility() =
 
+    /// Defines compute SHA256 hash behavior for the surrounding tests used by the server integration storage scenario.
     let computeSha256Hash (bytes: byte array) =
         let hash = SHA256.HashData(bytes)
         byteArrayToString (hash.AsSpan())
 
+    /// Tries to resolve get JSON property without failing the caller.
     let tryGetJsonProperty (name: string) (element: JsonElement) =
         element.EnumerateObject()
         |> Seq.tryFind (fun property -> property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
         |> Option.map (fun property -> property.Value)
 
+    /// Requires JSON property and fails the test when missing.
     let requireJsonProperty (name: string) (element: JsonElement) =
         match tryGetJsonProperty name element with
         | Some value -> value
@@ -99,12 +106,15 @@ type StorageWholeFileCompatibility() =
             Assert.Fail($"Expected JSON property '{name}'.")
             Unchecked.defaultof<JsonElement>
 
+    /// Asserts JSON content for integration responses.
     let assertJsonContent (response: HttpResponseMessage) =
         Assert.That(response.Content.Headers.ContentType, Is.Not.Null)
         Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("application/json"))
 
+    /// Asserts raw string content for integration responses.
     let assertRawStringContent (response: HttpResponseMessage) = Assert.That(response.Content.Headers.ContentType, Is.Null)
 
+    /// Asserts whole file content reference for integration responses.
     let assertWholeFileContentReference (metadata: JsonElement) =
         let contentReference = requireJsonProperty "ContentReference" metadata
         let referenceType = requireJsonProperty "ReferenceType" contentReference
@@ -118,12 +128,14 @@ type StorageWholeFileCompatibility() =
         | Some manifest -> Assert.That(manifest.ValueKind, Is.EqualTo(JsonValueKind.Null))
         | None -> ()
 
+    /// Gets upload metadata JSON from the running test server.
     let getUploadMetadataJson (content: string) =
         use document = JsonDocument.Parse(content)
         let root = document.RootElement.Clone()
         let returnValue = requireJsonProperty "ReturnValue" root
         returnValue.EnumerateArray() |> Seq.exactlyOne
 
+    /// Builds create upload parameters for route calls.
     let createUploadParameters repositoryId fileVersion =
         let parameters = Parameters.Storage.GetUploadMetadataForFilesParameters()
         parameters.OwnerId <- ownerId
@@ -133,6 +145,7 @@ type StorageWholeFileCompatibility() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds create download parameters for route calls.
     let createDownloadParameters repositoryId fileVersion =
         let parameters = Parameters.Storage.GetDownloadUriParameters()
         parameters.OwnerId <- ownerId
@@ -142,6 +155,7 @@ type StorageWholeFileCompatibility() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Verifies the small whole file content rejects missing BLAKE3 hash before publishing upload metadata scenario.
     [<Test>]
     member _.SmallWholeFileContentRejectsMissingBlake3HashBeforePublishingUploadMetadata() =
         task {
@@ -160,6 +174,7 @@ type StorageWholeFileCompatibility() =
             Assert.That(error.Error, Is.EqualTo("The Blake3Hash value is required."))
         }
 
+    /// Verifies the small whole file content populates content reference with full BLAKE3 metadata scenario.
     [<Test>]
     member _.SmallWholeFileContentPopulatesContentReferenceWithFullBlake3Metadata() =
         task {
@@ -213,6 +228,7 @@ type StorageWholeFileCompatibility() =
             Assert.That(downloadUri, Does.Contain(StorageKeys.wholeFileContentObjectKey fileVersion))
         }
 
+    /// Verifies the small whole file metadata uses BLAKE3 specific blob keys when present scenario.
     [<Test>]
     member _.SmallWholeFileMetadataUsesBlake3SpecificBlobKeysWhenPresent() =
         task {
@@ -292,6 +308,7 @@ type StorageWholeFileCompatibility() =
             Assert.That(firstDownloadUri, Is.Not.EqualTo(secondDownloadUri))
         }
 
+    /// Verifies the small whole file download uses current BLAKE3 key when blob has not been uploaded yet scenario.
     [<Test>]
     member _.SmallWholeFileDownloadUsesCurrentBlake3KeyWhenBlobHasNotBeenUploadedYet() =
         task {
@@ -321,22 +338,27 @@ type StorageWholeFileCompatibility() =
             Assert.That(downloadUriText, Does.Not.Contain(shaOnlyBlobName))
         }
 
+/// Covers storage content block SAS routes scenarios.
 [<NonParallelizable>]
 type StorageContentBlockSasRoutes() =
 
+    /// Builds a deterministic client with user ID for integration setup fixture for the server integration storage assertions.
     let createClientWithUserId (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Builds a deterministic unauthenticated client for integration setup fixture for the server integration storage assertions.
     let createUnauthenticatedClient () =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client
 
+    /// Builds a deterministic malformed JSON content for integration setup fixture for the server integration storage assertions.
     let createMalformedJsonContent () = new StringContent("{", Encoding.UTF8, "application/json")
 
+    /// Grants role needed by authorization-sensitive tests.
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -354,32 +376,38 @@ type StorageContentBlockSasRoutes() =
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
+    /// Builds set content block parameters for route calls.
     let setContentBlockParameters (parameters: Parameters.Storage.StorageParameters) repositoryId =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
         parameters.CorrelationId <- generateCorrelationId ()
 
+    /// Builds create content block upload parameters for route calls.
     let createContentBlockUploadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockUploadUriParameters()
         setContentBlockParameters parameters repositoryId
         parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
 
+    /// Builds create content block download parameters for route calls.
     let createContentBlockDownloadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
         setContentBlockParameters parameters repositoryId
         parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
 
+    /// Defines malformed content block address behavior for the surrounding tests used by the server integration storage scenario.
     let malformedContentBlockAddress () = ContentBlockAddress $"content-block-contract-{Guid.NewGuid():N}"
 
+    /// Asserts unauthorized for integration responses.
     let assertUnauthorized (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized), body)
         }
 
+    /// Asserts bad request for malformed content block address for integration responses.
     let assertBadRequestForMalformedContentBlockAddress (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -388,10 +416,12 @@ type StorageContentBlockSasRoutes() =
             Assert.That(body, Does.Contain("64-character hexadecimal BLAKE3"))
         }
 
+    /// Asserts JSON content for integration responses.
     let assertJsonContent (response: HttpResponseMessage) =
         Assert.That(response.Content.Headers.ContentType, Is.Not.Null)
         Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("application/json"))
 
+    /// Asserts success SAS for content block for integration responses.
     let assertSuccessSasForContentBlock (response: HttpResponseMessage) (contentBlockAddress: ContentBlockAddress) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -400,6 +430,7 @@ type StorageContentBlockSasRoutes() =
             Assert.That(body, Does.Contain(contentBlockAddress))
         }
 
+    /// Asserts bad request contains for integration responses.
     let assertBadRequestContains (expected: string) (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -407,6 +438,7 @@ type StorageContentBlockSasRoutes() =
             Assert.That(body, Does.Contain(expected))
         }
 
+    /// Verifies the content block placement parser uses shard fragment for ip host custom endpoint scenario.
     [<Test>]
     member _.ContentBlockPlacementParserUsesShardFragmentForIpHostCustomEndpoint() =
         let contentBlockAddress = ContentBlockAddress "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
@@ -423,6 +455,7 @@ type StorageContentBlockSasRoutes() =
         Assert.That(placement.ObjectKey, Is.EqualTo(objectKey))
         Assert.That(placement.ETag, Is.EqualTo(Some "etag-ip-shard"))
 
+    /// Verifies the content block placement parser keeps azurite path style when fragment names same account scenario.
     [<Test>]
     member _.ContentBlockPlacementParserKeepsAzuritePathStyleWhenFragmentNamesSameAccount() =
         let contentBlockAddress = ContentBlockAddress "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
@@ -436,6 +469,7 @@ type StorageContentBlockSasRoutes() =
         Assert.That(placement.StorageContainerName, Is.EqualTo(StorageContainerName "grace-cas"))
         Assert.That(placement.ObjectKey, Is.EqualTo(objectKey))
 
+    /// Verifies the content block upload URI requires path write and fails closed without upload session intent scenario.
     [<Test>]
     member _.ContentBlockUploadUriRequiresPathWriteAndFailsClosedWithoutUploadSessionIntent() =
         task {
@@ -461,6 +495,7 @@ type StorageContentBlockSasRoutes() =
             do! assertBadRequestContains "UploadSessionId is required" allowedUpload
         }
 
+    /// Verifies the content block upload URI checks principal before body validation and returns bad request after authentication scenario.
     [<Test>]
     member _.ContentBlockUploadUriChecksPrincipalBeforeBodyValidationAndReturnsBadRequestAfterAuthentication() =
         task {
@@ -492,6 +527,7 @@ type StorageContentBlockSasRoutes() =
             do! assertBadRequestForMalformedContentBlockAddress emptyUpload
         }
 
+    /// Verifies the confirm content block upload validates address before placement key derivation scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadValidatesAddressBeforePlacementKeyDerivation() =
         task {
@@ -522,6 +558,7 @@ type StorageContentBlockSasRoutes() =
             do! assertBadRequestForMalformedContentBlockAddress response
         }
 
+    /// Verifies the content block download URI requires path read and fails closed without finalized manifest reference scenario.
     [<Test>]
     member _.ContentBlockDownloadUriRequiresPathReadAndFailsClosedWithoutFinalizedManifestReference() =
         task {
@@ -548,6 +585,7 @@ type StorageContentBlockSasRoutes() =
             do! assertBadRequestContains "ManifestAddress" allowedDownload
         }
 
+    /// Verifies the content block download URI rejects address only request before shared CAS placement lookup scenario.
     [<Test>]
     member _.ContentBlockDownloadUriRejectsAddressOnlyRequestBeforeSharedCasPlacementLookup() =
         task {
@@ -569,6 +607,7 @@ type StorageContentBlockSasRoutes() =
             Assert.That(body, Does.Not.Contain("cas/content/"))
         }
 
+    /// Verifies the content block download URI rejects null authorized scope before path authorization scenario.
     [<Test>]
     member _.ContentBlockDownloadUriRejectsNullAuthorizedScopeBeforePathAuthorization() =
         task {
@@ -612,6 +651,7 @@ type StorageContentBlockSasRoutes() =
             Assert.That(body, Does.Not.Contain("cas/content/"))
         }
 
+    /// Verifies the content block download URI checks principal before body validation and returns bad request after authentication scenario.
     [<Test>]
     member _.ContentBlockDownloadUriChecksPrincipalBeforeBodyValidationAndReturnsBadRequestAfterAuthentication() =
         task {
@@ -643,6 +683,7 @@ type StorageContentBlockSasRoutes() =
             do! assertBadRequestForMalformedContentBlockAddress emptyDownload
         }
 
+    /// Verifies the content block download URI returns bad request for malformed manifest address scenario.
     [<Test>]
     member _.ContentBlockDownloadUriReturnsBadRequestForMalformedManifestAddress() =
         task {
@@ -665,22 +706,26 @@ type StorageContentBlockSasRoutes() =
             Assert.That(body, Does.Not.Contain("Error in /storage/getContentBlockDownloadUri"))
         }
 
+/// Covers storage content block discovery routes scenarios.
 [<NonParallelizable>]
 type StorageContentBlockDiscoveryRoutes() =
 
     let maxDiscoveryKeyChunkAddresses = 256
 
+    /// Builds a deterministic client with user ID for integration setup fixture for the server integration storage assertions.
     let createClientWithUserId (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Builds a deterministic unauthenticated client for integration setup fixture for the server integration storage assertions.
     let createUnauthenticatedClient () =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client
 
+    /// Grants role needed by authorization-sensitive tests.
     let grantRoleAsync (client: HttpClient) scopeKind ownerId organizationId repositoryId branchId principalId roleId =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -698,6 +743,7 @@ type StorageContentBlockDiscoveryRoutes() =
             return! client.PostAsync("/authorize/grant-role", createJsonContent parameters)
         }
 
+    /// Builds a deterministic discovery JSON for integration setup fixture for the server integration storage assertions.
     let createDiscoveryJson repositoryId (keyChunkAddresses: string array) =
         let encodedAddresses =
             keyChunkAddresses
@@ -719,16 +765,19 @@ type StorageContentBlockDiscoveryRoutes() =
             "]}"
         )
 
+    /// Builds a deterministic jSON content from string for integration setup fixture for the server integration storage assertions.
     let createJsonContentFromString (json: string) =
         let content = new StringContent(json, Encoding.UTF8)
         content.Headers.ContentType <- MediaTypeHeaderValue("application/json")
         content
 
+    /// Tries to resolve get JSON property without failing the caller.
     let tryGetJsonProperty (name: string) (element: JsonElement) =
         element.EnumerateObject()
         |> Seq.tryFind (fun property -> property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
         |> Option.map (fun property -> property.Value)
 
+    /// Requires JSON property and fails the test when missing.
     let requireJsonProperty (name: string) (element: JsonElement) =
         match tryGetJsonProperty name element with
         | Some value -> value
@@ -736,9 +785,11 @@ type StorageContentBlockDiscoveryRoutes() =
             Assert.Fail($"Expected JSON property '{name}'.")
             Unchecked.defaultof<JsonElement>
 
+    /// Posts discovery to the running test server.
     let postDiscoveryAsync (client: HttpClient) repositoryId keyChunkAddresses =
         client.PostAsync("/storage/discoverContentBlocks", createJsonContentFromString (createDiscoveryJson repositoryId keyChunkAddresses))
 
+    /// Verifies the discovery requires repository read and returns safe empty non authoritative results scenario.
     [<Test>]
     member _.DiscoveryRequiresRepositoryReadAndReturnsSafeEmptyNonAuthoritativeResults() =
         task {
@@ -821,6 +872,7 @@ type StorageContentBlockDiscoveryRoutes() =
             Assert.That(candidates.GetArrayLength(), Is.EqualTo(0))
         }
 
+    /// Verifies the discover content blocks rejects missing repository before shared pool lookup scenario.
     [<Test>]
     member _.DiscoverContentBlocksRejectsMissingRepositoryBeforeSharedPoolLookup() =
         task {
@@ -835,6 +887,7 @@ type StorageContentBlockDiscoveryRoutes() =
             Assert.That(body, Does.Not.Contain("CandidateContentBlocks"))
         }
 
+    /// Verifies the discovery rejects requests above max key chunk limit scenario.
     [<Test>]
     member _.DiscoveryRejectsRequestsAboveMaxKeyChunkLimit() =
         task {
@@ -854,11 +907,13 @@ type StorageContentBlockDiscoveryRoutes() =
             Assert.That(body, Does.Contain($"{maxDiscoveryKeyChunkAddresses}"))
         }
 
+/// Covers storage manifest upload session routes scenarios.
 [<NonParallelizable>]
 type StorageManifestUploadSessionRoutes() =
 
     let maxDiscoveryKeyChunkAddresses = 256
 
+    /// Defines pseudo random bytes behavior for the surrounding tests used by the server integration storage scenario.
     let pseudoRandomBytes length =
         let bytes = Array.zeroCreate<byte> length
         let mutable state = 0x78123456u
@@ -871,6 +926,7 @@ type StorageManifestUploadSessionRoutes() =
 
         bytes
 
+    /// Defines encode block at behavior for the surrounding tests used by the server integration storage scenario.
     let encodeBlockAt physicalOffset bytes =
         match ContentBlockFormat.encode [ { PhysicalOffset = physicalOffset; Bytes = bytes } ] with
         | Ok block -> block
@@ -878,8 +934,10 @@ type StorageManifestUploadSessionRoutes() =
             Assert.Fail($"Expected test ContentBlock to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Defines encode block behavior for the surrounding tests used by the server integration storage scenario.
     let encodeBlock bytes = encodeBlockAt 0L bytes
 
+    /// Defines encode chunked block behavior for the surrounding tests used by the server integration storage scenario.
     let encodeChunkedBlock (chunks: byte array array) =
         let mutable physicalOffset = 0L
 
@@ -896,12 +954,14 @@ type StorageManifestUploadSessionRoutes() =
             Assert.Fail($"Expected chunked test ContentBlock to encode, got {error}.")
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
+    /// Defines chunked payload behavior for the surrounding tests used by the server integration storage scenario.
     let chunkedPayload label chunkCount =
         [|
             for index in 0 .. chunkCount - 1 do
                 Encoding.UTF8.GetBytes($"{label}-chunk-{index:D2}-{Guid.NewGuid():N}-{String('x', 256)}")
         |]
 
+    /// Defines manifest for blocks behavior for the surrounding tests used by the server integration storage scenario.
     let manifestForBlocks storagePoolId bytes (blocks: (ContentBlockFormat.EncodedContentBlock * int64 * int64) array) =
         let contentBlocks =
             blocks
@@ -920,17 +980,21 @@ type StorageManifestUploadSessionRoutes() =
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Defines manifest for storage pool behavior for the surrounding tests used by the server integration storage scenario.
     let manifestForStoragePool storagePoolId (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
         manifestForBlocks storagePoolId bytes [| block, 0L, int64 bytes.Length |]
 
+    /// Defines manifest for behavior for the surrounding tests used by the server integration storage scenario.
     let manifestFor bytes block = manifestForStoragePool (StoragePoolId Constants.DefaultStoragePoolId) bytes block
 
+    /// Builds set storage parameters for route calls.
     let setStorageParameters (parameters: Parameters.Storage.StorageParameters) repositoryId correlationId =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
         parameters.CorrelationId <- correlationId
 
+    /// Builds a deterministic client with claims for integration setup fixture for the server integration storage assertions.
     let createClientWithClaims (claims: string list) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
@@ -941,6 +1005,7 @@ type StorageManifestUploadSessionRoutes() =
 
         client
 
+    /// Defines upsert path permission behavior for the surrounding tests used by the server integration storage scenario.
     let upsertPathPermissionAsync (client: HttpClient) repositoryId path claimPermissions =
         task {
             let parameters = Parameters.Access.UpsertPathPermissionParameters()
@@ -961,11 +1026,13 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
         }
 
+    /// Tries to resolve get JSON property without failing the caller.
     let tryGetJsonProperty (name: string) (element: JsonElement) =
         element.EnumerateObject()
         |> Seq.tryFind (fun property -> property.Name.Equals(name, StringComparison.OrdinalIgnoreCase))
         |> Option.map (fun property -> property.Value)
 
+    /// Requires JSON property and fails the test when missing.
     let requireJsonProperty (name: string) (element: JsonElement) =
         match tryGetJsonProperty name element with
         | Some value -> value
@@ -973,12 +1040,15 @@ type StorageManifestUploadSessionRoutes() =
             Assert.Fail($"Expected JSON property '{name}'.")
             Unchecked.defaultof<JsonElement>
 
+    /// Asserts JSON content for integration responses.
     let assertJsonContent (response: HttpResponseMessage) =
         Assert.That(response.Content.Headers.ContentType, Is.Not.Null)
         Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("application/json"))
 
+    /// Asserts raw string content for integration responses.
     let assertRawStringContent (response: HttpResponseMessage) = Assert.That(response.Content.Headers.ContentType, Is.Null)
 
+    /// Builds a deterministic discovery JSON for integration setup fixture for the server integration storage assertions.
     let createDiscoveryJson repositoryId (keyChunkAddresses: string array) =
         let encodedAddresses =
             keyChunkAddresses
@@ -1000,18 +1070,22 @@ type StorageManifestUploadSessionRoutes() =
             "]}"
         )
 
+    /// Builds a deterministic jSON content from string for integration setup fixture for the server integration storage assertions.
     let createJsonContentFromString (json: string) =
         let content = new StringContent(json, Encoding.UTF8)
         content.Headers.ContentType <- MediaTypeHeaderValue("application/json")
         content
 
+    /// Posts discovery to the running test server.
     let postDiscoveryAsync (client: HttpClient) repositoryId keyChunkAddresses =
         client.PostAsync("/storage/discoverContentBlocks", createJsonContentFromString (createDiscoveryJson repositoryId keyChunkAddresses))
 
+    /// Defines decoded chunk addresses behavior for the surrounding tests used by the server integration storage scenario.
     let decodedChunkAddresses (block: ContentBlockFormat.EncodedContentBlock) =
         block.Chunks
         |> Array.map (fun chunk -> chunk.Address)
 
+    /// Defines discover content blocks behavior for the surrounding tests used by the server integration storage scenario.
     let discoverContentBlocks repositoryId (block: ContentBlockFormat.EncodedContentBlock) =
         task {
             let! response = postDiscoveryAsync Client repositoryId (decodedChunkAddresses block)
@@ -1020,6 +1094,7 @@ type StorageManifestUploadSessionRoutes() =
             return deserialize<GraceReturnValue<Parameters.Storage.DiscoverContentBlocksResult>> body
         }
 
+    /// Defines query parameter behavior for the surrounding tests used by the server integration storage scenario.
     let queryParameter (name: string) (uri: Uri) =
         uri
             .Query
@@ -1036,12 +1111,14 @@ type StorageManifestUploadSessionRoutes() =
                 None)
         |> Option.defaultValue String.Empty
 
+    /// Defines sanitized SAS shape behavior for the surrounding tests used by the server integration storage scenario.
     let sanitizedSasShape (uri: Uri) =
         let permissions = queryParameter "sp" uri
         let resource = queryParameter "sr" uri
         let serviceVersion = queryParameter "sv" uri
         $"host={uri.Host}; path={uri.AbsolutePath}; sp={permissions}; sr={resource}; sv={serviceVersion}"
 
+    /// Puts content block with SAS to the running test server.
     let putContentBlockWithSas (payload: byte array) (uploadUri: Uri) =
         task {
             let blockBlobClient = BlockBlobClient(uploadUri)
@@ -1052,6 +1129,7 @@ type StorageManifestUploadSessionRoutes() =
             return response.Value.ETag.ToString()
         }
 
+    /// Uploads content block with SAS through storage test infrastructure.
     let uploadContentBlockWithSas (payload: byte array) (uploadUri: Uri) =
         task {
             try
@@ -1062,6 +1140,7 @@ type StorageManifestUploadSessionRoutes() =
                 return Unchecked.defaultof<string>
         }
 
+    /// Downloads content block with SAS through storage test infrastructure.
     let downloadContentBlockWithSas (downloadUri: Uri) =
         task {
             let blobClient = BlobClient(downloadUri)
@@ -1069,6 +1148,7 @@ type StorageManifestUploadSessionRoutes() =
             return response.Value.Content.ToArray()
         }
 
+    /// Defines final content block client from upload URI behavior for the surrounding tests used by the server integration storage scenario.
     let finalContentBlockClientFromUploadUri (uploadUri: Uri) (contentBlockAddress: ContentBlockAddress) =
         let pathSegments =
             uploadUri
@@ -1109,6 +1189,7 @@ type StorageManifestUploadSessionRoutes() =
         let containerClient = BlobContainerClient(connectionString, containerName)
         containerClient.GetBlockBlobClient(objectKey)
 
+    /// Defines storage connection string from upload URI behavior for the surrounding tests used by the server integration storage scenario.
     let storageConnectionStringFromUploadUri (uploadUri: Uri) =
         let pathSegments =
             uploadUri
@@ -1137,11 +1218,13 @@ type StorageManifestUploadSessionRoutes() =
 
         connectionString
 
+    /// Defines content block client from placement via upload URI behavior for the surrounding tests used by the server integration storage scenario.
     let contentBlockClientFromPlacementViaUploadUri (uploadUri: Uri) (placement: ContentBlockStoragePlacement) =
         let connectionString = storageConnectionStringFromUploadUri uploadUri
         let containerClient = BlobContainerClient(connectionString, placement.StorageContainerName)
         containerClient.GetBlockBlobClient(placement.ObjectKey)
 
+    /// Uploads final content block by address through storage test infrastructure.
     let uploadFinalContentBlockByAddress (uploadUri: Uri) (contentBlockAddress: ContentBlockAddress) (payload: byte array) =
         task {
             let blockBlobClient = finalContentBlockClientFromUploadUri uploadUri contentBlockAddress
@@ -1151,6 +1234,7 @@ type StorageManifestUploadSessionRoutes() =
             return ()
         }
 
+    /// Defines final content block exists by address behavior for the surrounding tests used by the server integration storage scenario.
     let finalContentBlockExistsByAddress (uploadUri: Uri) (contentBlockAddress: ContentBlockAddress) =
         task {
             let blockBlobClient = finalContentBlockClientFromUploadUri uploadUri contentBlockAddress
@@ -1158,6 +1242,7 @@ type StorageManifestUploadSessionRoutes() =
             return exists.Value
         }
 
+    /// Defines content block exists at placement behavior for the surrounding tests used by the server integration storage scenario.
     let contentBlockExistsAtPlacement (uploadUri: Uri) (placement: ContentBlockStoragePlacement) =
         task {
             let blockBlobClient = contentBlockClientFromPlacementViaUploadUri uploadUri placement
@@ -1165,6 +1250,7 @@ type StorageManifestUploadSessionRoutes() =
             return exists.Value
         }
 
+    /// Defines reuse hint behavior for the surrounding tests used by the server integration storage scenario.
     let reuseHint index =
         {
             StoragePoolId = StoragePoolId $"storage-pool-{Guid.NewGuid():N}"
@@ -1174,8 +1260,10 @@ type StorageManifestUploadSessionRoutes() =
             MetadataVersion = 1L
         }
 
+    /// Defines exact upload scope behavior for the surrounding tests used by the server integration storage scenario.
     let exactUploadScope (sessionId: Guid) = $"/storage-tests/upload-sessions/{sessionId:N}/content.bin"
 
+    /// Posts upload session decision to the running test server.
     let postUploadSessionDecision (route: string) parameters =
         task {
             let! response = Client.PostAsync(route, createJsonContent parameters)
@@ -1184,6 +1272,7 @@ type StorageManifestUploadSessionRoutes() =
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
 
+    /// Determines whether sue dedupe discovery for test-host decisions.
     let issueDedupeDiscovery repositoryId correlationId sessionId authorizedScope operationId keyChunkAddresses hints =
         task {
             let issue = Parameters.Storage.IssueDedupeDiscoveryParameters()
@@ -1203,6 +1292,7 @@ type StorageManifestUploadSessionRoutes() =
             return! postUploadSessionDecision "/storage/issueDedupeDiscovery" issue
         }
 
+    /// Defines claim reuse ranges behavior for the surrounding tests used by the server integration storage scenario.
     let claimReuseRanges repositoryId correlationId sessionId authorizedScope operationId discoveryOperationId hints =
         task {
             let claim = Parameters.Storage.ClaimReuseRangesParameters()
@@ -1216,6 +1306,7 @@ type StorageManifestUploadSessionRoutes() =
             return! postUploadSessionDecision "/storage/claimReuseRanges" claim
         }
 
+    /// Posts upload session bad request to the running test server.
     let postUploadSessionBadRequest (route: string) parameters =
         task {
             let! response = Client.PostAsync(route, createJsonContent parameters)
@@ -1224,6 +1315,7 @@ type StorageManifestUploadSessionRoutes() =
             return body
         }
 
+    /// Defines start manifest upload session behavior for the surrounding tests used by the server integration storage scenario.
     let startManifestUploadSession repositoryId correlationId sessionId authorizedScope operationId manifest samplingPolicySnapshot =
         task {
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
@@ -1288,6 +1380,7 @@ type StorageManifestUploadSessionRoutes() =
             return! postUploadSessionDecision "/storage/confirmContentBlockUpload" confirm
         }
 
+    /// Defines finalize manifest upload behavior for the surrounding tests used by the server integration storage scenario.
     let finalizeManifestUpload repositoryId correlationId sessionId authorizedScope operationId manifest =
         task {
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
@@ -1300,6 +1393,7 @@ type StorageManifestUploadSessionRoutes() =
             return! postUploadSessionDecision "/storage/finalizeManifestUpload" finalize
         }
 
+    /// Defines manifest backed file version behavior for the surrounding tests used by the server integration storage scenario.
     let manifestBackedFileVersion relativePath (payload: byte array) manifest =
         let fileVersion =
             FileVersion.CreateWithHashes
@@ -1313,6 +1407,7 @@ type StorageManifestUploadSessionRoutes() =
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
 
+    /// Saves directory versions response through the branch test routes.
     let saveDirectoryVersionsResponse repositoryId (directoryVersions: Grace.Types.Common.DirectoryVersion seq) =
         task {
             let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
@@ -1327,6 +1422,7 @@ type StorageManifestUploadSessionRoutes() =
             return! Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent parameters)
         }
 
+    /// Saves directory versions bad request through the branch test routes.
     let saveDirectoryVersionsBadRequest repositoryId directoryVersions =
         task {
             let! response = saveDirectoryVersionsResponse repositoryId directoryVersions
@@ -1335,6 +1431,7 @@ type StorageManifestUploadSessionRoutes() =
             return body
         }
 
+    /// Gets manifest file download URI from the running test server.
     let getManifestFileDownloadUri repositoryId correlationId (fileVersion: FileVersion) =
         task {
             let parameters = Parameters.Storage.GetDownloadUriParameters()
@@ -1348,6 +1445,7 @@ type StorageManifestUploadSessionRoutes() =
             return Uri body
         }
 
+    /// Downloads file with SAS through storage test infrastructure.
     let downloadFileWithSas (downloadUri: Uri) =
         task {
             let blobClient = BlobClient(downloadUri)
@@ -1355,6 +1453,7 @@ type StorageManifestUploadSessionRoutes() =
             return response.Value.Content.ToArray()
         }
 
+    /// Verifies the large manifest upload can upload blob confirm finalize and download content block scenario.
     [<Test>]
     member _.LargeManifestUploadCanUploadBlobConfirmFinalizeAndDownloadContentBlock() =
         task {
@@ -1507,6 +1606,7 @@ type StorageManifestUploadSessionRoutes() =
             | Error error -> Assert.Fail($"Expected downloaded ContentBlock to reconstruct the manifest bytes, got {error}.")
         }
 
+    /// Verifies the finalized upload metadata authorizes only recorded session storage pool scenario.
     [<Test>]
     member _.FinalizedUploadMetadataAuthorizesOnlyRecordedSessionStoragePool() =
         task {
@@ -1593,6 +1693,7 @@ type StorageManifestUploadSessionRoutes() =
             | Error error -> Assert.Fail($"Expected recorded-pool ContentBlock to reconstruct the manifest bytes, got {error}.")
         }
 
+    /// Verifies the repositories in same storage pool reuse durable content block placement across manifests scenario.
     [<Test>]
     member _.RepositoriesInSameStoragePoolReuseDurableContentBlockPlacementAcrossManifests() =
         task {
@@ -1757,6 +1858,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(secondFinalize.ReturnValue.Session.ConfirmedBlockUploads, Is.Empty)
             Assert.That(secondFinalize.ReturnValue.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
 
+            /// Downloads block through storage test infrastructure.
             let downloadBlock repositoryId correlationId authorizedScope manifest =
                 task {
                     let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
@@ -1808,6 +1910,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(wrongPoolBody, Does.Not.Contain(firstPlacement.ObjectKey))
         }
 
+    /// Verifies the large binary save lifecycle requires finalized manifest and downloads after route change scenario.
     [<Test>]
     member _.LargeBinarySaveLifecycleRequiresFinalizedManifestAndDownloadsAfterRouteChange() =
         task {
@@ -1963,6 +2066,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(manifestFileVersion.ContentReference.Manifest, Is.EqualTo(Some manifest))
         }
 
+    /// Verifies the confirm content block upload replays after staging cleanup for same operation ID scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadReplaysAfterStagingCleanupForSameOperationId() =
         task {
@@ -2035,6 +2139,7 @@ type StorageManifestUploadSessionRoutes() =
             )
         }
 
+    /// Verifies the confirm content block upload deletes final CAS when actor rejects after confirm race scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadDeletesFinalCasWhenActorRejectsAfterConfirmRace() =
         task {
@@ -2161,6 +2266,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(finalBlockExists, Is.False)
         }
 
+    /// Verifies the confirm content block upload rejects terminal session before final CAS materialization scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadRejectsTerminalSessionBeforeFinalCasMaterialization() =
         task {
@@ -2194,6 +2300,7 @@ type StorageManifestUploadSessionRoutes() =
             let! startResult = postUploadSessionDecision "/storage/startManifestUploadSession" start
             let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId firstPayload firstBlock
 
+            /// Defines register block behavior for the surrounding tests used by the server integration storage scenario.
             let registerBlock index (block: ContentBlockFormat.EncodedContentBlock) logicalLength =
                 task {
                     let register = Parameters.Storage.RegisterContentBlockUploadParameters()
@@ -2271,6 +2378,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(finalSecondExists, Is.False)
         }
 
+    /// Verifies the confirm content block upload rejects payload length intent mismatch before final CAS materialization scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadRejectsPayloadLengthIntentMismatchBeforeFinalCasMaterialization() =
         task {
@@ -2336,6 +2444,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(finalBlockExists, Is.False)
         }
 
+    /// Verifies the content block upload URI scopes staging key by repository scenario.
     [<Test>]
     member _.ContentBlockUploadUriScopesStagingKeyByRepository() =
         task {
@@ -2352,6 +2461,7 @@ type StorageManifestUploadSessionRoutes() =
             let block = encodeBlock payload
             let manifest = manifestFor payload block
 
+            /// Defines start session behavior for the surrounding tests used by the server integration storage scenario.
             let startSession repositoryId correlationId sessionId =
                 task {
                     let start = Parameters.Storage.StartManifestUploadSessionParameters()
@@ -2368,6 +2478,7 @@ type StorageManifestUploadSessionRoutes() =
                     return ()
                 }
 
+            /// Defines register block behavior for the surrounding tests used by the server integration storage scenario.
             let registerBlock repositoryId correlationId sessionId =
                 task {
                     let register = Parameters.Storage.RegisterContentBlockUploadParameters()
@@ -2384,6 +2495,7 @@ type StorageManifestUploadSessionRoutes() =
                     return ()
                 }
 
+            /// Gets upload URI from the running test server.
             let getUploadUri repositoryId correlationId sessionId =
                 task {
                     let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
@@ -2411,6 +2523,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(firstUploadUri.AbsolutePath, Is.Not.EqualTo(secondUploadUri.AbsolutePath))
         }
 
+    /// Verifies the confirm content block upload rejects final CAS encoding with different physical offsets scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadRejectsFinalCasEncodingWithDifferentPhysicalOffsets() =
         task {
@@ -2478,6 +2591,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Contain("does not match the staged validated payload"))
         }
 
+    /// Verifies the confirm content block upload rejects invalid final CAS blob instead of treating it as success scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadRejectsInvalidFinalCasBlobInsteadOfTreatingItAsSuccess() =
         task {
@@ -2552,6 +2666,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Contain("invalid"))
         }
 
+    /// Verifies the content block upload URI rejects retention pending session with retained intent scenario.
     [<Test>]
     member _.ContentBlockUploadUriRejectsRetentionPendingSessionWithRetainedIntent() =
         task {
@@ -2633,6 +2748,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(deniedBody, Does.Not.Contain("cas/content/"))
         }
 
+    /// Verifies the content block download URI rejects manifest finalized for different authorized scope scenario.
     [<Test>]
     member _.ContentBlockDownloadUriRejectsManifestFinalizedForDifferentAuthorizedScope() =
         task {
@@ -2728,6 +2844,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(downloadUriBody, Does.Not.Contain("cas/content/"))
         }
 
+    /// Verifies the storage routes lock raw and JSON response contracts scenario.
     [<Test>]
     member _.StorageRoutesLockRawAndJsonResponseContracts() =
         task {
@@ -2807,6 +2924,7 @@ type StorageManifestUploadSessionRoutes() =
             )
         }
 
+    /// Verifies the upload session mutations reject authorized scope mismatch scenario.
     [<Test>]
     member _.UploadSessionMutationsRejectAuthorizedScopeMismatch() =
         task {
@@ -2844,6 +2962,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Contain("AuthorizedScope must match"))
         }
 
+    /// Verifies the claim reuse ranges rejects authorized scope mismatch before metadata lookup scenario.
     [<Test>]
     member _.ClaimReuseRangesRejectsAuthorizedScopeMismatchBeforeMetadataLookup() =
         task {
@@ -2880,6 +2999,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
+    /// Verifies the claim reuse ranges rejects discovery operation mismatch before metadata lookup scenario.
     [<Test>]
     member _.ClaimReuseRangesRejectsDiscoveryOperationMismatchBeforeMetadataLookup() =
         task {
@@ -2931,6 +3051,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
+    /// Verifies the issue dedupe discovery rejects oversized hint arrays before dispatch scenario.
     [<Test>]
     member _.IssueDedupeDiscoveryRejectsOversizedHintArraysBeforeDispatch() =
         task {
@@ -2955,6 +3076,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Contain($"{Parameters.Storage.MaxReuseRangeClaims}"))
         }
 
+    /// Verifies the issue dedupe discovery rejects missing session before dedupe index lookup scenario.
     [<Test>]
     member _.IssueDedupeDiscoveryRejectsMissingSessionBeforeDedupeIndexLookup() =
         task {
@@ -2979,6 +3101,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("server discovery candidates"))
         }
 
+    /// Verifies the issue dedupe discovery rejects hints not backed by server discovery scenario.
     [<Test>]
     member _.IssueDedupeDiscoveryRejectsHintsNotBackedByServerDiscovery() =
         task {
@@ -3021,6 +3144,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Dedupe discovery issued"))
         }
 
+    /// Verifies the issue dedupe discovery normalizes null hint array to empty snapshot scenario.
     [<Test>]
     member _.IssueDedupeDiscoveryNormalizesNullHintArrayToEmptySnapshot() =
         task {
@@ -3062,6 +3186,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(result.ReturnValue.Session.DedupeDiscovery.Value.Hints, Is.Empty)
         }
 
+    /// Verifies the claim reuse ranges treats null hint array as empty before metadata lookup scenario.
     [<Test>]
     member _.ClaimReuseRangesTreatsNullHintArrayAsEmptyBeforeMetadataLookup() =
         task {
@@ -3113,6 +3238,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
+    /// Verifies the claim reuse ranges rejects wrong storage pool before metadata lookup scenario.
     [<Test>]
     member _.ClaimReuseRangesRejectsWrongStoragePoolBeforeMetadataLookup() =
         task {
@@ -3164,6 +3290,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
+    /// Verifies the claim reuse ranges rejects oversized hint arrays before metadata lookup scenario.
     [<Test>]
     member _.ClaimReuseRangesRejectsOversizedHintArraysBeforeMetadataLookup() =
         task {
@@ -3184,6 +3311,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Not.Contain("Authoritative ContentBlockMetadata is absent"))
         }
 
+    /// Verifies the confirm content block upload returns bad request when staged block blob is missing scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsMissing() =
         task {
@@ -3243,6 +3371,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(body, Does.Contain("could not be read from object storage"))
         }
 
+    /// Verifies the confirm content block upload returns bad request when staged block blob is corrupt scenario.
     [<Test>]
     member _.ConfirmContentBlockUploadReturnsBadRequestWhenStagedBlockBlobIsCorrupt() =
         task {

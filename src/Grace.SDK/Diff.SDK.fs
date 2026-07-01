@@ -8,6 +8,7 @@ open Grace.Types.Common
 open System
 open System.Threading.Tasks
 
+/// SDK entry point for computing and retrieving repository diff results.
 type Diff() =
     /// Gets a diff between two directory versions by DirectoryId's.
     static member public GetDiff(parameters: GetDiffParameters) =

@@ -3,6 +3,7 @@ namespace Grace.Shared
 open System
 open Grace.Types.Common
 
+/// Contains storage keys helpers.
 module StorageKeys =
     [<Literal>]
     let private CasPrefix = "cas"
@@ -16,6 +17,7 @@ module StorageKeys =
     [<Literal>]
     let private ContentBlockMetadataPrefix = "content-block-metadata"
 
+    /// Builds the storage object key for whole-file content using the current hash-addressed layout.
     let private wholeFileContentObjectFileName (fileVersion: FileVersion) =
         if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then
             fileVersion.GetObjectFileName

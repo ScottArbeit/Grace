@@ -15,6 +15,7 @@ open Microsoft.Data.Sqlite
 open NodaTime
 open SQLitePCL
 
+/// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
     let private SchemaVersion = "4"
@@ -26,8 +27,11 @@ module LocalStateDb =
 
     let mutable private verboseEnabled = false
 
+    /// Coordinates local SQLite state for set verbose, including Grace status, object cache, or watch metadata.
     let setVerbose enabled = verboseEnabled <- enabled
+    /// Reads trace file path from ParseResult, local configuration, or Grace ids.
     let private getTraceFilePath () = Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_PATH")
+    /// Resolves the local-state database should trace open connections value used to open .grace/grace-local.db.
     let private shouldTraceOpenConnections () = not (String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_TRACE_OPEN")))
     let private initLocks = ConcurrentDictionary<string, SemaphoreSlim>(StringComparer.OrdinalIgnoreCase)
     let private initializedDbs = ConcurrentDictionary<string, bool>(StringComparer.OrdinalIgnoreCase)
@@ -37,8 +41,10 @@ module LocalStateDb =
             (Batteries_V2.Init()
              true)
 
+    /// Coordinates local SQLite state for log verbose, including Grace status, object cache, or watch metadata.
     let private logVerbose message = if verboseEnabled then Log.LogVerbose message
 
+    /// Coordinates local SQLite state for log trace, including Grace status, object cache, or watch metadata.
     let private logTrace message =
         let traceFilePath = getTraceFilePath ()
 
@@ -48,6 +54,7 @@ module LocalStateDb =
             with
             | _ -> ()
 
+    /// Coordinates local SQLite state for log trace statement, including Grace status, object cache, or watch metadata.
     let private logTraceStatement label (statement: string) =
         let trimmed =
             if statement.Length > 240 then
@@ -57,9 +64,12 @@ module LocalStateDb =
 
         logTrace $"{label}: {trimmed}"
 
+    /// Evaluates is busy or locked against parsed options and command state.
     let private isBusyOrLocked (ex: SqliteException) = ex.SqliteErrorCode = 5 || ex.SqliteErrorCode = 6
 
+    /// Executes a reusable command workflow.
     let private executeWithRetry (operation: unit -> Task<unit>) =
+        /// Runs the command workflow with the supplied inputs.
         let rec run attempt =
             task {
                 try
@@ -76,30 +86,36 @@ module LocalStateDb =
 
         run 0
 
+    /// Executes a reusable command workflow.
     let private executeNonQuery (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Executes a reusable command workflow.
     let private executePragma (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Executes a reusable command workflow.
     let private executeNonQueryWithParams (connection: SqliteConnection) (sql: string) (configureParameters: SqliteParameterCollection -> unit) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         configureParameters cmd.Parameters
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Resolves the local-state database apply connection pragmas value used to open .grace/grace-local.db.
     let private applyConnectionPragmas (connection: SqliteConnection) =
         executePragma connection $"PRAGMA busy_timeout = {BusyTimeoutMs};"
         executePragma connection "PRAGMA foreign_keys = ON;"
         executePragma connection "PRAGMA synchronous = NORMAL;"
         executePragma connection "PRAGMA temp_store = MEMORY;"
 
+    /// Ensures required command context is present.
     let private ensureJournalMode (connection: SqliteConnection) = executePragma connection "PRAGMA journal_mode = WAL;"
 
+    /// Resolves the local-state database open connection value used to open .grace/grace-local.db.
     let private openConnection (dbPath: string) =
         sqliteInitialized.Value |> ignore
         let directoryPath = Path.GetDirectoryName(dbPath)
@@ -186,6 +202,7 @@ module LocalStateDb =
             "ix_object_cache_files_path_hash"
         |]
 
+    /// Models read only local state inspection values passed between the parser and local state db handlers.
     type ReadOnlyLocalStateInspection =
         {
             DbPath: string
@@ -203,6 +220,7 @@ module LocalStateDb =
             ObjectCacheError: string option
         }
 
+    /// Reads empty read only inspection data from the local SQLite state database.
     let private emptyReadOnlyInspection dbPath parentDirectoryExists dbFileExists dbPathIsDirectory openedReadOnly openError =
         {
             DbPath = dbPath
@@ -222,6 +240,7 @@ module LocalStateDb =
 
     let private sqliteHeaderMagic = Encoding.ASCII.GetBytes("SQLite format 3" + string (char 0))
 
+    /// Evaluates is wal mode header against parsed options and command state.
     let private isWalModeHeader (dbPath: string) =
         try
             use stream = new FileStream(dbPath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
@@ -239,8 +258,10 @@ module LocalStateDb =
         with
         | _ -> false
 
+    /// Resolves the local-state database wal sidecar paths value used to open .grace/grace-local.db.
     let private walSidecarPaths (dbPath: string) = dbPath + "-wal", dbPath + "-shm"
 
+    /// Coordinates local SQLite state for missing partial wal sidecars, including Grace status, object cache, or watch metadata.
     let private missingPartialWalSidecars (dbPath: string) =
         let walPath, shmPath = walSidecarPaths dbPath
         let walExists = File.Exists(walPath)
@@ -255,6 +276,7 @@ module LocalStateDb =
                 if not shmExists then Path.GetFileName(shmPath)
             |]
 
+    /// Reads should use immutable read only snapshot data from the local SQLite state database.
     let private shouldUseImmutableReadOnlySnapshot (dbPath: string) =
         let walPath, shmPath = walSidecarPaths dbPath
 
@@ -262,6 +284,7 @@ module LocalStateDb =
         && not (File.Exists(walPath))
         && not (File.Exists(shmPath))
 
+    /// Resolves the local-state database open read only connection value used to open .grace/grace-local.db.
     let private openReadOnlyConnection (dbPath: string) immutableSnapshot =
         sqliteInitialized.Value |> ignore
         let traceOpenConnections = shouldTraceOpenConnections ()
@@ -299,6 +322,7 @@ module LocalStateDb =
 
             raise ex
 
+    /// Reads text rows data needed by the CLI workflow.
     let private readTextRows (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
@@ -310,6 +334,7 @@ module LocalStateDb =
 
         rows |> Seq.toArray
 
+    /// Reads object names data needed by the CLI workflow.
     let private readObjectNames (connection: SqliteConnection) objectType =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- "SELECT name FROM sqlite_master WHERE type = $type;"
@@ -325,6 +350,7 @@ module LocalStateDb =
 
         names
 
+    /// Reads schema version read only data needed by the CLI workflow.
     let private readSchemaVersionReadOnly (connection: SqliteConnection) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version' LIMIT 1;"
@@ -335,6 +361,7 @@ module LocalStateDb =
         else
             Some(Convert.ToString(value))
 
+    /// Reads foreign key violations data needed by the CLI workflow.
     let private readForeignKeyViolations (connection: SqliteConnection) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- "PRAGMA foreign_key_check;"
@@ -350,6 +377,7 @@ module LocalStateDb =
 
         violations |> Seq.toArray
 
+    /// Coordinates local SQLite state for column exists, including Grace status, object cache, or watch metadata.
     let private columnExists (connection: SqliteConnection) tableName columnName =
         use command = connection.CreateCommand()
         command.CommandText <- $"PRAGMA table_info({tableName});"
@@ -362,6 +390,7 @@ module LocalStateDb =
 
         found
 
+    /// Reads inspect object cache read only data from the local SQLite state database.
     let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
         try
             for tableName in
@@ -378,6 +407,7 @@ module LocalStateDb =
         with
         | ex -> Some false, Some ex.Message
 
+    /// Reads inspect read only data from the local SQLite state database.
     let inspectReadOnly (dbPath: string) =
         let normalizedPath = Path.GetFullPath(dbPath)
         let directoryPath = Path.GetDirectoryName(normalizedPath)
@@ -460,6 +490,7 @@ module LocalStateDb =
                 with
                 | ex -> emptyReadOnlyInspection normalizedPath parentDirectoryExists dbFileExists dbPathIsDirectory false (Some ex.Message)
 
+    /// Tries to map get meta value and returns a GraceError instead of throwing on unsupported input.
     let private tryGetMetaValue (connection: SqliteConnection) (key: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- "SELECT value FROM meta WHERE key = $key LIMIT 1;"
@@ -467,11 +498,13 @@ module LocalStateDb =
         use reader = cmd.ExecuteReader()
         if reader.Read() then Some(reader.GetString(0)) else None
 
+    /// Coordinates local SQLite state for set meta value, including Grace status, object cache, or watch metadata.
     let private setMetaValue (connection: SqliteConnection) (key: string) (value: string) =
         executeNonQueryWithParams connection "INSERT OR REPLACE INTO meta (key, value) VALUES ($key, $value);" (fun parameters ->
             parameters.AddWithValue("$key", key) |> ignore
             parameters.AddWithValue("$value", value) |> ignore)
 
+    /// Persists insert status meta if missing changes in the local SQLite state database.
     let private insertStatusMetaIfMissing (connection: SqliteConnection) =
         let defaultStatus = GraceStatus.Default
 
@@ -494,6 +527,7 @@ module LocalStateDb =
                 parameters.AddWithValue("$last_dir", defaultStatus.LastSuccessfulDirectoryVersionUpload.ToUnixTimeTicks())
                 |> ignore)
 
+    /// Evaluates has required writable schema against parsed options and command state.
     let private hasRequiredWritableSchema (connection: SqliteConnection) =
         columnExists connection "status_meta" "root_directory_blake3_hash"
         && columnExists connection "status_directories" "blake3_hash"
@@ -501,6 +535,7 @@ module LocalStateDb =
         && columnExists connection "object_cache_directories" "blake3_hash"
         && columnExists connection "object_cache_directory_files" "blake3_hash"
 
+    /// Evaluates has empty writable status blake3 rows against parsed options and command state.
     let private hasEmptyWritableStatusBlake3Rows (connection: SqliteConnection) =
         if columnExists connection "status_directories" "blake3_hash"
            && columnExists connection "status_files" "blake3_hash" then
@@ -513,6 +548,7 @@ module LocalStateDb =
         else
             false
 
+    /// Resolves the local-state database recreate database value used to open .grace/grace-local.db.
     let private recreateDatabase (dbPath: string) =
         try
             SqliteConnection.ClearAllPools()
@@ -532,6 +568,7 @@ module LocalStateDb =
             let sidecarPath = dbPath + suffix
             if File.Exists(sidecarPath) then File.Delete(sidecarPath))
 
+    /// Ensures required command context is present.
     let ensureDbInitialized (dbPath: string) =
         task {
             let normalizedPath = Path.GetFullPath(dbPath)
@@ -551,6 +588,7 @@ module LocalStateDb =
                         do!
                             executeWithRetry (fun () ->
                                 task {
+                                    /// Coordinates local SQLite state for run schema, including Grace status, object cache, or watch metadata.
                                     let runSchema (connection: SqliteConnection) =
                                         ensureJournalMode connection
 
@@ -560,6 +598,7 @@ module LocalStateDb =
                                             executeNonQuery connection statement
                                             logTrace $"schema[{index}] done")
 
+                                    /// Coordinates local SQLite state for schema exists, including Grace status, object cache, or watch metadata.
                                     let schemaExists (connection: SqliteConnection) =
                                         use cmd = connection.CreateCommand()
                                         cmd.CommandText <- "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'meta' LIMIT 1;"
@@ -634,6 +673,7 @@ module LocalStateDb =
                     semaphore.Release() |> ignore
         }
 
+    /// Models status meta values passed between the parser and local state db handlers.
     type StatusMeta =
         {
             RootDirectoryId: DirectoryVersionId
@@ -643,6 +683,7 @@ module LocalStateDb =
             LastSuccessfulDirectoryVersionUpload: Instant
         }
 
+    /// Reads status meta internal data needed by the CLI workflow.
     let private readStatusMetaInternal (connection: SqliteConnection) =
         use cmd = connection.CreateCommand()
 
@@ -669,6 +710,7 @@ module LocalStateDb =
         else
             None
 
+    /// Reads status meta data needed by the CLI workflow.
     let readStatusMeta (dbPath: string) =
         task {
             do! ensureDbInitialized dbPath
@@ -692,6 +734,7 @@ module LocalStateDb =
                 connection.Dispose()
         }
 
+    /// Reads root directory blake3 hash from ParseResult, local configuration, or Grace ids.
     let private getRootDirectoryBlake3Hash (graceStatus: GraceStatus) =
         let mutable rootDirectory = Unchecked.defaultof<LocalDirectoryVersion>
 
@@ -705,6 +748,7 @@ module LocalStateDb =
         else
             Blake3Hash String.Empty
 
+    /// Coordinates local SQLite state for set status meta, including Grace status, object cache, or watch metadata.
     let private setStatusMeta (connection: SqliteConnection) (graceStatus: GraceStatus) =
         let incomingRootDirectoryBlake3Hash = getRootDirectoryBlake3Hash graceStatus
 
@@ -747,6 +791,7 @@ module LocalStateDb =
                 parameters.AddWithValue("$last_dir", graceStatus.LastSuccessfulDirectoryVersionUpload.ToUnixTimeTicks())
                 |> ignore)
 
+    /// Coordinates local SQLite state for replace status snapshot, including Grace status, object cache, or watch metadata.
     let replaceStatusSnapshot (dbPath: string) (graceStatus: GraceStatus) =
         task {
             do! ensureDbInitialized dbPath
@@ -869,6 +914,7 @@ module LocalStateDb =
                     })
         }
 
+    /// Persists upsert object cache changes in the local SQLite state database.
     let upsertObjectCache (dbPath: string) (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
         task {
             do! ensureDbInitialized dbPath
@@ -1041,6 +1087,7 @@ module LocalStateDb =
                     })
         }
 
+    /// Evaluates is file version in object cache against parsed options and command state.
     let isFileVersionInObjectCache (dbPath: string) (fileVersion: LocalFileVersion) =
         task {
             do! ensureDbInitialized dbPath
@@ -1062,6 +1109,7 @@ module LocalStateDb =
                 connection.Dispose()
         }
 
+    /// Evaluates is directory version in object cache against parsed options and command state.
     let isDirectoryVersionInObjectCache (dbPath: string) (directoryVersionId: DirectoryVersionId) =
         task {
             do! ensureDbInitialized dbPath
@@ -1080,6 +1128,7 @@ module LocalStateDb =
                 connection.Dispose()
         }
 
+    /// Persists remove object cache directory changes in the local SQLite state database.
     let removeObjectCacheDirectory (dbPath: string) (directoryVersionId: DirectoryVersionId) =
         task {
             do! ensureDbInitialized dbPath
@@ -1262,6 +1311,7 @@ module LocalStateDb =
                     })
         }
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private StatusDirectoryRow =
         {
             RelativePath: string
@@ -1274,6 +1324,7 @@ module LocalStateDb =
             LastWriteTimeUtc: DateTime
         }
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private StatusFileRow =
         {
             RelativePath: string
@@ -1287,6 +1338,7 @@ module LocalStateDb =
             LastWriteTimeUtc: DateTime
         }
 
+    /// Reads status snapshot data needed by the CLI workflow.
     let readStatusSnapshot (dbPath: string) =
         task {
             do! ensureDbInitialized dbPath
@@ -1455,6 +1507,7 @@ module LocalStateDb =
                 connection.Dispose()
         }
 
+    /// Reads status snapshot read only data needed by the CLI workflow.
     let readStatusSnapshotReadOnly (dbPath: string) (ownerId: OwnerId) (organizationId: OrganizationId) (repositoryId: RepositoryId) =
         task {
             let normalizedPath = Path.GetFullPath(dbPath)

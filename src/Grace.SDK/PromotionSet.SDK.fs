@@ -5,9 +5,9 @@ open Grace.Shared.Parameters.PromotionSet
 open Grace.Types.PromotionSet
 open System.Collections.Generic
 
-/// The PromotionSet module provides a set of functions for interacting with promotion sets in the Grace API.
+/// SDK entry point for promotion-set creation, recomputation, conflict resolution, and apply flows.
 type PromotionSet() =
-    /// Creates a promotion set.
+    /// Opens a promotion set from selected input promotions for server-side review and application.
     static member public Create(parameters: CreatePromotionSetParameters) =
         postServer<CreatePromotionSetParameters, string> (parameters |> ensureCorrelationIdIsSet, "promotion-set/create")
 

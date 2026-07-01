@@ -4,8 +4,10 @@ open System
 open System.Collections.Generic
 open System.Security.Claims
 
+/// Contains Grace Server claim mapping behavior and supporting helpers.
 module ClaimMapping =
 
+    /// Collects non-empty claim values of a specific type from the authenticated principal.
     let private getClaimValues (principal: ClaimsPrincipal) (claimType: string) =
         principal.Claims
         |> Seq.filter (fun claim -> String.Equals(claim.Type, claimType, StringComparison.OrdinalIgnoreCase))
@@ -13,6 +15,7 @@ module ClaimMapping =
         |> Seq.filter (fun value -> not (String.IsNullOrWhiteSpace value))
         |> Seq.toList
 
+    /// Gets try get claim value data needed by the server flow.
     let private tryGetClaimValue (principal: ClaimsPrincipal) (claimTypes: string list) =
         claimTypes
         |> Seq.tryPick (fun claimType ->
@@ -21,12 +24,14 @@ module ClaimMapping =
             |> Option.map (fun claim -> claim.Value))
         |> Option.filter (fun value -> not (String.IsNullOrWhiteSpace value))
 
+    /// Implements split scopes for the server request pipeline.
     let private splitScopes (value: string) =
         value.Split([| ' ' |], StringSplitOptions.RemoveEmptyEntries)
         |> Seq.map (fun scopeValue -> scopeValue.Trim())
         |> Seq.filter (fun scopeValue -> not (String.IsNullOrWhiteSpace scopeValue))
         |> Seq.toList
 
+    /// Implements compute grace user id for the server request pipeline.
     let computeGraceUserId (principal: ClaimsPrincipal) =
         let existing =
             principal.Claims
@@ -38,6 +43,7 @@ module ClaimMapping =
         | Some _ -> None
         | None -> tryGetClaimValue principal [ "sub"; ClaimTypes.NameIdentifier ]
 
+    /// Computes map claims data used by Grace Server.
     let mapClaims (principal: ClaimsPrincipal) =
         let claimsToAdd = ResizeArray<Claim>()
 

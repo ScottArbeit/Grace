@@ -15,6 +15,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Contains services helpers.
 module Services =
 
     /// Adds a property to a GraceResult instance.
@@ -35,8 +36,10 @@ module Services =
     /// A custom PooledObjectPolicy for IncrementalHash.
     type IncrementalHashPolicy() =
         interface IPooledObjectPolicy<IncrementalHash> with
+            /// Builds the contract value from required caller inputs and generated defaults used by this surface.
             member this.Create() = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
 
+            /// Wraps a value in the computation expression without adding validation errors.
             member this.Return(hashInstance: IncrementalHash) =
                 // Reset the hash instance so it can be reused.
                 // We're calling GetHashAndReset() to reset - there's no Reset() function.
@@ -232,30 +235,37 @@ module Services =
             Sha256Hash: Sha256Hash
         }
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create kind relativePath size blake3Hash sha256Hash =
             { Kind = kind; RelativePath = RelativePath(normalizeFilePath $"{relativePath}"); Size = size; Blake3Hash = blake3Hash; Sha256Hash = sha256Hash }
 
+        /// Builds a directory entry preimage with the directory kind discriminator.
         static member Directory relativePath size blake3Hash sha256Hash =
             DirectoryVersionPreimageEntry.Create DirectoryVersionPreimageEntryKind.Directory relativePath size blake3Hash sha256Hash
 
+        /// Builds a file entry preimage with the file kind discriminator.
         static member File relativePath size blake3Hash sha256Hash =
             DirectoryVersionPreimageEntry.Create DirectoryVersionPreimageEntryKind.File relativePath size blake3Hash sha256Hash
 
+    /// Maps a directory-version hash algorithm to its wire-format name.
     let private directoryVersionAlgorithmName algorithm =
         match algorithm with
         | DirectoryVersionHashAlgorithm.Blake3 -> "blake3"
         | DirectoryVersionHashAlgorithm.Sha256 -> "sha256"
 
+    /// Maps a directory-version entry kind to its wire-format name.
     let private directoryVersionEntryKindName kind =
         match kind with
         | DirectoryVersionPreimageEntryKind.Directory -> "directory"
         | DirectoryVersionPreimageEntryKind.File -> "file"
 
+    /// Selects the hash field that represents a directory-version entry.
     let private directoryVersionEntryHash algorithm (entry: DirectoryVersionPreimageEntry) =
         match algorithm with
         | DirectoryVersionHashAlgorithm.Blake3 -> entry.Blake3Hash
         | DirectoryVersionHashAlgorithm.Sha256 -> entry.Sha256Hash
 
+    /// Normalizes a directory-version path before hashing or signing it.
     let private encodeDirectoryVersionPath (path: RelativePath) =
         normalizeFilePath $"{path}"
         |> Encoding.UTF8.GetBytes

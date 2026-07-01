@@ -11,10 +11,11 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// SDK entry point for repository lifecycle, settings, branches, and reference lookup endpoints.
 type Repository() =
 
     /// <summary>
-    /// Creates a new repository.
+    /// Registers repository metadata under the requested organization.
     /// </summary>
     /// <param name="parameters">Values to use when creating the new repository.</param>
     static member public Create(parameters: CreateRepositoryParameters) =
@@ -22,7 +23,7 @@ type Repository() =
         postServer<CreateRepositoryParameters, String> (parameters |> ensureCorrelationIdIsSet, $"repository/{nameof (Repository.Create)}")
 
     /// <summary>
-    /// Creates a new repository.
+    /// Initializes repository storage and default branch state after the repository record exists.
     /// </summary>
     /// <param name="parameters">Values to use when creating the new repository.</param>
     static member public Init(parameters: InitParameters) =

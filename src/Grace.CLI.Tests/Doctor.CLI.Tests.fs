@@ -18,14 +18,17 @@ open System.Text.Json
 open System.Threading.Tasks
 open Grace.Types.Common
 
+/// Groups doctor cli coverage for the CLI test project.
 [<NonParallelizable>]
 module DoctorCliTests =
 
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Runs with captured stdout and stderr for test scenarios.
     let private runWithCapturedStdoutAndStderr (args: string array) =
         use standardOutWriter = new StringWriter()
         use standardErrorWriter = new StringWriter()
@@ -58,6 +61,7 @@ module DoctorCliTests =
             Constants.EnvironmentVariables.GraceServerUri
         |]
 
+    /// Runs the supplied action with cleared auth env applied.
     let private withClearedAuthEnv (action: unit -> unit) =
         let originalValues =
             authEnvNames
@@ -72,6 +76,7 @@ module DoctorCliTests =
             originalValues
             |> Array.iter (fun (name, value) -> Environment.SetEnvironmentVariable(name, value))
 
+    /// Runs the supplied action with temp dir applied.
     let private withTempDir (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-doctor-cli-tests-{Guid.NewGuid():N}")
         Directory.CreateDirectory(tempDir) |> ignore
@@ -89,6 +94,7 @@ module DoctorCliTests =
                 with
                 | _ -> ()
 
+    /// Runs the supplied action with env applied.
     let private withEnv (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
 
@@ -101,13 +107,16 @@ module DoctorCliTests =
         finally
             Environment.SetEnvironmentVariable(name, original)
 
+    /// Runs the supplied action with local state db open trace applied.
     let private withLocalStateDbOpenTrace root (action: string -> unit) =
         let tracePath = Path.Combine(root, "local-state-open-trace.log")
 
         withEnv "GRACE_LOCALSTATE_DB_TRACE_PATH" (Some tracePath) (fun () -> withEnv "GRACE_LOCALSTATE_DB_TRACE_OPEN" (Some "1") (fun () -> action tracePath))
 
+    /// Reads trace needed by the test scenario.
     let private readTrace tracePath = if File.Exists(tracePath) then File.ReadAllText(tracePath) else String.Empty
 
+    /// Runs the supplied action with isolated home applied.
     let private withIsolatedHome (root: string) (action: string -> unit) =
         let home = Path.Combine(root, "home")
         Directory.CreateDirectory(home) |> ignore
@@ -115,6 +124,7 @@ module DoctorCliTests =
         withEnv "USERPROFILE" (Some home) (fun () ->
             withEnv "HOME" (Some home) (fun () -> withEnv Constants.EnvironmentVariables.GraceServerUri None (fun () -> action home)))
 
+    /// Writes grace config needed by the test scenario.
     let private writeGraceConfig root serverUri =
         let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
         Directory.CreateDirectory(graceDir) |> ignore
@@ -150,8 +160,10 @@ module DoctorCliTests =
 
         Path.Combine(graceDir, Constants.GraceConfigFileName)
 
+    /// Builds local state db path test data used to exercise CLI doctor behavior.
     let private localStateDbPath root = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
+    /// Gets corrupt backups needed by the test scenario.
     let private getCorruptBackups root =
         let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
 
@@ -160,6 +172,7 @@ module DoctorCliTests =
         else
             Array.empty
 
+    /// Builds ensure valid local state db test data used to exercise CLI doctor behavior.
     let private ensureValidLocalStateDb root =
         writeGraceConfig root "http://127.0.0.1:5000"
         |> ignore
@@ -169,6 +182,7 @@ module DoctorCliTests =
             .GetAwaiter()
             .GetResult()
 
+    /// Builds sha256 hex test data used to exercise CLI doctor behavior.
     let private sha256Hex (text: string) =
         use sha256 = SHA256.Create()
 
@@ -177,6 +191,7 @@ module DoctorCliTests =
         |> Convert.ToHexString
         |> fun value -> value.ToLowerInvariant()
 
+    /// Builds a deterministic snapshot file for test scenarios fixture for the CLI doctor assertions.
     let private createSnapshotFile (relativePath: RelativePath) (content: string) (lastWriteTime: DateTime) =
         let bytes = Encoding.UTF8.GetBytes(content)
         use stream = new MemoryStream(bytes)
@@ -197,6 +212,7 @@ module DoctorCliTests =
             true
             lastWriteTime
 
+    /// Builds seed working tree snapshot test data used to exercise CLI doctor behavior.
     let private seedWorkingTreeSnapshot root =
         writeGraceConfig root "http://127.0.0.1:5000"
         |> ignore
@@ -291,16 +307,19 @@ module DoctorCliTests =
 
         dbPath
 
+    /// Builds open raw connection test data used to exercise CLI doctor behavior.
     let private openRawConnection (dbPath: string) =
         let connection = new SqliteConnection($"Data Source={dbPath}")
         connection.Open()
         connection
 
+    /// Builds execute non query test data used to exercise CLI doctor behavior.
     let private executeNonQuery (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Builds seed schema version only test data used to exercise CLI doctor behavior.
     let private seedSchemaVersionOnly (dbPath: string) (schemaVersion: string) =
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
         |> ignore
@@ -309,6 +328,7 @@ module DoctorCliTests =
         executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
         executeNonQuery connection $"INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '{schemaVersion}');"
 
+    /// Builds snapshot file test data used to exercise CLI doctor behavior.
     let private snapshotFile (path: string) =
         if File.Exists(path) then
             use stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
@@ -317,18 +337,21 @@ module DoctorCliTests =
         else
             None
 
+    /// Determines whether volatile local state sidecar snapshot path for test assertions.
     let private isVolatileLocalStateSidecarSnapshotPath (relativePath: string) =
         let localStateDbRelativePath = Path.Combine(Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
         [| "-shm"; "-wal"; "-journal" |]
         |> Array.exists (fun suffix -> relativePath.Equals(localStateDbRelativePath + suffix, StringComparison.OrdinalIgnoreCase))
 
+    /// Builds snapshot last write time test data used to exercise CLI doctor behavior.
     let private snapshotLastWriteTime relativePath lastWriteTimeUtc =
         if isVolatileLocalStateSidecarSnapshotPath relativePath then
             DateTime.UnixEpoch
         else
             lastWriteTimeUtc
 
+    /// Builds snapshot files test data used to exercise CLI doctor behavior.
     let private snapshotFiles root =
         if Directory.Exists(root) then
             Directory.GetFiles(root, "*", SearchOption.AllDirectories)
@@ -340,8 +363,10 @@ module DoctorCliTests =
         else
             Array.empty
 
+    /// Builds open exclusive read lock test data used to exercise CLI doctor behavior.
     let private openExclusiveReadLock path = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.None)
 
+    /// Runs the supplied action with user config temporarily missing applied.
     let private withUserConfigTemporarilyMissing (action: string -> unit) =
         let userConfigPath = UserConfiguration.getUserConfigurationPath ()
         let backupPath = Path.Combine(Path.GetTempPath(), $"grace-userconfig-backup-{Guid.NewGuid():N}.json")
@@ -361,6 +386,7 @@ module DoctorCliTests =
 
                 File.Move(backupPath, userConfigPath)
 
+    /// Parses json output for test assertions.
     let private parseJsonOutput (output: string) =
         output
             .TrimStart()
@@ -369,6 +395,7 @@ module DoctorCliTests =
 
         JsonDocument.Parse(output)
 
+    /// Asserts that clean json output matches the expected contract.
     let private assertCleanJsonOutput (standardOut: string) (standardError: string) =
         standardError |> should equal String.Empty
         standardOut |> should not' (contain "Elapsed:")
@@ -381,6 +408,7 @@ module DoctorCliTests =
 
         parseJsonOutput standardOut
 
+    /// Finds check by id used by the test scenario.
     let private findCheckById (checks: JsonElement) checkId =
         checks.EnumerateArray()
         |> Seq.find (fun check ->
@@ -389,11 +417,13 @@ module DoctorCliTests =
                 .GetString()
                 .Equals(checkId, StringComparison.Ordinal))
 
+    /// Asserts that does not contain secrets matches the expected contract.
     let private assertDoesNotContainSecrets (secrets: string list) (standardOut: string) (standardError: string) =
         for secret in secrets do
             standardOut |> should not' (contain secret)
             standardError |> should not' (contain secret)
 
+    /// Builds valid pat test data used to exercise CLI doctor behavior.
     let private validPat () = PersonalAccessToken.formatToken "doctor-user" (Guid.NewGuid()) (Array.create 32 7uy)
 
     let private localStateCheckIds =
@@ -415,6 +445,7 @@ module DoctorCliTests =
             "server.auth-principal.available"
         |]
 
+    /// Runs the supplied action with doctor server probe factory applied.
     let private withDoctorServerProbeFactory factory action =
         Doctor.setServerProbeFactoryForTests factory
 
@@ -423,6 +454,7 @@ module DoctorCliTests =
         finally
             Doctor.resetServerProbeFactoryForTests ()
 
+    /// Runs the supplied action with working tree scanner applied.
     let private withWorkingTreeScanner scanner action =
         Doctor.setWorkingTreeScannerForTests scanner
 
@@ -431,6 +463,7 @@ module DoctorCliTests =
         finally
             Doctor.resetWorkingTreeScannerForTests ()
 
+    /// Builds successful probe with lifecycle test data used to exercise CLI doctor behavior.
     let private successfulProbeWithLifecycle diagnostics =
         Doctor.ServerProbeSucceeded
             {
@@ -442,6 +475,7 @@ module DoctorCliTests =
 
     let private noLifecycleProbe = successfulProbeWithLifecycle None
 
+    /// Builds lifecycle diagnostics test data used to exercise CLI doctor behavior.
     let private lifecycleDiagnostics status unsupportedAfter minimumVersion recommendedVersion updateUrl updateUrlIsHttps unsupportedAfterIsMalformed =
         let diagnostics: Grace.SDK.ClientIdentity.LifecycleDiagnostics =
             {
@@ -456,9 +490,11 @@ module DoctorCliTests =
 
         Some diagnostics
 
+    /// Verifies that doctor help works without config and shows v1 options.
     [<Test>]
     let ``doctor help works without config and shows v1 options`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "doctor"
                                                   "--help" |]
@@ -474,9 +510,11 @@ module DoctorCliTests =
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that doctor list checks emits clean json envelope without config.
     [<Test>]
     let ``doctor list checks emits clean json envelope without config`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -572,6 +610,7 @@ module DoctorCliTests =
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that doctor list checks offline keeps full catalog without probing.
     [<Test>]
     let ``doctor list checks offline keeps full catalog without probing`` () =
         withTempDir (fun _ ->
@@ -582,6 +621,7 @@ module DoctorCliTests =
                     incr requestCount
                     Task.FromResult noLifecycleProbe)
                 (fun () ->
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -635,6 +675,7 @@ module DoctorCliTests =
 
                     !requestCount |> should equal 0))
 
+    /// Verifies that doctor server healthz reachable warns when lifecycle status is deprecated.
     [<Test>]
     let ``doctor server healthz reachable warns when lifecycle status is deprecated`` () =
         withTempDir (fun root ->
@@ -659,6 +700,7 @@ module DoctorCliTests =
                         requests.Add(request)
                         Task.FromResult(successfulProbeWithLifecycle diagnostics))
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -699,6 +741,7 @@ module DoctorCliTests =
                         requests[0].RelativePath |> should equal "healthz"
                         requests[0].BearerToken |> should equal None)))
 
+    /// Verifies that doctor exact lifecycle headers fails when healthz returns non success without lifecycle headers.
     [<Test>]
     let ``doctor exact lifecycle headers fails when healthz returns non-success without lifecycle headers`` () =
         withTempDir (fun root ->
@@ -717,6 +760,7 @@ module DoctorCliTests =
                         requests.Add(request)
                         Task.FromResult failedProbe)
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -752,6 +796,7 @@ module DoctorCliTests =
 
                         requests[0].RelativePath |> should equal "healthz")))
 
+    /// Verifies that doctor server healthz uses grace server uri over config and reports mismatch separately.
     [<Test>]
     let ``doctor server healthz uses GRACE_SERVER_URI over config and reports mismatch separately`` () =
         withTempDir (fun root ->
@@ -767,6 +812,7 @@ module DoctorCliTests =
                             requests.Add(request)
                             Task.FromResult noLifecycleProbe)
                         (fun () ->
+                            /// Verifies that the CLI doctor scenario exits with the expected process status.
                             let exitCode, standardOut, standardError =
                                 runWithCapturedStdoutAndStderr [| "--output"
                                                                   "Json"
@@ -801,6 +847,7 @@ module DoctorCliTests =
                             requests[0].BaseUri.AbsoluteUri
                             |> should equal "http://environment.example.test/"))))
 
+    /// Verifies that doctor server healthz classifies non success timeout tls connection and malformed uri findings.
     [<Test>]
     let ``doctor server healthz classifies non-success timeout tls connection and malformed uri findings`` () =
         withTempDir (fun root ->
@@ -820,6 +867,7 @@ module DoctorCliTests =
                     withDoctorServerProbeFactory
                         (fun _ -> Task.FromResult probeResult)
                         (fun () ->
+                            /// Verifies that the CLI doctor scenario exits with the expected process status.
                             let exitCode, standardOut, standardError =
                                 runWithCapturedStdoutAndStderr [| "--output"
                                                                   "Json"
@@ -865,6 +913,7 @@ module DoctorCliTests =
                 withDoctorServerProbeFactory
                     (fun _ -> Task.FromResult lifecycleRejection)
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -904,6 +953,7 @@ module DoctorCliTests =
                         incr requestCount
                         Task.FromResult noLifecycleProbe)
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -929,6 +979,7 @@ module DoctorCliTests =
 
                         !requestCount |> should equal 0)))
 
+    /// Verifies that doctor server lifecycle malformed date and non https update url warn cleanly.
     [<Test>]
     let ``doctor server lifecycle malformed date and non https update url warn cleanly`` () =
         withTempDir (fun root ->
@@ -942,6 +993,7 @@ module DoctorCliTests =
                 withDoctorServerProbeFactory
                     (fun _ -> Task.FromResult(successfulProbeWithLifecycle diagnostics))
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -973,6 +1025,7 @@ module DoctorCliTests =
                         summary
                         |> should not' (contain "http://example.test/update"))))
 
+    /// Verifies that doctor server explicit checks offline skip without network calls.
     [<Test>]
     let ``doctor server explicit checks offline skip without network calls`` () =
         withTempDir (fun root ->
@@ -987,6 +1040,7 @@ module DoctorCliTests =
                         incr requestCount
                         Task.FromResult noLifecycleProbe)
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -1020,6 +1074,7 @@ module DoctorCliTests =
 
                         !requestCount |> should equal 0)))
 
+    /// Verifies that doctor server principal skips without valid pat and runs with non refreshing pat only.
     [<Test>]
     let ``doctor server principal skips without valid PAT and runs with non refreshing PAT only`` () =
         withTempDir (fun root ->
@@ -1034,6 +1089,7 @@ module DoctorCliTests =
                         incr requestCount
                         Task.FromResult noLifecycleProbe)
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -1065,6 +1121,7 @@ module DoctorCliTests =
                             incr requestCount
                             Task.FromResult noLifecycleProbe)
                         (fun () ->
+                            /// Verifies that the CLI doctor scenario exits with the expected process status.
                             let exitCode, standardOut, standardError =
                                 runWithCapturedStdoutAndStderr [| "--output"
                                                                   "Json"
@@ -1095,6 +1152,7 @@ module DoctorCliTests =
                             principalRequests.Add(request)
                             Task.FromResult noLifecycleProbe)
                         (fun () ->
+                            /// Verifies that the CLI doctor scenario exits with the expected process status.
                             let exitCode, standardOut, standardError =
                                 runWithCapturedStdoutAndStderr [| "--output"
                                                                   "Json"
@@ -1124,6 +1182,7 @@ module DoctorCliTests =
                             principalRequests[0].BearerToken
                             |> should equal (Some token)))))
 
+    /// Verifies that doctor server output modes and select stay clean.
     [<Test>]
     let ``doctor server output modes and select stay clean`` () =
         withTempDir (fun root ->
@@ -1135,6 +1194,7 @@ module DoctorCliTests =
                     (fun _ -> Task.FromResult noLifecycleProbe)
                     (fun () ->
                         for output in [ "Silent"; "Minimal" ] do
+                            /// Verifies that the CLI doctor scenario exits with the expected process status.
                             let exitCode, standardOut, standardError =
                                 runWithCapturedStdoutAndStderr [| "--output"
                                                                   output
@@ -1146,6 +1206,7 @@ module DoctorCliTests =
                             standardOut |> should equal String.Empty
                             standardError |> should equal String.Empty
 
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Verbose"
@@ -1164,6 +1225,7 @@ module DoctorCliTests =
 
                         standardOut |> should not' (contain "healthz"))))
 
+    /// Verifies that doctor server selected output is clean for failure warning offline and principal cases.
     [<Test>]
     let ``doctor server selected output is clean for failure warning offline and principal cases`` () =
         withTempDir (fun root ->
@@ -1171,6 +1233,7 @@ module DoctorCliTests =
                 writeGraceConfig root "http://example.test"
                 |> ignore
 
+                /// Asserts that selected status matches the expected contract.
                 let assertSelectedStatus expectedExitCode expectedStatus args probeResult token =
                     let requestCount = ref 0
 
@@ -1180,6 +1243,7 @@ module DoctorCliTests =
                                 incr requestCount
                                 Task.FromResult probeResult)
                             (fun () ->
+                                /// Verifies that the CLI doctor scenario exits with the expected process status.
                                 let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args
 
                                 exitCode |> should equal expectedExitCode
@@ -1274,6 +1338,7 @@ module DoctorCliTests =
                     noLifecycleProbe
                     (Some token)))
 
+    /// Verifies that doctor server exact check selections are not filtered out.
     [<Test>]
     let ``doctor server exact check selections are not filtered out`` () =
         withTempDir (fun root ->
@@ -1281,7 +1346,9 @@ module DoctorCliTests =
                 writeGraceConfig root "http://example.test"
                 |> ignore
 
+                /// Asserts that exact check matches the expected contract.
                 let assertExactCheck checkId =
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -1311,9 +1378,11 @@ module DoctorCliTests =
                         assertExactCheck "server.lifecycle.headers"
                         assertExactCheck "server.auth-principal.available")))
 
+    /// Verifies that doctor check filter accepts mixed case ids and categories.
     [<Test>]
     let ``doctor check filter accepts mixed case ids and categories`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1336,9 +1405,11 @@ module DoctorCliTests =
             checks.GetArrayLength()
             |> should be (greaterThanOrEqualTo 5))
 
+    /// Verifies that doctor explicit check includes non default catalog entry without full.
     [<Test>]
     let ``doctor explicit check includes non-default catalog entry without full`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1361,6 +1432,7 @@ module DoctorCliTests =
             checks[ 0 ].GetProperty("Id").GetString()
             |> should equal "identity.auth-session")
 
+    /// Verifies that doctor explicit config check is not filtered out without full.
     [<Test>]
     let ``doctor explicit config check is not filtered out without full`` () =
         withTempDir (fun root ->
@@ -1368,6 +1440,7 @@ module DoctorCliTests =
                 writeGraceConfig root "http://127.0.0.1:5000"
                 |> ignore
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1393,12 +1466,14 @@ module DoctorCliTests =
                 checks[ 0 ].GetProperty("Status").GetString()
                 |> should equal "Ok"))
 
+    /// Verifies that doctor auth detects valid grace token without printing raw value.
     [<Test>]
     let ``doctor auth detects valid GRACE_TOKEN without printing raw value`` () =
         withTempDir (fun _ ->
             let token = validPat ()
 
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1431,6 +1506,7 @@ module DoctorCliTests =
                     .GetString()
                 |> should equal "Ok"))
 
+    /// Verifies that doctor auth accepts bearer grace token without printing raw value.
     [<Test>]
     let ``doctor auth accepts bearer GRACE_TOKEN without printing raw value`` () =
         withTempDir (fun _ ->
@@ -1438,6 +1514,7 @@ module DoctorCliTests =
             let bearerToken = $"  Bearer {token}  "
 
             withEnv Constants.EnvironmentVariables.GraceToken (Some bearerToken) (fun () ->
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1468,11 +1545,13 @@ module DoctorCliTests =
                     .GetString()
                 |> should equal "Ok"))
 
+    /// Verifies that doctor auth rejects invalid grace token safely.
     [<TestCase("not-a-pat")>]
     [<TestCase("Bearer not-a-pat")>]
     let ``doctor auth rejects invalid GRACE_TOKEN safely`` token =
         withTempDir (fun _ ->
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1499,6 +1578,7 @@ module DoctorCliTests =
                 check.GetProperty("Summary").GetString()
                 |> should contain "GRACE_TOKEN"))
 
+    /// Verifies that doctor auth treats blank grace token as unset and continues oidc inspection.
     [<TestCase("")>]
     [<TestCase("   ")>]
     let ``doctor auth treats blank GRACE_TOKEN as unset and continues OIDC inspection`` token =
@@ -1508,6 +1588,7 @@ module DoctorCliTests =
                     withEnv Constants.EnvironmentVariables.GraceAuthOidcAudience (Some "https://api.example.invalid/") (fun () ->
                         withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId (Some "m2m-client-id") (fun () ->
                             withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret (Some "m2m-client-secret") (fun () ->
+                                /// Verifies that the CLI doctor scenario exits with the expected process status.
                                 let exitCode, standardOut, standardError =
                                     runWithCapturedStdoutAndStderr [| "--output"
                                                                       "Json"
@@ -1545,12 +1626,14 @@ module DoctorCliTests =
                                     .GetString()
                                 |> should equal "Ok"))))))
 
+    /// Verifies that doctor auth reports unsupported grace token file with grace token remediation.
     [<Test>]
     let ``doctor auth reports unsupported GRACE_TOKEN_FILE with GRACE_TOKEN remediation`` () =
         withTempDir (fun _ ->
             let tokenFilePath = "C:\\secret\\grace-token.txt"
 
             withEnv Constants.EnvironmentVariables.GraceTokenFile (Some tokenFilePath) (fun () ->
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1575,11 +1658,13 @@ module DoctorCliTests =
                 check.GetProperty("Summary").GetString()
                 |> should contain "GRACE_TOKEN"))
 
+    /// Verifies that doctor auth treats blank grace token file as unset for explicit checks.
     [<TestCase("")>]
     [<TestCase("   ")>]
     let ``doctor auth treats blank GRACE_TOKEN_FILE as unset for explicit checks`` tokenFileValue =
         withTempDir (fun _ ->
             withEnv Constants.EnvironmentVariables.GraceTokenFile (Some tokenFileValue) (fun () ->
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1603,11 +1688,13 @@ module DoctorCliTests =
                 check.GetProperty("Summary").GetString()
                 |> should contain "GRACE_TOKEN_FILE is not set."))
 
+    /// Verifies that doctor auth treats blank grace token file as unset in default checks.
     [<TestCase("")>]
     [<TestCase("   ")>]
     let ``doctor auth treats blank GRACE_TOKEN_FILE as unset in default checks`` tokenFileValue =
         withTempDir (fun _ ->
             withEnv Constants.EnvironmentVariables.GraceTokenFile (Some tokenFileValue) (fun () ->
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1628,9 +1715,11 @@ module DoctorCliTests =
                     .GetString()
                 |> should equal "Ok"))
 
+    /// Verifies that doctor auth missing environment warns and skips token validation.
     [<Test>]
     let ``doctor auth missing environment warns and skips token validation`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1667,6 +1756,7 @@ module DoctorCliTests =
                 .GetString()
             |> should equal "Skipped")
 
+    /// Verifies that doctor auth reports partial oidc m2 m and cli configuration without secret values.
     [<Test>]
     let ``doctor auth reports partial OIDC M2M and CLI configuration without secret values`` () =
         withTempDir (fun _ ->
@@ -1677,6 +1767,7 @@ module DoctorCliTests =
             withEnv Constants.EnvironmentVariables.GraceAuthOidcAuthority (Some authority) (fun () ->
                 withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret (Some m2mSecret) (fun () ->
                     withEnv Constants.EnvironmentVariables.GraceAuthOidcCliClientId (Some cliClientId) (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -1701,6 +1792,7 @@ module DoctorCliTests =
                         check.GetProperty("Summary").GetString()
                         |> should contain "partial"))))
 
+    /// Verifies that doctor auth treats blank oidc required values as missing.
     [<Test>]
     let ``doctor auth treats blank OIDC required values as missing`` () =
         withTempDir (fun _ ->
@@ -1708,6 +1800,7 @@ module DoctorCliTests =
                 withEnv Constants.EnvironmentVariables.GraceAuthOidcAudience (Some "https://api.example.invalid/") (fun () ->
                     withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientId (Some "m2m-client-id") (fun () ->
                         withEnv Constants.EnvironmentVariables.GraceAuthOidcM2mClientSecret (Some "m2m-client-secret") (fun () ->
+                            /// Verifies that the CLI doctor scenario exits with the expected process status.
                             let exitCode, standardOut, standardError =
                                 runWithCapturedStdoutAndStderr [| "--output"
                                                                   "Json"
@@ -1732,6 +1825,7 @@ module DoctorCliTests =
                             check.GetProperty("Summary").GetString()
                             |> should contain Constants.EnvironmentVariables.GraceAuthOidcAuthority)))))
 
+    /// Verifies that doctor auth exact check selections are not filtered out.
     [<Test>]
     let ``doctor auth exact check selections are not filtered out`` () =
         withTempDir (fun _ ->
@@ -1741,6 +1835,7 @@ module DoctorCliTests =
                     "auth.token-file.unsupported"
                     "auth.oidc.configuration"
                 ] do
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1763,6 +1858,7 @@ module DoctorCliTests =
                 checks[ 0 ].GetProperty("Id").GetString()
                 |> should equal checkId)
 
+    /// Verifies that doctor auth select output is clean for valid and invalid auth states.
     [<TestCase("Json")>]
     [<TestCase("Verbose")>]
     let ``doctor auth select output is clean for valid and invalid auth states`` output =
@@ -1773,6 +1869,7 @@ module DoctorCliTests =
                     "not-a-pat", "\"Failed\""
                 ] do
                 withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           output
@@ -1796,6 +1893,7 @@ module DoctorCliTests =
 
                     standardOut |> should not' (contain "EventTime")))
 
+    /// Verifies that doctor auth successful diagnostics emit no output for quiet output modes.
     [<TestCase("Silent")>]
     [<TestCase("Minimal")>]
     let ``doctor auth successful diagnostics emit no output for quiet output modes`` output =
@@ -1803,6 +1901,7 @@ module DoctorCliTests =
             let token = validPat ()
 
             withEnv Constants.EnvironmentVariables.GraceToken (Some token) (fun () ->
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       output
@@ -1814,9 +1913,11 @@ module DoctorCliTests =
                 standardOut |> should equal String.Empty
                 standardError |> should equal String.Empty))
 
+    /// Verifies that doctor auth list checks includes s2 auth catalog ids.
     [<Test>]
     let ``doctor auth list checks includes S2 auth catalog ids`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "doctor"
                                                   "--list-checks"
@@ -1845,9 +1946,11 @@ module DoctorCliTests =
             catalogIds
             |> should contain "auth.oidc.configuration")
 
+    /// Verifies that doctor list checks includes local state and object cache catalog ids.
     [<Test>]
     let ``doctor list checks includes local-state and object-cache catalog ids`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "doctor"
                                                   "--list-checks"
@@ -1867,9 +1970,11 @@ module DoctorCliTests =
             for checkId in localStateCheckIds do
                 catalogIds |> should contain checkId)
 
+    /// Verifies that doctor list checks includes working tree scan catalog id.
     [<Test>]
     let ``doctor list checks includes working-tree scan catalog id`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "doctor"
                                                   "--list-checks"
@@ -1888,6 +1993,7 @@ module DoctorCliTests =
 
             catalogIds |> should contain "working-tree.scan")
 
+    /// Verifies that doctor default working tree scan is skipped without traversing changed files.
     [<Test>]
     let ``doctor default working-tree scan is skipped without traversing changed files`` () =
         withTempDir (fun root ->
@@ -1895,6 +2001,7 @@ module DoctorCliTests =
                 let dbPath = seedWorkingTreeSnapshot root
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1920,6 +2027,7 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor full working tree scan reports drift warning without mutation.
     [<Test>]
     let ``doctor full working-tree scan reports drift warning without mutation`` () =
         withTempDir (fun root ->
@@ -1927,6 +2035,7 @@ module DoctorCliTests =
                 seedWorkingTreeSnapshot root |> ignore
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1960,6 +2069,7 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor exact working tree scan runs without full and excludes ignored and grace owned paths.
     [<Test>]
     let ``doctor exact working-tree scan runs without full and excludes ignored and grace-owned paths`` () =
         withTempDir (fun root ->
@@ -1970,6 +2080,7 @@ module DoctorCliTests =
                 File.WriteAllText(Path.Combine(root, Constants.GraceConfigDirectory, "grace-local.db-wal.extra"), "sidecar-ish content")
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1999,6 +2110,7 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor working tree scan prunes trailing slash ignored directories.
     [<Test>]
     let ``doctor working-tree scan prunes trailing-slash ignored directories`` () =
         withTempDir (fun root ->
@@ -2022,6 +2134,7 @@ module DoctorCliTests =
 
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2052,6 +2165,7 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor working tree scan does not prune directories from file only ignore entries.
     [<Test>]
     let ``doctor working-tree scan does not prune directories from file-only ignore entries`` () =
         withTempDir (fun root ->
@@ -2069,6 +2183,7 @@ module DoctorCliTests =
 
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2099,6 +2214,7 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor strict exact working tree scan fails when read only scan execution fails.
     [<Test>]
     let ``doctor strict exact working-tree scan fails when read-only scan execution fails`` () =
         withTempDir (fun root ->
@@ -2108,6 +2224,7 @@ module DoctorCliTests =
                 withWorkingTreeScanner
                     (fun _ _ -> Task.FromResult(Error "simulated read-only scan failure"))
                     (fun () ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -2136,12 +2253,14 @@ module DoctorCliTests =
                         workingTree.GetProperty("Summary").GetString()
                         |> should contain "Working-tree scan failed without updating local state: simulated read-only scan failure")))
 
+    /// Verifies that doctor working tree category selector runs scan.
     [<Test>]
     let ``doctor working-tree category selector runs scan`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
                 seedWorkingTreeSnapshot root |> ignore
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2163,6 +2282,7 @@ module DoctorCliTests =
                 workingTree.GetProperty("Status").GetString()
                 |> should equal "Warning"))
 
+    /// Verifies that doctor working tree default quiet modes emit no successful diagnostic output.
     [<TestCase("Silent")>]
     [<TestCase("Minimal")>]
     let ``doctor working-tree default quiet modes emit no successful diagnostic output`` output =
@@ -2176,6 +2296,7 @@ module DoctorCliTests =
                 File.SetLastWriteTimeUtc(Path.Combine(root, "deleted.txt"), indexedWriteTime)
                 File.Delete(Path.Combine(root, "added.txt"))
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       output
@@ -2187,12 +2308,14 @@ module DoctorCliTests =
                 standardOut |> should equal String.Empty
                 standardError |> should equal String.Empty))
 
+    /// Verifies that doctor working tree verbose select emits clean scalar without progress text.
     [<Test>]
     let ``doctor working-tree verbose select emits clean scalar without progress text`` () =
         withTempDir (fun root ->
             withIsolatedHome root (fun _ ->
                 seedWorkingTreeSnapshot root |> ignore
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Verbose"
@@ -2215,6 +2338,7 @@ module DoctorCliTests =
                 standardOut
                 |> should not' (contain "Working tree differs")))
 
+    /// Verifies that doctor working tree scan skips unreadable snapshot inside report without creating database.
     [<Test>]
     let ``doctor working-tree scan skips unreadable snapshot inside report without creating database`` () =
         withTempDir (fun root ->
@@ -2230,6 +2354,7 @@ module DoctorCliTests =
                 File.WriteAllText(dbPath, "not a sqlite database")
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2253,6 +2378,7 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor selected non local check does not open local state database.
     [<Test>]
     let ``doctor selected non-local check does not open local-state database`` () =
         withTempDir (fun root ->
@@ -2265,6 +2391,7 @@ module DoctorCliTests =
                 let dbBefore = snapshotFile dbPath
 
                 withLocalStateDbOpenTrace root (fun tracePath ->
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -2293,6 +2420,7 @@ module DoctorCliTests =
                     readTrace tracePath |> should equal String.Empty
                     snapshotFile dbPath |> should equal dbBefore)))
 
+    /// Verifies that doctor selected local state check opens local state database read only.
     [<Test>]
     let ``doctor selected local-state check opens local-state database read-only`` () =
         withTempDir (fun root ->
@@ -2300,6 +2428,7 @@ module DoctorCliTests =
                 ensureValidLocalStateDb root
 
                 withLocalStateDbOpenTrace root (fun tracePath ->
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -2325,6 +2454,7 @@ module DoctorCliTests =
                     readTrace tracePath
                     |> should contain "openReadOnlyConnection starting")))
 
+    /// Verifies that doctor local state checks inspect checkpointed wal database without creating missing sidecars.
     [<Test>]
     let ``doctor local-state checks inspect checkpointed wal database without creating missing sidecars`` () =
         withTempDir (fun root ->
@@ -2345,6 +2475,7 @@ module DoctorCliTests =
                 let dbBefore = snapshotFile dbPath
 
                 withLocalStateDbOpenTrace root (fun tracePath ->
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -2387,6 +2518,7 @@ module DoctorCliTests =
                     File.Exists(walPath) |> should equal false
                     File.Exists(shmPath) |> should equal false)))
 
+    /// Verifies that doctor default run opens local state database and includes local state checks.
     [<Test>]
     let ``doctor default run opens local-state database and includes local-state checks`` () =
         withTempDir (fun root ->
@@ -2394,6 +2526,7 @@ module DoctorCliTests =
                 ensureValidLocalStateDb root
 
                 withLocalStateDbOpenTrace root (fun tracePath ->
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -2418,6 +2551,7 @@ module DoctorCliTests =
                     readTrace tracePath
                     |> should contain "openReadOnlyConnection starting")))
 
+    /// Verifies that doctor local state valid database reports read only metadata checks.
     [<Test>]
     let ``doctor local-state valid database reports read-only metadata checks`` () =
         withTempDir (fun root ->
@@ -2435,6 +2569,7 @@ module DoctorCliTests =
                             yield checkId
                     |]
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args
 
                 exitCode |> should equal 0
@@ -2466,11 +2601,13 @@ module DoctorCliTests =
                     .GetString()
                 |> should contain "without mutation"))
 
+    /// Verifies that doctor missing local state parent reports check result without creating files.
     [<Test>]
     let ``doctor missing local-state parent reports check result without creating files`` () =
         withTempDir (fun root ->
             let beforeRoot = snapshotFiles root
 
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -2505,6 +2642,7 @@ module DoctorCliTests =
 
             snapshotFiles root |> should equal beforeRoot)
 
+    /// Verifies that doctor missing local state database warns without creating database.
     [<Test>]
     let ``doctor missing local-state database warns without creating database`` () =
         withTempDir (fun root ->
@@ -2516,6 +2654,7 @@ module DoctorCliTests =
                 File.Exists(dbPath) |> should equal false
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2548,6 +2687,7 @@ module DoctorCliTests =
                 File.Exists(dbPath) |> should equal false
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor malformed config from nested directory inspects discovered local state database.
     [<Test>]
     let ``doctor malformed config from nested directory inspects discovered local-state database`` () =
         withTempDir (fun root ->
@@ -2567,6 +2707,7 @@ module DoctorCliTests =
                     let cwdDbPath = Path.Combine(nested, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
 
                     withLocalStateDbOpenTrace root (fun tracePath ->
+                        /// Verifies that the CLI doctor scenario exits with the expected process status.
                         let exitCode, standardOut, standardError =
                             runWithCapturedStdoutAndStderr [| "--output"
                                                               "Json"
@@ -2603,6 +2744,7 @@ module DoctorCliTests =
                 finally
                     Environment.CurrentDirectory <- originalDir))
 
+    /// Verifies that doctor local state database path occupied by directory reports failure without mutation.
     [<Test>]
     let ``doctor local-state database path occupied by directory reports failure without mutation`` () =
         withTempDir (fun root ->
@@ -2614,6 +2756,7 @@ module DoctorCliTests =
                 Directory.CreateDirectory(dbPath) |> ignore
                 let beforeRoot = snapshotFiles root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2646,6 +2789,7 @@ module DoctorCliTests =
                 Directory.Exists(dbPath) |> should equal true
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor corrupt local state database reports failure without moving bytes or sidecars.
     [<Test>]
     let ``doctor corrupt local-state database reports failure without moving bytes or sidecars`` () =
         withTempDir (fun root ->
@@ -2671,6 +2815,7 @@ module DoctorCliTests =
                 let sidecarsBefore = sidecars |> Array.map snapshotFile
                 let corruptBefore = getCorruptBackups root |> Array.length
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Verbose"
@@ -2699,6 +2844,7 @@ module DoctorCliTests =
                 let corruptAfter = getCorruptBackups root |> Array.length
                 corruptAfter |> should equal corruptBefore))
 
+    /// Verifies that doctor schema mismatch fails without corrupt backup.
     [<Test>]
     let ``doctor schema mismatch fails without corrupt backup`` () =
         withTempDir (fun root ->
@@ -2711,6 +2857,7 @@ module DoctorCliTests =
                 let dbBefore = snapshotFile dbPath
                 let corruptBefore = getCorruptBackups root |> Array.length
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2752,6 +2899,7 @@ module DoctorCliTests =
                 let corruptAfter = getCorruptBackups root |> Array.length
                 corruptAfter |> should equal corruptBefore))
 
+    /// Verifies that doctor local state exact check selections are not filtered out.
     [<Test>]
     let ``doctor local-state exact check selections are not filtered out`` () =
         withTempDir (fun root ->
@@ -2759,6 +2907,7 @@ module DoctorCliTests =
                 ensureValidLocalStateDb root
 
                 for checkId in localStateCheckIds do
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -2781,6 +2930,7 @@ module DoctorCliTests =
                     checks[ 0 ].GetProperty("Id").GetString()
                     |> should equal checkId))
 
+    /// Verifies that doctor local state successful diagnostics emit no output for quiet output modes.
     [<TestCase("Silent")>]
     [<TestCase("Minimal")>]
     let ``doctor local-state successful diagnostics emit no output for quiet output modes`` output =
@@ -2788,6 +2938,7 @@ module DoctorCliTests =
             withIsolatedHome root (fun _ ->
                 ensureValidLocalStateDb root
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       output
@@ -2799,6 +2950,7 @@ module DoctorCliTests =
                 standardOut |> should equal String.Empty
                 standardError |> should equal String.Empty))
 
+    /// Verifies that doctor verbose select returns clean scalar for passing config check.
     [<Test>]
     let ``doctor verbose select returns clean scalar for passing config check`` () =
         withTempDir (fun root ->
@@ -2806,6 +2958,7 @@ module DoctorCliTests =
                 writeGraceConfig root "http://127.0.0.1:5000"
                 |> ignore
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Verbose"
@@ -2824,6 +2977,7 @@ module DoctorCliTests =
 
                 standardOut |> should not' (contain "EventTime")))
 
+    /// Verifies that doctor reports config server uri mismatch and ignore counts without mutating files.
     [<Test>]
     let ``doctor reports config server uri mismatch and ignore counts without mutating files`` () =
         withTempDir (fun root ->
@@ -2847,6 +3001,7 @@ notes.txt # inline comment
                 let beforeHome = snapshotFiles home
 
                 withEnv Constants.EnvironmentVariables.GraceServerUri (Some "http://127.0.0.1:6000") (fun () ->
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -2888,6 +3043,7 @@ notes.txt # inline comment
                     File.Exists(Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName))
                     |> should equal false)))
 
+    /// Verifies that doctor malformed config fails parse and selected skipped dependent output stays clean.
     [<Test>]
     let ``doctor malformed config fails parse and selected skipped dependent output stays clean`` () =
         withTempDir (fun root ->
@@ -2899,6 +3055,7 @@ notes.txt # inline comment
                 let beforeRoot = snapshotFiles root
                 let beforeHome = snapshotFiles home
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Verbose"
@@ -2937,6 +3094,7 @@ notes.txt # inline comment
                 snapshotFiles root |> should equal beforeRoot
                 snapshotFiles home |> should equal beforeHome))
 
+    /// Verifies that doctor treats unreadable config file as parse failure instead of missing config.
     [<Test>]
     let ``doctor treats unreadable config file as parse failure instead of missing config`` () =
         withTempDir (fun root ->
@@ -2945,6 +3103,7 @@ notes.txt # inline comment
 
                 use _lock = openExclusiveReadLock configPath
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -2984,6 +3143,7 @@ notes.txt # inline comment
                 checks[ 1 ].GetProperty("Summary").GetString()
                 |> should contain "Could not parse"))
 
+    /// Verifies that doctor carries unreadable graceignore into ignore parse result without affecting config parse.
     [<Test>]
     let ``doctor carries unreadable graceignore into ignore parse result without affecting config parse`` () =
         withTempDir (fun root ->
@@ -2996,6 +3156,7 @@ notes.txt # inline comment
 
                 use _lock = openExclusiveReadLock graceIgnorePath
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -3032,6 +3193,7 @@ notes.txt # inline comment
                 checks[ 1 ].GetProperty("Summary").GetString()
                 |> should contain "Could not parse"))
 
+    /// Verifies that doctor missing user config reports warning without creating user grace directory.
     [<Test>]
     let ``doctor missing user config reports warning without creating user grace directory`` () =
         withTempDir (fun root ->
@@ -3040,6 +3202,7 @@ notes.txt # inline comment
                     let beforeHome = snapshotFiles home
                     let beforeUserConfigExists = File.Exists(userConfigPath)
 
+                    /// Verifies that the CLI doctor scenario exits with the expected process status.
                     let exitCode, standardOut, standardError =
                         runWithCapturedStdoutAndStderr [| "--output"
                                                           "Json"
@@ -3071,9 +3234,11 @@ notes.txt # inline comment
                     Directory.Exists(Path.Combine(home, Constants.GraceConfigDirectory))
                     |> should equal false)))
 
+    /// Verifies that doctor invalid check emits grace error in json mode.
     [<Test>]
     let ``doctor invalid check emits GraceError in json mode`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -3090,14 +3255,17 @@ notes.txt # inline comment
             rootElement.GetProperty("Error").GetString()
             |> should contain "Unknown doctor check token"
 
+            /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
             let mutable returnValue = Unchecked.defaultof<JsonElement>
 
             rootElement.TryGetProperty("ReturnValue", &returnValue)
             |> should equal false)
 
+    /// Verifies that doctor check followed by option shaped token emits grace error.
     [<Test>]
     let ``doctor check followed by option-shaped token emits GraceError`` () =
         withTempDir (fun _ ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -3114,11 +3282,13 @@ notes.txt # inline comment
             rootElement.GetProperty("Error").GetString()
             |> should contain "Unknown doctor check token: --strict"
 
+            /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
             let mutable returnValue = Unchecked.defaultof<JsonElement>
 
             rootElement.TryGetProperty("ReturnValue", &returnValue)
             |> should equal false)
 
+    /// Verifies that doctor schema and examples work without config.
     [<Test>]
     let ``doctor schema and examples work without config`` () =
         withTempDir (fun root ->
@@ -3127,6 +3297,7 @@ notes.txt # inline comment
                     [| "doctor"; "--schema" |], "schema"
                     [| "doctor"; "--examples" |], "examples"
                 ] do
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError = runWithCapturedStdoutAndStderr args
 
                 exitCode |> should equal 0
@@ -3147,6 +3318,7 @@ notes.txt # inline comment
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that doctor suppresses successful human output for quiet output modes.
     [<TestCase("Silent")>]
     [<TestCase("Minimal")>]
     let ``doctor suppresses successful human output for quiet output modes`` output =
@@ -3155,6 +3327,7 @@ notes.txt # inline comment
                 writeGraceConfig root "http://127.0.0.1:5000"
                 |> ignore
 
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       output
@@ -3169,10 +3342,12 @@ notes.txt # inline comment
                 File.Exists(Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName))
                 |> should equal false))
 
+    /// Verifies that doctor select projects return value property without config.
     [<TestCase("Json")>]
     [<TestCase("Verbose")>]
     let ``doctor select projects return value property without config`` output =
         withTempDir (fun root ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   output
@@ -3187,9 +3362,11 @@ notes.txt # inline comment
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that doctor select missing property returns projection failure exit code.
     [<Test>]
     let ``doctor select missing property returns projection failure exit code`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "doctor"
                                                   "--select"
@@ -3209,9 +3386,11 @@ notes.txt # inline comment
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that doctor select rejects envelope qualified path before config.
     [<Test>]
     let ``doctor select rejects envelope-qualified path before config`` () =
         withTempDir (fun root ->
+            /// Verifies that the CLI doctor scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "doctor"
                                                   "--select"
@@ -3231,6 +3410,7 @@ notes.txt # inline comment
             Directory.Exists(Path.Combine(root, ".grace"))
             |> should equal false)
 
+    /// Verifies that doctor diagnostic exit codes map warning and failure reports.
     [<Test>]
     let ``doctor diagnostic exit codes map warning and failure reports`` () =
         let warningReport =

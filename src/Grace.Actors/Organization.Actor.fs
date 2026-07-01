@@ -28,8 +28,10 @@ open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for organization keys, proxies, state, or workflow transitions.
 module Organization =
 
+    /// Implements the Orleans grain for organization actor.
     type OrganizationActor([<PersistentState(StateName.Organization, Constants.GraceActorStorage)>] state: IPersistentState<List<OrganizationEvent>>) =
         inherit Grain()
 
@@ -39,6 +41,7 @@ module Organization =
 
         let mutable organizationDto = OrganizationDto.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -52,6 +55,7 @@ module Organization =
 
             Task.CompletedTask
 
+        /// Applies one persisted Organization event to this activation's in-memory state.
         member private this.ApplyEvent organizationEvent =
             task {
                 try
@@ -197,18 +201,22 @@ module Organization =
                 }
 
         interface IOrganizationActor with
+            /// Reports whether this Organization actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
                 Task.FromResult(if organizationDto.UpdatedAt.IsSome then true else false)
 
+            /// Reports whether this Organization actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
                 Task.FromResult(if organizationDto.DeletedAt.IsSome then true else false)
 
+            /// Returns the current Organization actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 Task.FromResult(organizationDto)
 
+            /// Coordinates repository exists logic for the Organization actor.
             member this.RepositoryExists repositoryName correlationId =
                 task {
                     this.correlationId <- correlationId
@@ -219,6 +227,7 @@ module Organization =
                     | None -> return false
                 }
 
+            /// Returns list repositories data from the Organization actor state or related storage.
             member this.ListRepositories correlationId =
                 task {
                     this.correlationId <- correlationId
@@ -229,7 +238,9 @@ module Organization =
                 }
             //Task.FromResult(organizationDto.Repositories :> IReadOnlyDictionary<RepositoryId, RepositoryName>)
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle (command: OrganizationCommand) metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: OrganizationCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
@@ -247,6 +258,7 @@ module Organization =
                                 | None -> return Error(GraceError.Create (OrganizationError.getErrorMessage OrganizationIdDoesNotExist) metadata.CorrelationId)
                     }
 
+                /// Runs Organization command decisions, applies emitted events, and persists the result.
                 let processCommand (command: OrganizationCommand) (metadata: EventMetadata) =
                     task {
                         try

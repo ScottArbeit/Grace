@@ -16,6 +16,7 @@ open System
 open System.IO
 open System.Threading.Tasks
 
+/// Groups webhook approval command coverage for the CLI test project.
 [<NonParallelizable>]
 module WebhookApprovalCommandTests =
     let private ownerId = Guid.NewGuid()
@@ -23,6 +24,7 @@ module WebhookApprovalCommandTests =
     let private repositoryId = Guid.NewGuid()
     let private branchId = Guid.NewGuid()
 
+    /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
             args
@@ -35,11 +37,13 @@ module WebhookApprovalCommandTests =
                 repositoryId.ToString()
             |]
 
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Captures output produced by the action.
     let private captureOutput (action: unit -> unit) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -53,6 +57,7 @@ module WebhookApprovalCommandTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Verifies that pending approval output includes request policy status expiration and next command.
     [<Test>]
     let ``pending approval output includes request policy status expiration and next command`` () =
         let requestId = Guid.NewGuid()
@@ -94,6 +99,7 @@ module WebhookApprovalCommandTests =
         output
         |> should contain "grace approval request approve --request"
 
+    /// Verifies that json output redacts webhook destination and signing secret version.
     [<Test>]
     let ``json output redacts webhook destination and signing secret version`` () =
         let secretUrl = "https://example.test/webhook?sig=secret-token"
@@ -136,6 +142,7 @@ module WebhookApprovalCommandTests =
         listOutput |> should not' (contain secretUrl)
         listOutput |> should not' (contain secretVersion)
 
+    /// Verifies that json output redacts approval policy notification url.
     [<Test>]
     let ``json output redacts approval policy notification url`` () =
         let secretUrl = "https://example.test/approval?callback=secret-token"
@@ -176,6 +183,7 @@ module WebhookApprovalCommandTests =
 
         listOutput |> should not' (contain secretUrl)
 
+    /// Verifies that approval request wait returns error when timeout expires while pending.
     [<Test>]
     let ``approval request wait returns error when timeout expires while pending`` () =
         let requestId = Guid.NewGuid()
@@ -197,6 +205,7 @@ module WebhookApprovalCommandTests =
                            "Silent" |]
             )
 
+        /// Builds show request test data used to exercise CLI webhook Approval behavior.
         let showRequest (_: Grace.Shared.Parameters.Approval.ShowApprovalRequestParameters) = Task.FromResult(Ok(GraceReturnValue.Create pending "corr"))
 
         match ApprovalCommand.waitRequestWith showRequest parseResult
@@ -207,6 +216,7 @@ module WebhookApprovalCommandTests =
             error.Error |> should contain "Pending"
         | Ok _ -> Assert.Fail("Expected approval request wait to fail when the timeout expires while the request is pending.")
 
+    /// Verifies that promotion set list fails when a child promotion set fetch fails.
     [<Test>]
     let ``promotion set list fails when a child promotion set fetch fails`` () =
         let firstPromotionSetId = Guid.NewGuid()
@@ -232,8 +242,10 @@ module WebhookApprovalCommandTests =
                     ]
             }
 
+        /// Gets queue status needed by the test scenario.
         let getQueueStatus (_: Grace.Shared.Parameters.Queue.QueueStatusParameters) = Task.FromResult(Ok(GraceReturnValue.Create queue "corr"))
 
+        /// Gets promotion set needed by the test scenario.
         let getPromotionSet (parameters: Grace.Shared.Parameters.PromotionSet.GetPromotionSetParameters) =
             if parameters.PromotionSetId = firstPromotionSetId.ToString() then
                 Task.FromResult(
@@ -253,6 +265,7 @@ module WebhookApprovalCommandTests =
             |> should contain "stale promotion set id"
         | Ok _ -> Assert.Fail("Expected promotion-set list to fail when any child promotion set fetch fails.")
 
+    /// Verifies that promotion set list output includes compact approval summary.
     [<Test>]
     let ``promotion set list output includes compact approval summary`` () =
         let promotionSet =
@@ -299,6 +312,7 @@ module WebhookApprovalCommandTests =
                 .ToString()
                 .Substring(0, 12))
 
+    /// Verifies that webhook delivery output includes delivery identity retry status and redacted failure.
     [<Test>]
     let ``webhook delivery output includes delivery identity retry status and redacted failure`` () =
         let delivery =

@@ -29,18 +29,28 @@ open Azure.Storage.Blobs.Models
 open System.IO.Compression
 open Grace.CLI
 
+/// Groups the connect command parser, handlers, and output helpers.
 module Connect =
 
+    /// Executes the common parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type CommonParameters() =
         inherit ParameterBase()
+        /// Stores a parsed command value for handler execution.
         member val public RepositoryId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public RepositoryName: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OwnerId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OwnerName: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OrganizationId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OrganizationName: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public RetrieveDefaultBranch: bool = true with get, set
 
+    /// Defines the options parsed by the connect command handlers.
     module private Options =
         let repositoryId =
             new Option<RepositoryId>(
@@ -157,16 +167,19 @@ module Connect =
                 DefaultValueFactory = (fun _ -> true)
             )
 
+    /// Groups the connect command parser, handlers, and output helpers.
     module private Arguments =
         let repositoryShortcut =
             new Argument<string>("repository", Description = "Repository shortcut in the form owner/organization/repository.", Arity = ArgumentArity.ZeroOrOne)
 
+    /// Models directory version selection values passed between the parser and connect handlers.
     type DirectoryVersionSelection =
         | UseDirectoryVersionId of DirectoryVersionId
         | UseReferenceId of ReferenceId
         | UseReferenceType of ReferenceType
         | UseDefault
 
+    /// Tries to map get explicit value and returns a GraceError instead of throwing on unsupported input.
     let private tryGetExplicitValue<'T> (parseResult: ParseResult) (option: Option<'T>) =
         let result = parseResult.GetResult(option)
 
@@ -175,19 +188,23 @@ module Connect =
         else
             Some(parseResult.GetValue(option))
 
+    /// Tries to map get explicit non empty string and returns a GraceError instead of throwing on unsupported input.
     let private tryGetExplicitNonEmptyString (parseResult: ParseResult) (option: Option<string>) =
         match tryGetExplicitValue parseResult option with
         | Some value when not <| String.IsNullOrWhiteSpace(value) -> Some value
         | _ -> None
 
+    /// Defines structured data exchanged by CLI helpers.
     type private RepositoryShortcut = { OwnerName: OwnerName; OrganizationName: OrganizationName; RepositoryName: RepositoryName }
 
+    /// Validates grace name from parsed options and returns a correlated GraceError when input is invalid.
     let private validateGraceName (name: string) (error: IErrorDiscriminatedUnion) (parseResult: ParseResult) =
         if Constants.GraceNameRegex.IsMatch(name) then
             Ok name
         else
             Error(GraceError.Create (getErrorMessage error) (getCorrelationId parseResult))
 
+    /// Tries to map get repository shortcut and returns a GraceError instead of throwing on unsupported input.
     let private tryGetRepositoryShortcut (parseResult: ParseResult) =
         let result = parseResult.GetResult(Arguments.repositoryShortcut)
 
@@ -221,24 +238,28 @@ module Connect =
                             | Error error -> Error error
                             | Ok repositoryName -> Ok(Some { OwnerName = ownerName; OrganizationName = organizationName; RepositoryName = repositoryName })
 
+    /// Evaluates has explicit owner against parsed options and command state.
     let private hasExplicitOwner (parseResult: ParseResult) =
         tryGetExplicitValue parseResult Options.ownerId
         |> Option.exists (fun ownerId -> ownerId <> Guid.Empty)
         || (tryGetExplicitNonEmptyString parseResult Options.ownerName
             |> Option.isSome)
 
+    /// Evaluates has explicit organization against parsed options and command state.
     let private hasExplicitOrganization (parseResult: ParseResult) =
         tryGetExplicitValue parseResult Options.organizationId
         |> Option.exists (fun organizationId -> organizationId <> Guid.Empty)
         || (tryGetExplicitNonEmptyString parseResult Options.organizationName
             |> Option.isSome)
 
+    /// Evaluates has explicit repository against parsed options and command state.
     let private hasExplicitRepository (parseResult: ParseResult) =
         tryGetExplicitValue parseResult Options.repositoryId
         |> Option.exists (fun repositoryId -> repositoryId <> Guid.Empty)
         || (tryGetExplicitNonEmptyString parseResult Options.repositoryName
             |> Option.isSome)
 
+    /// Updates CLI authentication state for apply repository shortcut while keeping token handling centralized.
     let internal applyRepositoryShortcut (parseResult: ParseResult) (graceIds: GraceIds) =
         match tryGetRepositoryShortcut parseResult with
         | Error error -> Error error
@@ -269,6 +290,7 @@ module Connect =
                         HasRepository = true
                     }
 
+    /// Reads directory version selection from ParseResult, local configuration, or Grace ids.
     let internal getDirectoryVersionSelection (parseResult: ParseResult) =
         match tryGetExplicitValue parseResult Options.directoryVersionId with
         | Some directoryVersionId when directoryVersionId <> Guid.Empty -> UseDirectoryVersionId directoryVersionId
@@ -287,6 +309,7 @@ module Connect =
                     UseReferenceType referenceType
                 | None -> UseDefault
 
+    /// Tries to map get directory id from branch and returns a GraceError instead of throwing on unsupported input.
     let internal tryGetDirectoryIdFromBranch (referenceType: ReferenceType) (branchDto: BranchDto) =
         match referenceType with
         | ReferenceType.Promotion when
@@ -303,6 +326,7 @@ module Connect =
         | ReferenceType.Save when branchDto.LatestSave.DirectoryId <> Guid.Empty -> Some branchDto.LatestSave.DirectoryId
         | _ -> None
 
+    /// Resolves default directory version id from command options, configuration, or local state.
     let internal resolveDefaultDirectoryVersionId (branchDto: BranchDto) =
         if branchDto.LatestPromotion.DirectoryId
            <> Guid.Empty then
@@ -312,6 +336,7 @@ module Connect =
         else
             None
 
+    /// Coordinates select latest reference behavior for this CLI command path.
     let private selectLatestReference (references: ReferenceDto seq) =
         references
         |> Seq.sortByDescending (fun reference ->
@@ -319,6 +344,7 @@ module Connect =
             |> Option.defaultValue reference.CreatedAt)
         |> Seq.tryHead
 
+    /// Resolves directory version id from reference type from command options, configuration, or local state.
     let private resolveDirectoryVersionIdFromReferenceType
         (graceIds: GraceIds)
         (ownerDto: OwnerDto)
@@ -363,6 +389,7 @@ module Connect =
                 | Error error -> return Error error
         }
 
+    /// Resolves target directory version id from command options, configuration, or local state.
     let private resolveTargetDirectoryVersionId
         (parseResult: ParseResult)
         (graceIds: GraceIds)
@@ -403,15 +430,18 @@ module Connect =
                 | None -> return Error(GraceError.Create "No downloadable version found for this branch." graceIds.CorrelationId)
         }
 
+    /// Coordinates existing file matches remote version behavior for this CLI command path.
     let internal existingFileMatchesRemoteVersion localSha256Hash localBlake3Hash (fileVersion: FileVersion) =
         localSha256Hash = fileVersion.Sha256Hash
         && (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash)
             || localBlake3Hash = fileVersion.Blake3Hash)
 
+    /// Coordinates collect file conflicts behavior for this CLI command path.
     let private collectFileConflicts (fileVersions: FileVersion array) (force: bool) =
         let conflicts = ResizeArray<string>()
         let filesToSkip = HashSet<RelativePath>()
 
+        /// Coordinates rec behavior for this CLI command path.
         let rec loop index =
             task {
                 if index >= fileVersions.Length then
@@ -452,6 +482,7 @@ module Connect =
 
         loop 0
 
+    /// Ensures required command context is present.
     let private ensureConfigurationFileExists () =
         if not <| configurationFileExists () then
             let graceDirPath = Path.Combine(Environment.CurrentDirectory, Constants.GraceConfigDirectory)
@@ -462,10 +493,12 @@ module Connect =
                 GraceConfiguration()
                 |> saveConfigFile graceConfigPath
 
+    /// Reads reload configuration data needed by the command workflow without changing remote state.
     let private reloadConfiguration () =
         resetConfiguration ()
         Current() |> ignore
 
+    /// Updates CLI authentication state for apply server address override while keeping token handling centralized.
     let private applyServerAddressOverride (parseResult: ParseResult) =
         match tryGetExplicitNonEmptyString parseResult Options.serverAddress with
         | Some serverAddress ->
@@ -475,6 +508,7 @@ module Connect =
             reloadConfiguration ()
         | None -> ()
 
+    /// Validates required ids from parsed options and returns a correlated GraceError when input is invalid.
     let private validateRequiredIds (parseResult: ParseResult) (graceIds: GraceIds) =
         let correlationId = getCorrelationId parseResult
 
@@ -502,6 +536,7 @@ module Connect =
         else
             Ok()
 
+    /// Reads owner organization repository from ParseResult, local configuration, or Grace ids.
     let private getOwnerOrganizationRepository (graceIds: GraceIds) =
         task {
             let ownerParameters =
@@ -540,6 +575,7 @@ module Connect =
             | (_, _, Error error) -> return Error error
         }
 
+    /// Reads branch for connect from ParseResult, local configuration, or Grace ids.
     let private getBranchForConnect
         (parseResult: ParseResult)
         (graceIds: GraceIds)
@@ -589,6 +625,7 @@ module Connect =
                 | Error error -> Error error
         }
 
+    /// Builds command objects or parameters for execution.
     let private buildFileVersionsByRelativePath (fileVersions: FileVersion array) =
         let lookup = Dictionary<RelativePath, FileVersion>(fileVersions.Length, StringComparer.OrdinalIgnoreCase)
 
@@ -597,6 +634,7 @@ module Connect =
 
         lookup
 
+    /// Writes human line data through the CLI output contract.
     let private writeHumanLine (parseResult: ParseResult) text =
         if
             not (parseResult |> json)
@@ -604,6 +642,7 @@ module Connect =
         then
             AnsiConsole.MarkupLine text
 
+    /// Converts command data into the required shape.
     let private toConnectDto
         (ownerDto: OwnerDto)
         (organizationDto: OrganizationDto)
@@ -625,6 +664,7 @@ module Connect =
             RetrievedDefaultBranch = retrievedDefaultBranch
         }
 
+    /// Coordinates extract zip entries behavior for this CLI command path.
     let private extractZipEntries
         (parseResult: ParseResult)
         (fileVersionsByRelativePath: Dictionary<RelativePath, FileVersion>)
@@ -668,6 +708,7 @@ module Connect =
                         if writeWorkingFile then entry.ExtractToFile(fileInfo.FullName, true)
                         if writeObjectFile then entry.ExtractToFile(objectFileInfo.FullName, true)
                     else
+                        /// Coordinates uncompress and write to file behavior for this CLI command path.
                         let uncompressAndWriteToFile (zipEntry: ZipArchiveEntry) (fileInfo: FileInfo) =
                             use entryStream = zipEntry.Open()
                             use fileStream = fileInfo.Create()
@@ -687,6 +728,7 @@ module Connect =
 
         writeHumanLine parseResult $"[{Colors.Important}]Finished writing files to disk.[/]"
 
+    /// Coordinates retrieve default branch and write behavior for this CLI command path.
     let private retrieveDefaultBranchAndWrite
         (parseResult: ParseResult)
         (graceIds: GraceIds)
@@ -777,6 +819,7 @@ module Connect =
                 | (_, Error error) -> return (Error error |> renderOutput parseResult)
         }
 
+    /// Routes the connect command from parsed options through validation, the SDK call, and result rendering.
     let private connectImpl (parseResult: ParseResult) : Task<int> =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -850,9 +893,11 @@ module Connect =
                         | Error error -> return (Error error |> renderOutput parseResult)
         }
 
+    /// Executes the connect command by binding ParseResult values to the SDK request and CLI output contract.
     type Connect() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous connect action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 try

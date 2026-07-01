@@ -6,6 +6,7 @@ open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open System
 
+/// Contains repository helpers.
 module Repository =
 
     /// Checks that the visibility value provided exists in the RepositoryVisibility type.

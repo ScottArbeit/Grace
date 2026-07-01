@@ -24,13 +24,16 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Groups shared helpers for branch server test helpers.
 module BranchServerTestHelpers =
+    /// Asserts ok for integration responses.
     let private assertOk (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
         }
 
+    /// Asserts bad request grace error for integration responses.
     let private assertBadRequestGraceError (expectedError: string) (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -40,6 +43,7 @@ module BranchServerTestHelpers =
             Assert.That(error.CorrelationId, Is.Not.Empty)
         }
 
+    /// Builds get branch parameters for route calls.
     let getBranchParameters (repositoryId: string) (branchId: string) =
         let parameters = Parameters.Branch.GetBranchParameters()
         parameters.OwnerId <- ownerId
@@ -49,6 +53,7 @@ module BranchServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Gets branch from the running test server.
     let getBranchAsync (repositoryId: string) (branchId: string) =
         task {
             let! response = Client.PostAsync("/branch/get", createJsonContent (getBranchParameters repositoryId branchId))
@@ -57,6 +62,7 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Waits for for branch to become observable in the test host.
     let waitForBranchAsync (repositoryId: string) (branchId: string) =
         task {
             let timeoutAt = DateTime.UtcNow.AddSeconds(15.0)
@@ -83,6 +89,7 @@ module BranchServerTestHelpers =
                 return Unchecked.defaultof<Branch.BranchDto>
         }
 
+    /// Builds a deterministic branch for integration setup fixture for the server integration branch assertions.
     let createBranchAsync (repositoryId: string) (parentBranch: Branch.BranchDto) (branchName: string) =
         task {
             let branchId = $"{Guid.NewGuid()}"
@@ -111,6 +118,7 @@ module BranchServerTestHelpers =
             return! waitForBranchAsync repositoryId branchId
         }
 
+    /// Gets repository branches from the running test server.
     let getRepositoryBranchesAsync (repositoryId: string) =
         task {
             let parameters = Parameters.Repository.GetBranchesParameters()
@@ -126,6 +134,7 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Saves branch through the branch test routes.
     let saveBranchAsync (repositoryId: string) (branch: Branch.BranchDto) =
         task {
             let parameters = Parameters.Branch.CreateReferenceParameters()
@@ -148,6 +157,7 @@ module BranchServerTestHelpers =
             return returnValue
         }
 
+    /// Gets branch references from the running test server.
     let getBranchReferencesAsync (repositoryId: string) (branchId: string) =
         task {
             let parameters = Parameters.Branch.GetReferencesParameters()
@@ -164,6 +174,7 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Gets branch version from the running test server.
     let getBranchVersionAsync (repositoryId: string) (branchId: string) =
         task {
             let parameters = Parameters.Branch.GetBranchVersionParameters()
@@ -179,12 +190,15 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Defines sHA256 hex behavior for the surrounding tests used by the server integration branch scenario.
     let sha256Hex (bytes: byte array) =
         SHA256.HashData(bytes)
         |> fun hash -> byteArrayToString (hash.AsSpan())
 
+    /// Defines bLAKE3 hex behavior for the surrounding tests used by the server integration branch scenario.
     let blake3Hex (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
 
+    /// Builds a deterministic root directory version for integration setup fixture for the server integration branch assertions.
     let createRootDirectoryVersion (repositoryId: string) (fileVersion: FileVersion) =
         let entries =
             [|
@@ -206,6 +220,7 @@ module BranchServerTestHelpers =
             (List<FileVersion>([ fileVersion ]))
             fileVersion.Size
 
+    /// Builds a deterministic directory version with file for integration setup fixture for the server integration branch assertions.
     let createDirectoryVersionWithFile (repositoryId: string) (relativePath: RelativePath) (fileVersion: FileVersion) =
         let entries =
             [|
@@ -227,6 +242,7 @@ module BranchServerTestHelpers =
             (List<FileVersion>([ fileVersion ]))
             fileVersion.Size
 
+    /// Normalizes d directory size for hash for stable assertions.
     let private normalizedDirectorySizeForHash (directoryVersion: Grace.Types.Common.DirectoryVersion) =
         if directoryVersion.Size = Constants.InitialDirectorySize then
             0L
@@ -270,6 +286,7 @@ module BranchServerTestHelpers =
             (List<FileVersion>())
             Constants.InitialDirectorySize
 
+    /// Defines gzip bytes behavior for the surrounding tests used by the server integration branch scenario.
     let private gzipBytes (bytes: byte array) =
         use compressed = new MemoryStream()
         use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
@@ -277,6 +294,7 @@ module BranchServerTestHelpers =
         gzipStream.Dispose()
         compressed.ToArray()
 
+    /// Uploads file to object storage through storage test infrastructure.
     let uploadFileToObjectStorageAsync repositoryId (payload: byte array) (fileVersion: FileVersion) =
         task {
             let parameters = Parameters.Storage.GetUploadMetadataForFilesParameters()
@@ -301,6 +319,7 @@ module BranchServerTestHelpers =
             Assert.That(response.GetRawResponse().Status, Is.EqualTo(int HttpStatusCode.Created))
         }
 
+    /// Saves directory version through the branch test routes.
     let private saveDirectoryVersionAsync repositoryId (directoryVersion: Grace.Types.Common.DirectoryVersion) =
         task {
             let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
@@ -314,6 +333,7 @@ module BranchServerTestHelpers =
             do! assertOk response
         }
 
+    /// Saves directory versions through the branch test routes.
     let saveDirectoryVersionsAsync repositoryId (directoryVersions: Grace.Types.Common.DirectoryVersion seq) =
         task {
             let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
@@ -329,6 +349,7 @@ module BranchServerTestHelpers =
             do! assertOk response
         }
 
+    /// Saves reference response through the branch test routes.
     let saveReferenceResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
         task {
             let parameters = Parameters.Branch.CreateReferenceParameters()
@@ -344,6 +365,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/save", createJsonContent parameters)
         }
 
+    /// Defines assign reference response behavior for the surrounding tests used by the server integration branch scenario.
     let assignReferenceResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
         task {
             let parameters = Parameters.Branch.AssignParameters()
@@ -359,6 +381,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/assign", createJsonContent parameters)
         }
 
+    /// Saves reference by BLAKE3 response through the branch test routes.
     let saveReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId blake3Hash =
         task {
             let parameters = Parameters.Branch.CreateReferenceParameters()
@@ -374,6 +397,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/save", createJsonContent parameters)
         }
 
+    /// Saves reference by SHA and BLAKE3 response through the branch test routes.
     let saveReferenceByShaAndBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
         task {
             let parameters = Parameters.Branch.CreateReferenceParameters()
@@ -389,6 +413,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/save", createJsonContent parameters)
         }
 
+    /// Builds a deterministic reference by BLAKE3 response for integration setup fixture for the server integration branch assertions.
     let createReferenceByBlake3ResponseAsync (endpoint: string) repositoryId (branch: Branch.BranchDto) blake3Hash =
         task {
             let parameters = Parameters.Branch.CreateReferenceParameters()
@@ -403,6 +428,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync(endpoint, createJsonContent parameters)
         }
 
+    /// Defines assign reference by BLAKE3 response behavior for the surrounding tests used by the server integration branch scenario.
     let assignReferenceByBlake3ResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId blake3Hash =
         task {
             let parameters = Parameters.Branch.AssignParameters()
@@ -418,6 +444,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/assign", createJsonContent parameters)
         }
 
+    /// Lists contents by SHA and BLAKE3 hash response from the running test server.
     let listContentsByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
         task {
             let parameters = Parameters.Branch.ListContentsParameters()
@@ -432,6 +459,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/listContents", createJsonContent parameters)
         }
 
+    /// Gets version by SHA and BLAKE3 hash response from the running test server.
     let getVersionByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
         task {
             let parameters = Parameters.Branch.GetBranchVersionParameters()
@@ -446,6 +474,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/getVersion", createJsonContent parameters)
         }
 
+    /// Gets recursive size by SHA256 hash response from the running test server.
     let getRecursiveSizeBySha256HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash =
         task {
             let parameters = Parameters.Branch.ListContentsParameters()
@@ -459,6 +488,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
         }
 
+    /// Gets recursive size by BLAKE3 hash response from the running test server.
     let getRecursiveSizeByBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) blake3Hash =
         task {
             let parameters = Parameters.Branch.ListContentsParameters()
@@ -472,6 +502,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
         }
 
+    /// Gets recursive size by SHA and BLAKE3 hash response from the running test server.
     let getRecursiveSizeByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
         task {
             let parameters = Parameters.Branch.ListContentsParameters()
@@ -486,6 +517,7 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
         }
 
+    /// Enables assign for branch route tests.
     let enableAssignAsync repositoryId (branch: Branch.BranchDto) =
         task {
             let parameters = Parameters.Branch.EnableFeatureParameters()
@@ -500,6 +532,7 @@ module BranchServerTestHelpers =
             do! assertOk response
         }
 
+    /// Enables commit for branch route tests.
     let enableCommitAsync repositoryId (branch: Branch.BranchDto) =
         task {
             let parameters = Parameters.Branch.EnableFeatureParameters()
@@ -514,6 +547,7 @@ module BranchServerTestHelpers =
             do! assertOk response
         }
 
+    /// Enables promotion for branch route tests.
     let enablePromotionAsync repositoryId (branch: Branch.BranchDto) =
         task {
             let parameters = Parameters.Branch.EnableFeatureParameters()
@@ -528,6 +562,7 @@ module BranchServerTestHelpers =
             do! assertOk response
         }
 
+    /// Saves branch reference through the branch test routes.
     let private saveBranchReferenceAsync repositoryId (branch: Branch.BranchDto) (directoryVersion: Grace.Types.Common.DirectoryVersion) =
         task {
             let parameters = Parameters.Branch.CreateReferenceParameters()
@@ -544,6 +579,7 @@ module BranchServerTestHelpers =
             do! assertOk response
         }
 
+    /// Builds a deterministic annotatable reference for integration setup fixture for the server integration branch assertions.
     let createAnnotatableReferenceAsync repositoryId (parentBranch: Branch.BranchDto) =
         task {
             let! branch = createBranchAsync repositoryId parentBranch $"Annotate{Guid.NewGuid():N}"
@@ -576,19 +612,23 @@ module BranchServerTestHelpers =
                 if Directory.Exists(tempRoot) then Directory.Delete(tempRoot, true)
         }
 
+    /// Builds a deterministic dot root with child directory versions for integration setup fixture for the server integration branch assertions.
     let createDotRootWithChildDirectoryVersions repositoryId childRelativePath =
         let child = createDirectoryVersion (Guid.NewGuid()) repositoryId childRelativePath []
         let root = createDirectoryVersion (Guid.NewGuid()) repositoryId Constants.RootDirectoryPath [ child ]
         child, root
 
+    /// Builds a deterministic slash root directory version for integration setup fixture for the server integration branch assertions.
     let createSlashRootDirectoryVersion repositoryId = createDirectoryVersion (Guid.NewGuid()) repositoryId (RelativePath "/") []
 
+    /// Builds a deterministic dot root with child SHA prefix collision for integration setup fixture for the server integration branch assertions.
     let createDotRootWithChildShaPrefixCollision repositoryId childBasePath excludedRootHashes =
         let mutable collision = None
         let mutable attempt = 0
         let prefixLength = 3
 
         while collision.IsNone && attempt < 32768 do
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = createDotRootWithChildDirectoryVersions repositoryId $"{childBasePath}/{attempt}"
 
             let rootPrefix =
@@ -615,12 +655,14 @@ module BranchServerTestHelpers =
             Assert.Fail("Could not generate a root/child SHA prefix collision for the assign regression test.")
             Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
 
+    /// Builds a deterministic dot root with child BLAKE3 prefix collision for integration setup fixture for the server integration branch assertions.
     let createDotRootWithChildBlake3PrefixCollision repositoryId childBasePath excludedRootHashes =
         let mutable collision = None
         let mutable attempt = 0
         let prefixLength = 3
 
         while collision.IsNone && attempt < 32768 do
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = createDotRootWithChildDirectoryVersions repositoryId $"{childBasePath}/{attempt}"
 
             let rootPrefix =
@@ -647,10 +689,12 @@ module BranchServerTestHelpers =
             Assert.Fail("Could not generate a root/child BLAKE3 prefix collision for the assign regression test.")
             Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
 
+    /// Builds a deterministic same BLAKE3 prefix root pair for integration setup fixture for the server integration branch assertions.
     let createSameBlake3PrefixRootPair repositoryId pathPrefix =
         let candidates =
             [|
                 for index in 0..512 ->
+                    /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
                     let child, root = createDotRootWithChildDirectoryVersions repositoryId $"{pathPrefix}/{index}"
                     child, root
             |]
@@ -659,7 +703,9 @@ module BranchServerTestHelpers =
         |> Array.groupBy (fun (_, root) -> (string root.Blake3Hash).Substring(0, 2))
         |> Array.tryPick (fun (sharedPrefix, matches) ->
             if matches.Length >= 2 then
+                /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
                 let firstChild, firstRoot = matches[0]
+                /// Defines second child behavior for the surrounding tests used by the server integration branch scenario.
                 let secondChild, secondRoot = matches[1]
                 Some(firstChild, firstRoot, secondChild, secondRoot, sharedPrefix)
             else
@@ -670,6 +716,7 @@ module BranchServerTestHelpers =
                 Assert.Fail("Could not generate same-prefix BLAKE3 root DirectoryVersions for branch route tests.")
                 Unchecked.defaultof<Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * Grace.Types.Common.DirectoryVersion * string>
 
+    /// Defines shortest unique prefix behavior for the surrounding tests used by the server integration branch scenario.
     let shortestUniquePrefix (selected: Sha256Hash) (others: Sha256Hash seq) =
         let selectedHash = string selected
         let otherHashes = others |> Seq.map string |> Seq.toArray
@@ -682,6 +729,7 @@ module BranchServerTestHelpers =
 
         selectedHash.Substring(0, prefixLength)
 
+    /// Defines shortest unique BLAKE3 prefix behavior for the surrounding tests used by the server integration branch scenario.
     let shortestUniqueBlake3Prefix (selected: Blake3Hash) (others: Blake3Hash seq) =
         let selectedHash = string selected
         let otherHashes = others |> Seq.map string |> Seq.toArray
@@ -694,6 +742,7 @@ module BranchServerTestHelpers =
 
         selectedHash.Substring(0, prefixLength)
 
+    /// Builds a deterministic annotatable reference with content for integration setup fixture for the server integration branch assertions.
     let createAnnotatableReferenceWithContentAsync repositoryId (branch: Branch.BranchDto) relativePath (content: string) =
         task {
             let contentBytes = Encoding.UTF8.GetBytes(content)
@@ -712,6 +761,7 @@ module BranchServerTestHelpers =
             return savedBranch, fileVersion, savedBranch.LatestSave.ReferenceId
         }
 
+    /// Defines promote latest save behavior for the surrounding tests used by the server integration branch scenario.
     let promoteLatestSaveAsync repositoryId (branch: Branch.BranchDto) =
         task {
             let enableParameters = Parameters.Branch.EnableFeatureParameters()
@@ -740,6 +790,7 @@ module BranchServerTestHelpers =
             return! getBranchAsync repositoryId $"{branch.BranchId}"
         }
 
+    /// Defines rebase branch behavior for the surrounding tests used by the server integration branch scenario.
     let rebaseBranchAsync repositoryId (branch: Branch.BranchDto) basedOnReferenceId =
         task {
             let parameters = Parameters.Branch.RebaseParameters()
@@ -755,6 +806,7 @@ module BranchServerTestHelpers =
             return! getBranchAsync repositoryId $"{branch.BranchId}"
         }
 
+    /// Builds a deterministic personal access token for integration setup fixture for the server integration branch assertions.
     let private createPersonalAccessTokenAsync () =
         task {
             let parameters = Parameters.Auth.CreatePersonalAccessTokenParameters()
@@ -767,6 +819,7 @@ module BranchServerTestHelpers =
             return returnValue.ReturnValue.Token
         }
 
+    /// Defines configure SDK for server behavior for the surrounding tests used by the server integration branch scenario.
     let configureSdkForServerAsync () =
         task {
             let configuration = Current()
@@ -777,6 +830,7 @@ module BranchServerTestHelpers =
             Grace.SDK.Auth.setTokenProvider (fun () -> task { return Some token })
         }
 
+    /// Gets first annotatable file from the running test server.
     let getFirstAnnotatableFileAsync (repositoryId: string) (branch: Branch.BranchDto) =
         task {
             let parameters = Parameters.Branch.ListContentsParameters()
@@ -805,6 +859,7 @@ module BranchServerTestHelpers =
                 return Unchecked.defaultof<FileVersion>
         }
 
+    /// Builds annotate parameters for route calls.
     let annotateParameters (repositoryId: string) (branch: Branch.BranchDto) (fileVersion: FileVersion) =
         let parameters = Parameters.Branch.AnnotateParameters()
         parameters.OwnerId <- ownerId
@@ -828,6 +883,7 @@ module BranchServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Asserts branch matches for integration responses.
     let assertBranchMatches (expectedRepositoryId: string) (expectedBranchId: string) (expectedBranchName: string) (branch: Branch.BranchDto) =
         Assert.That(branch.RepositoryId, Is.EqualTo(Guid.Parse(expectedRepositoryId)))
         Assert.That(branch.BranchId, Is.EqualTo(Guid.Parse(expectedBranchId)))
@@ -836,6 +892,7 @@ module BranchServerTestHelpers =
         Assert.That(branch.OrganizationId, Is.EqualTo(Guid.Parse(organizationId)))
         Assert.That(branch.BasedOn.ReferenceId, Is.Not.EqualTo(Guid.Empty))
 
+    /// Asserts branch reference shape for integration responses.
     let assertBranchReferenceShape (expectedRepositoryId: string) (expectedBranchId: string) (reference: Reference.ReferenceDto) =
         Assert.That(reference.RepositoryId, Is.EqualTo(Guid.Parse(expectedRepositoryId)))
         Assert.That(reference.BranchId, Is.EqualTo(Guid.Parse(expectedBranchId)))
@@ -843,6 +900,7 @@ module BranchServerTestHelpers =
         Assert.That(reference.DirectoryId, Is.Not.EqualTo(Guid.Empty))
         Assert.That($"{reference.Sha256Hash}", Is.Not.Empty)
 
+    /// Asserts missing repository for integration responses.
     let assertMissingRepositoryAsync () =
         task {
             let parameters = getBranchParameters $"{Guid.NewGuid()}" repositoryDefaultBranchIds[0]
@@ -851,6 +909,7 @@ module BranchServerTestHelpers =
             do! assertBadRequestGraceError expected response
         }
 
+    /// Asserts missing branch for integration responses.
     let assertMissingBranchAsync (repositoryId: string) =
         task {
             let parameters = getBranchParameters repositoryId $"{Guid.NewGuid()}"
@@ -859,9 +918,11 @@ module BranchServerTestHelpers =
             do! assertBadRequestGraceError expected response
         }
 
+/// Covers branch server scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type BranchServer() =
 
+    /// Verifies the create get list reference and version routes round trip branch identity scenario.
     [<Test>]
     member _.CreateGetListReferenceAndVersionRoutesRoundTripBranchIdentity() =
         task {
@@ -907,6 +968,7 @@ type BranchServer() =
             do! BranchServerTestHelpers.assertMissingBranchAsync repositoryId
         }
 
+    /// Verifies the save with directory version ID and SHA prefix hydrates full root hashes scenario.
     [<Test>]
     member _.SaveWithDirectoryVersionIdAndShaPrefixHydratesFullRootHashes() =
         task {
@@ -914,6 +976,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"RootPrefix{Guid.NewGuid():N}"
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"prefix/{Guid.NewGuid():N}"
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
@@ -929,6 +992,7 @@ type BranchServer() =
             Assert.That(savedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
         }
 
+    /// Verifies the save with SHA only slash root hydrates full root hashes scenario.
     [<Test>]
     member _.SaveWithShaOnlySlashRootHydratesFullRootHashes() =
         task {
@@ -951,6 +1015,7 @@ type BranchServer() =
             Assert.That(savedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
         }
 
+    /// Verifies the save with BLAKE3 full and unique prefix hydrates full root hashes scenario.
     [<Test>]
     member _.SaveWithBlake3FullAndUniquePrefixHydratesFullRootHashes() =
         task {
@@ -959,6 +1024,7 @@ type BranchServer() =
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! fullHashBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"Blake3Full{Guid.NewGuid():N}"
             let! prefixBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"Blake3Prefix{Guid.NewGuid():N}"
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"blake3-prefix/{Guid.NewGuid():N}"
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
@@ -1004,6 +1070,7 @@ type BranchServer() =
             Assert.That(prefixSavedBranch.LatestSave.Blake3Hash, Is.EqualTo(root.Blake3Hash))
         }
 
+    /// Verifies the save with mismatched SHA and BLAKE3 hash only locators fails before mutation scenario.
     [<Test>]
     member _.SaveWithMismatchedShaAndBlake3HashOnlyLocatorsFailsBeforeMutation() =
         task {
@@ -1012,6 +1079,7 @@ type BranchServer() =
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"MixedHashMismatch{Guid.NewGuid():N}"
 
+            /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, _sharedPrefix =
                 BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"mixed-hash-mismatch/{Guid.NewGuid():N}"
 
@@ -1036,6 +1104,7 @@ type BranchServer() =
             Assert.That(afterBranch.LatestSave.DirectoryId, Is.EqualTo(branch.LatestSave.DirectoryId))
         }
 
+    /// Verifies the assign with SHA only root prefix ignores newer child directory match scenario.
     [<Test>]
     member _.AssignWithShaOnlyRootPrefixIgnoresNewerChildDirectoryMatch() =
         task {
@@ -1044,6 +1113,7 @@ type BranchServer() =
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignRootPrefix{Guid.NewGuid():N}"
 
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root, sharedPrefix =
                 BranchServerTestHelpers.createDotRootWithChildShaPrefixCollision
                     repositoryId
@@ -1063,6 +1133,7 @@ type BranchServer() =
             Assert.That(assignedBranch.LatestPromotion.Blake3Hash, Is.EqualTo(root.Blake3Hash))
         }
 
+    /// Verifies the assign with BLAKE3 only root prefix ignores newer child directory match scenario.
     [<Test>]
     member _.AssignWithBlake3OnlyRootPrefixIgnoresNewerChildDirectoryMatch() =
         task {
@@ -1071,6 +1142,7 @@ type BranchServer() =
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignBlake3Prefix{Guid.NewGuid():N}"
 
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root, sharedPrefix =
                 BranchServerTestHelpers.createDotRootWithChildBlake3PrefixCollision
                     repositoryId
@@ -1090,6 +1162,7 @@ type BranchServer() =
             Assert.That(assignedBranch.LatestPromotion.Blake3Hash, Is.EqualTo(root.Blake3Hash))
         }
 
+    /// Verifies the assign with directory version ID and mismatched BLAKE3 fails before mutation scenario.
     [<Test>]
     member _.AssignWithDirectoryVersionIdAndMismatchedBlake3FailsBeforeMutation() =
         task {
@@ -1097,6 +1170,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignMismatchedBlake3{Guid.NewGuid():N}"
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"assign-mismatch/{Guid.NewGuid():N}"
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
@@ -1121,6 +1195,7 @@ type BranchServer() =
             Assert.That(afterBranch.LatestPromotion.DirectoryId, Is.EqualTo(beforeBranch.LatestPromotion.DirectoryId))
         }
 
+    /// Verifies the assign with malformed BLAKE3 locator returns validation error before mutation scenario.
     [<Test>]
     member _.AssignWithMalformedBlake3LocatorReturnsValidationErrorBeforeMutation() =
         task {
@@ -1143,6 +1218,7 @@ type BranchServer() =
             Assert.That(afterBranch.LatestPromotion.DirectoryId, Is.EqualTo(branch.LatestPromotion.DirectoryId))
         }
 
+    /// Verifies the assign with malformed SHA locator returns validation error before lookup and mutation scenario.
     [<Test>]
     member _.AssignWithMalformedShaLocatorReturnsValidationErrorBeforeLookupAndMutation() =
         task {
@@ -1150,6 +1226,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignMalformedSha{Guid.NewGuid():N}"
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"assign-malformed-sha/{Guid.NewGuid():N}"
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
@@ -1166,6 +1243,7 @@ type BranchServer() =
             Assert.That(afterBranch.LatestPromotion.DirectoryId, Is.EqualTo(branch.LatestPromotion.DirectoryId))
         }
 
+    /// Verifies the save with malformed zero and ambiguous BLAKE3 locators fails before mutation scenario.
     [<Test>]
     member _.SaveWithMalformedZeroAndAmbiguousBlake3LocatorsFailsBeforeMutation() =
         task {
@@ -1176,6 +1254,7 @@ type BranchServer() =
             let! zeroBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ZeroBlake3{Guid.NewGuid():N}"
             let! ambiguousBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousBlake3{Guid.NewGuid():N}"
 
+            /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
                 BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"ambiguous-branch-blake3/{Guid.NewGuid():N}"
 
@@ -1189,6 +1268,7 @@ type BranchServer() =
                         secondRoot
                     ]
 
+            /// Asserts latest save unchanged for integration responses.
             let assertLatestSaveUnchanged repositoryId (beforeBranch: Branch.BranchDto) =
                 task {
                     let! afterBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{beforeBranch.BranchId}"
@@ -1224,6 +1304,7 @@ type BranchServer() =
             do! assertLatestSaveUnchanged repositoryId ambiguousBranch
         }
 
+    /// Verifies the reference creation routes reject ambiguous BLAKE3 root prefix before mutation scenario.
     [<Test>]
     member _.ReferenceCreationRoutesRejectAmbiguousBlake3RootPrefixBeforeMutation() =
         task {
@@ -1235,6 +1316,7 @@ type BranchServer() =
             let! promoteBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousPromote{Guid.NewGuid():N}"
             let! assignBranch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousAssign{Guid.NewGuid():N}"
 
+            /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
                 BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"ambiguous-reference-create/{Guid.NewGuid():N}"
 
@@ -1252,6 +1334,7 @@ type BranchServer() =
             do! BranchServerTestHelpers.enablePromotionAsync repositoryId promoteBranch
             do! BranchServerTestHelpers.enableAssignAsync repositoryId assignBranch
 
+            /// Asserts ambiguous response for integration responses.
             let assertAmbiguousResponse (response: HttpResponseMessage) =
                 task {
                     let! body = response.Content.ReadAsStringAsync()
@@ -1295,6 +1378,7 @@ type BranchServer() =
             Assert.That(afterAssignBranch.LatestPromotion.DirectoryId, Is.EqualTo(assignBranch.LatestPromotion.DirectoryId))
         }
 
+    /// Verifies the save with ambiguous BLAKE3 prefix and matching SHA creates reference for paired root scenario.
     [<Test>]
     member _.SaveWithAmbiguousBlake3PrefixAndMatchingShaCreatesReferenceForPairedRoot() =
         task {
@@ -1303,6 +1387,7 @@ type BranchServer() =
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"PairedHashSave{Guid.NewGuid():N}"
 
+            /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
                 BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"paired-hash-save/{Guid.NewGuid():N}"
 
@@ -1327,6 +1412,7 @@ type BranchServer() =
             Assert.That(afterBranch.LatestSave.Blake3Hash, Is.EqualTo(firstRoot.Blake3Hash))
         }
 
+    /// Verifies the branch hash queries reject ambiguous BLAKE3 prefix instead of returning empty success scenario.
     [<Test>]
     member _.BranchHashQueriesRejectAmbiguousBlake3PrefixInsteadOfReturningEmptySuccess() =
         task {
@@ -1335,6 +1421,7 @@ type BranchServer() =
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AmbiguousBranchHashQuery{Guid.NewGuid():N}"
 
+            /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
                 BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"ambiguous-branch-query/{Guid.NewGuid():N}"
 
@@ -1348,6 +1435,7 @@ type BranchServer() =
                         secondRoot
                     ]
 
+            /// Asserts ambiguous for integration responses.
             let assertAmbiguous (response: HttpResponseMessage) =
                 task {
                     let! body = response.Content.ReadAsStringAsync()
@@ -1370,6 +1458,7 @@ type BranchServer() =
             do! assertAmbiguous recursiveSizeResponse
         }
 
+    /// Verifies the save with SHA only child directory prefix does not create root reference scenario.
     [<Test>]
     member _.SaveWithShaOnlyChildDirectoryPrefixDoesNotCreateRootReference() =
         task {
@@ -1377,6 +1466,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ChildPrefix{Guid.NewGuid():N}"
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"child-prefix/{Guid.NewGuid():N}"
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
@@ -1399,6 +1489,7 @@ type BranchServer() =
             Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion does not exist."))
         }
 
+    /// Verifies the save with BLAKE3 child directory prefix does not create root reference scenario.
     [<Test>]
     member _.SaveWithBlake3ChildDirectoryPrefixDoesNotCreateRootReference() =
         task {
@@ -1406,6 +1497,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"Blake3ChildPrefix{Guid.NewGuid():N}"
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"blake3-child-prefix/{Guid.NewGuid():N}"
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
@@ -1432,6 +1524,7 @@ type BranchServer() =
             Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion does not exist."))
         }
 
+    /// Verifies the get recursive size with child directory BLAKE3 matches SHA lookup scenario.
     [<Test>]
     member _.GetRecursiveSizeWithChildDirectoryBlake3MatchesShaLookup() =
         task {
@@ -1478,6 +1571,7 @@ type BranchServer() =
             Assert.That(blake3Size, Is.Not.EqualTo(Constants.InitialDirectorySize))
         }
 
+    /// Verifies the hash read queries reject inconsistent SHA and BLAKE3 root evidence scenario.
     [<Test>]
     member _.HashReadQueriesRejectInconsistentShaAndBlake3RootEvidence() =
         task {
@@ -1485,6 +1579,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
 
+            /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, _sharedPrefix =
                 BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"read-mixed-hash-mismatch/{Guid.NewGuid():N}"
 
@@ -1535,6 +1630,7 @@ type BranchServer() =
             Assert.That(directoryIds, Is.Empty)
         }
 
+    /// Verifies the hash read queries use SHA to disambiguate shared BLAKE3 root prefix scenario.
     [<Test>]
     member _.HashReadQueriesUseShaToDisambiguateSharedBlake3RootPrefix() =
         task {
@@ -1542,6 +1638,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
 
+            /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
                 BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"read-paired-hash/{Guid.NewGuid():N}"
 
@@ -1584,6 +1681,7 @@ type BranchServer() =
             Assert.That(directoryIds, Does.Contain(firstRoot.DirectoryVersionId))
         }
 
+    /// Verifies the save with child directory version ID and SHA prefix does not create root reference scenario.
     [<Test>]
     member _.SaveWithChildDirectoryVersionIdAndShaPrefixDoesNotCreateRootReference() =
         task {
@@ -1591,6 +1689,7 @@ type BranchServer() =
             let branchId = repositoryDefaultBranchIds[0]
             let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ChildIdPrefix{Guid.NewGuid():N}"
+            /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
             let child, root = BranchServerTestHelpers.createDotRootWithChildDirectoryVersions repositoryId $"child-id-prefix/{Guid.NewGuid():N}"
 
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
@@ -1602,6 +1701,7 @@ type BranchServer() =
             Assert.That(responseBody, Does.Contain("Reference root DirectoryVersion must use the repository root path."))
         }
 
+    /// Verifies the annotate route and SDK return envelope for server known reference scenario.
     [<Test>]
     member _.AnnotateRouteAndSdkReturnEnvelopeForServerKnownReference() =
         task {
@@ -1638,6 +1738,7 @@ type BranchServer() =
                 Grace.SDK.Auth.clearTokenProvider ()
         }
 
+    /// Verifies the annotate route returns grace error for bad parameters scenario.
     [<Test>]
     member _.AnnotateRouteReturnsGraceErrorForBadParameters() =
         task {
@@ -1657,6 +1758,7 @@ type BranchServer() =
             Assert.That(error.CorrelationId, Is.Not.Empty)
         }
 
+    /// Verifies the annotate route returns grace error for null path scenario.
     [<Test>]
     member _.AnnotateRouteReturnsGraceErrorForNullPath() =
         task {
@@ -1676,6 +1778,7 @@ type BranchServer() =
             Assert.That(error.CorrelationId, Is.Not.Empty)
         }
 
+    /// Verifies the annotate route returns grace error for null body scenario.
     [<Test>]
     member _.AnnotateRouteReturnsGraceErrorForNullBody() =
         task {
@@ -1690,6 +1793,7 @@ type BranchServer() =
             Assert.That(error.CorrelationId, Is.Not.Empty)
         }
 
+    /// Verifies the annotate route returns grace error for null reference types scenario.
     [<Test>]
     member _.AnnotateRouteReturnsGraceErrorForNullReferenceTypes() =
         task {
@@ -1730,6 +1834,7 @@ type BranchServer() =
             Assert.That(error.CorrelationId, Is.Not.Empty)
         }
 
+    /// Verifies the annotate older target reference includes local ancestors before newest references scenario.
     [<Test>]
     member _.AnnotateOlderTargetReferenceIncludesLocalAncestorsBeforeNewestReferences() =
         task {
@@ -1775,6 +1880,7 @@ type BranchServer() =
             )
         }
 
+    /// Verifies the annotate child rebase fetches parent history before based on promotion scenario.
     [<Test>]
     member _.AnnotateChildRebaseFetchesParentHistoryBeforeBasedOnPromotion() =
         task {

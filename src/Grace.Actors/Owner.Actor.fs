@@ -29,8 +29,10 @@ open System.Runtime.Serialization
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for owner keys, proxies, state, or workflow transitions.
 module Owner =
 
+    /// Implements the Orleans grain for owner actor.
     type OwnerActor([<PersistentState(StateName.Owner, Constants.GraceActorStorage)>] state: IPersistentState<List<OwnerEvent>>) =
         inherit Grain()
 
@@ -40,6 +42,7 @@ module Owner =
 
         let mutable ownerDto = OwnerDto.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -53,6 +56,7 @@ module Owner =
 
             Task.CompletedTask
 
+        /// Applies one persisted Owner event to this activation's in-memory state.
         member private this.ApplyEvent ownerEvent =
             task {
                 try
@@ -224,18 +228,22 @@ module Owner =
                 }
 
         interface IOwnerActor with
+            /// Reports whether this Owner actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
                 ownerDto.UpdatedAt.IsSome |> returnTask
 
+            /// Reports whether this Owner actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
                 ownerDto.DeletedAt.IsSome |> returnTask
 
+            /// Returns the current Owner actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 ownerDto |> returnTask
 
+            /// Coordinates organization exists logic for the Owner actor.
             member this.OrganizationExists organizationName correlationId =
                 task {
                     this.correlationId <- correlationId
@@ -246,6 +254,7 @@ module Owner =
                     | None -> return false
                 }
 
+            /// Returns list organizations data from the Owner actor state or related storage.
             member this.ListOrganizations correlationId =
                 task {
                     this.correlationId <- correlationId
@@ -255,7 +264,9 @@ module Owner =
                     return dict :> IReadOnlyDictionary<OrganizationId, OrganizationName>
                 }
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid command (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
@@ -272,6 +283,7 @@ module Owner =
                                 | None -> return Error(GraceError.Create (getErrorMessage OwnerError.OwnerIdDoesNotExist) metadata.CorrelationId)
                     }
 
+                /// Runs Owner command decisions, applies emitted events, and persists the result.
                 let processCommand (command: OwnerCommand) (metadata: EventMetadata) =
                     task {
                         try

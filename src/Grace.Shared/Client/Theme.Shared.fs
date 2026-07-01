@@ -7,8 +7,10 @@ open System.Collections.Generic
 // A few comments on Theme:
 // It's "optimized" for being able to add #RRGGBB values to the configuration easily.
 
+/// Contains theme helpers.
 module Theme =
 
+    /// Contains display color helpers.
     module DisplayColor =
         let Added = "added"
         let Changed = "changed"
@@ -19,16 +21,20 @@ module Theme =
         let Important = "important"
         let Verbose = "verbose"
 
+    /// Formats format.
     let format (color: Color) = $"#{color.R:X2}{color.G:X2}{color.B:X2}"
 
+    /// Represents theme.
     type Theme =
         {
             Name: string
             DisplayColorOptions: IReadOnlyDictionary<string, string>
         }
 
+        /// Returns the display representation for this value.
         override this.ToString() = $"{this.Name}"
 
+        /// Builds the contract value from required caller inputs and generated defaults used by this surface.
         static member Create (name: string) (colors: Color []) =
             let displayColorOptions = Dictionary<string, string>()
             displayColorOptions.Add(DisplayColor.Added, format colors[0])

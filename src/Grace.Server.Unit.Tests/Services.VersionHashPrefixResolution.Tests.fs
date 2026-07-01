@@ -5,6 +5,7 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 
+/// Covers hash Candidate behavior in no-Aspire server unit tests.
 type HashCandidate =
     {
         RepositoryId: RepositoryId
@@ -14,12 +15,14 @@ type HashCandidate =
         Blake3Hash: Blake3Hash
     }
 
+/// Covers services Version Hash Prefix Resolution behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ServicesVersionHashPrefixResolutionTests() =
     let repositoryId = Guid.Parse("11111111-3530-4444-8888-111111111111")
     let otherRepositoryId = Guid.Parse("22222222-3530-4444-8888-222222222222")
     let sharedDirectoryVersionId = Guid.Parse("33333333-3530-4444-8888-333333333333")
 
+    /// Builds candidate test data for the server unit services Version Hash Prefix Resolution scenarios in this file.
     let candidate index repositoryId directoryVersionId (sha256Hash: string) (blake3Hash: string) =
         {
             RepositoryId = repositoryId
@@ -36,6 +39,7 @@ type ServicesVersionHashPrefixResolutionTests() =
     let ambiguousBlake3 = "ba5e9999abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
     let unrelatedBlake3 = "cd5e9999abcdef0123456789abcdef0123456789abcdef0123456789abcdef01"
 
+    /// Verifies that sha256 Prefix Resolution Returns No Matches For Zero Scoped Candidates.
     [<Test>]
     member _.Sha256PrefixResolutionReturnsNoMatchesForZeroScopedCandidates() =
         let resolution =
@@ -48,6 +52,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.NoMatches -> Assert.Pass()
         | _ -> Assert.Fail($"Expected zero matches, got {resolution}.")
 
+    /// Verifies that sha256 Prefix Resolution Returns Unique Match For One Scoped Candidate.
     [<Test>]
     member _.Sha256PrefixResolutionReturnsUniqueMatchForOneScopedCandidate() =
         let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 "blake3-value"
@@ -63,6 +68,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.UniqueMatch actual -> Assert.That(actual.ReferenceId, Is.EqualTo(expected.ReferenceId))
         | _ -> Assert.Fail($"Expected one match, got {resolution}.")
 
+    /// Verifies that sha256 Prefix Resolution Returns Ambiguous Matches Instead Of First Match.
     [<Test>]
     member _.Sha256PrefixResolutionReturnsAmbiguousMatchesInsteadOfFirstMatch() =
         let first = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 "first-blake3"
@@ -93,6 +99,7 @@ type ServicesVersionHashPrefixResolutionTests() =
             )
         | _ -> Assert.Fail($"Expected ambiguous matches, got {resolution}.")
 
+    /// Verifies that option Compatibility Wrapper Only Returns Unique Matches.
     [<Test>]
     member _.OptionCompatibilityWrapperOnlyReturnsUniqueMatches() =
         let first = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 "first-blake3"
@@ -112,6 +119,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         Assert.That(zeroResult, Is.EqualTo(None))
         Assert.That(ambiguousResult, Is.EqualTo(None))
 
+    /// Verifies that exact Sha256 Resolution Still Rejects Multiple Version Graph Objects.
     [<Test>]
     member _.ExactSha256ResolutionStillRejectsMultipleVersionGraphObjects() =
         let first = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 "first-blake3"
@@ -125,6 +133,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.AmbiguousMatches matches -> Assert.That(matches, Has.Length.EqualTo(2))
         | _ -> Assert.Fail($"Expected exact-hash ambiguity, got {resolution}.")
 
+    /// Verifies that two Character Sha256 Prefix Uses Same Unique Rule Within Repository Scope.
     [<Test>]
     member _.TwoCharacterSha256PrefixUsesSameUniqueRuleWithinRepositoryScope() =
         let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 "first-blake3"
@@ -142,6 +151,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.UniqueMatch actual -> Assert.That(actual.ReferenceId, Is.EqualTo(expected.ReferenceId))
         | _ -> Assert.Fail($"Expected repository-scoped unique match, got {resolution}.")
 
+    /// Verifies that reference Scope Treats Multiple References To One Root As Ambiguous References.
     [<Test>]
     member _.ReferenceScopeTreatsMultipleReferencesToOneRootAsAmbiguousReferences() =
         let first = candidate 1 repositoryId sharedDirectoryVersionId uniqueSha256 "first-blake3"
@@ -163,6 +173,7 @@ type ServicesVersionHashPrefixResolutionTests() =
             )
         | _ -> Assert.Fail($"Expected reference-scope ambiguity, got {resolution}.")
 
+    /// Verifies that sha256 Resolution Does Not Mix Blake3 Namespace Matches.
     [<Test>]
     member _.Sha256ResolutionDoesNotMixBlake3NamespaceMatches() =
         let shaOnly = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 "cd-blake3"
@@ -176,6 +187,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.UniqueMatch actual -> Assert.That(actual.ReferenceId, Is.EqualTo(shaOnly.ReferenceId))
         | _ -> Assert.Fail($"Expected SHA-256-only match, got {resolution}.")
 
+    /// Verifies that blake3 Prefix Resolution Returns No Matches For Zero Scoped Candidates.
     [<Test>]
     member _.Blake3PrefixResolutionReturnsNoMatchesForZeroScopedCandidates() =
         let resolution =
@@ -188,6 +200,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.NoMatches -> Assert.Pass()
         | _ -> Assert.Fail($"Expected zero BLAKE3 matches, got {resolution}.")
 
+    /// Verifies that blake3 Full Hash And Unique Prefix Resolve Same Directory Version As Sha256.
     [<Test>]
     member _.Blake3FullHashAndUniquePrefixResolveSameDirectoryVersionAsSha256() =
         let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
@@ -219,6 +232,7 @@ type ServicesVersionHashPrefixResolutionTests() =
                 $"Expected SHA-256, full BLAKE3, and prefix BLAKE3 unique matches; got {shaResolution}, {blake3FullResolution}, {blake3PrefixResolution}."
             )
 
+    /// Verifies that blake3 Prefix Resolution Returns Ambiguous Matches Instead Of First Match.
     [<Test>]
     member _.Blake3PrefixResolutionReturnsAmbiguousMatchesInsteadOfFirstMatch() =
         let first = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
@@ -249,6 +263,7 @@ type ServicesVersionHashPrefixResolutionTests() =
             )
         | _ -> Assert.Fail($"Expected ambiguous BLAKE3 matches, got {resolution}.")
 
+    /// Verifies that two Character Blake3 Prefix Uses Repository Scope.
     [<Test>]
     member _.TwoCharacterBlake3PrefixUsesRepositoryScope() =
         let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
@@ -266,6 +281,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.UniqueMatch actual -> Assert.That(actual.DirectoryVersionId, Is.EqualTo(expected.DirectoryVersionId))
         | _ -> Assert.Fail($"Expected repository-scoped BLAKE3 unique match, got {resolution}.")
 
+    /// Verifies that legacy Directory Version Without Blake3 Hash Cannot Satisfy Blake3 Lookup.
     [<Test>]
     member _.LegacyDirectoryVersionWithoutBlake3HashCannotSatisfyBlake3Lookup() =
         let resolution =
@@ -279,6 +295,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.NoMatches -> Assert.Pass()
         | _ -> Assert.Fail($"Expected missing legacy BLAKE3 hash to be ignored, got {resolution}.")
 
+    /// Verifies that blake3 Resolution Does Not Mix Sha256 Namespace Matches.
     [<Test>]
     member _.Blake3ResolutionDoesNotMixSha256NamespaceMatches() =
         let shaOnly = candidate 1 repositoryId (Guid.NewGuid()) "ba5eba11abcdef0123456789abcdef0123456789abcdef0123456789abcdef01" unrelatedBlake3
@@ -292,6 +309,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.UniqueMatch actual -> Assert.That(actual.ReferenceId, Is.EqualTo(blake3Only.ReferenceId))
         | _ -> Assert.Fail($"Expected BLAKE3-only match, got {resolution}.")
 
+    /// Verifies that paired Hash Resolution Filters Ambiguous Blake3 Prefix By Sha256 Prefix.
     [<Test>]
     member _.PairedHashResolutionFiltersAmbiguousBlake3PrefixBySha256Prefix() =
         let expected = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3
@@ -305,6 +323,7 @@ type ServicesVersionHashPrefixResolutionTests() =
         | Services.UniqueMatch actual -> Assert.That(actual.DirectoryVersionId, Is.EqualTo(expected.DirectoryVersionId))
         | _ -> Assert.Fail($"Expected paired hashes to select the SHA-matching BLAKE3 candidate, got {resolution}.")
 
+    /// Verifies that paired Hash Resolution Keeps Ambiguity When Both Prefixes Match Multiple Versions.
     [<Test>]
     member _.PairedHashResolutionKeepsAmbiguityWhenBothPrefixesMatchMultipleVersions() =
         let first = candidate 1 repositoryId (Guid.NewGuid()) uniqueSha256 uniqueBlake3

@@ -9,6 +9,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Covers promotion Set Directory Hash behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type PromotionSetDirectoryHashTests() =
 
@@ -34,6 +35,7 @@ type PromotionSetDirectoryHashTests() =
             true
             lastWriteTimeUtc
 
+    /// Verifies that promotion Hash Child Directory Preserves Computed Size And Both Hashes In Parent Preimage.
     [<Test>]
     member _.PromotionHashChildDirectoryPreservesComputedSizeAndBothHashesInParentPreimage() =
         let childMetadata: PromotionSet.ComputedDirectoryMetadata =
@@ -85,6 +87,7 @@ type PromotionSetDirectoryHashTests() =
         Assert.That(actualSha256, Is.Not.EqualTo(zeroSizeRegression))
         Assert.That(actualBlake3, Is.Not.EqualTo(shaOnlyBlake3Regression))
 
+    /// Verifies that promotion File Equivalence Includes Blake3 When Both Files Have It.
     [<Test>]
     member _.PromotionFileEquivalenceIncludesBlake3WhenBothFilesHaveIt() =
         let sameSha256 = Sha256Hash "same-sha256"

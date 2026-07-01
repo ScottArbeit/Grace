@@ -11,15 +11,18 @@ open NodaTime
 open NUnit.Framework
 open System.Security.Claims
 
+/// Covers metadata Creation behavior in no-Aspire server unit tests.
 [<TestFixture>]
 type MetadataCreationTests() =
 
+    /// Verifies that create Context.
     member private _.CreateContext() =
         let context = DefaultHttpContext()
         context.Items[ Constants.CorrelationId ] <- "corr-server"
         context.User <- ClaimsPrincipal(ClaimsIdentity([| Claim(ClaimTypes.Name, "tester") |], "test"))
         context
 
+    /// Verifies that create Metadata maps Grace client headers to CLI client type.
     [<Test>]
     member this.``createMetadata maps Grace client headers to CLI client type``() =
         let context = this.CreateContext()
@@ -32,6 +35,7 @@ type MetadataCreationTests() =
         | Some (ClientType.CLI version) -> Assert.That(version, Is.EqualTo("0.1.2.3"))
         | other -> Assert.Fail($"Expected CLI client metadata, got {other}.")
 
+    /// Verifies that create Metadata leaves client type unset when headers are absent.
     [<Test>]
     member this.``createMetadata leaves client type unset when headers are absent``() =
         let context = this.CreateContext()
@@ -40,6 +44,7 @@ type MetadataCreationTests() =
 
         Assert.That(metadata.ClientType, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
 
+    /// Verifies that create Metadata leaves client type unset when CLI version header is missing.
     [<Test>]
     member this.``createMetadata leaves client type unset when CLI version header is missing``() =
         let context = this.CreateContext()
@@ -49,6 +54,7 @@ type MetadataCreationTests() =
 
         Assert.That(metadata.ClientType, Is.EqualTo(Microsoft.FSharp.Core.Option.None))
 
+    /// Verifies that create Metadata uses http principal when identity name is absent.
     [<Test>]
     member this.``createMetadata uses http principal when identity name is absent``() =
         let context = this.CreateContext()
@@ -58,6 +64,7 @@ type MetadataCreationTests() =
 
         Assert.That(metadata.Principal, Is.EqualTo("http"))
 
+    /// Verifies that storage upload session metadata preserves client type headers.
     [<Test>]
     member this.``storage upload session metadata preserves client type headers``() =
         let context = this.CreateContext()
@@ -75,11 +82,13 @@ type MetadataCreationTests() =
         | other -> Assert.Fail($"Expected CLI client metadata, got {other}.")
 
 
+/// Covers branch Annotation Server behavior in no-Aspire server unit tests.
 [<TestFixture>]
 type BranchAnnotationServerTests() =
 
     let branchId = System.Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
 
+    /// Builds reference test data for the server unit general scenarios in this file.
     let reference order referenceId =
         { ReferenceDto.Default with
             BranchId = branchId
@@ -89,6 +98,7 @@ type BranchAnnotationServerTests() =
             ReferenceType = ReferenceType.Save
         }
 
+    /// Verifies that try Get Based On Reference Id follows stored Based On links.
     [<Test>]
     member _.``tryGetBasedOnReferenceId follows stored BasedOn links``() =
         let basedOnReferenceId = System.Guid.Parse("11111111-1111-1111-1111-111111111111")
@@ -104,6 +114,7 @@ type BranchAnnotationServerTests() =
 
         Assert.That(Grace.Server.Branch.tryGetBasedOnReferenceId referenceDto, Is.EqualTo(Some basedOnReferenceId))
 
+    /// Verifies that ordered History Window preserves boundary link when local history is truncated.
     [<Test>]
     member _.``orderedHistoryWindow preserves boundary link when local history is truncated``() =
         let firstReferenceId = System.Guid.Parse("11111111-1111-1111-1111-111111111111")
@@ -133,6 +144,7 @@ type BranchAnnotationServerTests() =
                 Assert.That(historyWindow.SyntheticBasedOnByReferenceId[secondReferenceId], Is.EqualTo(firstReferenceId)))
         )
 
+    /// Verifies that effective History From Materialization Result turns ancestor materialization errors into boundaries.
     [<Test>]
     member _.``effectiveHistoryFromMaterializationResult turns ancestor materialization errors into boundaries``() =
         let targetReferenceId = System.Guid.Parse("11111111-1111-1111-1111-111111111111")
@@ -155,6 +167,7 @@ type BranchAnnotationServerTests() =
             Assert.That(document.Document.Content, Is.Empty)
             Assert.That(document.BasedOnReferenceId, Is.EqualTo(Some targetReferenceId))
 
+    /// Verifies that effective History From Materialization Result preserves target materialization errors.
     [<Test>]
     member _.``effectiveHistoryFromMaterializationResult preserves target materialization errors``() =
         let targetReferenceId = System.Guid.Parse("11111111-1111-1111-1111-111111111111")
@@ -167,6 +180,7 @@ type BranchAnnotationServerTests() =
         | Ok _ -> Assert.Fail("Target materialization error should stop annotation.")
         | Error error -> Assert.That(error.Error, Is.EqualTo(materializationError.Error))
 
+    /// Verifies that try Reserve Retained Annotation Bytes rejects content past total materialization budget.
     [<Test>]
     member _.``tryReserveRetainedAnnotationBytes rejects content past total materialization budget``() =
         let document = { SourceReference = AnnotationSourceReference.Default; Path = "src/App.fs"; Content = [| 1uy |] }

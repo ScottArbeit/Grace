@@ -9,6 +9,7 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Contains tests covering branch dto hash behavior.
 [<Parallelizable(ParallelScope.All)>]
 type BranchDtoHashTests() =
 
@@ -29,6 +30,7 @@ type BranchDtoHashTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Exercises reference dto coverage for the types branch contract.
     let referenceDto referenceType =
         { ReferenceDto.Default with
             ReferenceId = referenceId
@@ -41,8 +43,10 @@ type BranchDtoHashTests() =
             CreatedAt = timestamp
         }
 
+    /// Exercises branch event coverage for the types branch contract.
     let branchEvent (eventType: BranchEventType) : BranchEvent = { Event = eventType; Metadata = metadata }
 
+    /// Verifies that reference producing commands carry both root hashes.
     [<Test>]
     member _.ReferenceProducingCommandsCarryBothRootHashes() =
         let commands =
@@ -71,6 +75,7 @@ type BranchDtoHashTests() =
                 Assert.That(text, Is.EqualTo(referenceText))
             | _ -> Assert.Fail($"Unexpected command case: {command}")
 
+    /// Verifies that reference producing events carry both root hashes.
     [<Test>]
     member _.ReferenceProducingEventsCarryBothRootHashes() =
         let promotionReference = referenceDto ReferenceType.Promotion
@@ -108,6 +113,7 @@ type BranchDtoHashTests() =
                 Assert.That(text, Is.EqualTo(referenceText))
             | _ -> Assert.Fail($"Unexpected event case: {event}")
 
+    /// Verifies that replay projection keeps latest references with both root hashes.
     [<Test>]
     member _.ReplayProjectionKeepsLatestReferencesWithBothRootHashes() =
         let committed =

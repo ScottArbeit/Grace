@@ -16,13 +16,16 @@ open System.Net.Http
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups shared helpers for review integration helpers.
 module private ReviewIntegrationHelpers =
+    /// Posts Async to the running test server.
     let private postAsync (route: string) (content: HttpContent) =
         let request = new HttpRequestMessage(HttpMethod.Post, route)
         request.Headers.Add(Constants.CorrelationIdHeaderKey, generateCorrelationId ())
         request.Content <- content
         Client.SendAsync(request)
 
+    /// Defines review scoped behavior for the surrounding tests used by the server integration review Integration scenario.
     let private reviewScoped<'T when 'T :> ReviewParameters> (parameters: 'T) repositoryId promotionSetId : 'T =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
@@ -31,6 +34,7 @@ module private ReviewIntegrationHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Defines candidate scoped behavior for the surrounding tests used by the server integration review Integration scenario.
     let private candidateScoped<'T when 'T :> CandidateProjectionParameters> (parameters: 'T) repositoryId candidateId : 'T =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
@@ -39,6 +43,7 @@ module private ReviewIntegrationHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Posts ok return to the running test server.
     let postOkReturnAsync<'T, 'P> route (parameters: 'P) =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -57,6 +62,7 @@ module private ReviewIntegrationHelpers =
                 return deserialize<'T> body
         }
 
+    /// Posts bad request contains to the running test server.
     let postBadRequestContainsAsync<'P> route (parameters: 'P) expectedText =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -66,6 +72,7 @@ module private ReviewIntegrationHelpers =
             return body
         }
 
+    /// Posts status contains to the running test server.
     let postStatusContainsAsync<'P> route (parameters: 'P) (expectedStatus: HttpStatusCode) expectedText =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -75,6 +82,7 @@ module private ReviewIntegrationHelpers =
             return body
         }
 
+    /// Posts ok body contains to the running test server.
     let postOkBodyContainsAsync<'P> route (parameters: 'P) expectedText =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -84,6 +92,7 @@ module private ReviewIntegrationHelpers =
             return body
         }
 
+    /// Builds a deterministic promotion set for integration setup fixture for the server integration review Integration assertions.
     let createPromotionSetAsync repositoryId targetBranchId =
         task {
             let promotionSetId = Guid.NewGuid().ToString()
@@ -100,6 +109,7 @@ module private ReviewIntegrationHelpers =
             return promotionSetId
         }
 
+    /// Seeds policy snapshot for integration test setup.
     let seedPolicySnapshotAsync repositoryId branchId =
         task {
             let policySnapshotId = $"{Guid.NewGuid():N}{Guid.NewGuid():N}"
@@ -117,6 +127,7 @@ module private ReviewIntegrationHelpers =
             return policySnapshotId
         }
 
+    /// Defines checkpoint behavior for the surrounding tests used by the server integration review Integration scenario.
     let checkpointAsync repositoryId promotionSetId reviewedUpToReferenceId policySnapshotId =
         task {
             let parameters = reviewScoped (ReviewCheckpointParameters()) repositoryId promotionSetId
@@ -136,14 +147,17 @@ module private ReviewIntegrationHelpers =
             return ()
         }
 
+    /// Gets notes from the running test server.
     let getNotesAsync repositoryId promotionSetId =
         let parameters = reviewScoped (GetReviewNotesParameters()) repositoryId promotionSetId
         postOkReturnAsync<ReviewNotes option, GetReviewNotesParameters> "/review/notes" parameters
 
+    /// Gets notes current no notes from the running test server.
     let getNotesCurrentNoNotesAsync repositoryId promotionSetId =
         let parameters = reviewScoped (GetReviewNotesParameters()) repositoryId promotionSetId
         postOkBodyContainsAsync "/review/notes" parameters "ReturnValue"
 
+    /// Defines resolve missing finding behavior for the surrounding tests used by the server integration review Integration scenario.
     let resolveMissingFindingAsync repositoryId promotionSetId findingId =
         let parameters = reviewScoped (ResolveFindingParameters()) repositoryId promotionSetId
         parameters.FindingId <- findingId
@@ -151,60 +165,74 @@ module private ReviewIntegrationHelpers =
         parameters.Note <- "hosted route proof"
         postBadRequestContainsAsync<ResolveFindingParameters> "/review/resolve" parameters "The review notes do not exist."
 
+    /// Defines candidate identity behavior for the surrounding tests used by the server integration review Integration scenario.
     let candidateIdentityAsync repositoryId candidateId =
         candidateScoped (ResolveCandidateIdentityParameters()) repositoryId candidateId
         |> postOkReturnAsync<CandidateIdentityProjectionResult, ResolveCandidateIdentityParameters> "/review/candidate/resolve"
 
+    /// Defines candidate get behavior for the surrounding tests used by the server integration review Integration scenario.
     let candidateGetAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> postOkReturnAsync<CandidateProjectionSnapshotResult, CandidateProjectionParameters> "/review/candidate/get"
 
+    /// Defines candidate get current failure behavior for the surrounding tests used by the server integration review Integration scenario.
     let candidateGetCurrentFailureAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> fun parameters -> postStatusContainsAsync "/review/candidate/get" parameters HttpStatusCode.InternalServerError "deriveCandidateRequiredActions"
 
+    /// Defines candidate required actions behavior for the surrounding tests used by the server integration review Integration scenario.
     let candidateRequiredActionsAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> postOkReturnAsync<CandidateRequiredActionsResult, CandidateProjectionParameters> "/review/candidate/required-actions"
 
+    /// Defines candidate required actions current failure behavior for the surrounding tests used by the server integration review Integration scenario.
     let candidateRequiredActionsCurrentFailureAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> fun parameters ->
             postStatusContainsAsync "/review/candidate/required-actions" parameters HttpStatusCode.InternalServerError "deriveCandidateRequiredActions"
 
+    /// Defines candidate attestations behavior for the surrounding tests used by the server integration review Integration scenario.
     let candidateAttestationsAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> postOkReturnAsync<CandidateAttestationsResult, CandidateProjectionParameters> "/review/candidate/attestations"
 
+    /// Defines review report behavior for the surrounding tests used by the server integration review Integration scenario.
     let reviewReportAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> postOkReturnAsync<ReviewModels.ReviewReportResult, CandidateProjectionParameters> "/review/report/get"
 
+    /// Defines review report current failure behavior for the surrounding tests used by the server integration review Integration scenario.
     let reviewReportCurrentFailureAsync repositoryId candidateId =
         candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         |> fun parameters -> postStatusContainsAsync "/review/report/get" parameters HttpStatusCode.InternalServerError "deriveCandidateRequiredActions"
 
+    /// Defines retry behavior for the surrounding tests used by the server integration review Integration scenario.
     let retryAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         postBadRequestContainsAsync<CandidateProjectionParameters> "/review/candidate/retry" parameters "PromotionSet does not exist."
 
+    /// Defines cancel behavior for the surrounding tests used by the server integration review Integration scenario.
     let cancelAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
         postBadRequestContainsAsync<CandidateProjectionParameters> "/review/candidate/cancel" parameters "target branch queue is not initialized"
 
+    /// Defines gate rerun behavior for the surrounding tests used by the server integration review Integration scenario.
     let gateRerunAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateGateRerunParameters()) repositoryId candidateId
         parameters.Gate <- "required-validation"
         postBadRequestContainsAsync<CandidateGateRerunParameters> "/review/candidate/gate-rerun" parameters "PromotionSet does not exist."
 
+    /// Defines deepen stub behavior for the surrounding tests used by the server integration review Integration scenario.
     let deepenStubAsync repositoryId promotionSetId =
         let parameters = reviewScoped (DeepenReviewParameters()) repositoryId promotionSetId
         parameters.ChapterId <- "chapter-proof"
         postBadRequestContainsAsync<DeepenReviewParameters> "/review/deepen" parameters "Deepen is not implemented yet."
 
+/// Covers review route scenarios.
 [<NonParallelizable>]
 type ReviewRouteIntegrationTests() =
 
+    /// Verifies the review candidate routes preserve projection order checkpoint and current stub contract scenario.
     [<Test>]
     member _.ReviewCandidateRoutesPreserveProjectionOrderCheckpointAndCurrentStubContract() =
         task {

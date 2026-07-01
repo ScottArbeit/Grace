@@ -83,6 +83,11 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   compatibility behavior when an issue explicitly requires it as current Grace behavior.
 - Declare owned paths, forbidden or sensitive paths, risk surfaces, validation, docs impact, and definition of done
   before editing.
+- When adding new F# modules, types, functions, methods, members, or meaningful local helper functions, include a
+  concise `///` XML documentation comment that explains the declaration's purpose for future maintainers and
+  IntelliSense. Avoid generic comments that merely restate the declaration name or use filler such as "for the current
+  operation/request"; describe the Grace behavior, invariant, route, command, state transition, or contract role the
+  declaration owns.
 - After the issue exists, claim it with a comment, assign it to the authenticated GitHub user, and create an
   issue-owned branch/worktree from the selected base before editing: latest `origin/main` for standalone non-epic
   issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.

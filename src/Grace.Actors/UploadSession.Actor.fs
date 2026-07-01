@@ -20,10 +20,12 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for upload session keys, proxies, state, or workflow transitions.
 module UploadSession =
 
     let private actorName = ActorName.UploadSession
 
+    /// Maps a UploadSession command case to the operation name used in idempotency and diagnostics.
     let commandName command =
         match command with
         | UploadSessionCommand.Start _ -> "Start"
@@ -36,6 +38,7 @@ module UploadSession =
         | UploadSessionCommand.Expire _ -> "Expire"
         | UploadSessionCommand.DeletePhysicalState _ -> "DeletePhysicalState"
 
+    /// Extracts the client operation id that lets command retries match previously emitted events.
     let operationId command =
         match command with
         | UploadSessionCommand.Start start -> start.OperationId
@@ -51,8 +54,10 @@ module UploadSession =
         | UploadSessionCommand.Expire operationId -> operationId
         | UploadSessionCommand.DeletePhysicalState operationId -> operationId
 
+    /// Builds cleanup operation id data needed by the UploadSession actor.
     let createCleanupOperationId operationId = $"{operationId}:cleanup"
 
+    /// Builds cleanup reminder state data needed by the UploadSession actor.
     let createCleanupReminderState uploadSessionId repositoryId operationId correlationId =
         {
             UploadSessionId = uploadSessionId
@@ -62,6 +67,7 @@ module UploadSession =
             CorrelationId = correlationId
         }
 
+    /// Coordinates event operation id logic for the UploadSession actor.
     let private eventOperationId uploadSessionEvent =
         match uploadSessionEvent.Event with
         | UploadSessionEventType.Started start -> start.OperationId
@@ -75,10 +81,12 @@ module UploadSession =
         | UploadSessionEventType.DedupeDiscoveryIssued (operationId, _) -> operationId
         | UploadSessionEventType.ReuseRangesClaimed (operationId, _) -> operationId
 
+    /// Checks whether the operation id has already produced a persisted event.
     let private hasAppliedOperationId (events: seq<UploadSessionEvent>) operationId =
         events
         |> Seq.exists (fun uploadSessionEvent -> eventOperationId uploadSessionEvent = operationId)
 
+    /// Checks whether the block-upload confirmation operation id was already persisted.
     let private hasAppliedBlockUploadConfirmedOperationId (events: seq<UploadSessionEvent>) operationId =
         events
         |> Seq.exists (fun uploadSessionEvent ->
@@ -86,10 +94,12 @@ module UploadSession =
             | UploadSessionEventType.BlockUploadConfirmed (eventOperationId, _) -> eventOperationId = operationId
             | _ -> false)
 
+    /// Applies events changes to the UploadSession actor state.
     let private applyEvents (events: UploadSessionEvent list) (session: UploadSessionDto) =
         events
         |> List.fold (fun current event -> UploadSessionDto.UpdateDto event current) session
 
+    /// Coordinates compact events for physical state cleanup logic for the UploadSession actor.
     let compactEventsForPhysicalStateCleanup (events: seq<UploadSessionEvent>) =
         events
         |> Seq.filter (fun uploadSessionEvent ->
@@ -106,11 +116,14 @@ module UploadSession =
             | UploadSessionEventType.ReuseRangesClaimed _ -> false)
         |> Seq.toList
 
+    /// Coordinates ok decision logic for the UploadSession actor.
     let private okDecision (session: UploadSessionDto) operationId (events: UploadSessionEvent list) wasReplay message =
         Ok { Session = applyEvents events session; OperationId = operationId; Events = events; WasIdempotentReplay = wasReplay; Message = message }
 
+    /// Coordinates grace error logic for the UploadSession actor.
     let private graceError correlationId message = GraceError.Create message correlationId
 
+    /// Coordinates cleanup events logic for the UploadSession actor.
     let private cleanupEvents (session: UploadSessionDto) operationId (metadata: EventMetadata) =
         let cleanupOperationId = createCleanupOperationId operationId
         let reminderTime = metadata.Timestamp.Plus(DefaultPhysicalDeletionReminderDuration)
@@ -119,6 +132,7 @@ module UploadSession =
             { Event = UploadSessionEventType.CleanupReminderScheduled(cleanupOperationId, reminderTime); Metadata = metadata }
         ]
 
+    /// Coordinates should schedule finalize cleanup reminder logic for the UploadSession actor.
     let internal shouldScheduleFinalizeCleanupReminder (session: UploadSessionDto) (finalize: FinalizeManifest) =
         if
             isNull (box finalize)
@@ -137,6 +151,7 @@ module UploadSession =
                 true
             | Some _ -> false
 
+    /// Coordinates split finalize events logic for the UploadSession actor.
     let private splitFinalizeEvents (events: UploadSessionEvent list) =
         let finalizedEvents = ResizeArray<UploadSessionEvent>()
         let retentionEvents = ResizeArray<UploadSessionEvent>()
@@ -148,6 +163,7 @@ module UploadSession =
 
         finalizedEvents |> Seq.toList, retentionEvents |> Seq.toList
 
+    /// Coordinates terminal mutation error logic for the UploadSession actor.
     let private terminalMutationError (session: UploadSessionDto) command correlationId =
         match session.LifecycleState with
         | UploadSessionLifecycleState.Finalized -> Some(graceError correlationId $"UploadSession is finalized and cannot be changed by {commandName command}.")
@@ -157,6 +173,7 @@ module UploadSession =
             Some(graceError correlationId $"UploadSession physical state has been deleted and cannot be changed by {commandName command}.")
         | _ -> None
 
+    /// Coordinates require started session logic for the UploadSession actor.
     let private requireStartedSession (session: UploadSessionDto) command correlationId =
         match terminalMutationError session command correlationId with
         | Some error -> Some error
@@ -169,6 +186,7 @@ module UploadSession =
             | UploadSessionLifecycleState.NotStarted -> Some(graceError correlationId $"UploadSession must be started before {commandName command}.")
             | _ -> Some(graceError correlationId $"UploadSession cannot {commandName command} from {session.LifecycleState}.")
 
+    /// Validates intent before the operation continues.
     let private validateIntent correlationId (intent: RegisterBlockUploadIntent) =
         if String.IsNullOrWhiteSpace intent.ContentBlockAddress then
             Some(graceError correlationId "ContentBlockAddress is required.")
@@ -181,6 +199,7 @@ module UploadSession =
         else
             None
 
+    /// Validates storage placement before the operation continues.
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "StoragePlacement is required.")
@@ -193,8 +212,10 @@ module UploadSession =
         else
             None
 
+    /// Coordinates normalize hints logic for the UploadSession actor.
     let private normalizeHints (hints: ContentBlockReuseRangeHint array) = if isNull hints then Array.empty else hints
 
+    /// Validates reuse hint before the operation continues.
     let private validateReuseHint correlationId (hint: ContentBlockReuseRangeHint) =
         if isNull (box hint) then
             Some(graceError correlationId "Reuse range hint is required.")
@@ -211,6 +232,7 @@ module UploadSession =
         else
             None
 
+    /// Coordinates same hint logic for the UploadSession actor.
     let private sameHint (left: ContentBlockReuseRangeHint) (right: ContentBlockReuseRangeHint) =
         left.StoragePoolId = right.StoragePoolId
         && left.ContentBlockAddress = right.ContentBlockAddress
@@ -218,9 +240,11 @@ module UploadSession =
         && left.OrdinalCount = right.OrdinalCount
         && left.MetadataVersion = right.MetadataVersion
 
+    /// Coordinates claimed range key logic for the UploadSession actor.
     let private claimedRangeKey (range: ClaimedReuseRange) =
         $"{range.StoragePoolId}|{range.ContentBlockAddress}|{range.OrdinalStart}|{range.OrdinalCount}|{range.MetadataVersion}"
 
+    /// Checks whether issue dedupe discovery is true for the UploadSession actor state.
     let private issueDedupeDiscovery (session: UploadSessionDto) (discovery: IssueDedupeDiscovery) (metadata: EventMetadata) =
         if discovery.MinimumReuseRunLength <= 0 then
             Error(graceError metadata.CorrelationId "MinimumReuseRunLength must be greater than zero.")
@@ -250,6 +274,7 @@ module UploadSession =
 
                 okDecision session discovery.OperationId events false "Dedupe discovery issued."
 
+    /// Coordinates claim reuse range logic for the UploadSession actor.
     let private claimReuseRange correlationId timestamp (discovery: DedupeDiscoverySnapshot) (claimRange: ClaimReuseRange) =
         if isNull (box claimRange) then
             Error(graceError correlationId "Reuse range claim is required.")
@@ -300,6 +325,7 @@ module UploadSession =
                                 ClaimedAt = timestamp
                             }
 
+    /// Coordinates claim reuse ranges logic for the UploadSession actor.
     let private claimReuseRanges (session: UploadSessionDto) (claim: ClaimReuseRanges) (metadata: EventMetadata) =
         match session.DedupeDiscovery with
         | None -> Error(graceError metadata.CorrelationId "Dedupe discovery must be issued before reuse ranges can be claimed.")
@@ -342,21 +368,26 @@ module UploadSession =
 
                     okDecision session claim.OperationId events false "Reuse ranges claimed."
 
+    /// Coordinates find block intents logic for the UploadSession actor.
     let private findBlockIntents (session: UploadSessionDto) contentBlockAddress =
         session.BlockUploadIntents
         |> Array.filter (fun intent -> intent.ContentBlockAddress = contentBlockAddress)
 
+    /// Coordinates content block error logic for the UploadSession actor.
     let private contentBlockError error = $"ContentBlock payload is invalid: {error}."
 
+    /// Coordinates physical ranges from decoded block logic for the UploadSession actor.
     let private physicalRangesFromDecodedBlock (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
         decodedBlock.Chunks
         |> Array.mapi (fun index chunk ->
             { OrdinalStart = index; OrdinalCount = 1; ActiveManifestCount = 0; PhysicalOffset = chunk.PhysicalOffset; PhysicalLength = int64 chunk.Length })
 
+    /// Coordinates decoded logical length logic for the UploadSession actor.
     let private decodedLogicalLength (decodedBlock: ContentBlockFormat.DecodedContentBlock) =
         decodedBlock.Chunks
         |> Array.sumBy (fun chunk -> int64 chunk.Length)
 
+    /// Coordinates finalized manifest content block addresses logic for the UploadSession actor.
     let private finalizedManifestContentBlockAddresses (manifest: FileManifest) =
         let addresses = HashSet<ContentBlockAddress>()
         let orderedAddresses = ResizeArray<ContentBlockAddress>()
@@ -374,14 +405,17 @@ module UploadSession =
 
         orderedAddresses.ToArray()
 
+    /// Coordinates manifest block addresses logic for the UploadSession actor.
     let private manifestBlockAddresses (manifest: FileManifest) =
         finalizedManifestContentBlockAddresses manifest
         |> HashSet<ContentBlockAddress>
 
+    /// Coordinates finalized manifest contribution ranges logic for the UploadSession actor.
     let finalizedManifestContributionRanges (ranges: ContentBlockMetadataRange array) =
         ranges
         |> Array.map (fun range -> { range with ActiveManifestCount = 1 })
 
+    /// Coordinates block was uploaded logic for the UploadSession actor.
     let private blockWasUploaded (session: UploadSessionDto) (block: ContentBlock) =
         session.ConfirmedBlockUploads
         |> Array.exists (fun confirmedBlock -> confirmedBlock.ContentBlockAddress = block.Address)
@@ -391,6 +425,7 @@ module UploadSession =
                && intent.LogicalOffset = block.Offset
                && intent.LogicalLength = block.Size)
 
+    /// Coordinates manifest blocks requiring claimed metadata logic for the UploadSession actor.
     let private manifestBlocksRequiringClaimedMetadata (session: UploadSessionDto) (manifest: FileManifest) =
         if isNull (box manifest) || isNull manifest.Blocks then
             Array.empty
@@ -401,13 +436,16 @@ module UploadSession =
                 && not (blockWasUploaded session block))
             |> Seq.toArray
 
+    /// Validates authoritative storage placement before the operation continues.
     let private validateAuthoritativeStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         match validateStoragePlacement correlationId placement with
         | Some error -> Error error
         | None -> Ok()
 
+    /// Coordinates claimed metadata content block key logic for the UploadSession actor.
     let private claimedMetadataContentBlockKey storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
 
+    /// Coordinates claimed metadata by content block address logic for the UploadSession actor.
     let private claimedMetadataByContentBlockAddress (claimedMetadata: ContentBlockMetadata array) =
         let metadata = Dictionary<string, ResizeArray<ContentBlockMetadata>>()
 
@@ -428,6 +466,7 @@ module UploadSession =
 
         metadata
 
+    /// Coordinates matching claimed metadata range logic for the UploadSession actor.
     let private matchingClaimedMetadataRange (metadata: ContentBlockMetadata) (claimedRange: ClaimedReuseRange) =
         let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
 
@@ -441,6 +480,7 @@ module UploadSession =
                 range.PhysicalLength = claimedRange.PhysicalLength
                 && range.ActiveManifestCount > 0))
 
+    /// Attempts to select active contiguous range chain and returns no value when the required invariant is not met.
     let private trySelectActiveContiguousRangeChain ordinalStart ordinalCount physicalOffset physicalLength (ranges: ContentBlockMetadataRange array) =
         if ordinalCount <= 0
            || physicalLength <= 0L
@@ -449,8 +489,10 @@ module UploadSession =
         else
             let finalOrdinal = ordinalStart + ordinalCount
 
+            /// Calculates the exclusive logical ordinal end for a metadata range.
             let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
 
+            /// Attempts to project covering range and returns no value when the required invariant is not met.
             let tryProjectCoveringRange () =
                 ranges
                 |> Array.filter (fun range ->
@@ -497,6 +539,7 @@ module UploadSession =
                     && range.PhysicalLength <= physicalLength)
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
+            /// Selects select chain data for the UploadSession actor workflow.
             let rec selectChain nextOrdinal selectedLength expectedPhysicalOffset selected =
                 if nextOrdinal = finalOrdinal
                    && selectedLength = physicalLength then
@@ -525,6 +568,7 @@ module UploadSession =
 
     type private ClaimedMetadataRangeEvidence = { ExpectedRanges: ContentBlockMetadataRange array; PhysicalRanges: ContentBlockMetadataRange array }
 
+    /// Coordinates claimed metadata range evidence logic for the UploadSession actor.
     let private claimedMetadataRangeEvidence (metadata: ContentBlockMetadata) (claimedRange: ClaimedReuseRange) =
         let query = { OrdinalStart = claimedRange.OrdinalStart; OrdinalCount = claimedRange.OrdinalCount }
 
@@ -608,6 +652,7 @@ module UploadSession =
                             $"Authoritative ContentBlockMetadata range is absent or changed for claimed reuse range {claimedRange.ContentBlockAddress}."
                     ))
 
+    /// Coordinates compare claimed range newest first logic for the UploadSession actor.
     let private compareClaimedRangeNewestFirst (left: ClaimedReuseRange) (right: ClaimedReuseRange) =
         let versionComparison = compare right.MetadataVersion left.MetadataVersion
 
@@ -616,6 +661,7 @@ module UploadSession =
         else
             compare right.ClaimedAt left.ClaimedAt
 
+    /// Attempts to select claimed range cover and returns no value when the required invariant is not met.
     let private trySelectClaimedRangeCover blockLength (claimedRanges: ClaimedReuseRange array) =
         if blockLength <= 0L || isNull claimedRanges then
             None
@@ -630,6 +676,7 @@ module UploadSession =
                     && claimedRange.PhysicalLength > 0L
                     && claimedRange.PhysicalLength <= blockLength)
 
+            /// Selects select cover data for the UploadSession actor workflow.
             let rec selectCover nextOrdinal selectedLength selected =
                 if selectedLength = blockLength then
                     selected |> List.rev |> List.toArray |> Some
@@ -701,6 +748,7 @@ module UploadSession =
                         $"A claimed reuse range set covering manifest block {contentBlockAddress} length {physicalLength} is required before finalization."
                 )
 
+    /// Validates claimed metadata for finalize before the operation continues.
     let private validateClaimedMetadataForFinalize correlationId storagePoolId (session: UploadSessionDto) (manifest: FileManifest) claimedMetadata =
         let manifestBlocks = manifestBlocksRequiringClaimedMetadata session manifest
         let metadata = claimedMetadataByContentBlockAddress claimedMetadata
@@ -748,6 +796,7 @@ module UploadSession =
                            && matchingClaimedMetadataRange candidate claimedRange
                               |> Option.isSome))
 
+    /// Attempts to find claimed manifest block and returns no value when the required invariant is not met.
     let private tryFindClaimedManifestBlock (session: UploadSessionDto) (manifest: FileManifest) contentBlockAddress =
         manifestBlocksRequiringClaimedMetadata session manifest
         |> Array.tryFind (fun block -> block.Address = contentBlockAddress)
@@ -836,6 +885,7 @@ module UploadSession =
                                 )
                             ))
 
+    /// Builds content block metadata merge commands for finalized uploads data needed by the UploadSession actor.
     let createContentBlockMetadataMergeCommandsForFinalizedUploads storagePoolId finalizeOperationId (session: UploadSessionDto) (manifest: FileManifest) =
         let manifestAddresses = manifestBlockAddresses manifest
         let commands = ResizeArray<ContentBlockMetadataCommand>()
@@ -863,6 +913,7 @@ module UploadSession =
 
         commands.ToArray()
 
+    /// Coordinates with finalize merge precondition logic for the UploadSession actor.
     let withFinalizeMergePrecondition (merge: MergeContentBlockPhysicalRanges) =
         { merge with
             ExpectedMetadataVersion = None
@@ -870,6 +921,7 @@ module UploadSession =
             ExpectedRanges = if isNull merge.ExpectedRanges then Array.empty else merge.ExpectedRanges
         }
 
+    /// Attempts to select active current ranges for uploaded merge and returns no value when the required invariant is not met.
     let private trySelectActiveCurrentRangesForUploadedMerge (authoritativeMetadata: ContentBlockMetadata) (uploadedRanges: ContentBlockMetadataRange array) =
         if isNull uploadedRanges || uploadedRanges.Length = 0 then
             None
@@ -878,6 +930,7 @@ module UploadSession =
                 uploadedRanges
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
+            /// Selects select ranges data for the UploadSession actor workflow.
             let rec selectRanges index expectedPhysicalOffset selected =
                 if index = sortedUploadedRanges.Length then
                     selected |> List.rev |> List.toArray |> Some
@@ -904,6 +957,7 @@ module UploadSession =
 
             selectRanges 0 None []
 
+    /// Coordinates rebase uploaded merge on current metadata logic for the UploadSession actor.
     let internal rebaseUploadedMergeOnCurrentMetadata (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
         match currentMetadata with
         | None -> merge
@@ -1018,11 +1072,13 @@ module UploadSession =
         | Some validationError -> Error validationError
         | None -> Ok(commands.ToArray())
 
+    /// Builds content block metadata merge commands for finalized blocks data needed by the UploadSession actor.
     let createContentBlockMetadataMergeCommandsForFinalizedBlocks storagePoolId finalizeOperationId session manifest claimedMetadata =
         match tryCreateContentBlockMetadataMergeCommandsForFinalizedBlocks String.Empty storagePoolId finalizeOperationId session manifest claimedMetadata with
         | Ok commands -> commands
         | Error _ -> Array.empty
 
+    /// Coordinates manifest validation error message logic for the UploadSession actor.
     let private manifestValidationErrorMessage error =
         match error with
         | ManifestValidation.NullManifest -> "FileManifest is required."
@@ -1047,6 +1103,7 @@ module UploadSession =
         | ManifestValidation.FileContentHashMismatch (expected, actual) -> $"FileManifest FileContentHash mismatch. Expected {expected}, actual {actual}."
         | ManifestValidation.ManifestSizeMismatch (expected, actual) -> $"FileManifest Size mismatch. Expected {expected}, actual {actual}."
 
+    /// Coordinates block was claimed logic for the UploadSession actor.
     let private blockWasClaimed (session: UploadSessionDto) (block: ContentBlock) =
         let claimedRanges =
             if isNull session.ClaimedReuseRanges then
@@ -1061,6 +1118,7 @@ module UploadSession =
         |> trySelectClaimedRangeCover block.Size
         |> Option.isSome
 
+    /// Validates manifest block presence before the operation continues.
     let private validateManifestBlockPresence correlationId (session: UploadSessionDto) (manifest: FileManifest) =
         if isNull (box manifest) then
             Error(graceError correlationId "FileManifest is required.")
@@ -1091,6 +1149,7 @@ module UploadSession =
             | Some error -> Error error
             | None -> Ok()
 
+    /// Validates finalize session fields before the operation continues.
     let private validateFinalizeSessionFields correlationId (session: UploadSessionDto) (manifest: FileManifest) =
         if isNull (box manifest) then
             Error(graceError correlationId "FileManifest is required.")
@@ -1121,6 +1180,7 @@ module UploadSession =
         else
             Ok()
 
+    /// Validates finalize replay manifest identity before the operation continues.
     let private validateFinalizeReplayManifestIdentity correlationId (session: UploadSessionDto) (manifest: FileManifest) finalizedManifestAddress =
         validateFinalizeSessionFields correlationId session manifest
         |> Result.bind (fun () ->
@@ -1155,12 +1215,14 @@ module UploadSession =
                     else
                         Ok())
 
+    /// Coordinates finalize block payload logic for the UploadSession actor.
     let private finalizeBlockPayload (payload: FinalizeManifestBlockPayload) =
         if isNull (box payload) then
             Unchecked.defaultof<ManifestValidation.ManifestBlockPayload>
         else
             ManifestValidation.createBlockPayload payload.Address payload.Payload
 
+    /// Coordinates finalize manifest logic for the UploadSession actor.
     let private finalizeManifest (session: UploadSessionDto) (finalize: FinalizeManifest) (metadata: EventMetadata) =
         if isNull (box finalize) then
             Error(graceError metadata.CorrelationId "FinalizeManifest payload is required.")
@@ -1188,6 +1250,7 @@ module UploadSession =
                     okDecision session finalize.OperationId events false "Upload session manifest finalized."
                 | Error error -> Error(graceError metadata.CorrelationId (manifestValidationErrorMessage error)))
 
+    /// Validates finalize replay manifest against durable state before the operation continues.
     let private validateFinalizeReplayManifestAgainstDurableState (session: UploadSessionDto) (finalize: FinalizeManifest) (metadata: EventMetadata) =
         if isNull (box finalize) then
             Error(graceError metadata.CorrelationId "FinalizeManifest payload is required for replay.")
@@ -1196,6 +1259,7 @@ module UploadSession =
             | None -> Error(graceError metadata.CorrelationId "Durable finalized manifest address is required for FinalizeManifest replay.")
             | Some finalizedManifestAddress -> validateFinalizeReplayManifestIdentity metadata.CorrelationId session finalize.Manifest finalizedManifestAddress
 
+    /// Coordinates confirm block upload logic for the UploadSession actor.
     let private confirmBlockUpload (session: UploadSessionDto) (confirmation: ConfirmBlockUploaded) (metadata: EventMetadata) =
         if String.IsNullOrWhiteSpace confirmation.ContentBlockAddress then
             Error(graceError metadata.CorrelationId "ContentBlockAddress is required.")
@@ -1268,6 +1332,7 @@ module UploadSession =
 
                                 okDecision session confirmation.OperationId events false "ContentBlock upload confirmed."
 
+    /// Validates a UploadSession command and derives the events needed for a state transition.
     let decideCommand (events: seq<UploadSessionEvent>) (session: UploadSessionDto) (command: UploadSessionCommand) (metadata: EventMetadata) =
         let operationId = operationId command
 
@@ -1405,11 +1470,13 @@ module UploadSession =
                         Error(graceError metadata.CorrelationId "UploadSession must be started before FinalizeManifest.")
                     | _ -> Error(graceError metadata.CorrelationId $"UploadSession cannot FinalizeManifest from {session.LifecycleState}.")
 
+    /// Implements the Orleans grain for session actor.
     type UploadSessionActor([<PersistentState(StateName.UploadSession, Constants.GraceActorStorage)>] state: IPersistentState<List<UploadSessionEvent>>) =
         inherit Grain()
 
         let log = loggerFactory.CreateLogger("UploadSession.Actor")
         let mutable uploadSessionDto = UploadSessionDto.Default
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -1423,6 +1490,7 @@ module UploadSession =
 
             Task.CompletedTask
 
+        /// Replays persisted UploadSession events into an in-memory state snapshot.
         member private this.ApplyEvents(events: UploadSessionEvent list) =
             task {
                 for uploadSessionEvent in events do
@@ -1433,6 +1501,7 @@ module UploadSession =
                 uploadSessionDto <- applyEvents events uploadSessionDto
             }
 
+        /// Coordinates compact physical state events logic for the UploadSession actor.
         member private this.CompactPhysicalStateEvents() =
             task {
                 let retainedEvents =
@@ -1455,6 +1524,7 @@ module UploadSession =
                     |> Seq.fold (fun dto event -> UploadSessionDto.UpdateDto event dto) UploadSessionDto.Default
             }
 
+        /// Coordinates prevalidate finalized content block metadata logic for the UploadSession actor.
         member private this.PrevalidateFinalizedContentBlockMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
                 let storagePoolId = decision.Session.StoragePoolId
@@ -1563,6 +1633,7 @@ module UploadSession =
                     | None -> return Ok(prevalidatedMerges.ToArray())
             }
 
+        /// Coordinates revalidate prevalidated content block metadata logic for the UploadSession actor.
         member private this.RevalidatePrevalidatedContentBlockMetadata
             (prevalidatedMerges: (IContentBlockMetadataActor * MergeContentBlockPhysicalRanges) array)
             (metadata: EventMetadata)
@@ -1573,6 +1644,7 @@ module UploadSession =
 
                 while metadataIndex < prevalidatedMerges.Length
                       && metadataError.IsNone do
+                    /// Coordinates metadata actor logic for the UploadSession actor.
                     let metadataActor, merge = prevalidatedMerges[metadataIndex]
                     let! currentMetadata = metadataActor.Get metadata.CorrelationId
 
@@ -1587,6 +1659,7 @@ module UploadSession =
                 | None -> return Ok()
             }
 
+        /// Coordinates merge prevalidated content block metadata logic for the UploadSession actor.
         member private this.MergePrevalidatedContentBlockMetadata
             (prevalidatedMerges: (IContentBlockMetadataActor * MergeContentBlockPhysicalRanges) array)
             (metadata: EventMetadata)
@@ -1598,6 +1671,7 @@ module UploadSession =
 
                 while metadataIndex < prevalidatedMerges.Length
                       && metadataError.IsNone do
+                    /// Coordinates metadata actor logic for the UploadSession actor.
                     let metadataActor, merge = prevalidatedMerges[metadataIndex]
                     let! metadataResult = metadataActor.MergePhysicalRanges merge metadata
 
@@ -1633,6 +1707,7 @@ module UploadSession =
                 | None -> return Ok(mergedMetadata.ToArray())
             }
 
+        /// Coordinates merge finalized content block metadata logic for the UploadSession actor.
         member private this.MergeFinalizedContentBlockMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
                 let! prevalidationResult = this.PrevalidateFinalizedContentBlockMetadata decision finalize metadata
@@ -1647,6 +1722,7 @@ module UploadSession =
                     | Ok () -> return! this.MergePrevalidatedContentBlockMetadata prevalidatedMerges metadata
             }
 
+        /// Loads load authoritative finalized manifest metadata data required by the UploadSession actor workflow.
         member private this.LoadAuthoritativeFinalizedManifestMetadata decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
                 let authoritativeMetadata = ResizeArray<ContentBlockMetadata>()
@@ -1695,6 +1771,7 @@ module UploadSession =
                     return Ok(Array.empty)
             }
 
+        /// Adds register finalized manifest in dedupe data to the UploadSession actor workflow or state.
         member private this.RegisterFinalizedManifestInDedupe
             decision
             (finalize: FinalizeManifest)
@@ -1725,6 +1802,7 @@ module UploadSession =
                         metadataIndex <- metadataIndex + 1
             }
 
+        /// Schedules schedule finalize cleanup reminder work for the UploadSession actor.
         member private this.ScheduleFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
                 let reminderState =
@@ -1739,6 +1817,7 @@ module UploadSession =
                         metadata.CorrelationId
             }
 
+        /// Validates finalize cleanup reminder before the operation continues.
         member private this.EnsureFinalizeCleanupReminder decision (finalize: FinalizeManifest) (metadata: EventMetadata) =
             task {
                 if shouldScheduleFinalizeCleanupReminder decision.Session finalize then
@@ -1751,6 +1830,7 @@ module UploadSession =
             }
 
         interface IGraceReminderWithGuidKey with
+            /// Schedules schedule reminder async work for the UploadSession actor.
             member this.ScheduleReminderAsync reminderType delay reminderState correlationId =
                 task {
                     let reminder =
@@ -1769,6 +1849,7 @@ module UploadSession =
                 }
                 :> Task
 
+            /// Handles receive reminder async callbacks for the UploadSession actor.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
                 task {
                     this.correlationId <- reminder.CorrelationId
@@ -1801,6 +1882,7 @@ module UploadSession =
                 }
 
         interface IUploadSessionActor with
+            /// Reports whether this UploadSession actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -1808,16 +1890,19 @@ module UploadSession =
                  <> UploadSessionId.Empty)
                 |> returnTask
 
+            /// Returns the current UploadSession actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 uploadSessionDto |> returnTask
 
+            /// Returns the persisted UploadSession event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<UploadSessionEvent>)
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 task {
                     this.correlationId <- metadata.CorrelationId
@@ -1862,6 +1947,7 @@ module UploadSession =
                                     match revalidationResult with
                                     | Error error -> return Error error
                                     | Ok () ->
+                                        /// Coordinates finalization events logic for the UploadSession actor.
                                         let finalizationEvents, retentionEvents = splitFinalizeEvents decision.Events
 
                                         if not finalizationEvents.IsEmpty then do! this.ApplyEvents finalizationEvents

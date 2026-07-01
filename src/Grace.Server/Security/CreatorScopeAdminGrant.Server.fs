@@ -11,16 +11,21 @@ open Microsoft.Extensions.DependencyInjection
 open System
 open System.Threading.Tasks
 
+/// Contains Grace Server creator scope admin grant behavior and supporting helpers.
 module CreatorScopeAdminGrant =
 
+    /// Represents creator admin grant result used by Grace Server APIs and background services.
     type CreatorAdminGrantResult =
         | InheritedAdminAlreadyApplies
         | DirectGrantPersisted
 
+    /// Represents admin check used by Grace Server APIs and background services.
     type AdminCheck = Principal list -> Set<string> -> Operation -> Resource -> Task<PermissionCheckResult>
 
+    /// Represents grant creator admin used by Grace Server APIs and background services.
     type GrantCreatorAdmin = RoleAssignment -> Task<GraceResult<RoleAssignment list>>
 
+    /// Computes resource for scope data used by Grace Server.
     let internal resourceForScope scope =
         match scope with
         | Scope.System -> Resource.System
@@ -29,6 +34,7 @@ module CreatorScopeAdminGrant =
         | Scope.Repository (ownerId, organizationId, repositoryId) -> Resource.Repository(ownerId, organizationId, repositoryId)
         | Scope.Branch (ownerId, organizationId, repositoryId, branchId) -> Resource.Branch(ownerId, organizationId, repositoryId, branchId)
 
+    /// Selects the administrative RBAC operation needed for the created scope.
     let internal adminOperationForScope scope =
         match scope with
         | Scope.System -> Operation.SystemAdmin
@@ -37,6 +43,7 @@ module CreatorScopeAdminGrant =
         | Scope.Repository _ -> Operation.RepositoryAdmin
         | Scope.Branch _ -> Operation.BranchAdmin
 
+    /// Selects the administrative RBAC role granted for the created scope.
     let internal adminRoleForScope scope =
         match scope with
         | Scope.System -> "SystemAdmin"
@@ -45,6 +52,7 @@ module CreatorScopeAdminGrant =
         | Scope.Repository _ -> "RepositoryAdmin"
         | Scope.Branch _ -> "BranchAdmin"
 
+    /// Ensures creator admin core before the handler returns success.
     let internal ensureCreatorAdminCore
         (correlationId: CorrelationId)
         (creatorUserId: string option)
@@ -93,18 +101,21 @@ module CreatorScopeAdminGrant =
                                 )
         }
 
+    /// Ensures creator admin for created scope before the handler returns success.
     let ensureCreatorAdminForCreatedScope (context: HttpContext) (scope: Scope) =
         let correlationId = getCorrelationId context
         let creatorUserId = PrincipalMapper.tryGetUserId context.User
         let principals = PrincipalMapper.getPrincipals context.User
         let effectiveClaims = PrincipalMapper.getEffectiveClaims context.User
 
+        /// Checks admin through the authorization actor.
         let checkAdmin principals effectiveClaims operation resource =
             task {
                 let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
                 return! evaluator.CheckAsync(principals, effectiveClaims, operation, resource)
             }
 
+        /// Grants creator admin after verifying the created scope.
         let grantCreatorAdmin assignment =
             task {
                 let scopeKey = AccessControl.getScopeKey assignment.Scope

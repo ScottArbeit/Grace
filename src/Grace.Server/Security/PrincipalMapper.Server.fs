@@ -4,6 +4,7 @@ open Grace.Types.Authorization
 open System
 open System.Security.Claims
 
+/// Contains Grace Server principal mapper behavior and supporting helpers.
 module PrincipalMapper =
 
     [<Literal>]
@@ -15,12 +16,14 @@ module PrincipalMapper =
     [<Literal>]
     let GraceClaim = "grace_claim"
 
+    /// Gets try get user id data needed by the server flow.
     let tryGetUserId (principal: ClaimsPrincipal) =
         principal.Claims
         |> Seq.tryFind (fun claim -> claim.Type = GraceUserIdClaim)
         |> Option.map (fun claim -> claim.Value)
         |> Option.filter (fun value -> not (String.IsNullOrWhiteSpace value))
 
+    /// Returns claim values for a principal while tolerating unauthenticated identities.
     let private getClaims (principal: ClaimsPrincipal) (claimType: string) =
         principal.Claims
         |> Seq.filter (fun claim -> claim.Type = claimType)
@@ -28,6 +31,7 @@ module PrincipalMapper =
         |> Seq.filter (fun value -> not (String.IsNullOrWhiteSpace value))
         |> Seq.toList
 
+    /// Maps a claims principal into the user and claim principals considered by RBAC.
     let getPrincipals (principal: ClaimsPrincipal) =
         let userId = tryGetUserId principal
         let groupIds = getClaims principal GraceGroupIdClaim
@@ -42,6 +46,7 @@ module PrincipalMapper =
 
         principals
 
+    /// Produces the claim dictionary exposed to callers after principal mapping.
     let getEffectiveClaims (principal: ClaimsPrincipal) =
         let claimValues = getClaims principal GraceClaim |> Set.ofList
 

@@ -10,9 +10,11 @@ open NUnit.Framework
 open System
 open System.Threading.Tasks
 
+/// Covers validations behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type Validations() =
 
+    /// Verifies that valid Guid returns Ok.
     [<Test>]
     member this.``valid Guid returns Ok``() =
         let result =
@@ -21,6 +23,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that empty string for guid returns Ok.
     [<Test>]
     member this.``empty string for guid returns Ok``() =
         let result =
@@ -29,6 +32,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that invalid Guid returns Error.
     [<Test>]
     member this.``invalid Guid returns Error``() =
         let result =
@@ -37,6 +41,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that guid Empty returns Error.
     [<Test>]
     member this.``Guid Empty returns Error``() =
         let result =
@@ -45,6 +50,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that guid is not Guid Empty returns Ok.
     [<Test>]
     member this.``Guid is not Guid Empty returns Ok``() =
         let result =
@@ -53,6 +59,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that guid is Guid Empty returns Error.
     [<Test>]
     member this.``Guid is Guid Empty returns Error``() =
         let result =
@@ -61,6 +68,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that positive number returns Ok.
     [<Test>]
     member this.``positive number returns Ok``() =
         let result =
@@ -69,6 +77,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that zero returns Ok.
     [<Test>]
     member this.``zero returns Ok``() =
         let result =
@@ -77,6 +86,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that negative number returns Error.
     [<Test>]
     member this.``negative number returns Error``() =
         let result =
@@ -85,6 +95,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that number within range returns Ok.
     [<Test>]
     member this.``number within range returns Ok``() =
         let result =
@@ -93,6 +104,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that number not within range returns Error.
     [<Test>]
     member this.``number not within range returns Error``() =
         let result =
@@ -101,6 +113,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that not empty string returns Ok.
     [<Test>]
     member this.``not empty string returns Ok``() =
         let result =
@@ -109,11 +122,13 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that empty string returns Error.
     [<Test>]
     member this.``empty string returns Error``() =
         let result = (String.isNotEmpty "" TestError.TestFailed).Result
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that valid SHA-256 hash returns Ok.
     [<Test>]
     member this.``valid SHA-256 hash returns Ok``() =
         let result =
@@ -122,6 +137,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that sHA-256 prefix boundary values return Ok.
     [<Test>]
     member this.``SHA-256 prefix boundary values return Ok``() =
         let cases =
@@ -138,6 +154,7 @@ type Validations() =
 
             Assert.That(result, Is.EqualTo(Common.okResult), caseName)
 
+    /// Verifies that sHA-256 version hash requires lowercase full value.
     [<Test>]
     member this.``SHA-256 version hash requires lowercase full value``() =
         let valid =
@@ -156,6 +173,7 @@ type Validations() =
         Assert.That(Result.isError uppercase, Is.True)
         Assert.That(Result.isError short, Is.True)
 
+    /// Verifies that empty string for SHA-256 value returns Ok.
     [<Test>]
     member this.``empty string for SHA-256 value returns Ok``() =
         let result =
@@ -164,6 +182,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that invalid SHA-256 hash returns Error.
     [<Test>]
     member this.``invalid SHA-256 hash returns Error``() =
         let result =
@@ -172,6 +191,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that invalid SHA-256 prefix values return Error.
     [<Test>]
     member this.``invalid SHA-256 prefix values return Error``() =
         let cases =
@@ -188,6 +208,7 @@ type Validations() =
 
             Assert.That(result, Is.EqualTo(Common.errorResult), caseName)
 
+    /// Verifies that valid BLAKE3 prefix values return Ok.
     [<Test>]
     member this.``valid BLAKE3 prefix values return Ok``() =
         let cases =
@@ -204,6 +225,7 @@ type Validations() =
 
             Assert.That(Result.isOk result, Is.True, caseName)
 
+    /// Verifies that invalid BLAKE3 prefix values return Error.
     [<Test>]
     member this.``invalid BLAKE3 prefix values return Error``() =
         let cases =
@@ -220,6 +242,7 @@ type Validations() =
 
             Assert.That(Result.isError result, Is.True, caseName)
 
+    /// Verifies that empty string for optional BLAKE3 prefix returns Ok.
     [<Test>]
     member this.``empty string for optional BLAKE3 prefix returns Ok``() =
         let result =
@@ -228,6 +251,7 @@ type Validations() =
 
         Assert.That(Result.isOk result, Is.True)
 
+    /// Verifies that bLAKE3 version hash requires lowercase full value.
     [<Test>]
     member this.``BLAKE3 version hash requires lowercase full value``() =
         let valid =
@@ -251,6 +275,7 @@ type Validations() =
         Assert.That(Result.isError empty, Is.True)
         Assert.That(Result.isError short, Is.True)
 
+    /// Verifies that version hash errors return localized text.
     [<Test>]
     member this.``version hash errors return localized text``() =
         Assert.That(
@@ -260,6 +285,7 @@ type Validations() =
 
         Assert.That(getErrorMessage VersionHashError.Blake3HashIsRequired, Is.EqualTo("The Blake3Hash value is required."))
 
+    /// Verifies that string length less than max length returns Ok.
     [<Test>]
     member this.``string length less than max length returns Ok``() =
         let result =
@@ -268,6 +294,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that string length equal to max length returns Ok.
     [<Test>]
     member this.``string length equal to max length returns Ok``() =
         let result =
@@ -276,6 +303,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that string length greater than max length returns Error.
     [<Test>]
     member this.``string length greater than max length returns Error``() =
         let result =
@@ -284,6 +312,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that string is member of discriminated union returns Ok.
     [<Test>]
     member this.``string is member of discriminated union returns Ok``() =
         let result =
@@ -292,6 +321,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that string is not member of discriminated union returns Error.
     [<Test>]
     member this.``string is not member of discriminated union returns Error``() =
         let result =
@@ -300,6 +330,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that either id or name is provided returns Ok.
     [<Test>]
     member this.``either id or name is provided returns Ok``() =
         let result =
@@ -308,6 +339,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that both id and name are provided returns Ok.
     [<Test>]
     member this.``both id and name are provided returns Ok``() =
         let result =
@@ -316,6 +348,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that neither id nor name is provided returns Error.
     [<Test>]
     member this.``neither id nor name is provided returns Error``() =
         let result =
@@ -324,6 +357,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.errorResult))
 
+    /// Verifies that non-empty list returns Ok.
     [<Test>]
     member this.``non-empty list returns Ok``() =
         let result =
@@ -332,6 +366,7 @@ type Validations() =
 
         Assert.That(result, Is.EqualTo(Common.okResult))
 
+    /// Verifies that empty list returns Error.
     [<Test>]
     member this.``empty list returns Error``() =
         let result =

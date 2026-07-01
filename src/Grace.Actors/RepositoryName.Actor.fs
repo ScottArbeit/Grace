@@ -14,8 +14,10 @@ open Orleans.Runtime
 open System
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for repository name keys, proxies, state, or workflow transitions.
 module RepositoryName =
 
+    /// Implements the Orleans grain for repository name actor.
     type RepositoryNameActor() =
         inherit Grain()
 
@@ -25,6 +27,7 @@ module RepositoryName =
 
         let mutable cachedRepositoryId: RepositoryId option = None
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -35,10 +38,12 @@ module RepositoryName =
             Task.CompletedTask
 
         interface IRepositoryNameActor with
+            /// Returns the repository id recorded in this RepositoryName actor state.
             member this.GetRepositoryId correlationId =
                 this.correlationId <- correlationId
                 cachedRepositoryId |> returnTask
 
+            /// Stores set repository id data in the RepositoryName actor state.
             member this.SetRepositoryId (repositoryId: RepositoryId) correlationId =
                 this.correlationId <- correlationId
                 cachedRepositoryId <- Some repositoryId

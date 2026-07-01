@@ -3,6 +3,7 @@ namespace Grace.Server.Security
 open System
 open System.Security.Claims
 
+/// Contains Grace Server telemetry enrichment behavior and supporting helpers.
 module TelemetryEnrichment =
 
     let private allowedClaimTypes =
@@ -12,16 +13,19 @@ module TelemetryEnrichment =
                      "roles"
                      ClaimTypes.Role ]
 
+    /// Computes redact claim value data used by Grace Server.
     let private redactClaimValue (claimType: string) (value: string) =
         if claimType = PrincipalMapper.GraceUserIdClaim then "REDACTED"
         elif String.IsNullOrWhiteSpace value then String.Empty
         else value.Trim()
 
+    /// Implements safe end user id for the server request pipeline.
     let safeEndUserId (principal: ClaimsPrincipal) =
         PrincipalMapper.tryGetUserId principal
         |> Option.map (fun _ -> "REDACTED")
         |> Option.defaultValue "anonymous"
 
+    /// Implements safe claims tag for the server request pipeline.
     let safeClaimsTag (principal: ClaimsPrincipal) =
         if isNull principal || isNull principal.Claims then
             String.Empty

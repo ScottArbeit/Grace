@@ -7,6 +7,7 @@ open NodaTime
 open System
 open System.Collections.Concurrent
 
+/// Groups Orleans actor helpers for constants keys, proxies, state, or workflow transitions.
 module Constants =
 
     /// Constants for the names of the actors.
@@ -130,6 +131,7 @@ module Constants =
         [<Literal>]
         let WorkItemNumberCounter = "WorkItemNumberCounterActor"
 
+    /// Groups Orleans actor helpers for state name keys, proxies, state, or workflow transitions.
     module StateName =
         [<Literal>]
         let AccessControl = "AccessControl"
@@ -235,6 +237,7 @@ module Constants =
         [<Literal>]
         let DeleteCachedState = "DeleteCachedState"
 
+    /// Groups Orleans actor helpers for lock name keys, proxies, state, or workflow transitions.
     module LockName =
         [<Literal>]
         let ReminderLock = "ReminderLock"

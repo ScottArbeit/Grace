@@ -42,6 +42,7 @@ open MessagePack
 open System.Threading
 open Azure.Storage
 
+/// Groups Orleans actor helpers for directory version keys, proxies, state, or workflow transitions.
 module DirectoryVersion =
 
     /// Result of validating a single whole-file content reference.
@@ -57,6 +58,7 @@ module DirectoryVersion =
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
 
+    /// Validates recursive directory versions complete before the operation continues.
     let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersionDtos: DirectoryVersionDto seq) correlationId =
         let directoryVersionDtoArray = directoryVersionDtos |> Seq.toArray
 
@@ -103,6 +105,7 @@ module DirectoryVersion =
                     stopwatch.Stop()
                     return MissingInStorage(fileVersion, stopwatch.Elapsed.TotalMilliseconds)
                 else
+                    /// Downloads a directory-version blob and computes the hashes recorded for validation.
                     let computeHashesFromBlob () =
                         task {
                             use! blobStream = blobClient.OpenReadAsync(position = 0, bufferSize = (64 * 1024))
@@ -138,6 +141,7 @@ module DirectoryVersion =
                 return ValidationError(fileVersion, ex.Message, stopwatch.Elapsed.TotalMilliseconds)
         }
 
+    /// Coordinates normalize content reference logic for the DirectoryVersion actor.
     let private normalizeContentReference (fileVersion: FileVersion) =
         if isNull (box fileVersion.ContentReference) then
             FileContentReference.WholeFileContent
@@ -148,6 +152,7 @@ module DirectoryVersion =
     /// Returns the list of files that need to be validated.
     let getFilesToValidate (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
         if previouslyValidatedFiles.Count > 0 then
+            /// Builds the identity tuple used to compare file content references across directory versions.
             let contentReferenceIdentity (fileVersion: FileVersion) =
                 let contentReference = normalizeContentReference fileVersion
 
@@ -155,6 +160,7 @@ module DirectoryVersion =
                 | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
                 | referenceType, _ -> $"{referenceType}"
 
+            /// Builds the identity tuple used to compare file paths and content references.
             let fileIdentity (fileVersion: FileVersion) =
                 (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
 
@@ -172,24 +178,30 @@ module DirectoryVersion =
         else
             newFiles.ToArray()
 
+    /// Checks whether a file version stores whole-file content instead of manifest-backed content.
     let private isWholeFileContentReference (fileVersion: FileVersion) =
         (normalizeContentReference fileVersion)
             .ReferenceType = FileContentReferenceType.WholeFileContent
 
+    /// Selects files whose content references still need save-boundary validation.
     let getFilesToValidateForSaveBoundary (newFiles: List<FileVersion>) (previouslyValidatedFiles: List<FileVersion>) : FileVersion array =
         getFilesToValidate newFiles previouslyValidatedFiles
         |> Array.filter isWholeFileContentReference
 
+    /// Coordinates directory version hash error logic for the DirectoryVersion actor.
     let private directoryVersionHashError correlationId (directoryVersion: DirectoryVersion) message =
         GraceError.Create $"DirectoryVersion '{directoryVersion.RelativePath}' {message}" correlationId
 
+    /// Checks whether legacy file metadata is missing one of the expected hashes.
     let private hasMissingHash (value: string) = String.IsNullOrWhiteSpace value
 
+    /// Checks whether a legacy directory hash gap has already been validated.
     let private hasValidatedLegacyDirectoryBlake3Gap (directoryVersion: DirectoryVersion) =
         hasMissingHash directoryVersion.Blake3Hash
         && not (hasMissingHash directoryVersion.Sha256Hash)
         && directoryVersion.HashesValidated
 
+    /// Checks whether manifest-backed legacy file metadata lacks a Blake3 hash.
     let private hasLegacyManifestBackedFileBlake3Gap (fileVersion: FileVersion) =
         let contentReference = normalizeContentReference fileVersion
 
@@ -201,11 +213,13 @@ module DirectoryVersion =
             && fileVersion.Size = manifest.Size
         | _ -> false
 
+    /// Checks whether whole-file legacy metadata lacks a Blake3 hash.
     let private hasLegacyWholeFileBlake3Gap (fileVersion: FileVersion) =
         hasMissingHash fileVersion.Blake3Hash
         && not (hasMissingHash fileVersion.Sha256Hash)
         && isWholeFileContentReference fileVersion
 
+    /// Coordinates content reference identity logic for the DirectoryVersion actor.
     let private contentReferenceIdentity (fileVersion: FileVersion) =
         let contentReference = normalizeContentReference fileVersion
 
@@ -213,9 +227,11 @@ module DirectoryVersion =
         | FileContentReferenceType.FileManifest, Some manifest -> $"{contentReference.ReferenceType}:{manifest.ManifestAddress}"
         | referenceType, _ -> $"{referenceType}"
 
+    /// Coordinates file identity logic for the DirectoryVersion actor.
     let private fileIdentity (fileVersion: FileVersion) =
         (fileVersion.RelativePath, fileVersion.Size, fileVersion.Sha256Hash, fileVersion.Blake3Hash, contentReferenceIdentity fileVersion)
 
+    /// Checks whether an unchanged whole-file legacy Blake3 gap can be accepted.
     let private hasUnchangedLegacyWholeFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
         hasLegacyWholeFileBlake3Gap fileVersion
         && previouslyValidatedFiles
@@ -223,6 +239,7 @@ module DirectoryVersion =
                hasLegacyWholeFileBlake3Gap previousFile
                && fileIdentity previousFile = fileIdentity fileVersion)
 
+    /// Checks whether an unchanged manifest-backed legacy Blake3 gap can be accepted.
     let private hasUnchangedLegacyManifestBackedFileBlake3Gap (previouslyValidatedFiles: FileVersion seq) (fileVersion: FileVersion) =
         hasLegacyManifestBackedFileBlake3Gap fileVersion
         && previouslyValidatedFiles
@@ -230,6 +247,7 @@ module DirectoryVersion =
                hasLegacyManifestBackedFileBlake3Gap previousFile
                && fileIdentity previousFile = fileIdentity fileVersion)
 
+    /// Normalizes directory-version children and files before save-boundary validation.
     let normalizeDirectoryVersionForSaveBoundary (directoryVersion: DirectoryVersion) =
         if directoryVersion.Size
            <> Constants.InitialDirectorySize then
@@ -251,6 +269,7 @@ module DirectoryVersion =
             normalizedDirectoryVersion.HashesValidated <- directoryVersion.HashesValidated
             normalizedDirectoryVersion
 
+    /// Computes directory hashes from child directory-version and file hashes.
     let computeDirectoryVersionHashesFromChildren (relativePath: RelativePath) (childDirectoryVersions: seq<DirectoryVersion>) (files: seq<FileVersion>) =
         let directoryEntries =
             childDirectoryVersions
@@ -335,6 +354,7 @@ module DirectoryVersion =
         match error with
         | Some error -> Error error
         | None ->
+            /// Coordinates expected sha256 hash logic for the DirectoryVersion actor.
             let expectedSha256Hash, expectedBlake3Hash =
                 computeDirectoryVersionHashesFromChildren directoryVersion.RelativePath childDirectoryVersions directoryVersion.Files
 
@@ -355,9 +375,11 @@ module DirectoryVersion =
             else
                 Ok()
 
+    /// Validates directory version hashes with children before the operation continues.
     let validateDirectoryVersionHashesWithChildren correlationId (directoryVersion: DirectoryVersion) (childDirectoryVersions: seq<DirectoryVersion>) =
         validateDirectoryVersionHashesWithChildrenAndPreviousFiles correlationId directoryVersion childDirectoryVersions Array.empty<FileVersion>
 
+    /// Returns child directory versions for validation data from the DirectoryVersion actor state or related storage.
     let private getChildDirectoryVersionsForValidation repositoryId correlationId (directoryVersion: DirectoryVersion) =
         task {
             let childDirectoryVersions = ResizeArray<DirectoryVersion>()
@@ -393,9 +415,11 @@ module DirectoryVersion =
             | None -> return Ok(childDirectoryVersions.ToArray())
         }
 
+    /// Coordinates manifest validation error logic for the DirectoryVersion actor.
     let private manifestValidationError correlationId (fileVersion: FileVersion) message =
         GraceError.Create $"FileManifest reference for '{fileVersion.RelativePath}' {message}" correlationId
 
+    /// Validates manifest blocks before the operation continues.
     let private validateManifestBlocks correlationId (fileVersion: FileVersion) (manifest: FileManifest) =
         if
             isNull (box manifest.Blocks)
@@ -429,6 +453,7 @@ module DirectoryVersion =
                 Error(manifestValidationError correlationId fileVersion "must have ContentBlocks that cover the full manifest size before Save.")
             | None -> Ok()
 
+    /// Validates manifest backed file for save boundary before the operation continues.
     let validateManifestBackedFileForSaveBoundary correlationId (fileVersion: FileVersion) (manifest: FileManifest) =
         try
             if isNull (box manifest) then
@@ -469,8 +494,10 @@ module DirectoryVersion =
         with
         | ex -> Error(GraceError.CreateWithException ex $"FileManifest reference for '{fileVersion.RelativePath}' is invalid before Save." correlationId)
 
+    /// Wraps manifest reference for save boundary records exchanged by actor queries or projections.
     type ManifestReferenceForSaveBoundary = { Manifest: FileManifest; AuthorizedScope: RelativePath }
 
+    /// Returns manifest references for save boundary data from the DirectoryVersion actor state or related storage.
     let getManifestReferencesForSaveBoundary (directoryVersion: DirectoryVersion) correlationId =
         let manifests = Dictionary<StoragePoolId * ManifestAddress * RelativePath, ManifestReferenceForSaveBoundary>()
         let mutable index = 0
@@ -499,6 +526,7 @@ module DirectoryVersion =
         | Some graceError -> Error graceError
         | None -> Ok(manifests.Values |> Seq.toList)
 
+    /// Coordinates content block metadata actor key for save boundary logic for the DirectoryVersion actor.
     let contentBlockMetadataActorKeyForSaveBoundary storagePoolId contentBlockAddress = $"{storagePoolId}|{contentBlockAddress}"
 
     let validateManifestReferencesForSaveBoundaryWithResolver
@@ -555,7 +583,9 @@ module DirectoryVersion =
                 | None -> Ok()
         }
 
+    /// Validates manifest references for save boundary before the operation continues.
     let private validateManifestReferencesForSaveBoundary repositoryId correlationId manifestReferences =
+        /// Returns scoped range presence data from the DirectoryVersion actor state or related storage.
         let getScopedRangePresence storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress query =
             task {
                 let dedupeIndexActor = orleansClient.CreateActorProxyWithCorrelationId<IDedupeIndexActor>("dedupe-index:v1", correlationId)
@@ -577,6 +607,7 @@ module DirectoryVersion =
 
         validateManifestReferencesForSaveBoundaryWithResolver getScopedRangePresence repositoryId correlationId manifestReferences
 
+    /// Implements the Orleans grain for directory version actor.
     type DirectoryVersionActor
         (
             [<PersistentState(StateName.DirectoryVersion, Constants.GraceActorStorage)>] state: IPersistentState<List<DirectoryVersionEvent>>
@@ -596,6 +627,7 @@ module DirectoryVersion =
         /// Gets the name of the blob file that holds the .zip file for the directory version.
         let getZipFileBlobName (directoryVersionId: DirectoryVersionId) = $"{GraceZipFilesFolderName}/{directoryVersionId}.zip"
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -747,6 +779,7 @@ module DirectoryVersion =
                             )
                 }
 
+        /// Applies one persisted DirectoryVersion event to this activation's in-memory state.
         member private this.ApplyEvent directoryVersionEvent =
             task {
                 try
@@ -792,11 +825,13 @@ module DirectoryVersion =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this DirectoryVersion actor state.
             member this.GetRepositoryId correlationId =
                 directoryVersionDto.DirectoryVersion.RepositoryId
                 |> returnTask
 
         interface IDirectoryVersionActor with
+            /// Reports whether this DirectoryVersion actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -804,46 +839,54 @@ module DirectoryVersion =
                  <> DirectoryVersion.Default.DirectoryVersionId)
                 |> returnTask
 
+            /// Removes or invalidates delete data from the DirectoryVersion actor state.
             member this.Delete correlationId =
                 this.correlationId <- correlationId
 
                 GraceResult.Error(GraceError.Create "Not implemented" correlationId)
                 |> returnTask
 
+            /// Returns the current DirectoryVersion actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 directoryVersionDto |> returnTask
 
+            /// Returns the creation timestamp recorded for this directory version.
             member this.GetCreatedAt correlationId =
                 this.correlationId <- correlationId
 
                 directoryVersionDto.DirectoryVersion.CreatedAt
                 |> returnTask
 
+            /// Returns child directory-version references recorded by this directory version.
             member this.GetDirectories correlationId =
                 this.correlationId <- correlationId
 
                 directoryVersionDto.DirectoryVersion.Directories
                 |> returnTask
 
+            /// Returns file-version entries recorded by this directory version.
             member this.GetFiles correlationId =
                 this.correlationId <- correlationId
 
                 directoryVersionDto.DirectoryVersion.Files
                 |> returnTask
 
+            /// Returns the SHA-256 directory hash recorded by this directory version.
             member this.GetSha256Hash correlationId =
                 this.correlationId <- correlationId
 
                 directoryVersionDto.DirectoryVersion.Sha256Hash
                 |> returnTask
 
+            /// Returns the aggregate byte size recorded for this directory version.
             member this.GetSize correlationId =
                 this.correlationId <- correlationId
 
                 directoryVersionDto.DirectoryVersion.Size
                 |> returnTask
 
+            /// Traverses child directory versions and returns the recursive directory tree.
             member this.GetRecursiveDirectoryVersions (forceRegenerate: bool) correlationId =
                 this.correlationId <- correlationId
 
@@ -1094,7 +1137,9 @@ module DirectoryVersion =
                         return Array.Empty<DirectoryVersionDto>()
                 }
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid command (metadata: EventMetadata) =
                     task {
                         match command with
@@ -1142,6 +1187,7 @@ module DirectoryVersion =
                                 return Ok command
                     }
 
+                /// Runs DirectoryVersion command decisions, applies emitted events, and persists the result.
                 let processCommand (command: DirectoryVersionCommand) (metadata: EventMetadata) =
                     task {
                         try
@@ -1417,6 +1463,7 @@ module DirectoryVersion =
                         return Error(GraceError.CreateWithException ex "Exception in DirectoryVersionActor.Handle()" metadata.CorrelationId)
                 }
 
+            /// Calculates recursive byte size from this directory version and its children.
             member this.GetRecursiveSize correlationId =
                 this.correlationId <- correlationId
 
@@ -1439,6 +1486,7 @@ module DirectoryVersion =
                         return directoryVersionDto.RecursiveSize
                 }
 
+            /// Creates a readable URI for the zip artifact associated with this directory version.
             member this.GetZipFileUri(correlationId: CorrelationId) : Task<UriWithSharedAccessSignature> =
                 this.correlationId <- correlationId
                 let directoryVersion = directoryVersionDto.DirectoryVersion

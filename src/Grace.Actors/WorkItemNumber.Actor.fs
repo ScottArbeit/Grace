@@ -12,8 +12,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for work item number keys, proxies, state, or workflow transitions.
 module WorkItemNumber =
 
+    /// Implements the Orleans grain for work item number actor.
     type WorkItemNumberActor() =
         inherit Grain()
 
@@ -23,6 +25,7 @@ module WorkItemNumber =
 
         let cachedWorkItemIds = Dictionary<WorkItemNumber, WorkItemId>()
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -31,6 +34,7 @@ module WorkItemNumber =
             Task.CompletedTask
 
         interface IWorkItemNumberActor with
+            /// Returns the work item id mapped to a repository-local work item number.
             member this.GetWorkItemId (workItemNumber: WorkItemNumber) correlationId =
                 this.correlationId <- correlationId
 
@@ -38,6 +42,7 @@ module WorkItemNumber =
                 | true, workItemId -> Some workItemId |> returnTask
                 | false, _ -> None |> returnTask
 
+            /// Stores the work item id mapped to a repository-local work item number.
             member this.SetWorkItemId (workItemNumber: WorkItemNumber) (workItemId: WorkItemId) correlationId =
                 this.correlationId <- correlationId
 

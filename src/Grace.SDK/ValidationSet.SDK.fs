@@ -7,7 +7,7 @@ open Grace.Types.Validation
 /// Client API for validation set endpoints.
 type ValidationSet() =
 
-    /// Creates a validation set.
+    /// Registers a validation set used to group validation runs for a target scope.
     static member public Create(parameters: CreateValidationSetParameters) =
         postServer<CreateValidationSetParameters, string> (parameters |> ensureCorrelationIdIsSet, "validation-set/create")
 

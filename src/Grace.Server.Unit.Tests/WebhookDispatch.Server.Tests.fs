@@ -24,22 +24,31 @@ open System.Threading
 open System.Threading.Tasks
 open System.Text.Json
 
+/// Groups server unit test helpers for webhook Dispatch Test Helpers.
 module private WebhookDispatchTestHelpers =
 
+    /// Covers test Host Environment behavior in no-Aspire server unit tests.
     type TestHostEnvironment() =
         interface IHostEnvironment with
+            /// Stores the test application Name value used by validation scenarios.
             member val ApplicationName = "Grace.Server.Tests" with get, set
+            /// Stores the test environment Name value used by validation scenarios.
             member val EnvironmentName = Environments.Production with get, set
+            /// Stores the test content Root Path value used by validation scenarios.
             member val ContentRootPath = Environment.CurrentDirectory with get, set
+            /// Stores the test content Root File Provider value used by validation scenarios.
             member val ContentRootFileProvider = NullFileProvider() :> IFileProvider with get, set
 
+    /// Covers recording Transport behavior in no-Aspire server unit tests.
     type RecordingTransport(results: OutboundWebhookResult list) =
         let requests = List<OutboundWebhookRequest>()
         let mutable remainingResults = results
 
+        /// Exposes recorded outbound webhook requests for assertions.
         member _.Requests = requests |> Seq.toArray
 
         interface IOutboundWebhookTransport with
+            /// Sends an outbound webhook request through the scripted test transport.
             member _.SendAsync(request, _) =
                 task {
                     requests.Add request
@@ -51,8 +60,10 @@ module private WebhookDispatchTestHelpers =
                     | [] -> return OutboundWebhookResult.Succeeded 200
                 }
 
+    /// Covers throwing Transport behavior in no-Aspire server unit tests.
     type ThrowingTransport() =
         interface IOutboundWebhookTransport with
+            /// Sends an outbound webhook request through the scripted test transport.
             member _.SendAsync(_, _) =
                 task {
                     return
@@ -63,13 +74,16 @@ module private WebhookDispatchTestHelpers =
                         )
                 }
 
+    /// Covers scripted Transport behavior in no-Aspire server unit tests.
     type ScriptedTransport(steps: (OutboundWebhookRequest -> CancellationToken -> Task<OutboundWebhookResult>) list) =
         let requests = List<OutboundWebhookRequest>()
         let mutable remainingSteps = steps
 
+        /// Exposes recorded outbound webhook requests for assertions.
         member _.Requests = requests |> Seq.toArray
 
         interface IOutboundWebhookTransport with
+            /// Sends an outbound webhook request through the scripted test transport.
             member _.SendAsync(request, cancellationToken) =
                 task {
                     requests.Add request
@@ -81,12 +95,15 @@ module private WebhookDispatchTestHelpers =
                     | [] -> return OutboundWebhookResult.Succeeded 200
                 }
 
+    /// Covers canceling Transport behavior in no-Aspire server unit tests.
     type CancelingTransport(cancellationTokenSource: CancellationTokenSource) =
         let requests = List<OutboundWebhookRequest>()
 
+        /// Exposes recorded outbound webhook requests for assertions.
         member _.Requests = requests |> Seq.toArray
 
         interface IOutboundWebhookTransport with
+            /// Sends an outbound webhook request through the scripted test transport.
             member _.SendAsync(request, cancellationToken) =
                 task {
                     requests.Add request
@@ -94,12 +111,15 @@ module private WebhookDispatchTestHelpers =
                     return raise (OperationCanceledException(cancellationToken))
                 }
 
+    /// Covers cancel After Success Transport behavior in no-Aspire server unit tests.
     type CancelAfterSuccessTransport(cancellationTokenSource: CancellationTokenSource) =
         let requests = List<OutboundWebhookRequest>()
 
+        /// Exposes recorded outbound webhook requests for assertions.
         member _.Requests = requests |> Seq.toArray
 
         interface IOutboundWebhookTransport with
+            /// Sends an outbound webhook request through the scripted test transport.
             member _.SendAsync(request, _) =
                 task {
                     requests.Add request
@@ -107,18 +127,23 @@ module private WebhookDispatchTestHelpers =
                     return OutboundWebhookResult.Succeeded 200
                 }
 
+    /// Covers blocking Success Transport behavior in no-Aspire server unit tests.
     type BlockingSuccessTransport() =
         let requests = ConcurrentBag<OutboundWebhookRequest>()
         let firstRequest = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
         let release = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
 
+        /// Exposes recorded outbound webhook requests for assertions.
         member _.Requests = requests.ToArray()
 
+        /// Waits until the blocking transport records its first outbound request.
         member _.WaitForFirstRequestAsync() = firstRequest.Task
 
+        /// Releases the blocking transport so the pending send can finish.
         member _.Release() = release.TrySetResult(()) |> ignore
 
         interface IOutboundWebhookTransport with
+            /// Sends an outbound webhook request through the scripted test transport.
             member _.SendAsync(request, _) =
                 task {
                     requests.Add request
@@ -134,6 +159,7 @@ module private WebhookDispatchTestHelpers =
 
     let logger = NullLogger.Instance
 
+    /// Constructs metadata fixtures used by the server unit webhook Dispatch assertions.
     let metadata ownerId organizationId repositoryId targetBranchId promotionSetId correlationId =
         let properties = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
         properties[nameof OwnerId] <- $"{ownerId}"
@@ -143,19 +169,25 @@ module private WebhookDispatchTestHelpers =
         properties[nameof PromotionSetId] <- $"{promotionSetId}"
         properties["ActorId"] <- $"{promotionSetId}"
 
-        { Timestamp = Instant.FromUtc(2026, 6, 2, 12, 0)
-          CorrelationId = correlationId
-          Principal = "tester"
-          ClientType = Option.None
-          Properties = properties }
+        {
+            Timestamp = Instant.FromUtc(2026, 6, 2, 12, 0)
+            CorrelationId = correlationId
+            Principal = "tester"
+            ClientType = Option.None
+            Properties = properties
+        }
 
+    /// Builds applied Event test data for the server unit webhook Dispatch scenarios in this file.
     let appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId =
         let promotionSetEvent: PromotionSetEvent =
-            { Event = PromotionSetEventType.Applied terminalReferenceId
-              Metadata = metadata ownerId organizationId repositoryId targetBranchId promotionSetId "corr-webhook" }
+            {
+                Event = PromotionSetEventType.Applied terminalReferenceId
+                Metadata = metadata ownerId organizationId repositoryId targetBranchId promotionSetId "corr-webhook"
+            }
 
         GraceEvent.PromotionSetEvent promotionSetEvent
 
+    /// Builds rule test data for the server unit webhook Dispatch scenarios in this file.
     let rule ruleId ownerId organizationId repositoryId targetBranchId =
         { WebhookRule.Default with
             WebhookRuleId = ruleId
@@ -167,17 +199,22 @@ module private WebhookDispatchTestHelpers =
             RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
             Status = WebhookRuleStatus.Enabled
             CreatedBy = UserId "tester"
-            CreatedAt = Instant.FromUtc(2026, 6, 2, 11, 0) }
+            CreatedAt = Instant.FromUtc(2026, 6, 2, 11, 0)
+        }
 
+    /// Builds dispatch test data for the server unit webhook Dispatch scenarios in this file.
     let dispatch transport graceEvent =
         WebhookDispatch.dispatchCommittedEventAsync logger configuration hostEnvironment transport graceEvent CancellationToken.None
 
+/// Covers webhook Dispatch Unit behavior in no-Aspire server unit tests.
 [<NonParallelizable>]
 type WebhookDispatchUnitTests() =
 
+    /// Verifies that set Up.
     [<SetUp>]
     member _.SetUp() = WebhookStore.clearForTests ()
 
+    /// Verifies that committed Promotion Set Applied Creates Signed Versioned Delivery For Matching Rule.
     [<Test>]
     member _.CommittedPromotionSetAppliedCreatesSignedVersionedDeliveryForMatchingRule() =
         task {
@@ -211,13 +248,37 @@ type WebhookDispatchUnitTests() =
 
             use payload = JsonDocument.Parse(request.PayloadJson)
 
-            Assert.That(payload.RootElement.GetProperty("eventName").GetString(), Is.EqualTo(ExternalWebhookEventRegistry.PromotionSetAppliedName))
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("eventName")
+                    .GetString(),
+                Is.EqualTo(ExternalWebhookEventRegistry.PromotionSetAppliedName)
+            )
 
-            Assert.That(payload.RootElement.GetProperty("eventVersion").GetInt32(), Is.EqualTo(1))
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("eventVersion")
+                    .GetInt32(),
+                Is.EqualTo(1)
+            )
 
-            Assert.That(payload.RootElement.GetProperty("promotionSetId").GetGuid(), Is.EqualTo(promotionSetId))
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("promotionSetId")
+                    .GetGuid(),
+                Is.EqualTo(promotionSetId)
+            )
 
-            Assert.That(payload.RootElement.GetProperty("terminalPromotionReferenceId").GetGuid(), Is.EqualTo(terminalReferenceId))
+            Assert.That(
+                payload
+                    .RootElement
+                    .GetProperty("terminalPromotionReferenceId")
+                    .GetGuid(),
+                Is.EqualTo(terminalReferenceId)
+            )
 
             Assert.That(request.PayloadJson, Does.Not.Contain("DataJson"))
             Assert.That(request.PayloadJson, Does.Not.Contain("AutomationEventEnvelope"))
@@ -229,6 +290,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries[0].LastStatusCode, Is.EqualTo(Option.Some 202))
         }
 
+    /// Verifies that committed Delivery Headers Use Stable Sha256 Payload Digest And Hmac Preimage.
     [<Test>]
     member _.CommittedDeliveryHeadersUseStableSha256PayloadDigestAndHmacPreimage() =
         task {
@@ -292,6 +354,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(Encoding.UTF8.GetString(signedMaterial), Is.EqualTo($"{deliveryId}.{timestamp}.{rule.SigningSecretVersion}.{payloadSha256}"))
         }
 
+    /// Verifies that non Matching Rule And Non Canonical Reference Source Do Not Create Delivery.
     [<Test>]
     member _.NonMatchingRuleAndNonCanonicalReferenceSourceDoNotCreateDelivery() =
         task {
@@ -315,27 +378,32 @@ type WebhookDispatchUnitTests() =
             Assert.That(transport.Requests, Is.Empty)
 
             let referenceEvent: ReferenceEvent =
-                { Event =
-                    ReferenceEventType.Created(
-                        Guid.NewGuid(),
-                        ownerId,
-                        organizationId,
-                        repositoryId,
-                        otherBranchId,
-                        Guid.NewGuid(),
-                        Sha256Hash String.Empty,
-                        Blake3Hash String.Empty,
-                        ReferenceType.Promotion,
-                        "promotion",
-                        [ ReferenceLinkType.PromotionSetTerminal promotionSetId ]
-                    )
-                  Metadata = WebhookDispatchTestHelpers.metadata ownerId organizationId repositoryId otherBranchId promotionSetId "corr-reference" }
+                {
+                    Event =
+                        ReferenceEventType.Created(
+                            Guid.NewGuid(),
+                            ownerId,
+                            organizationId,
+                            repositoryId,
+                            otherBranchId,
+                            Guid.NewGuid(),
+                            Sha256Hash String.Empty,
+                            Blake3Hash String.Empty,
+                            ReferenceType.Promotion,
+                            "promotion",
+                            [
+                                ReferenceLinkType.PromotionSetTerminal promotionSetId
+                            ]
+                        )
+                    Metadata = WebhookDispatchTestHelpers.metadata ownerId organizationId repositoryId otherBranchId promotionSetId "corr-reference"
+                }
 
             let! referenceResult = WebhookDispatchTestHelpers.dispatch transport (GraceEvent.ReferenceEvent referenceEvent)
             Assert.That(referenceResult.DeliveryCount, Is.EqualTo(0))
             Assert.That(transport.Requests, Is.Empty)
         }
 
+    /// Verifies that duplicate Committed Event Skips Existing Dedupe Key.
     [<Test>]
     member _.DuplicateCommittedEventSkipsExistingDedupeKey() =
         task {
@@ -348,7 +416,13 @@ type WebhookDispatchUnitTests() =
             let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId Option.None
             WebhookStore.upsertRule rule |> ignore
 
-            let transport = WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.Succeeded 200; OutboundWebhookResult.Succeeded 200 ])
+            let transport =
+                WebhookDispatchTestHelpers.RecordingTransport(
+                    [
+                        OutboundWebhookResult.Succeeded 200
+                        OutboundWebhookResult.Succeeded 200
+                    ]
+                )
 
             let graceEvent = WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId
             let! first = WebhookDispatchTestHelpers.dispatch transport graceEvent
@@ -362,6 +436,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries, Has.Count.EqualTo(1))
         }
 
+    /// Verifies that concurrent Duplicate Committed Event Only Sends Once For Dedupe Key.
     [<Test>]
     member _.ConcurrentDuplicateCommittedEventOnlySendsOnceForDedupeKey() =
         task {
@@ -377,18 +452,33 @@ type WebhookDispatchUnitTests() =
             let transport = WebhookDispatchTestHelpers.BlockingSuccessTransport()
             let graceEvent = WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId
 
-            let dispatches = [| for _ in 1..16 -> WebhookDispatchTestHelpers.dispatch transport graceEvent |]
+            let dispatches =
+                [|
+                    for _ in 1..16 -> WebhookDispatchTestHelpers.dispatch transport graceEvent
+                |]
 
             do! transport.WaitForFirstRequestAsync()
             transport.Release()
 
             let! results = Task.WhenAll dispatches
 
-            Assert.That(results |> Array.sumBy (fun result -> result.DeliveryCount), Is.EqualTo(1))
+            Assert.That(
+                results
+                |> Array.sumBy (fun result -> result.DeliveryCount),
+                Is.EqualTo(1)
+            )
 
-            Assert.That(results |> Array.sumBy (fun result -> result.DeliveredCount), Is.EqualTo(1))
+            Assert.That(
+                results
+                |> Array.sumBy (fun result -> result.DeliveredCount),
+                Is.EqualTo(1)
+            )
 
-            Assert.That(results |> Array.sumBy (fun result -> result.SkippedDuplicateCount), Is.EqualTo(15))
+            Assert.That(
+                results
+                |> Array.sumBy (fun result -> result.SkippedDuplicateCount),
+                Is.EqualTo(15)
+            )
 
             Assert.That(transport.Requests, Has.Length.EqualTo(1))
 
@@ -397,6 +487,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
         }
 
+    /// Verifies that transient Failure Schedules Retry Without Blocking Committed Event Dispatch.
     [<Test>]
     member _.TransientFailureSchedulesRetryWithoutBlockingCommittedEventDispatch() =
         task {
@@ -408,14 +499,17 @@ type WebhookDispatchUnitTests() =
 
             let transientRule =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
-                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
 
             WebhookStore.upsertRule transientRule |> ignore
 
             let transport =
                 WebhookDispatchTestHelpers.RecordingTransport(
-                    [ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable token=response-secret")
-                      OutboundWebhookResult.Succeeded 200 ]
+                    [
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable token=response-secret")
+                        OutboundWebhookResult.Succeeded 200
+                    ]
                 )
 
             let! result =
@@ -450,6 +544,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(updatedDeliveries[0].AttemptCount, Is.EqualTo(2))
         }
 
+    /// Verifies that timeout Like Cancellation Schedules Retry And Does Not Abort Committed Event Batch.
     [<Test>]
     member _.TimeoutLikeCancellationSchedulesRetryAndDoesNotAbortCommittedEventBatch() =
         task {
@@ -461,7 +556,8 @@ type WebhookDispatchUnitTests() =
 
             let timeoutRule =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
-                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
 
             let successRule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
 
@@ -505,6 +601,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(retryDelivery.NextAttemptAt, Is.Not.EqualTo(Option.None))
         }
 
+    /// Verifies that committed Event Cancellation Between Rules Does Not Claim Or Send Next Rule.
     [<Test>]
     member _.CommittedEventCancellationBetweenRulesDoesNotClaimOrSendNextRule() =
         task {
@@ -524,7 +621,7 @@ type WebhookDispatchUnitTests() =
             let transport = WebhookDispatchTestHelpers.CancelAfterSuccessTransport(cancellationTokenSource)
 
             let operation =
-                Func<Task>(fun () ->
+                Func<Task> (fun () ->
                     task {
                         let! _ =
                             WebhookDispatch.dispatchCommittedEventAsync
@@ -539,7 +636,8 @@ type WebhookDispatchUnitTests() =
                     }
                     :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation) |> ignore
+            Assert.ThrowsAsync<OperationCanceledException>(operation)
+            |> ignore
 
             Assert.That(transport.Requests, Has.Length.EqualTo(1))
 
@@ -552,6 +650,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries[0].AttemptCount, Is.EqualTo(1))
         }
 
+    /// Verifies that scheduled Retry Uses Original Rule Snapshot After Rule Url And Signing Update.
     [<Test>]
     member _.ScheduledRetryUsesOriginalRuleSnapshotAfterRuleUrlAndSigningUpdate() =
         task {
@@ -565,14 +664,17 @@ type WebhookDispatchUnitTests() =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
                     Url = { Url = "https://8.8.8.8/original?token=original-secret"; Safety = OutboundUrlSafety.PublicHttps }
                     SigningSecretVersion = "original-secret-version"
-                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
 
             WebhookStore.upsertRule originalRule |> ignore
 
             let transport =
                 WebhookDispatchTestHelpers.RecordingTransport(
-                    [ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
-                      OutboundWebhookResult.Succeeded 200 ]
+                    [
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        OutboundWebhookResult.Succeeded 200
+                    ]
                 )
 
             let! result =
@@ -586,7 +688,8 @@ type WebhookDispatchUnitTests() =
             let updatedRule =
                 { originalRule with
                     Url = { Url = "https://8.8.4.4/updated?token=updated-secret"; Safety = OutboundUrlSafety.PublicHttps }
-                    SigningSecretVersion = "updated-secret-version" }
+                    SigningSecretVersion = "updated-secret-version"
+                }
 
             WebhookStore.upsertRule updatedRule |> ignore
 
@@ -606,6 +709,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(transport.Requests[1].Headers["x-grace-webhook-signature-key-id"], Is.EqualTo("original-secret-version"))
         }
 
+    /// Verifies that scheduled Retry Uses Original Rule Snapshot After Live Rule Is Disabled Or Deleted.
     [<Test>]
     member _.ScheduledRetryUsesOriginalRuleSnapshotAfterLiveRuleIsDisabledOrDeleted() =
         task {
@@ -617,15 +721,18 @@ type WebhookDispatchUnitTests() =
 
             let originalRule =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
-                    RetryPolicy = { MaxAttempts = 4; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+                    RetryPolicy = { MaxAttempts = 4; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
 
             WebhookStore.upsertRule originalRule |> ignore
 
             let transport =
                 WebhookDispatchTestHelpers.RecordingTransport(
-                    [ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
-                      OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
-                      OutboundWebhookResult.Succeeded 200 ]
+                    [
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        OutboundWebhookResult.Succeeded 200
+                    ]
                 )
 
             let! result =
@@ -673,6 +780,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(transport.Requests[2].Url.AbsoluteUri, Is.EqualTo(originalRule.Url.Url))
         }
 
+    /// Verifies that drain Scheduled Retries Once Processes Due Retry Batch.
     [<Test>]
     member _.DrainScheduledRetriesOnceProcessesDueRetryBatch() =
         task {
@@ -687,8 +795,10 @@ type WebhookDispatchUnitTests() =
 
             let transport =
                 WebhookDispatchTestHelpers.RecordingTransport(
-                    [ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
-                      OutboundWebhookResult.Succeeded 200 ]
+                    [
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        OutboundWebhookResult.Succeeded 200
+                    ]
                 )
 
             let! dispatchResult =
@@ -699,7 +809,14 @@ type WebhookDispatchUnitTests() =
             Assert.That(dispatchResult.FailedCount, Is.EqualTo(1))
             let delivery = (WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true)[0]
 
-            WebhookStore.upsertDelivery { delivery with NextAttemptAt = Some(getCurrentInstant().Minus(Duration.FromSeconds(1.0))) }
+            WebhookStore.upsertDelivery
+                { delivery with
+                    NextAttemptAt =
+                        Some(
+                            getCurrentInstant()
+                                .Minus(Duration.FromSeconds(1.0))
+                        )
+                }
             |> ignore
 
             let! retryResult =
@@ -715,6 +832,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(transport.Requests, Has.Length.EqualTo(2))
         }
 
+    /// Verifies that scheduled Retry Exhaustion Dead Letters Without Blocking Source Workflow.
     [<Test>]
     member _.ScheduledRetryExhaustionDeadLettersWithoutBlockingSourceWorkflow() =
         task {
@@ -726,7 +844,8 @@ type WebhookDispatchUnitTests() =
 
             let transientRule =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
-                    RetryPolicy = { MaxAttempts = 2; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+                    RetryPolicy = { MaxAttempts = 2; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
 
             let exhaustedRule = { transientRule with WebhookRuleId = Guid.NewGuid() }
 
@@ -734,8 +853,10 @@ type WebhookDispatchUnitTests() =
 
             let exhaustedTransport =
                 WebhookDispatchTestHelpers.RecordingTransport(
-                    [ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
-                      OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable") ]
+                    [
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                    ]
                 )
 
             let! exhaustedResult =
@@ -768,6 +889,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(retriedDelivery.AttemptCount, Is.EqualTo(2))
         }
 
+    /// Verifies that scheduled Retry Cancellation Propagates Without Mutating Due Delivery.
     [<Test>]
     member _.ScheduledRetryCancellationPropagatesWithoutMutatingDueDelivery() =
         task {
@@ -779,20 +901,32 @@ type WebhookDispatchUnitTests() =
 
             let rule =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
-                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+                    RetryPolicy = { MaxAttempts = 3; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
 
             WebhookStore.upsertRule rule |> ignore
 
             let! dispatchResult =
                 WebhookDispatchTestHelpers.dispatch
-                    (WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable") ]))
+                    (WebhookDispatchTestHelpers.RecordingTransport(
+                        [
+                            OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        ]
+                    ))
                     (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
 
             Assert.That(dispatchResult.FailedCount, Is.EqualTo(1))
 
             let scheduledDelivery = (WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true)[0]
 
-            let dueDelivery = { scheduledDelivery with NextAttemptAt = Some(getCurrentInstant().Minus(Duration.FromSeconds(1.0))) }
+            let dueDelivery =
+                { scheduledDelivery with
+                    NextAttemptAt =
+                        Some(
+                            getCurrentInstant()
+                                .Minus(Duration.FromSeconds(1.0))
+                        )
+                }
 
             WebhookStore.upsertDelivery dueDelivery |> ignore
 
@@ -800,7 +934,7 @@ type WebhookDispatchUnitTests() =
             let transport = WebhookDispatchTestHelpers.CancelingTransport(cancellationTokenSource)
 
             let operation =
-                Func<Task>(fun () ->
+                Func<Task> (fun () ->
                     task {
                         let! _ =
                             WebhookDispatch.processScheduledRetriesAsync
@@ -816,11 +950,14 @@ type WebhookDispatchUnitTests() =
                     }
                     :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation) |> ignore
+            Assert.ThrowsAsync<OperationCanceledException>(operation)
+            |> ignore
 
             Assert.That(transport.Requests, Has.Length.EqualTo(1))
 
-            let unchangedDelivery = WebhookStore.tryGetDelivery dueDelivery.WebhookDeliveryId |> Option.get
+            let unchangedDelivery =
+                WebhookStore.tryGetDelivery dueDelivery.WebhookDeliveryId
+                |> Option.get
 
             Assert.That(unchangedDelivery.Status, Is.EqualTo(dueDelivery.Status))
             Assert.That(unchangedDelivery.AttemptCount, Is.EqualTo(dueDelivery.AttemptCount))
@@ -830,6 +967,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(unchangedDelivery.NextAttemptAt, Is.EqualTo(dueDelivery.NextAttemptAt))
         }
 
+    /// Verifies that scheduled Retry Cancellation Between Items Does Not Mutate Next Due Delivery.
     [<Test>]
     member _.ScheduledRetryCancellationBetweenItemsDoesNotMutateNextDueDelivery() =
         task {
@@ -849,12 +987,20 @@ type WebhookDispatchUnitTests() =
 
             let! firstDispatchResult =
                 WebhookDispatchTestHelpers.dispatch
-                    (WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable") ]))
+                    (WebhookDispatchTestHelpers.RecordingTransport(
+                        [
+                            OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        ]
+                    ))
                     (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId firstTargetBranchId promotionSetId (Guid.NewGuid()))
 
             let! secondDispatchResult =
                 WebhookDispatchTestHelpers.dispatch
-                    (WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable") ]))
+                    (WebhookDispatchTestHelpers.RecordingTransport(
+                        [
+                            OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        ]
+                    ))
                     (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId secondTargetBranchId promotionSetId (Guid.NewGuid()))
 
             Assert.That(firstDispatchResult.FailedCount, Is.EqualTo(1))
@@ -864,21 +1010,25 @@ type WebhookDispatchUnitTests() =
 
             let firstDueDelivery =
                 { (WebhookStore.listDeliveries firstRule.Scope firstRule.WebhookRuleId true)[0] with
-                    NextAttemptAt = Some(now.Minus(Duration.FromSeconds(2.0))) }
+                    NextAttemptAt = Some(now.Minus(Duration.FromSeconds(2.0)))
+                }
 
             let secondDueDelivery =
                 { (WebhookStore.listDeliveries secondRule.Scope secondRule.WebhookRuleId true)[0] with
-                    NextAttemptAt = Some(now.Minus(Duration.FromSeconds(1.0))) }
+                    NextAttemptAt = Some(now.Minus(Duration.FromSeconds(1.0)))
+                }
 
-            WebhookStore.upsertDelivery firstDueDelivery |> ignore
+            WebhookStore.upsertDelivery firstDueDelivery
+            |> ignore
 
-            WebhookStore.upsertDelivery secondDueDelivery |> ignore
+            WebhookStore.upsertDelivery secondDueDelivery
+            |> ignore
 
             use cancellationTokenSource = new CancellationTokenSource()
             let transport = WebhookDispatchTestHelpers.CancelAfterSuccessTransport(cancellationTokenSource)
 
             let operation =
-                Func<Task>(fun () ->
+                Func<Task> (fun () ->
                     task {
                         let! _ =
                             WebhookDispatch.processScheduledRetriesAsync
@@ -894,16 +1044,21 @@ type WebhookDispatchUnitTests() =
                     }
                     :> Task)
 
-            Assert.ThrowsAsync<OperationCanceledException>(operation) |> ignore
+            Assert.ThrowsAsync<OperationCanceledException>(operation)
+            |> ignore
 
             Assert.That(transport.Requests, Has.Length.EqualTo(1))
 
-            let firstRetriedDelivery = WebhookStore.tryGetDelivery firstDueDelivery.WebhookDeliveryId |> Option.get
+            let firstRetriedDelivery =
+                WebhookStore.tryGetDelivery firstDueDelivery.WebhookDeliveryId
+                |> Option.get
 
             Assert.That(firstRetriedDelivery.Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
             Assert.That(firstRetriedDelivery.AttemptCount, Is.EqualTo(2))
 
-            let unchangedSecondDelivery = WebhookStore.tryGetDelivery secondDueDelivery.WebhookDeliveryId |> Option.get
+            let unchangedSecondDelivery =
+                WebhookStore.tryGetDelivery secondDueDelivery.WebhookDeliveryId
+                |> Option.get
 
             Assert.That(unchangedSecondDelivery.Status, Is.EqualTo(secondDueDelivery.Status))
             Assert.That(unchangedSecondDelivery.AttemptCount, Is.EqualTo(secondDueDelivery.AttemptCount))
@@ -913,6 +1068,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(unchangedSecondDelivery.NextAttemptAt, Is.EqualTo(secondDueDelivery.NextAttemptAt))
         }
 
+    /// Verifies that scheduled Retry Transport Exception Is Redacted And Dead Lettered At Max Attempts.
     [<Test>]
     member _.ScheduledRetryTransportExceptionIsRedactedAndDeadLetteredAtMaxAttempts() =
         task {
@@ -924,20 +1080,32 @@ type WebhookDispatchUnitTests() =
 
             let rule =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
-                    RetryPolicy = { MaxAttempts = 2; InitialDelaySeconds = 1; MaxDelaySeconds = 8 } }
+                    RetryPolicy = { MaxAttempts = 2; InitialDelaySeconds = 1; MaxDelaySeconds = 8 }
+                }
 
             WebhookStore.upsertRule rule |> ignore
 
             let! dispatchResult =
                 WebhookDispatchTestHelpers.dispatch
-                    (WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable") ]))
+                    (WebhookDispatchTestHelpers.RecordingTransport(
+                        [
+                            OutboundWebhookResult.TransientFailure(Option.Some 503, "service unavailable")
+                        ]
+                    ))
                     (WebhookDispatchTestHelpers.appliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId (Guid.NewGuid()))
 
             Assert.That(dispatchResult.FailedCount, Is.EqualTo(1))
 
             let scheduledDelivery = (WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true)[0]
 
-            WebhookStore.upsertDelivery { scheduledDelivery with NextAttemptAt = Some(getCurrentInstant().Minus(Duration.FromSeconds(1.0))) }
+            WebhookStore.upsertDelivery
+                { scheduledDelivery with
+                    NextAttemptAt =
+                        Some(
+                            getCurrentInstant()
+                                .Minus(Duration.FromSeconds(1.0))
+                        )
+                }
             |> ignore
 
             let! retryResult =
@@ -961,6 +1129,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(retriedDelivery.LastError.Value, Does.Contain("signature=REDACTED"))
         }
 
+    /// Verifies that delivery Rejects Unsafe Url Without Calling Transport Or Leaking Secret Url.
     [<Test>]
     member _.DeliveryRejectsUnsafeUrlWithoutCallingTransportOrLeakingSecretUrl() =
         task {
@@ -972,7 +1141,8 @@ type WebhookDispatchUnitTests() =
 
             let rule =
                 { WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId) with
-                    Url = { Url = "https://127.0.0.1/hook?token=secret"; Safety = OutboundUrlSafety.PublicHttps } }
+                    Url = { Url = "https://127.0.0.1/hook?token=secret"; Safety = OutboundUrlSafety.PublicHttps }
+                }
 
             WebhookStore.upsertRule rule |> ignore
 
@@ -992,6 +1162,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(delivery.LastError.Value, Does.Not.Contain("secret"))
         }
 
+    /// Verifies that outbound Transport Exception Does Not Escape Committed Event Dispatch.
     [<Test>]
     member _.OutboundTransportExceptionDoesNotEscapeCommittedEventDispatch() =
         task {
@@ -1022,6 +1193,7 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries[0].LastError.Value, Does.Contain("signature=REDACTED"))
         }
 
+    /// Verifies that failed Response Error Is Redacted Before Persistence.
     [<Test>]
     member _.FailedResponseErrorIsRedactedBeforePersistence() =
         task {
@@ -1036,10 +1208,12 @@ type WebhookDispatchUnitTests() =
 
             let transport =
                 WebhookDispatchTestHelpers.RecordingTransport(
-                    [ OutboundWebhookResult.PermanentFailure(
-                          Option.Some 400,
-                          "bad response from https://example.test/hook?token=response-token&signature=response-signature secret=response-secret"
-                      ) ]
+                    [
+                        OutboundWebhookResult.PermanentFailure(
+                            Option.Some 400,
+                            "bad response from https://example.test/hook?token=response-token&signature=response-signature secret=response-secret"
+                        )
+                    ]
                 )
 
             let! result =

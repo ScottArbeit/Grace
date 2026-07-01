@@ -3,6 +3,7 @@
 
 # Grace-specific ignores
 .grace/
+/.azure/
 /artifacts/
 **/.grace/objects
 **/.grace/directoryVersions

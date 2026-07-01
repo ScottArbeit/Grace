@@ -24,6 +24,7 @@ open System.Threading.Tasks
 open Grace.Types
 open Grace.Shared.Utilities
 
+/// Captures test host state values used by the test suite.
 type TestHostState =
     {
         App: DistributedApplication
@@ -35,6 +36,7 @@ type TestHostState =
         ServiceBusTestSubscription: string
     }
 
+/// Groups shared helpers for aspire test host.
 module AspireTestHost =
     do AppDomain.CurrentDomain.ProcessExit.Add(fun _ -> Environment.ExitCode <- 0)
 
@@ -44,11 +46,13 @@ module AspireTestHost =
     let mutable private sharedState: TestHostState option = None
     let mutable private sharedBootstrapUserId: string option = None
 
+    /// Gets service bus sql resource name from the running test server.
     let private getServiceBusSqlResourceName () =
         match Environment.GetEnvironmentVariable("GRACE_TEST_RUN_ID") with
         | value when not (String.IsNullOrWhiteSpace value) -> $"servicebus-sql-{value}"
         | _ -> "servicebus-sql"
 
+    /// Gets service bus emulator resource name from the running test server.
     let private getServiceBusEmulatorResourceName () =
         match Environment.GetEnvironmentVariable("GRACE_TEST_RUN_ID") with
         | value when not (String.IsNullOrWhiteSpace value) -> $"servicebus-emulator-{value}"
@@ -60,10 +64,12 @@ module AspireTestHost =
         | _, value when not (String.IsNullOrWhiteSpace value) -> true
         | _ -> false
 
+    /// Gets timeout from the running test server.
     let private getTimeout (local: TimeSpan) (ci: TimeSpan) = if isCi then ci else local
 
     let private defaultWaitTimeout = getTimeout (TimeSpan.FromMinutes(5.0)) (TimeSpan.FromMinutes(3.0))
 
+    /// Defines log progress behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private logProgress (message: string) =
         let progressMessage = $"Grace.Server.Tests progress: {message}"
 
@@ -72,6 +78,7 @@ module AspireTestHost =
         Console.Error.WriteLine(progressMessage)
         Console.Error.Flush()
 
+    /// Defines ensure bootstrap compatible behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private ensureBootstrapCompatible (bootstrapUserId: string) =
         match sharedBootstrapUserId with
         | None -> ()
@@ -86,6 +93,7 @@ module AspireTestHost =
                 )
             )
 
+    /// Gets resource from the running test server.
     let private getResource (app: DistributedApplication) (resourceName: string) =
         let model = app.Services.GetRequiredService<DistributedApplicationModel>()
 
@@ -93,6 +101,7 @@ module AspireTestHost =
         |> Seq.tryFind (fun resource -> resource.Name = resourceName)
         |> Option.defaultWith (fun () -> failwith $"Resource '{resourceName}' not found in distributed application model.")
 
+    /// Tries to resolve find resource name without failing the caller.
     let private tryFindResourceName<'T when 'T :> IResource> (app: DistributedApplication) =
         let model = app.Services.GetRequiredService<DistributedApplicationModel>()
 
@@ -100,17 +109,20 @@ module AspireTestHost =
         |> Seq.tryFind (fun resource -> resource :? 'T)
         |> Option.map (fun resource -> resource.Name)
 
+    /// Tries to resolve find resource by name without failing the caller.
     let private tryFindResourceByName (app: DistributedApplication) (resourceName: string) =
         let model = app.Services.GetRequiredService<DistributedApplicationModel>()
 
         model.Resources
         |> Seq.tryFind (fun resource -> resource.Name = resourceName)
 
+    /// Gets endpoint name from the running test server.
     let private getEndpointName (app: DistributedApplication) (resourceName: string) =
         let resource = getResource app resourceName
         let resourceWithEndpoints = resource :?> IResourceWithEndpoints
         let endpoints = resourceWithEndpoints.GetEndpoints() |> Seq.toList
 
+        /// Defines by scheme behavior for the surrounding tests used by the server integration aspire Test Host scenario.
         let byScheme scheme =
             endpoints
             |> List.tryFind (fun endpoint -> endpoint.EndpointAnnotation.UriScheme.Equals(scheme, StringComparison.OrdinalIgnoreCase))
@@ -124,6 +136,7 @@ module AspireTestHost =
             | first :: _ -> first.EndpointAnnotation.Name
             | [] -> failwith $"No endpoints found for resource '{resourceName}'."
 
+    /// Gets environment variables from the running test server.
     let private getEnvironmentVariablesAsync (app: DistributedApplication) (resourceName: string) =
         task {
             let resource = getResource app resourceName
@@ -147,6 +160,7 @@ module AspireTestHost =
                 |> Map.ofSeq
         }
 
+    /// Defines describe resource state behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private describeResourceState (notificationService: ResourceNotificationService) (resourceName: string) =
         let mutable resourceEvent = Unchecked.defaultof<ResourceEvent>
 
@@ -174,6 +188,7 @@ module AspireTestHost =
         else
             "State unavailable."
 
+    /// Gets resource logs from the running test server.
     let private getResourceLogsAsync (app: DistributedApplication) (resourceName: string) =
         task {
             let loggerService = app.Services.GetRequiredService<ResourceLoggerService>()
@@ -205,8 +220,10 @@ module AspireTestHost =
             return lines |> Seq.toList
         }
 
+    /// Captures process result values used by the test suite.
     type private ProcessResult = { ExitCode: int option; StdOut: string; StdErr: string; TimedOut: bool; Error: string option }
 
+    /// Runs process with the configured test context.
     let private runProcessAsync (fileName: string) (arguments: string) (timeout: TimeSpan) =
         task {
             try
@@ -241,16 +258,19 @@ module AspireTestHost =
             | ex -> return { ExitCode = None; StdOut = ""; StdErr = ""; TimedOut = false; Error = Some ex.Message }
         }
 
+    /// Tries to resolve get environment value without failing the caller.
     let private tryGetEnvironmentValue name =
         match Environment.GetEnvironmentVariable(name) with
         | value when String.IsNullOrWhiteSpace value -> None
         | value -> Some value
 
+    /// Determines whether truthy environment value for test-host decisions.
     let private isTruthyEnvironmentValue (value: string) =
         value.Equals("1", StringComparison.OrdinalIgnoreCase)
         || value.Equals("true", StringComparison.OrdinalIgnoreCase)
         || value.Equals("yes", StringComparison.OrdinalIgnoreCase)
 
+    /// Defines should cleanup docker behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private shouldCleanupDocker () =
         match tryGetEnvironmentValue "GRACE_TEST_DOCKER_CLEANUP" with
         | Some value -> isTruthyEnvironmentValue value
@@ -259,6 +279,7 @@ module AspireTestHost =
             | Some value -> isTruthyEnvironmentValue value
             | None -> false
 
+    /// Defines should skip service bus behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private shouldSkipServiceBus () =
         match Environment.GetEnvironmentVariable("GRACE_TEST_SKIP_SERVICEBUS") with
         | null -> false
@@ -270,6 +291,7 @@ module AspireTestHost =
             true
         | _ -> false
 
+    /// Defines cleanup docker containers behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private cleanupDockerContainersAsync () =
         task {
             if shouldCleanupDocker () then
@@ -289,6 +311,7 @@ module AspireTestHost =
                         listResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
                         |> Array.toList
 
+                    /// Defines matches prefix behavior for the surrounding tests used by the server integration aspire Test Host scenario.
                     let matchesPrefix (name: string) =
                         containerPrefixes
                         |> List.exists (fun prefix ->
@@ -312,6 +335,7 @@ module AspireTestHost =
                     Console.WriteLine($"Docker cleanup list stderr: {listResult.StdErr.Trim()}")
         }
 
+    /// Formats log tail for diagnostics.
     let private formatLogTail (label: string) (lines: string list) (maxLines: int) =
         let tail =
             lines
@@ -325,6 +349,7 @@ module AspireTestHost =
         else
             $"{label}:{Environment.NewLine}{tail}"
 
+    /// Gets resource log snapshot from the running test server.
     let private getResourceLogSnapshotAsync (app: DistributedApplication) =
         task {
             let model = app.Services.GetRequiredService<DistributedApplicationModel>()
@@ -347,6 +372,7 @@ module AspireTestHost =
             return snapshots |> String.concat Environment.NewLine
         }
 
+    /// Formats process failure for diagnostics.
     let private formatProcessFailure (label: string) (result: ProcessResult) =
         if result.TimedOut then
             $"{label} timed out."
@@ -370,6 +396,7 @@ module AspireTestHost =
             | None when not (String.IsNullOrWhiteSpace details) -> $"{label} exited with {exitCode}.{Environment.NewLine}{details}"
             | None -> $"{label} exited with {exitCode}."
 
+    /// Tries to resolve get docker diagnostics without failing the caller.
     let private tryGetDockerDiagnosticsAsync () =
         task {
             let! psResult = runProcessAsync "docker" "ps -a --format \"{{.ID}} {{.Names}}\"" (TimeSpan.FromSeconds(10.0))
@@ -454,7 +481,9 @@ module AspireTestHost =
                 raise (Exception($"{resourceName} failed to start. {details}{Environment.NewLine}{logDetails}", ex))
         }
 
+    /// Groups shared helpers for fixture diagnostics.
     module FixtureDiagnostics =
+        /// Defines redact connection string segments behavior for the surrounding tests used by the server integration aspire Test Host scenario.
         let private redactConnectionStringSegments (sensitivePrefixes: string list) (connectionString: string) =
             if String.IsNullOrWhiteSpace connectionString then
                 connectionString
@@ -468,6 +497,7 @@ module AspireTestHost =
                     | None -> part)
                 |> String.concat ";"
 
+        /// Defines redact service bus connection string behavior for the surrounding tests used by the server integration aspire Test Host scenario.
         let redactServiceBusConnectionString (connectionString: string) =
             redactConnectionStringSegments
                 [
@@ -476,6 +506,7 @@ module AspireTestHost =
                 ]
                 connectionString
 
+        /// Defines redact storage connection string behavior for the surrounding tests used by the server integration aspire Test Host scenario.
         let redactStorageConnectionString (connectionString: string) =
             redactConnectionStringSegments
                 [
@@ -484,6 +515,7 @@ module AspireTestHost =
                 ]
                 connectionString
 
+        /// Defines redact cosmos connection string behavior for the surrounding tests used by the server integration aspire Test Host scenario.
         let redactCosmosConnectionString (connectionString: string) =
             redactConnectionStringSegments
                 [
@@ -492,7 +524,9 @@ module AspireTestHost =
                 ]
                 connectionString
 
+        /// Formats env diagnostics for diagnostics.
         let formatEnvDiagnostics (env: Map<string, string>) =
+            /// Gets get from the running test server.
             let get key =
                 match env |> Map.tryFind key with
                 | Some value when not (String.IsNullOrWhiteSpace value) -> value
@@ -535,6 +569,7 @@ module AspireTestHost =
                     $"{key}={get key}")
             |> String.concat "; "
 
+        /// Gets required startup keys from the running test server.
         let getRequiredStartupKeys skipServiceBus =
             [
                 Constants.EnvironmentVariables.AzureCosmosDBConnectionString
@@ -547,6 +582,7 @@ module AspireTestHost =
                     Constants.EnvironmentVariables.AzureServiceBusSubscription
             ]
 
+        /// Gets missing startup keys from the running test server.
         let getMissingStartupKeys skipServiceBus (env: Map<string, string>) =
             getRequiredStartupKeys skipServiceBus
             |> List.filter (fun key ->
@@ -557,6 +593,7 @@ module AspireTestHost =
         let serviceBusSkipModeMessage =
             "GRACE_TEST_SKIP_SERVICEBUS=1 is unsupported for Grace.Server.Tests because the shared setup drains the Service Bus test subscription and proves the Owner Created event."
 
+    /// Requires env and fails the test when missing.
     let private requireEnv (resourceName: string) (key: string) (env: Map<string, string>) =
         env
         |> Map.tryFind key
@@ -566,6 +603,7 @@ module AspireTestHost =
     let private redactStorageConnectionString = FixtureDiagnostics.redactStorageConnectionString
     let private redactCosmosConnectionString = FixtureDiagnostics.redactCosmosConnectionString
 
+    /// Tries to resolve get conn value without failing the caller.
     let private tryGetConnValue (prefix: string) (value: string) =
         value.Split(';', StringSplitOptions.RemoveEmptyEntries)
         |> Array.tryPick (fun segment ->
@@ -575,6 +613,7 @@ module AspireTestHost =
                 None)
         |> Option.defaultValue "<missing>"
 
+    /// Defines replace conn value behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private replaceConnValue (prefix: string) (replacement: string) (value: string) =
         let mutable replaced = false
 
@@ -589,12 +628,14 @@ module AspireTestHost =
 
         if replaced then (String.Join(";", segments)) + ";" else value
 
+    /// Tries to resolve get cosmos endpoint URI without failing the caller.
     let private tryGetCosmosEndpointUri (connectionString: string) =
         let value = tryGetConnValue "AccountEndpoint=" connectionString
         let mutable uri = Unchecked.defaultof<Uri>
 
         if Uri.TryCreate(value, UriKind.Absolute, &uri) then Some uri else None
 
+    /// Tries to resolve get endpoint name for target port without failing the caller.
     let private tryGetEndpointNameForTargetPort (app: DistributedApplication) (resourceName: string) (targetPort: int) =
         match tryFindResourceByName app resourceName with
         | Some (:? IResourceWithEndpoints as resourceWithEndpoints) ->
@@ -605,6 +646,7 @@ module AspireTestHost =
             |> Option.map (fun endpoint -> endpoint.EndpointAnnotation.Name)
         | _ -> None
 
+    /// Tries to resolve find resource name for target port without failing the caller.
     let private tryFindResourceNameForTargetPort (app: DistributedApplication) (targetPort: int) =
         let model = app.Services.GetRequiredService<DistributedApplicationModel>()
 
@@ -621,6 +663,7 @@ module AspireTestHost =
                 if hasTargetPort then Some resource.Name else None
             | _ -> None)
 
+    /// Tries to resolve get runtime endpoint without failing the caller.
     let private tryGetRuntimeEndpoint (app: DistributedApplication) (resourceName: string) (targetPort: int) =
         try
             let endpointName =
@@ -633,6 +676,7 @@ module AspireTestHost =
             Console.WriteLine($"Unable to resolve runtime endpoint for {resourceName}: {ex.Message}")
             None
 
+    /// Defines resolve local cosmos connection string behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private resolveLocalCosmosConnectionString (app: DistributedApplication) (cosmosResourceName: string option) (connectionString: string) =
         match cosmosResourceName with
         | Some resourceName ->
@@ -648,6 +692,7 @@ module AspireTestHost =
             | None -> connectionString
         | None -> connectionString
 
+    /// Formats exception chain for diagnostics.
     let private formatExceptionChain (ex: exn) =
         let parts = ResizeArray<string>()
         let mutable current = ex
@@ -658,11 +703,13 @@ module AspireTestHost =
 
         parts |> String.concat " --> "
 
+    /// Builds a deterministic permissive cosmos HTTP client for integration setup fixture for the server integration aspire Test Host assertions.
     let private createPermissiveCosmosHttpClient () =
         let handler = new HttpClientHandler()
         handler.ServerCertificateCustomValidationCallback <- HttpClientHandler.DangerousAcceptAnyServerCertificateValidator
         new HttpClient(handler, disposeHandler = true)
 
+    /// Builds a deterministic local cosmos client options for integration setup fixture for the server integration aspire Test Host assertions.
     let private createLocalCosmosClientOptions () =
         let options = CosmosClientOptions(ConnectionMode = ConnectionMode.Gateway, LimitToEndpoint = true)
         options.RequestTimeout <- TimeSpan.FromSeconds(10.0)
@@ -672,6 +719,7 @@ module AspireTestHost =
 
     let private formatEnvDiagnostics = FixtureDiagnostics.formatEnvDiagnostics
 
+    /// Requires startup environment and fails the test when missing.
     let private requireStartupEnvironment (resourceName: string) (skipServiceBus: bool) (env: Map<string, string>) =
         let missing = FixtureDiagnostics.getMissingStartupKeys skipServiceBus env
 
@@ -681,6 +729,7 @@ module AspireTestHost =
 
             failwith $"Missing required startup env var(s) for resource '{resourceName}': {missingText}. Env: {envDetails}"
 
+    /// Tries to resolve get latest log tail without failing the caller.
     let private tryGetLatestLogTail (logDirectory: string) =
         try
             if Directory.Exists(logDirectory) then
@@ -705,6 +754,7 @@ module AspireTestHost =
         with
         | _ -> None
 
+    /// Waits for for service bus ready to become observable in the test host.
     let private waitForServiceBusReadyAsync (serviceBusEmulatorName: string) (serviceBusSqlName: string) (state: TestHostState) =
         task {
             let sw = Stopwatch.StartNew()
@@ -719,6 +769,7 @@ module AspireTestHost =
                 $"Service Bus readiness probe: Endpoint={endpoint}; Topic={state.ServiceBusTopic}; Subscription={state.ServiceBusTestSubscription}; Connection={redactedConnectionString}"
             )
 
+            /// Gets resource diagnostics from the running test server.
             let getResourceDiagnosticsAsync (resourceName: string) =
                 task {
                     let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
@@ -818,6 +869,7 @@ module AspireTestHost =
 
                 let redactedConnectionString = redactCosmosConnectionString connectionString
 
+                /// Gets resource diagnostics from the running test server.
                 let getResourceDiagnosticsAsync () =
                     task {
                         match cosmosResourceName with
@@ -896,6 +948,7 @@ module AspireTestHost =
                         do! Task.Delay(TimeSpan.FromSeconds(1.0))
         }
 
+    /// Waits for for grace server HTTP ready to become observable in the test host.
     let private waitForGraceServerHttpReadyAsync (client: HttpClient) (ct: CancellationToken) =
         task {
             let perRequestTimeout = getTimeout (TimeSpan.FromSeconds(10.0)) (TimeSpan.FromSeconds(20.0))
@@ -903,6 +956,7 @@ module AspireTestHost =
             let mutable attempt = 0
             let mutable lastError = String.Empty
 
+            /// Defines delay behavior for the surrounding tests used by the server integration aspire Test Host scenario.
             let delayAsync () =
                 task {
                     try
@@ -942,14 +996,17 @@ module AspireTestHost =
                     do! delayAsync ()
         }
 
+    /// Defines start new host behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private startNewHostAsync (bootstrapUserId: string) =
         task {
             logProgress "Aspire setup starting."
 
             Environment.SetEnvironmentVariable("GRACE_TESTING", "1")
             Environment.SetEnvironmentVariable("GRACE_TEST_DOCKER_CLEANUP", "1")
+
             if String.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("GRACE_TEST_SERVER_CLEANUP")) then
                 Environment.SetEnvironmentVariable("GRACE_TEST_SERVER_CLEANUP", "1")
+
             Environment.SetEnvironmentVariable("GRACE_TEST_RUN_ID", Guid.NewGuid().ToString("N"))
             Environment.SetEnvironmentVariable("ASPIRE_RESOURCE_MODE", "Local")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GraceAuthOidcAuthority, "https://auth.grace.test")
@@ -1142,6 +1199,7 @@ module AspireTestHost =
 
             let diagnosticsPath = Path.Combine(Path.GetTempPath(), "grace-server-tests.host.log")
 
+            /// Tries to resolve get conn value without failing the caller.
             let tryGetConnValue (prefix: string) (value: string) =
                 value.Split(';', StringSplitOptions.RemoveEmptyEntries)
                 |> Array.tryPick (fun segment ->
@@ -1171,6 +1229,7 @@ module AspireTestHost =
 
             File.AppendAllText(diagnosticsPath, diagnosticsLine + Environment.NewLine)
 
+            /// Defines service bus connection string behavior for the surrounding tests used by the server integration aspire Test Host scenario.
             let serviceBusConnectionString, serviceBusTopic, serviceBusSubscription, serviceBusTestSubscription =
                 if shouldSkipServiceBus () then
                     "", "", "", ""
@@ -1207,6 +1266,7 @@ module AspireTestHost =
             return state
         }
 
+    /// Defines start behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let startAsync (bootstrapUserId: string) =
         task {
             do! sharedStateLock.WaitAsync()
@@ -1225,6 +1285,7 @@ module AspireTestHost =
                 sharedStateLock.Release() |> ignore
         }
 
+    /// Defines stop behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let stopAsync (app: DistributedApplication option) =
         task {
             match app with
@@ -1234,6 +1295,7 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
+    /// Restarts grace server to verify durability across process restarts.
     let restartGraceServerAsync (state: TestHostState) =
         task {
             do! sharedStateLock.WaitAsync()
@@ -1261,14 +1323,17 @@ module AspireTestHost =
                 sharedStateLock.Release() |> ignore
         }
 
+    /// Builds a deterministic service bus receiver for integration setup fixture for the server integration aspire Test Host assertions.
     let private createServiceBusReceiver (state: TestHostState) =
         let options = ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.ReceiveAndDelete)
         let client = ServiceBusClient(state.ServiceBusConnectionString)
         let receiver = client.CreateReceiver(state.ServiceBusTopic, state.ServiceBusTestSubscription, options)
         client, receiver
 
+    /// Defines drain service bus behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let drainServiceBusAsync (state: TestHostState) =
         task {
+            /// Defines client behavior for the surrounding tests used by the server integration aspire Test Host scenario.
             let client, receiver = createServiceBusReceiver state
             use _client = client
             use _receiver = receiver
@@ -1284,8 +1349,10 @@ module AspireTestHost =
             return drainedCount
         }
 
+    /// Waits for for owner created event to become observable in the test host.
     let waitForOwnerCreatedEventAsync (state: TestHostState) (ownerId: string) =
         task {
+            /// Defines client behavior for the surrounding tests used by the server integration aspire Test Host scenario.
             let client, receiver = createServiceBusReceiver state
             use _client = client
             use _receiver = receiver
@@ -1332,6 +1399,7 @@ module AspireTestHost =
 
                     lastBodies.Add(body)
 
+                    /// Tries to resolve match owner created without failing the caller.
                     let tryMatchOwnerCreated (ownerEvent: Owner.OwnerEvent) =
                         match ownerEvent.Event with
                         | Owner.OwnerEventType.Created (createdOwnerId, _) when hasParsedOwnerId && createdOwnerId = parsedOwnerId -> true
@@ -1357,6 +1425,7 @@ module AspireTestHost =
 
     let private serviceBusSendTimeout = TimeSpan.FromSeconds(10.0)
 
+    /// Defines send service bus message behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private sendServiceBusMessageAsync (state: TestHostState) (message: ServiceBusMessage) =
         task {
             use cts = new CancellationTokenSource(serviceBusSendTimeout)
@@ -1374,6 +1443,7 @@ module AspireTestHost =
                     .GetResult()
         }
 
+    /// Defines send grace event behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let sendGraceEventAsync (state: TestHostState) (graceEvent: Events.GraceEvent) (metadata: Grace.Types.Common.EventMetadata) =
         task {
             let payload = JsonSerializer.SerializeToUtf8Bytes(graceEvent, Constants.JsonSerializerOptions)
@@ -1395,6 +1465,7 @@ module AspireTestHost =
             do! sendServiceBusMessageAsync state message
         }
 
+    /// Defines send raw service bus message behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let sendRawServiceBusMessageAsync (state: TestHostState) (body: string) (messageId: string) (correlationId: string) =
         task {
             let message = ServiceBusMessage(BinaryData.FromString(body))
@@ -1406,8 +1477,10 @@ module AspireTestHost =
             do! sendServiceBusMessageAsync state message
         }
 
+    /// Tries to resolve wait for grace event without failing the caller.
     let tryWaitForGraceEventAsync (state: TestHostState) (timeout: TimeSpan) (predicate: Events.GraceEvent -> bool) =
         task {
+            /// Defines client behavior for the surrounding tests used by the server integration aspire Test Host scenario.
             let client, receiver = createServiceBusReceiver state
             use _client = client
             use _receiver = receiver
@@ -1445,6 +1518,7 @@ module AspireTestHost =
             return found
         }
 
+    /// Waits for for grace event to become observable in the test host.
     let waitForGraceEventAsync (state: TestHostState) (timeout: TimeSpan) (description: string) (predicate: Events.GraceEvent -> bool) =
         task {
             match! tryWaitForGraceEventAsync state timeout predicate with

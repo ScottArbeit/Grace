@@ -14,8 +14,10 @@ open System.Net.Http
 open System.Net.Http.Json
 open System.Threading.Tasks
 
+/// SDK wrappers for personal access token creation, listing, and revocation.
 module PersonalAccessToken =
 
+    /// Posts token requests to the server URI from the environment and attaches SDK auth and lifecycle handling.
     let private postServerWithEnv<'T, 'U when 'T :> CommonParameters> (parameters: 'T, route: string) =
         task {
             try
@@ -63,11 +65,14 @@ module PersonalAccessToken =
                 return Error(GraceError.Create ($"{exceptionResponse}") parameters.CorrelationId)
         }
 
+    /// Requests a new personal access token and returns the one-time token material.
     let Create (parameters: CreatePersonalAccessTokenParameters) =
         postServerWithEnv<CreatePersonalAccessTokenParameters, PersonalAccessTokenCreated> (parameters, "authenticate/token/create")
 
+    /// Lists personal access token summaries without exposing token secrets.
     let List (parameters: ListPersonalAccessTokensParameters) =
         postServerWithEnv<ListPersonalAccessTokensParameters, PersonalAccessTokenSummary list> (parameters, "authenticate/token/list")
 
+    /// Revokes one personal access token and returns the updated token summary.
     let Revoke (parameters: RevokePersonalAccessTokenParameters) =
         postServerWithEnv<RevokePersonalAccessTokenParameters, PersonalAccessTokenSummary> (parameters, "authenticate/token/revoke")

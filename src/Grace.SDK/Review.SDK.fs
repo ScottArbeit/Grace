@@ -6,11 +6,13 @@ open Grace.Types.Review
 open System
 open System.Threading.Tasks
 
+/// Constants that version the SDK review report payload shape.
 [<RequireQualifiedAccess>]
 module ReviewReportSchema =
     [<Literal>]
     let Version = "1.0"
 
+/// Stable section identifiers and ordering used when rendering review reports.
 [<RequireQualifiedAccess>]
 module ReviewReportSections =
     [<Literal>]
@@ -41,24 +43,38 @@ module ReviewReportSections =
             BlockingReasonsAndNextActions
         ]
 
+/// One keyed set of display values inside a review report section.
 type ReviewReportEntry() =
+    /// Machine-readable label for the entry within its section.
     member val public Key = String.Empty with get, set
+    /// Display values associated with the entry key.
     member val public Values: string list = [] with get, set
 
+/// A named review report section with projection state, entries, and diagnostics.
 type ReviewReportSection() =
+    /// Stable section identifier from ReviewReportSections.
     member val public Section = String.Empty with get, set
+    /// Human-readable title for the rendered section.
     member val public Title = String.Empty with get, set
+    /// Aggregate projection state for the section.
     member val public SourceState = ProjectionSourceStates.NotAvailable with get, set
+    /// Source-specific projection states that explain the aggregate state.
     member val public SourceStates: ProjectionSourceStateMetadata list = [] with get, set
+    /// Structured rows rendered under this section.
     member val public Entries: ReviewReportEntry list = [] with get, set
+    /// Non-fatal diagnostics collected while preparing the section.
     member val public Diagnostics: string list = [] with get, set
 
+/// Candidate-first review report payload with schema version, section order, and section details.
 type ReviewReportResult() =
+    /// Schema version used by consumers to parse the review report.
     member val public ReviewReportSchemaVersion = ReviewReportSchema.Version with get, set
+    /// Preferred section rendering order for clients that display the report.
     member val public SectionOrder: string list = ReviewReportSections.Ordered with get, set
+    /// Sections included in the generated review report.
     member val public Sections: ReviewReportSection list = [] with get, set
 
-/// The Review module provides a set of functions for interacting with reviews in the Grace API.
+/// SDK entry point for creating, updating, and projecting Grace review records.
 type Review() =
     /// Gets review notes for a promotion set.
     static member public GetNotes(parameters: GetReviewNotesParameters) =

@@ -8,8 +8,10 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Contains tests covering queue types behavior.
 [<Parallelizable(ParallelScope.All)>]
 type QueueTypesTests() =
+    /// Exercises metadata coverage for the types queue contract.
     let metadata (timestamp: Instant) : EventMetadata =
         {
             Timestamp = timestamp
@@ -19,6 +21,7 @@ type QueueTypesTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Verifies that promotion queue dto updates deterministically.
     [<Test>]
     member _.PromotionQueueDtoUpdatesDeterministically() =
         let branchId = Guid.NewGuid()
@@ -48,6 +51,7 @@ type QueueTypesTests() =
         Assert.That(finalState.PromotionSetIds[0], Is.EqualTo(promotionSetId))
         Assert.That(finalState.State, Is.EqualTo(QueueState.Running))
 
+    /// Verifies that promotion set dequeued removes from queue.
     [<Test>]
     member _.PromotionSetDequeuedRemovesFromQueue() =
         let promotionSetId = Guid.NewGuid()

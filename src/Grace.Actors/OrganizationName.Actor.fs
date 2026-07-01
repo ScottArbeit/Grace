@@ -14,8 +14,10 @@ open Orleans.Runtime
 open System
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for organization name keys, proxies, state, or workflow transitions.
 module OrganizationName =
 
+    /// Implements the Orleans grain for organization name actor.
     type OrganizationNameActor() =
         inherit Grain()
 
@@ -25,6 +27,7 @@ module OrganizationName =
 
         let mutable cachedOrganizationId: OrganizationId option = None
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -38,10 +41,12 @@ module OrganizationName =
             Task.CompletedTask
 
         interface IOrganizationNameActor with
+            /// Returns organization id data from the OrganizationName actor state or related storage.
             member this.GetOrganizationId correlationId =
                 this.correlationId <- correlationId
                 cachedOrganizationId |> returnTask
 
+            /// Stores set organization id data in the OrganizationName actor state.
             member this.SetOrganizationId (organizationId: OrganizationId) correlationId =
                 this.correlationId <- correlationId
 

@@ -12,10 +12,12 @@ open System.IO
 open System.Text.RegularExpressions
 open System.Text.Json
 
+/// Groups command output contract registry coverage for the CLI test project.
 [<TestFixture>]
 [<NonParallelizable>]
 module CommandOutputContractRegistryTests =
 
+    /// Normalizes command identifiers so command-output coverage can compare documentation and parser surfaces.
     let private commandId (identity: CommandIdentity) = identity.CommandId
 
     let private placeholderGuid = "11111111-1111-1111-1111-111111111111"
@@ -24,6 +26,7 @@ module CommandOutputContractRegistryTests =
 
     let private machineReadableDocPath = Path.Combine(repoRoot, "docs", "Machine-readable CLI output.md")
 
+    /// Builds an option placeholder token used when auditing command help output.
     let private optionPlaceholder optionName =
         match optionName with
         | "--after" -> "+15m"
@@ -86,6 +89,7 @@ module CommandOutputContractRegistryTests =
         | name when name.EndsWith("-type", StringComparison.OrdinalIgnoreCase) -> "Maintenance"
         | _ -> "example"
 
+    /// Builds an argument placeholder token used when auditing command help output.
     let private argumentPlaceholder argumentName =
         match argumentName with
         | "action" -> "read"
@@ -97,7 +101,9 @@ module CommandOutputContractRegistryTests =
         | name when name.Contains("id", StringComparison.OrdinalIgnoreCase) -> placeholderGuid
         | _ -> "example"
 
+    /// Finds command used by the test scenario.
     let private findCommand (commandPath: string list) =
+        /// Tracks current changes so this scenario can assert the resulting side effect explicitly.
         let mutable current: Command = GraceCommand.rootCommand :> Command
 
         for commandName in commandPath do
@@ -109,6 +115,7 @@ module CommandOutputContractRegistryTests =
 
         current
 
+    /// Builds audit placeholder args test data used to exercise CLI command Output Contract behavior.
     let private auditPlaceholderArgs (entry: CommandContractEntry) =
         let command = findCommand entry.Identity.CommandPath
 
@@ -122,6 +129,7 @@ module CommandOutputContractRegistryTests =
                 yield argumentPlaceholder argument.Name
         |]
 
+    /// Builds audit parse args test data used to exercise CLI command Output Contract behavior.
     let private auditParseArgs (entry: CommandContractEntry) =
         let commandPath = entry.Identity.CommandPath |> List.toArray
 
@@ -132,11 +140,13 @@ module CommandOutputContractRegistryTests =
             yield! auditPlaceholderArgs entry
         |]
 
+    /// Counts by for test assertions.
     let private countBy behavior =
         CommandOutputContract.entries
         |> List.filter (fun entry -> entry.CurrentJsonBehavior = behavior)
         |> List.length
 
+    /// Asserts that set equal matches the expected contract.
     let private assertSetEqual expected actual =
         let expectedSet = Set.ofSeq expected
         let actualSet = Set.ofSeq actual
@@ -152,6 +162,7 @@ module CommandOutputContractRegistryTests =
 
             Assert.Fail($"Set mismatch. Missing: {missing}. Extra: {extra}.")
 
+    /// Captures stdout produced by the action.
     let private captureStdout action =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -163,6 +174,7 @@ module CommandOutputContractRegistryTests =
         finally
             Console.SetOut(originalOut)
 
+    /// Parses json document for test assertions.
     let private parseJsonDocument (output: string) =
         output
             .TrimStart()
@@ -171,6 +183,7 @@ module CommandOutputContractRegistryTests =
 
         JsonDocument.Parse(output)
 
+    /// Asserts that one json object stdout matches the expected contract.
     let private assertOneJsonObjectStdout (output: string) =
         let ansiCsiPrefix = string (char 0x1B) + "["
 
@@ -188,16 +201,19 @@ module CommandOutputContractRegistryTests =
         document.RootElement.ValueKind
         |> should equal JsonValueKind.Object
 
+    /// Counts entries for test assertions.
     let private countEntries predicate =
         CommandOutputContract.entries
         |> List.filter predicate
         |> List.length
 
+    /// Builds command ids for test data used to exercise CLI command Output Contract behavior.
     let private commandIdsFor predicate =
         CommandOutputContract.entries
         |> List.filter predicate
         |> List.map (fun entry -> entry.Identity.CommandId)
 
+    /// Builds markdown bullet ids after test data used to exercise CLI command Output Contract behavior.
     let private markdownBulletIdsAfter (anchor: string) (markdown: string) =
         let pattern =
             Regex.Escape(anchor)
@@ -218,6 +234,7 @@ module CommandOutputContractRegistryTests =
             itemMatch.Groups["id"].Value)
         |> Array.toList
 
+    /// Verifies that registry contains accepted inventory totals.
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
@@ -243,6 +260,7 @@ module CommandOutputContractRegistryTests =
         countBy HumanOnly |> should equal 0
         countBy UnroutedSourceOnly |> should equal 9
 
+    /// Verifies that final inventory dispositions cover every command exactly once.
     [<Test>]
     let ``final inventory dispositions cover every command exactly once`` () =
         let jsonReady =
@@ -284,6 +302,7 @@ module CommandOutputContractRegistryTests =
         + deleted
         |> should equal CommandOutputContract.entries.Length
 
+    /// Verifies that every live leaf command has one registry entry.
     [<Test>]
     let ``every live leaf command has one registry entry`` () =
         let discovered =
@@ -312,6 +331,7 @@ module CommandOutputContractRegistryTests =
 
         assertSetEqual discovered registered
 
+    /// Verifies that source only entries are explicit and unsupported.
     [<Test>]
     let ``source-only entries are explicit and unsupported`` () =
         let sourceOnlyIds =
@@ -353,6 +373,7 @@ module CommandOutputContractRegistryTests =
             entry.Features.Select
             |> should equal UnsupportedUntilRouted
 
+    /// Verifies that routed backlog categories are represented.
     [<Test>]
     let ``routed backlog categories are represented`` () =
         let behaviors =
@@ -377,6 +398,7 @@ module CommandOutputContractRegistryTests =
         behaviors.Contains HumanProcOnly
         |> should equal true
 
+    /// Verifies that registry metadata is consumable without invoking handlers.
     [<Test>]
     let ``registry metadata is consumable without invoking handlers`` () =
         let identity = CommandOutputContract.commandIdentity [] "connect"
@@ -404,6 +426,7 @@ module CommandOutputContractRegistryTests =
             |> should equal ExistingBehavior
         | None -> Assert.Fail("connect should have a registry entry.")
 
+    /// Verifies that branch annotate registry entry is mutating because implicit save can update local state.
     [<Test>]
     let ``branch annotate registry entry is mutating because implicit save can update local state`` () =
         let identity = CommandOutputContract.commandIdentity [ "branch" ] "annotate"
@@ -419,6 +442,7 @@ module CommandOutputContractRegistryTests =
             |> should equal CompositeLocalAndServer
         | None -> Assert.Fail("branch annotate should have a registry entry.")
 
+    /// Verifies that diff blake3 json mode is centrally rendered instead of human progress only.
     [<Test>]
     let ``diff blake3 json mode is centrally rendered instead of human-progress only`` () =
         let identity = CommandOutputContract.commandIdentity [ "diff" ] "blake3"
@@ -435,6 +459,7 @@ module CommandOutputContractRegistryTests =
             |> should equal ExistingBehavior
         | None -> Assert.Fail("diff blake3 should have a registry entry.")
 
+    /// Verifies that current common renderer entries keep the grace envelope model.
     [<Test>]
     let ``current common renderer entries keep the Grace envelope model`` () =
         let commonEntries =
@@ -452,6 +477,7 @@ module CommandOutputContractRegistryTests =
             entry.Features.Select
             |> should equal ExistingBehavior
 
+    /// Verifies that every common renderer entry has recursive json option and central envelope behavior.
     [<Test>]
     let ``every common renderer entry has recursive json option and central envelope behavior`` () =
         let commonEntries =
@@ -494,6 +520,7 @@ module CommandOutputContractRegistryTests =
 
             let successValue = GraceReturnValue.Create $"success:{entry.Identity.CommandId}" $"corr-success-{entry.Identity.CommandId}"
 
+            /// Verifies the successful command path returns the expected process status.
             let successExitCode, successOutput = captureStdout (fun () -> Common.renderOutput parseResult (Ok successValue))
 
             successExitCode |> should equal 0
@@ -512,6 +539,7 @@ module CommandOutputContractRegistryTests =
 
             let error = GraceError.Create $"error:{entry.Identity.CommandId}" $"corr-error-{entry.Identity.CommandId}"
 
+            /// Verifies the failing command path returns the expected process status.
             let errorExitCode, errorOutput = captureStdout (fun () -> Common.renderOutput parseResult (Error error))
 
             errorExitCode |> should equal -1
@@ -526,6 +554,7 @@ module CommandOutputContractRegistryTests =
             errorRoot.GetProperty("CorrelationId").GetString()
             |> should equal $"corr-error-{entry.Identity.CommandId}"
 
+    /// Verifies that representative local dto envelopes use shared serializer contract.
     [<Test>]
     let ``representative local dto envelopes use shared serializer contract`` () =
         let parseResult =
@@ -543,6 +572,7 @@ module CommandOutputContractRegistryTests =
         let dto: Common.LocalOutputDto.MaintenanceStatsDto =
             { DirectoryCount = 3; FileCount = 5; TotalFileSize = 89L; RootSha256Hash = Some "0123456789abcdef"; RootBlake3Hash = Some "af1349b9f5f9a1a6" }
 
+        /// Verifies that the CLI command Output Contract scenario exits with the expected process status.
         let exitCode, output =
             captureStdout (fun () ->
                 GraceReturnValue.Create dto "corr-local-dto"
@@ -579,6 +609,7 @@ module CommandOutputContractRegistryTests =
             .GetString()
         |> should equal "af1349b9f5f9a1a6"
 
+        /// Tracks camel Case Return Value changes so this scenario can assert the resulting side effect explicitly.
         let mutable camelCaseReturnValue = Unchecked.defaultof<JsonElement>
 
         root.TryGetProperty("returnValue", &camelCaseReturnValue)
@@ -587,6 +618,7 @@ module CommandOutputContractRegistryTests =
         Constants.JsonSerializerOptions.PropertyNamingPolicy
         |> should equal null
 
+    /// Verifies that maintenance list contents local dto serializes explicit dual hash fields.
     [<Test>]
     let ``maintenance list contents local dto serializes explicit dual hash fields`` () =
         let parseResult =
@@ -628,6 +660,7 @@ module CommandOutputContractRegistryTests =
                     |]
             }
 
+        /// Verifies that the CLI command Output Contract scenario exits with the expected process status.
         let exitCode, output =
             captureStdout (fun () ->
                 GraceReturnValue.Create dto "corr-local-list-contents-dto"
@@ -671,6 +704,7 @@ module CommandOutputContractRegistryTests =
         file.GetProperty("Blake3Hash").GetString()
         |> should equal "file-blake3"
 
+    /// Verifies that watch json mode is registered as immediate error only.
     [<Test>]
     let ``watch json mode is registered as immediate error only`` () =
         let identity = CommandOutputContract.commandIdentity [] "watch"
@@ -706,6 +740,7 @@ module CommandOutputContractRegistryTests =
             | None -> Assert.Fail("watch schema introspection should include the explicit unsupported schema document.")
         | None -> Assert.Fail("watch should have a registry entry.")
 
+    /// Verifies that schema ready registry entries describe success and error envelopes.
     [<Test>]
     let ``schema ready registry entries describe success and error envelopes`` () =
         let identity = CommandOutputContract.commandIdentity [ "authenticate" ] "logout"
@@ -779,6 +814,7 @@ module CommandOutputContractRegistryTests =
             | None -> Assert.Fail("Schema introspection should include a schema document.")
         | None -> Assert.Fail("authenticate.logout should have a registry entry.")
 
+    /// Verifies that maintenance registry entries expose schema ready local dto metadata.
     [<Test>]
     let ``maintenance registry entries expose schema ready local dto metadata`` () =
         let cases =
@@ -823,6 +859,7 @@ module CommandOutputContractRegistryTests =
                 |> should equal "success-envelope-shape"
             | None -> Assert.Fail($"{identity.CommandId} should have a registry entry.")
 
+    /// Verifies that doctor registry entry exposes schema ready local dto metadata.
     [<Test>]
     let ``doctor registry entry exposes schema ready local dto metadata`` () =
         let identity = CommandOutputContract.commandIdentity [] "doctor"
@@ -868,6 +905,7 @@ module CommandOutputContractRegistryTests =
             |> should equal "success-envelope-shape"
         | None -> Assert.Fail("doctor should have a registry entry.")
 
+    /// Verifies that metadata incomplete registry entries are explicit.
     [<Test>]
     let ``metadata incomplete registry entries are explicit`` () =
         let identity = CommandOutputContract.commandIdentity [ "repository" ] "init"
@@ -897,6 +935,7 @@ module CommandOutputContractRegistryTests =
             |> should equal "metadata-incomplete"
         | None -> Assert.Fail("repository.init should have a registry entry.")
 
+    /// Verifies that dto and union contracts are not schema ready until their full emitted shapes are declared.
     [<Test>]
     let ``dto and union contracts are not schema ready until their full emitted shapes are declared`` () =
         let cases =
@@ -930,6 +969,7 @@ module CommandOutputContractRegistryTests =
                 |> should equal "metadata-incomplete"
             | None -> Assert.Fail($"{identity.CommandId} should have a registry entry.")
 
+    /// Verifies that examples for schema ready commands parse as grace envelopes.
     [<Test>]
     let ``examples for schema ready commands parse as Grace envelopes`` () =
         let identity = CommandOutputContract.commandIdentity [ "authenticate" ] "logout"
@@ -972,6 +1012,7 @@ module CommandOutputContractRegistryTests =
             |> should equal "correlation-id"
         | None -> Assert.Fail("authenticate.logout should have a registry entry.")
 
+    /// Verifies that all registry schema and example documents serialize as json.
     [<Test>]
     let ``all registry schema and example documents serialize as json`` () =
         for entry in CommandOutputContract.entries do
@@ -990,17 +1031,20 @@ module CommandOutputContractRegistryTests =
                     .GetString()
                 |> should equal entry.Identity.CommandId
 
+    /// Verifies that machine readable cli docs keep final inventory evidence current.
     [<Test>]
     let ``machine readable cli docs keep final inventory evidence current`` () =
         let markdown = File.ReadAllText(machineReadableDocPath)
 
         let docsTrackedEntries = CommandOutputContract.entries
 
+        /// Counts docs tracked for test assertions.
         let countDocsTracked predicate =
             docsTrackedEntries
             |> List.filter predicate
             |> List.length
 
+        /// Builds command ids for docs tracked test data used to exercise CLI command Output Contract behavior.
         let commandIdsForDocsTracked predicate =
             docsTrackedEntries
             |> List.filter predicate
@@ -1053,6 +1097,7 @@ module CommandOutputContractRegistryTests =
         assertSetEqual sourceOnly sourceOnlyInDocs
         assertSetEqual deferredV2 deferredV2InDocs
 
+    /// Verifies that machine readable cli docs json snippets parse.
     [<Test>]
     let ``machine readable cli docs json snippets parse`` () =
         let markdown = File.ReadAllText(machineReadableDocPath)

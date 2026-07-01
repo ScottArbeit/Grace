@@ -18,13 +18,16 @@ open System.IO
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups watch coverage for the CLI test project.
 [<NonParallelizable>]
 module WatchTests =
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Runs with captured output for test scenarios.
     let private runWithCapturedOutput (args: string array) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -39,6 +42,7 @@ module WatchTests =
             Console.SetOut(originalOut)
             setAnsiConsoleOutput originalOut
 
+    /// Runs with captured stdout and stderr for test scenarios.
     let private runWithCapturedStdoutAndStderr (args: string array) =
         use standardOutWriter = new StringWriter()
         use standardErrorWriter = new StringWriter()
@@ -56,6 +60,7 @@ module WatchTests =
             Console.SetError(originalError)
             setAnsiConsoleOutput originalOut
 
+    /// Runs grace process with captured stdout and stderr for test scenarios.
     let private runGraceProcessWithCapturedStdoutAndStderr workingDirectory (args: string array) =
         let cliDllPath = Path.Combine(AppContext.BaseDirectory, "grace.dll")
 
@@ -91,6 +96,7 @@ module WatchTests =
 
         proc.ExitCode, standardOut, standardError
 
+    /// Runs the supplied action with env applied.
     let private withEnv (name: string) (value: string option) (action: unit -> unit) =
         let original = Environment.GetEnvironmentVariable(name)
 
@@ -103,7 +109,9 @@ module WatchTests =
         finally
             Environment.SetEnvironmentVariable(name, original)
 
+    /// Runs the supplied action with cleared env vars applied.
     let private withClearedEnvVars (names: string list) (action: unit -> unit) =
+        /// Builds run test data used to exercise CLI watch behavior.
         let rec run remaining =
             match remaining with
             | [] -> action ()
@@ -111,6 +119,7 @@ module WatchTests =
 
         run names
 
+    /// Clears watch auth env for isolated test execution.
     let private clearWatchAuthEnv (action: unit -> unit) =
         withClearedEnvVars
             [
@@ -128,12 +137,14 @@ module WatchTests =
             ]
             action
 
+    /// Parses json output for test assertions.
     let private parseJsonOutput (output: string) =
         output.StartsWith("{", StringComparison.Ordinal)
         |> should equal true
 
         JsonDocument.Parse(output)
 
+    /// Writes live watch status file needed by the test scenario.
     let private writeLiveWatchStatusFile () =
         let rootDirectoryId = Guid.NewGuid()
 
@@ -157,13 +168,16 @@ module WatchTests =
         File.WriteAllText(ipcFileName, serialize status)
         ipcFileName
 
+    /// Reads file if exists needed by the test scenario.
     let private readFileIfExists path = if File.Exists(path) then Some(File.ReadAllText(path)) else None
 
+    /// Builds delete watch status file if exists test data used to exercise CLI watch behavior.
     let private deleteWatchStatusFileIfExists () =
         let ipcFileName = Services.IpcFileName()
 
         if File.Exists(ipcFileName) then File.Delete(ipcFileName)
 
+    /// Runs the supplied action with temp repo applied.
     let private withTempRepo (action: string -> unit) =
         let tempDir = Path.Combine(Path.GetTempPath(), $"grace-watch-tests-{Guid.NewGuid():N}")
         let graceDir = Path.Combine(tempDir, Constants.GraceConfigDirectory)
@@ -198,29 +212,40 @@ module WatchTests =
                 with
                 | _ -> ()
 
+    /// Builds deleted event test data used to exercise CLI watch behavior.
     let private deletedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Deleted, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
 
+    /// Builds changed event test data used to exercise CLI watch behavior.
     let private changedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
 
+    /// Builds renamed event test data used to exercise CLI watch behavior.
     let private renamedEvent (oldFullPath: string) (fullPath: string) =
         RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
 
+    /// Builds process pending watch work for test test data used to exercise CLI watch behavior.
     let private processPendingWatchWorkForTest () =
         let status = GraceStatus.Default
+        /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
         let mutable updateCalls = 0
+        /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
         let mutable uploadCalls = 0
 
+        /// Reads status needed by the test scenario.
         let readStatus () = Task.FromResult(status)
 
+        /// Builds upload test data used to exercise CLI watch behavior.
         let upload _ _ =
             uploadCalls <- uploadCalls + 1
             Task.FromResult(())
 
+        /// Builds update grace status test data used to exercise CLI watch behavior.
         let updateGraceStatus status _ =
             updateCalls <- updateCalls + 1
             Task.FromResult(Some status)
 
+        /// Builds apply incremental test data used to exercise CLI watch behavior.
         let applyIncremental _ _ _ = Task.FromResult(())
+        /// Builds update ipc test data used to exercise CLI watch behavior.
         let updateIpc _ _ = Task.FromResult(())
 
         let processTask = Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc
@@ -229,20 +254,27 @@ module WatchTests =
 
         updateCalls, uploadCalls
 
+    /// Builds process pending watch work with status clients test data used to exercise CLI watch behavior.
     let private processPendingWatchWorkWithStatusClients readStatusFile updateGraceStatus =
         let status = GraceStatus.Default
+        /// Reads status meta needed by the test scenario.
         let readStatusMeta () = Task.FromResult(status)
+        /// Builds upload test data used to exercise CLI watch behavior.
         let upload _ _ = Task.FromResult(())
+        /// Builds apply incremental test data used to exercise CLI watch behavior.
         let applyIncremental _ _ _ = Task.FromResult(())
+        /// Builds update ipc test data used to exercise CLI watch behavior.
         let updateIpc _ _ = Task.FromResult(())
 
         Watch.processChangedFilesWithClients readStatusMeta readStatusFile upload updateGraceStatus applyIncremental updateIpc
         |> fun processTask -> processTask.GetAwaiter().GetResult()
 
+    /// Writes grace ignore needed by the test scenario.
     let private writeGraceIgnore root (entries: string array) =
         File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), String.Join(Environment.NewLine, entries))
         resetConfiguration ()
 
+    /// Builds local file version test data used to exercise CLI watch behavior.
     let private localFileVersion relativePath =
         LocalFileVersion.CreateWithHashes
             relativePath
@@ -254,6 +286,7 @@ module WatchTests =
             true
             DateTime.UtcNow
 
+    /// Builds local directory version test data used to exercise CLI watch behavior.
     let private localDirectoryVersion relativePath directories files =
         LocalDirectoryVersion.CreateWithHashes
             (Guid.NewGuid())
@@ -268,6 +301,7 @@ module WatchTests =
             1L
             DateTime.UtcNow
 
+    /// Builds grace status tracking test data used to exercise CLI watch behavior.
     let private graceStatusTracking trackedFiles trackedDirectories =
         let rootDirectoryId = Guid.NewGuid()
         let index = GraceIndex()
@@ -306,6 +340,7 @@ module WatchTests =
             RootDirectoryBlake3Hash = root.Blake3Hash
         }
 
+    /// Verifies that resolve signal r access token result returns token when present.
     [<Test>]
     let ``resolveSignalRAccessTokenResult returns token when present`` () =
         let result = Watch.resolveSignalRAccessTokenResult (Ok(Some "token-value"))
@@ -314,6 +349,7 @@ module WatchTests =
         | Ok token -> token |> should equal "token-value"
         | Error error -> Assert.Fail($"Expected token result, got error: {error}")
 
+    /// Verifies that resolve signal r access token result errors when token is missing.
     [<Test>]
     let ``resolveSignalRAccessTokenResult errors when token is missing`` () =
         let result = Watch.resolveSignalRAccessTokenResult (Ok None)
@@ -324,6 +360,7 @@ module WatchTests =
             error
             |> should contain "No access token is available."
 
+    /// Verifies that resolve signal r access token result includes underlying auth error.
     [<Test>]
     let ``resolveSignalRAccessTokenResult includes underlying auth error`` () =
         let result = Watch.resolveSignalRAccessTokenResult (Error "test error")
@@ -336,6 +373,7 @@ module WatchTests =
 
             error |> should contain "test error"
 
+    /// Verifies that deleted file queues status update work without upload work.
     [<Test>]
     let ``deleted file queues status update work without upload work`` () =
         withTempRepo (fun root ->
@@ -351,6 +389,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>
 
+            /// Builds update calls test data used to exercise CLI watch behavior.
             let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             updateCalls |> should equal 1
@@ -364,29 +403,37 @@ module WatchTests =
             afterProcessing.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that failed upload remains queued and blocks status only rescan until upload succeeds.
     [<Test>]
     let ``failed upload remains queued and blocks status-only rescan until upload succeeds`` () =
         withTempRepo (fun root ->
             let changedFilePath = Path.Combine(root, "changed.txt")
             let deletedFilePath = Path.Combine(root, "deleted-while-upload-pending.txt")
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable uploadCalls = 0
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             File.WriteAllText(changedFilePath, "changed payload")
             Watch.OnChanged(changedEvent changedFilePath)
             Watch.OnDeleted(deletedEvent deletedFilePath)
 
+            /// Reads status needed by the test scenario.
             let readStatus () = Task.FromResult(GraceStatus.Default)
 
+            /// Builds failing upload test data used to exercise CLI watch behavior.
             let failingUpload _ _ =
                 uploadCalls <- uploadCalls + 1
                 Task.FromException<unit>(InvalidOperationException("transient upload failure"))
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 updateCalls <- updateCalls + 1
                 Task.FromResult(Some status)
 
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
             let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
             let updateIpc _ _ = Task.FromResult(())
 
             (Watch.processChangedFilesWithClients readStatus readStatus failingUpload updateGraceStatus applyIncremental updateIpc)
@@ -404,6 +451,7 @@ module WatchTests =
             afterFailure.StatusUpdateTriggers
             |> should equal [| "deleted-while-upload-pending.txt" |]
 
+            /// Builds success calls test data used to exercise CLI watch behavior.
             let successCalls, successfulUploadCalls = processPendingWatchWorkForTest ()
 
             successCalls |> should equal 1
@@ -417,18 +465,23 @@ module WatchTests =
             afterSuccess.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that same path change during upload remains queued for a newer upload.
     [<Test>]
     let ``same-path change during upload remains queued for a newer upload`` () =
         withTempRepo (fun root ->
             let changedFilePath = Path.Combine(root, "changed-during-upload.txt")
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable uploadCalls = 0
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             File.WriteAllText(changedFilePath, "first payload")
             Watch.OnChanged(changedEvent changedFilePath)
 
+            /// Reads status needed by the test scenario.
             let readStatus () = Task.FromResult(GraceStatus.Default)
 
+            /// Builds upload test data used to exercise CLI watch behavior.
             let upload _ _ =
                 uploadCalls <- uploadCalls + 1
 
@@ -438,11 +491,14 @@ module WatchTests =
 
                 Task.FromResult(())
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 updateCalls <- updateCalls + 1
                 Task.FromResult(Some status)
 
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
             let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
             let updateIpc _ _ = Task.FromResult(())
 
             (Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc)
@@ -469,6 +525,7 @@ module WatchTests =
             afterSecondUpload.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that deleted file cancels same path pending upload work before status rescan.
     [<Test>]
     let ``deleted file cancels same-path pending upload work before status rescan`` () =
         withTempRepo (fun root ->
@@ -487,11 +544,13 @@ module WatchTests =
             pending.StatusUpdateTriggers
             |> should equal [| "queued-then-deleted.txt" |]
 
+            /// Builds update calls test data used to exercise CLI watch behavior.
             let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             updateCalls |> should equal 1
             uploadCalls |> should equal 0)
 
+    /// Verifies that ignored delete uses filesystem casing when cancelling pending upload work.
     [<Test>]
     let ``ignored delete uses filesystem casing when cancelling pending upload work`` () =
         withTempRepo (fun root ->
@@ -518,14 +577,17 @@ module WatchTests =
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that status only triggers remain pending when status update returns none.
     [<Test>]
     let ``status-only triggers remain pending when status update returns none`` () =
         withTempRepo (fun root ->
             let filePath = Path.Combine(root, "retry-delete.txt")
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             Watch.OnDeleted(deletedEvent filePath)
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus _ _ =
                 updateCalls <- updateCalls + 1
                 Task.FromResult(None)
@@ -539,6 +601,7 @@ module WatchTests =
             afterFailure.StatusUpdateTriggers
             |> should equal [| "retry-delete.txt" |]
 
+            /// Builds success calls test data used to exercise CLI watch behavior.
             let successCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             successCalls |> should equal 1
@@ -549,14 +612,17 @@ module WatchTests =
             afterSuccess.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that status only triggers remain pending when scan failure is swallowed as unchanged status.
     [<Test>]
     let ``status-only triggers remain pending when scan failure is swallowed as unchanged status`` () =
         withTempRepo (fun root ->
             let filePath = Path.Combine(root, "swallowed-scan-failure-delete.txt")
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             Watch.OnDeleted(deletedEvent filePath)
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 updateCalls <- updateCalls + 1
                 Services.setLastScanForDifferencesSuccessfulForWatchTests false
@@ -577,20 +643,24 @@ module WatchTests =
 
             Services.setLastScanForDifferencesSuccessfulForWatchTests true
 
+            /// Builds success calls test data used to exercise CLI watch behavior.
             let successCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             successCalls |> should equal 1
             uploadCalls |> should equal 0)
 
+    /// Verifies that status only triggers added during status update remain pending for next pass.
     [<Test>]
     let ``status-only triggers added during status update remain pending for next pass`` () =
         withTempRepo (fun root ->
             let beforeUpdatePath = Path.Combine(root, "before-update-delete.txt")
             let duringUpdatePath = Path.Combine(root, "during-update-delete.txt")
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             Watch.OnDeleted(deletedEvent beforeUpdatePath)
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 updateCalls <- updateCalls + 1
 
@@ -607,6 +677,7 @@ module WatchTests =
             afterFirstPass.StatusUpdateTriggers
             |> should equal [| "during-update-delete.txt" |]
 
+            /// Builds success calls test data used to exercise CLI watch behavior.
             let successCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             successCalls |> should equal 1
@@ -617,14 +688,17 @@ module WatchTests =
             afterSecondPass.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that same status only trigger added during status update remains pending for next pass.
     [<Test>]
     let ``same status-only trigger added during status update remains pending for next pass`` () =
         withTempRepo (fun root ->
             let deletedPath = Path.Combine(root, "same-path-delete.txt")
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             Watch.OnDeleted(deletedEvent deletedPath)
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 updateCalls <- updateCalls + 1
 
@@ -641,6 +715,7 @@ module WatchTests =
             afterFirstPass.StatusUpdateTriggers
             |> should equal [| "same-path-delete.txt" |]
 
+            /// Builds success calls test data used to exercise CLI watch behavior.
             let successCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             successCalls |> should equal 1
@@ -651,16 +726,20 @@ module WatchTests =
             afterSecondPass.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that status only triggers remain pending when status file read fails.
     [<Test>]
     let ``status-only triggers remain pending when status file read fails`` () =
         withTempRepo (fun root ->
             let filePath = Path.Combine(root, "read-failure-delete.txt")
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             Watch.OnDeleted(deletedEvent filePath)
 
+            /// Reads status file needed by the test scenario.
             let readStatusFile () = Task.FromException<GraceStatus>(InvalidOperationException("transient status read failure"))
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 updateCalls <- updateCalls + 1
                 Task.FromResult(Some status)
@@ -674,6 +753,7 @@ module WatchTests =
             afterFailure.StatusUpdateTriggers
             |> should equal [| "read-failure-delete.txt" |])
 
+    /// Verifies that rename old status only trigger remains pending when status update fails.
     [<Test>]
     let ``rename-old status-only trigger remains pending when status update fails`` () =
         withTempRepo (fun root ->
@@ -682,6 +762,7 @@ module WatchTests =
 
             Watch.OnRenamed(renamedEvent oldPath ignoredNewPath)
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus _ _ = Task.FromException<GraceStatus option>(InvalidOperationException("transient status update failure"))
 
             processPendingWatchWorkWithStatusClients (fun () -> Task.FromResult(GraceStatus.Default)) updateGraceStatus
@@ -694,6 +775,7 @@ module WatchTests =
             afterFailure.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that ignored and outside delete paths do not queue status update work.
     [<Test>]
     let ``ignored and outside delete paths do not queue status update work`` () =
         withTempRepo (fun root ->
@@ -711,6 +793,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that unknown deleted file matching file ignore does not queue status update work.
     [<Test>]
     let ``unknown deleted file matching file ignore does not queue status update work`` () =
         withTempRepo (fun root ->
@@ -728,6 +811,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that unknown deleted file under ignored parent directory does not queue status update work.
     [<Test>]
     let ``unknown deleted file under ignored parent directory does not queue status update work`` () =
         withTempRepo (fun root ->
@@ -747,6 +831,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that deleted tracked file under ignored parent directory queues status update work.
     [<Test>]
     let ``deleted tracked file under ignored parent directory queues status update work`` () =
         withTempRepo (fun root ->
@@ -769,6 +854,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that dirty status reload keeps tracked ignored looking delete from being suppressed.
     [<Test>]
     let ``dirty status reload keeps tracked ignored-looking delete from being suppressed`` () =
         withTempRepo (fun root ->
@@ -795,6 +881,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that status reload failure keeps ignored looking delete queued for retry.
     [<Test>]
     let ``status reload failure keeps ignored-looking delete queued for retry`` () =
         withTempRepo (fun root ->
@@ -816,6 +903,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that status only delete rescan clears stale working tree scan cache.
     [<Test>]
     let ``status-only delete rescan clears stale working tree scan cache`` () =
         withTempRepo (fun root ->
@@ -833,8 +921,10 @@ module WatchTests =
             File.Delete(filePath)
             Watch.OnDeleted(deletedEvent filePath)
 
+            /// Tracks observed Differences changes so this scenario can assert the resulting side effect explicitly.
             let mutable observedDifferences = List<FileSystemDifference>()
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 task {
                     let! differences = Services.scanForDifferences status
@@ -851,6 +941,7 @@ module WatchTests =
                 && difference.RelativePath = RelativePath relativePath)
             |> should equal true)
 
+    /// Verifies that deleted directory queues status update when rename cached directory ignore.
     [<Test>]
     let ``deleted directory queues status update when rename cached directory ignore`` () =
         withTempRepo (fun root ->
@@ -872,6 +963,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that deleted directory named like file ignore queues status update work.
     [<Test>]
     let ``deleted directory named like file ignore queues status update work`` () =
         withTempRepo (fun root ->
@@ -892,6 +984,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that deleted tracked directory ending gracetmp queues status update work.
     [<Test>]
     let ``deleted tracked directory ending gracetmp queues status update work`` () =
         withTempRepo (fun root ->
@@ -910,6 +1003,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that deleted tracked directory matching directory ignore queues status update work.
     [<Test>]
     let ``deleted tracked directory matching directory ignore queues status update work`` () =
         withTempRepo (fun root ->
@@ -930,6 +1024,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that unknown deleted directory matching directory ignore does not queue status update work.
     [<Test>]
     let ``unknown deleted directory matching directory ignore does not queue status update work`` () =
         withTempRepo (fun root ->
@@ -949,6 +1044,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that deleted tracked file matching directory only ignore queues status update work.
     [<Test>]
     let ``deleted tracked file matching directory-only ignore queues status update work`` () =
         withTempRepo (fun root ->
@@ -969,6 +1065,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that duplicate deleted file events drain as one status update trigger.
     [<Test>]
     let ``duplicate deleted file events drain as one status update trigger`` () =
         withTempRepo (fun root ->
@@ -982,6 +1079,7 @@ module WatchTests =
             pending.StatusUpdateTriggers
             |> should equal [| "duplicate-delete.txt" |]
 
+            /// Builds update calls test data used to exercise CLI watch behavior.
             let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             updateCalls |> should equal 1
@@ -992,6 +1090,7 @@ module WatchTests =
             afterProcessing.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that renamed file queues old path status trigger and new path upload work.
     [<Test>]
     let ``renamed file queues old path status trigger and new path upload work`` () =
         withTempRepo (fun root ->
@@ -1009,6 +1108,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal [| newPath |])
 
+    /// Verifies that renamed file cancels old path pending upload before queuing new path.
     [<Test>]
     let ``renamed file cancels old path pending upload before queuing new path`` () =
         withTempRepo (fun root ->
@@ -1029,6 +1129,7 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal [| newPath |])
 
+    /// Verifies that renamed directory queues old path status trigger and new contents upload work.
     [<Test>]
     let ``renamed directory queues old path status trigger and new contents upload work`` () =
         withTempRepo (fun root ->
@@ -1056,11 +1157,13 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal ([| rootFile; nestedFile |] |> Array.sort)
 
+            /// Builds update calls test data used to exercise CLI watch behavior.
             let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             uploadCalls |> should equal 2
             updateCalls |> should equal 1)
 
+    /// Verifies that renamed directory enumeration failure keeps old path trigger for retry.
     [<Test>]
     let ``renamed directory enumeration failure keeps old path trigger for retry`` () =
         withTempRepo (fun root ->
@@ -1080,15 +1183,18 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that file event during status only update keeps trigger pending for upload first retry.
     [<Test>]
     let ``file event during status-only update keeps trigger pending for upload-first retry`` () =
         withTempRepo (fun root ->
             let deletedFilePath = Path.Combine(root, "delete-before-race.txt")
             let createdFilePath = Path.Combine(root, "created-during-status-update.txt")
+            /// Tracks update Calls changes so this scenario can assert the resulting side effect explicitly.
             let mutable updateCalls = 0
 
             Watch.OnDeleted(deletedEvent deletedFilePath)
 
+            /// Builds update grace status test data used to exercise CLI watch behavior.
             let updateGraceStatus status _ =
                 updateCalls <- updateCalls + 1
 
@@ -1110,6 +1216,7 @@ module WatchTests =
             afterRace.FilesToProcess
             |> should equal [| createdFilePath |])
 
+    /// Verifies that startup deleted file difference queues status only work without upload work.
     [<Test>]
     let ``startup deleted file difference queues status-only work without upload work`` () =
         withTempRepo (fun _ ->
@@ -1123,11 +1230,13 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>
 
+            /// Builds update calls test data used to exercise CLI watch behavior.
             let updateCalls, uploadCalls = processPendingWatchWorkForTest ()
 
             updateCalls |> should equal 1
             uploadCalls |> should equal 0)
 
+    /// Verifies that renamed tracked file matching directory only ignore queues old path status trigger.
     [<Test>]
     let ``renamed tracked file matching directory-only ignore queues old path status trigger`` () =
         withTempRepo (fun root ->
@@ -1148,10 +1257,12 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal [| newPath |])
 
+    /// Verifies that watch exits with auth guidance when no token is configured.
     [<Test>]
     let ``watch exits with auth guidance when no token is configured`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
+                /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, output = runWithCapturedOutput [| "watch" |]
 
                 if exitCode <> -1 then
@@ -1165,12 +1276,14 @@ module WatchTests =
                 output
                 |> should contain "Authentication is not configured."))
 
+    /// Verifies that watch exits nonzero when live watcher status already exists.
     [<Test>]
     let ``watch exits nonzero when live watcher status already exists`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
                 let ipcFileName = writeLiveWatchStatusFile ()
                 let originalContents = readFileIfExists ipcFileName
+                /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, output = runWithCapturedOutput [| "watch" |]
 
                 exitCode |> should equal -1
@@ -1184,6 +1297,7 @@ module WatchTests =
                 readFileIfExists ipcFileName
                 |> should equal originalContents))
 
+    /// Verifies that watch startup claim is atomic for simultaneous ordinary starts.
     [<Test>]
     let ``watch startup claim is atomic for simultaneous ordinary starts`` () =
         withTempRepo (fun _ ->
@@ -1207,6 +1321,7 @@ module WatchTests =
             let status = Services.getGraceWatchStatus().Result
             status |> should equal None)
 
+    /// Verifies that watch startup claim blocks second ordinary start without usable status.
     [<Test>]
     let ``watch startup claim blocks second ordinary start without usable status`` () =
         withTempRepo (fun _ ->
@@ -1221,6 +1336,7 @@ module WatchTests =
                 let status = Services.getGraceWatchStatus().Result
                 status |> should equal None
 
+                /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, output = runWithCapturedOutput [| "watch" |]
 
                 exitCode |> should equal -1
@@ -1231,6 +1347,7 @@ module WatchTests =
                 output
                 |> should not' (contain "Unable to acquire an access token for SignalR")))
 
+    /// Verifies that watch startup claim replaces malformed stale ipc file.
     [<Test>]
     let ``watch startup claim replaces malformed stale ipc file`` () =
         withTempRepo (fun _ ->
@@ -1251,6 +1368,7 @@ module WatchTests =
             let status = Services.getGraceWatchStatus().Result
             status |> should equal None)
 
+    /// Verifies that watch status preserves root blake3 from grace status index.
     [<Test>]
     let ``watch status preserves root Blake3 from GraceStatus index`` () =
         withTempRepo (fun _ ->
@@ -1295,6 +1413,7 @@ module WatchTests =
                 |> should equal rootBlake3Hash
             | None -> Assert.Fail("Expected usable watch status with root BLAKE3."))
 
+    /// Verifies that watch status preserves root blake3 from grace status metadata when index is empty.
     [<Test>]
     let ``watch status preserves root Blake3 from GraceStatus metadata when index is empty`` () =
         withTempRepo (fun _ ->
@@ -1326,12 +1445,14 @@ module WatchTests =
                 |> should equal rootBlake3Hash
             | None -> Assert.Fail("Expected usable watch status with fallback root BLAKE3."))
 
+    /// Verifies that watch check exits zero when live watcher status exists.
     [<Test>]
     let ``watch check exits zero when live watcher status exists`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
             let originalContents = readFileIfExists ipcFileName
 
+            /// Verifies that the CLI watch scenario exits with the expected process status.
             let exitCode, output =
                 runWithCapturedOutput [| "watch"
                                          "--check" |]
@@ -1343,12 +1464,14 @@ module WatchTests =
             readFileIfExists ipcFileName
             |> should equal originalContents)
 
+    /// Verifies that watch check through main exits zero and preserves live watcher status.
     [<Test>]
     let ``watch check through main exits zero and preserves live watcher status`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
             let originalContents = readFileIfExists ipcFileName
 
+            /// Verifies that the CLI watch scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "watch"
                                                   "--check" |]
@@ -1362,12 +1485,14 @@ module WatchTests =
             readFileIfExists ipcFileName
             |> should equal originalContents)
 
+    /// Verifies that watch check json mode emits error envelope and preserves live watcher status.
     [<Test>]
     let ``watch check json mode emits error envelope and preserves live watcher status`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
             let originalContents = readFileIfExists ipcFileName
 
+            /// Verifies that the CLI watch scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "--output"
                                                   "Json"
@@ -1386,6 +1511,7 @@ module WatchTests =
             root.GetProperty("Error").GetString()
             |> should contain "watch is a continuous foreground workflow"
 
+            /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
             let mutable returnValue = Unchecked.defaultof<JsonElement>
 
             root.TryGetProperty("ReturnValue", &returnValue)
@@ -1394,12 +1520,14 @@ module WatchTests =
             readFileIfExists ipcFileName
             |> should equal originalContents)
 
+    /// Verifies that watch check select mode emits error envelope and preserves live watcher status.
     [<Test>]
     let ``watch check select mode emits error envelope and preserves live watcher status`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
             let originalContents = readFileIfExists ipcFileName
 
+            /// Verifies that the CLI watch scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runWithCapturedStdoutAndStderr [| "watch"
                                                   "--check"
@@ -1418,6 +1546,7 @@ module WatchTests =
             root.GetProperty("Error").GetString()
             |> should contain "does not support --select in this release"
 
+            /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
             let mutable returnValue = Unchecked.defaultof<JsonElement>
 
             root.TryGetProperty("ReturnValue", &returnValue)
@@ -1426,10 +1555,12 @@ module WatchTests =
             readFileIfExists ipcFileName
             |> should equal originalContents)
 
+    /// Verifies that watch check exits nonzero when live watcher status is missing.
     [<Test>]
     let ``watch check exits nonzero when live watcher status is missing`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
+                /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, output =
                     runWithCapturedOutput [| "watch"
                                              "--check" |]
@@ -1446,6 +1577,7 @@ module WatchTests =
                 |> File.Exists
                 |> should equal false))
 
+    /// Verifies that watch check exits nonzero and preserves startup claim.
     [<Test>]
     let ``watch check exits nonzero and preserves startup claim`` () =
         withTempRepo (fun _ ->
@@ -1460,6 +1592,7 @@ module WatchTests =
                 let ipcFileName = Services.IpcFileName()
                 let originalContents = readFileIfExists ipcFileName
 
+                /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, output =
                     runWithCapturedOutput [| "watch"
                                              "--check" |]
@@ -1475,6 +1608,7 @@ module WatchTests =
                 readFileIfExists ipcFileName
                 |> should equal originalContents))
 
+    /// Verifies that watch cached file changes upload cached object for save enrichment.
     [<Test>]
     let ``watch cached file changes upload cached object for save enrichment`` () =
         let filePath = FilePath @"C:\repo\dir\cached-file.txt"
@@ -1482,12 +1616,16 @@ module WatchTests =
         let cachedFileVersion =
             FileVersion.Create "dir/cached-file.txt" (Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa") String.Empty true 12L
 
+        /// Tracks uploaded File Versions changes so this scenario can assert the resulting side effect explicitly.
         let mutable uploadedFileVersions = Array.empty<FileVersion>
 
+        /// Builds copy file to object cache test data used to exercise CLI watch behavior.
         let copyFileToObjectCache _ = Task.FromResult<FileVersion option> None
 
+        /// Gets cached file version needed by the test scenario.
         let getCachedFileVersion _ = Task.FromResult(Some cachedFileVersion)
 
+        /// Builds upload file versions test data used to exercise CLI watch behavior.
         let uploadFileVersions (parameters: GetUploadMetadataForFilesParameters) =
             uploadedFileVersions <- parameters.FileVersions
             Task.FromResult(Ok(GraceReturnValue.Create parameters.FileVersions parameters.CorrelationId))
@@ -1510,6 +1648,7 @@ module WatchTests =
         parameters.FileVersions
         |> should equal [| cachedFileVersion |]
 
+    /// Verifies that object cache copies preserve scanner blake3 identity.
     [<Test>]
     let ``object-cache copies preserve scanner Blake3 identity`` () =
         withTempRepo (fun root ->
@@ -1541,6 +1680,7 @@ module WatchTests =
             copiedFileVersion.Blake3Hash
             |> should equal localFileVersion.Blake3Hash)
 
+    /// Verifies that object cache copy returns file version when object already exists.
     [<Test>]
     let ``object-cache copy returns file version when object already exists`` () =
         withTempRepo (fun root ->
@@ -1575,10 +1715,12 @@ module WatchTests =
             secondCopy.RelativePath
             |> should equal firstCopy.RelativePath)
 
+    /// Verifies that watch json auth failure emits one clean error envelope.
     [<Test>]
     let ``watch json auth failure emits one clean error envelope`` () =
         withTempRepo (fun _ ->
             clearWatchAuthEnv (fun () ->
+                /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, standardOut, standardError =
                     runWithCapturedStdoutAndStderr [| "--output"
                                                       "Json"
@@ -1598,17 +1740,20 @@ module WatchTests =
                 root.GetProperty("Error").GetString()
                 |> should contain "watch is a continuous foreground workflow"
 
+                /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
                 let mutable returnValue = Unchecked.defaultof<JsonElement>
 
                 root.TryGetProperty("ReturnValue", &returnValue)
                 |> should equal false))
 
+    /// Verifies that watch json error in separate process does not delete live watch ipc file.
     [<Test>]
     let ``watch json error in separate process does not delete live watch ipc file`` () =
         withTempRepo (fun root ->
             clearWatchAuthEnv (fun () ->
                 let ipcFileName = writeLiveWatchStatusFile ()
 
+                /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, standardOut, standardError = runGraceProcessWithCapturedStdoutAndStderr root [| "--output"; "Json"; "watch" |]
 
                 Assert.That(exitCode, Is.EqualTo(-1).Or.EqualTo(255))

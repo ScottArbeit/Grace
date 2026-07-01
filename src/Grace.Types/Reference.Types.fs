@@ -8,6 +8,7 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains reference helpers.
 module Reference =
 
     /// The state held in the database when creating a physical deletion reminder for a reference.
@@ -23,6 +24,7 @@ module Reference =
             CorrelationId: CorrelationId
         }
 
+    /// Represents reference command.
     [<KnownType("GetKnownTypes")>]
     type ReferenceCommand =
         | Create of
@@ -43,6 +45,7 @@ module Reference =
         | DeletePhysical
         | Undelete
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReferenceCommand>()
 
     /// Defines the events for the Reference actor.
@@ -66,6 +69,7 @@ module Reference =
         | PhysicalDeleted
         | Undeleted
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReferenceEventType>()
 
     /// Record that holds the event type and metadata for a Reference event.
@@ -99,6 +103,7 @@ module Reference =
             DeleteReason: DeleteReason
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof ReferenceDto
@@ -120,6 +125,7 @@ module Reference =
                 DeleteReason = String.Empty
             }
 
+        /// Recovers full root directory hashes when an older reference stored only a SHA-256 prefix.
         static member TryGetLegacyRootDirectoryHashRepair directoryId sha256Hash blake3Hash (directoryVersion: DirectoryVersion) =
             let rootRelativePath = directoryVersion.RelativePath
 
@@ -145,6 +151,7 @@ module Reference =
             else
                 None
 
+        /// Returns a reference DTO with repaired root directory hashes when legacy data can be matched safely.
         static member HydrateLegacyRootDirectoryHash directoryVersion referenceDto =
             match ReferenceDto.TryGetLegacyRootDirectoryHashRepair referenceDto.DirectoryId referenceDto.Sha256Hash referenceDto.Blake3Hash directoryVersion
                 with

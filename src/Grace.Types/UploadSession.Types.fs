@@ -9,8 +9,10 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains upload session helpers.
 module UploadSession =
 
+    /// Represents upload session lifecycle state.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type UploadSessionLifecycleState =
         | NotStarted
@@ -25,8 +27,10 @@ module UploadSession =
         | RetentionPending
         | StateDeleted
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<UploadSessionLifecycleState>()
 
+    /// Represents start upload session.
     [<GenerateSerializer>]
     type StartUploadSession =
         {
@@ -43,6 +47,7 @@ module UploadSession =
             OperationId: UploadSessionOperationId
         }
 
+    /// Represents register block upload intent.
     [<GenerateSerializer>]
     type RegisterBlockUploadIntent =
         {
@@ -53,6 +58,7 @@ module UploadSession =
             ExpectedPayloadLength: int64
         }
 
+    /// Represents confirm block uploaded.
     [<GenerateSerializer>]
     type ConfirmBlockUploaded =
         {
@@ -62,6 +68,7 @@ module UploadSession =
             StoragePlacement: ContentBlockStoragePlacement
         }
 
+    /// Represents block upload intent.
     [<GenerateSerializer>]
     type BlockUploadIntent =
         {
@@ -72,6 +79,7 @@ module UploadSession =
             RegisteredAt: Instant
         }
 
+    /// Represents confirmed block upload.
     [<GenerateSerializer>]
     type ConfirmedBlockUpload =
         {
@@ -103,6 +111,7 @@ module UploadSession =
             Hints: ContentBlockReuseRangeHint array
         }
 
+    /// Represents issue dedupe discovery.
     [<GenerateSerializer>]
     type IssueDedupeDiscovery =
         {
@@ -116,9 +125,11 @@ module UploadSession =
     [<GenerateSerializer>]
     type ClaimReuseRange = { Hint: ContentBlockReuseRangeHint; Metadata: ContentBlockMetadata }
 
+    /// Represents the claim reuse ranges contract.
     [<GenerateSerializer>]
     type ClaimReuseRanges = { OperationId: UploadSessionOperationId; DiscoveryOperationId: UploadSessionOperationId; Ranges: ClaimReuseRange array }
 
+    /// Represents claimed reuse range.
     [<GenerateSerializer>]
     type ClaimedReuseRange =
         {
@@ -132,9 +143,11 @@ module UploadSession =
             ClaimedAt: Instant
         }
 
+    /// Represents the finalize manifest block payload contract.
     [<GenerateSerializer>]
     type FinalizeManifestBlockPayload = { Address: ContentBlockAddress; Payload: byte array }
 
+    /// Represents finalize manifest.
     [<GenerateSerializer>]
     type FinalizeManifest =
         {
@@ -144,6 +157,7 @@ module UploadSession =
             ClaimedMetadata: ContentBlockMetadata array
         }
 
+    /// Represents upload session command.
     [<KnownType("GetKnownTypes")>]
     type UploadSessionCommand =
         | Start of start: StartUploadSession
@@ -156,8 +170,10 @@ module UploadSession =
         | Expire of operationId: UploadSessionOperationId
         | DeletePhysicalState of operationId: UploadSessionOperationId
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<UploadSessionCommand>()
 
+    /// Represents upload session event type.
     [<KnownType("GetKnownTypes")>]
     type UploadSessionEventType =
         | Started of start: StartUploadSession
@@ -171,10 +187,13 @@ module UploadSession =
         | DedupeDiscoveryIssued of operationId: UploadSessionOperationId * discovery: DedupeDiscoverySnapshot
         | ReuseRangesClaimed of operationId: UploadSessionOperationId * claimedRanges: ClaimedReuseRange array
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<UploadSessionEventType>()
 
+    /// Represents the upload session event contract.
     type UploadSessionEvent = { Event: UploadSessionEventType; Metadata: EventMetadata }
 
+    /// Represents upload session dto.
     [<GenerateSerializer>]
     type UploadSessionDto =
         {
@@ -202,6 +221,7 @@ module UploadSession =
             LastOperationId: UploadSessionOperationId option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof UploadSessionDto
@@ -228,6 +248,7 @@ module UploadSession =
                 LastOperationId = None
             }
 
+        /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto uploadSessionEvent current =
             match uploadSessionEvent.Event with
             | UploadSessionEventType.Started start ->
@@ -310,6 +331,7 @@ module UploadSession =
                     LastOperationId = Some operationId
                 }
 
+    /// Represents upload session decision.
     [<GenerateSerializer>]
     type UploadSessionDecision =
         {
@@ -320,10 +342,12 @@ module UploadSession =
             Message: string
         }
 
+    /// Indicates whether the upload session still points at the supplied finalized manifest address.
     let retainsFinalizedManifest manifestAddress (session: UploadSessionDto) =
         not (String.IsNullOrWhiteSpace manifestAddress)
         && session.FinalizedManifestAddress = Some manifestAddress
 
+    /// Represents physical deletion reminder state.
     [<GenerateSerializer>]
     type PhysicalDeletionReminderState =
         {

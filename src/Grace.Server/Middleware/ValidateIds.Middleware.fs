@@ -66,6 +66,7 @@ type ValidateIdsMiddleware(next: RequestDelegate) =
         else
             None
 
+    /// Validates route identifiers before protected endpoint handlers read actor state.
     member this.Invoke(context: HttpContext) =
         task {
 

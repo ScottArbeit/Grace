@@ -5,6 +5,7 @@ open Grace.Types.Common
 open System
 open Orleans
 
+/// Contains owner helpers.
 module Owner =
 
     /// Common parameters for endpoints in the /owner path.

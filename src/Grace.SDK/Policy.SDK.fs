@@ -5,7 +5,7 @@ open Grace.Shared.Parameters.Policy
 open Grace.Types.Policy
 open System.Threading.Tasks
 
-/// The Policy module provides a set of functions for interacting with policy snapshots in the Grace API.
+/// SDK entry point for reading and acknowledging branch policy snapshots.
 type Policy() =
     /// Gets the current policy snapshot for a target branch.
     static member public GetCurrent(parameters: GetPolicyParameters) =

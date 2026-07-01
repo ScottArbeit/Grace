@@ -10,6 +10,7 @@ open NUnit.Framework
 open System
 open System.Text.Json
 
+/// Contains tests covering annotation contract behavior.
 [<Parallelizable(ParallelScope.All)>]
 type AnnotationContractTests() =
 
@@ -17,16 +18,19 @@ type AnnotationContractTests() =
     let sourceReferenceId = Guid.Parse("22222222-2222-2222-2222-222222222222")
     let directoryVersionId = Guid.Parse("33333333-3333-3333-3333-333333333333")
 
+    /// Asserts ok.
     let assertOk (result: Result<unit, string list>) =
         match result with
         | Ok () -> ()
         | Error errors -> Assert.Fail(String.Join(Environment.NewLine, errors))
 
+    /// Asserts error contains.
     let assertErrorContains expected (result: Result<unit, string list>) =
         match result with
         | Ok () -> Assert.Fail($"Expected validation error containing '{expected}'.")
         | Error errors -> Assert.That(errors, Has.Some.Contains(expected))
 
+    /// Exercises valid annotation coverage for the types annotation contract.
     let validAnnotation includeLineText =
         BranchAnnotationDto.Create(
             { StartLine = 10; EndLine = 12 },
@@ -69,6 +73,7 @@ type AnnotationContractTests() =
             |]
         )
 
+    /// Verifies that annotation dto serialization keeps source references as array.
     [<Test>]
     member _.AnnotationDtoSerializationKeepsSourceReferencesAsArray() =
         let annotation = validAnnotation true
@@ -79,6 +84,7 @@ type AnnotationContractTests() =
 
         Assert.Multiple(
             Action (fun () ->
+                /// Tracks algorithm Version changes so this scenario can assert the resulting side effect explicitly.
                 let mutable algorithmVersion = Unchecked.defaultof<JsonElement>
 
                 Assert.That(root.GetProperty("Class").GetString(), Is.EqualTo(nameof BranchAnnotationDto))
@@ -121,6 +127,7 @@ type AnnotationContractTests() =
         let roundTrip = deserialize<BranchAnnotationDto> json
         Assert.That(roundTrip, Is.EqualTo(annotation))
 
+    /// Verifies that annotation dto message pack round trips through grace options.
     [<Test>]
     member _.AnnotationDtoMessagePackRoundTripsThroughGraceOptions() =
         let annotation = validAnnotation true
@@ -129,6 +136,7 @@ type AnnotationContractTests() =
 
         Assert.That(roundTrip, Is.EqualTo(annotation))
 
+    /// Verifies that include line text false yields empty lines.
     [<Test>]
     member _.IncludeLineTextFalseYieldsEmptyLines() =
         let annotation = validAnnotation false
@@ -140,6 +148,7 @@ type AnnotationContractTests() =
                 assertOk (validate annotation))
         )
 
+    /// Verifies that annotation validation rejects line text when not requested.
     [<Test>]
     member _.AnnotationValidationRejectsLineTextWhenNotRequested() =
         let annotation =
@@ -153,6 +162,7 @@ type AnnotationContractTests() =
         validate annotation
         |> assertErrorContains "Lines must be empty when IncludeLineText is false"
 
+    /// Verifies that annotation validation rejects unknown source reference type.
     [<Test>]
     member _.AnnotationValidationRejectsUnknownSourceReferenceType() =
         let annotation =
@@ -166,6 +176,7 @@ type AnnotationContractTests() =
         validate annotation
         |> assertErrorContains "unknown ReferenceType 'Bogus'"
 
+    /// Verifies that annotation validation rejects unknown reference type filter.
     [<Test>]
     member _.AnnotationValidationRejectsUnknownReferenceTypeFilter() =
         let annotation = { validAnnotation true with ReferenceTypeFilter = [| "Bogus" |] }
@@ -173,6 +184,7 @@ type AnnotationContractTests() =
         validate annotation
         |> assertErrorContains "unknown ReferenceType 'Bogus'"
 
+    /// Verifies that annotate parameters default reference budget is one thousand.
     [<Test>]
     member _.AnnotateParametersDefaultReferenceBudgetIsOneThousand() =
         let parameters = AnnotateParameters()
@@ -181,6 +193,7 @@ type AnnotationContractTests() =
         Assert.Multiple(
             Action (fun () ->
                 use document = JsonDocument.Parse(json)
+                /// Tracks line Range changes so this scenario can assert the resulting side effect explicitly.
                 let mutable lineRange = Unchecked.defaultof<JsonElement>
 
                 Assert.That(parameters.MaxReferences, Is.EqualTo(1000))
@@ -189,6 +202,7 @@ type AnnotationContractTests() =
                 assertOk (parameters.Validate()))
         )
 
+    /// Verifies that annotate parameters rejects reference budget outside supported range.
     [<TestCase(0)>]
     [<TestCase(5001)>]
     member _.AnnotateParametersRejectsReferenceBudgetOutsideSupportedRange(maxReferences: int) =
@@ -197,6 +211,7 @@ type AnnotationContractTests() =
 
         Assert.That(parameters.Validate().IsError, Is.True)
 
+    /// Verifies that annotate parameters accepts maximum reference budget.
     [<Test>]
     member _.AnnotateParametersAcceptsMaximumReferenceBudget() =
         let parameters = AnnotateParameters()
@@ -204,6 +219,7 @@ type AnnotationContractTests() =
 
         assertOk (parameters.Validate())
 
+    /// Verifies that annotate parameters rejects invalid line ranges.
     [<TestCase(0, 1)>]
     [<TestCase(-1, 1)>]
     [<TestCase(5, 4)>]
@@ -214,6 +230,7 @@ type AnnotationContractTests() =
 
         Assert.That(parameters.Validate().IsError, Is.True)
 
+    /// Verifies that annotation validation checks span source and boundary links.
     [<Test>]
     member _.AnnotationValidationChecksSpanSourceAndBoundaryLinks() =
         let annotation = validAnnotation true
@@ -242,6 +259,7 @@ type AnnotationContractTests() =
                     Assert.That(errors, Has.Some.Contains("missing SourceReference")))
             )
 
+    /// Verifies that annotation validation allows resolved spans without boundaries.
     [<Test>]
     member _.AnnotationValidationAllowsResolvedSpansWithoutBoundaries() =
         let annotation =
@@ -255,6 +273,7 @@ type AnnotationContractTests() =
 
         assertOk (validate annotation)
 
+    /// Verifies that annotation validation rejects resolved spans without source rows.
     [<Test>]
     member _.AnnotationValidationRejectsResolvedSpansWithoutSourceRows() =
         let annotation =
@@ -270,6 +289,7 @@ type AnnotationContractTests() =
         | Ok () -> Assert.Fail("Resolved spans without source rows should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("must reference at least one SourceRow"))
 
+    /// Verifies that annotation validation rejects duplicate source rows.
     [<Test>]
     member _.AnnotationValidationRejectsDuplicateSourceRows() =
         let annotation = validAnnotation true
@@ -287,6 +307,7 @@ type AnnotationContractTests() =
         | Ok () -> Assert.Fail("Duplicate source rows should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("duplicate SourceRowId"))
 
+    /// Verifies that annotation validation rejects blank identifiers.
     [<TestCase("source-reference")>]
     [<TestCase("source-row")>]
     [<TestCase("boundary")>]
@@ -330,6 +351,7 @@ type AnnotationContractTests() =
         | Ok () -> Assert.Fail($"Blank {identifierKind} identifiers should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("blank"))
 
+    /// Verifies that annotation validation rejects blank boundary kind.
     [<Test>]
     member _.AnnotationValidationRejectsBlankBoundaryKind() =
         let annotation = validAnnotation true
@@ -346,6 +368,7 @@ type AnnotationContractTests() =
         | Ok () -> Assert.Fail("Blank BoundaryKind should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("blank BoundaryKind"))
 
+    /// Verifies that annotation validation rejects spans outside requested range.
     [<Test>]
     member _.AnnotationValidationRejectsSpansOutsideRequestedRange() =
         let annotation =
@@ -360,6 +383,7 @@ type AnnotationContractTests() =
         | Ok () -> Assert.Fail("Spans outside the requested line range should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("inside RequestedLineRange"))
 
+    /// Verifies that annotation validation rejects target rows outside requested range.
     [<TestCase("line")>]
     [<TestCase("boundary")>]
     member _.AnnotationValidationRejectsTargetRowsOutsideRequestedRange(targetKind: string) =
@@ -387,6 +411,7 @@ type AnnotationContractTests() =
         | Ok () -> Assert.Fail($"{targetKind} outside the requested line range should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("inside RequestedLineRange"))
 
+    /// Verifies that annotation validation rejects cross path source rows.
     [<Test>]
     member _.AnnotationValidationRejectsCrossPathSourceRows() =
         let annotation =
@@ -401,6 +426,7 @@ type AnnotationContractTests() =
         | Ok () -> Assert.Fail("Source rows from a different path should be rejected.")
         | Error errors -> Assert.That(errors, Has.Some.Contains("Path must match annotation Path"))
 
+    /// Verifies that annotation validation rejects source references above budget.
     [<Test>]
     member _.AnnotationValidationRejectsSourceReferencesAboveBudget() =
         let annotation =

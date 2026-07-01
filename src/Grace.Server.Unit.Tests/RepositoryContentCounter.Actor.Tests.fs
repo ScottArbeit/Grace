@@ -9,6 +9,7 @@ open System.Collections.Generic
 
 module RepositoryContentCounterActor = Grace.Actors.RepositoryContentCounter
 
+/// Covers repository Content Counter Actor behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type RepositoryContentCounterActorTests() =
 
@@ -20,6 +21,7 @@ type RepositoryContentCounterActorTests() =
     let manifestAddress = "manifest:blake3:alpha"
     let otherManifestAddress = "manifest:blake3:beta"
 
+    /// Constructs metadata fixtures used by the server unit repository Content Counter Actor assertions.
     let metadata correlationId =
         {
             Timestamp = timestamp
@@ -33,10 +35,12 @@ type RepositoryContentCounterActorTests() =
 
     let remove operationId = RepositoryContentCounterCommand.RemoveReference(operationId, repositoryId, storagePoolId, manifestAddress)
 
+    /// Applies all inputs to drive the server unit repository Content Counter Actor state transition under test.
     let applyAll events dto =
         events
         |> List.fold (fun current event -> RepositoryContentCounterDto.UpdateDto event current) dto
 
+    /// Verifies that zero To One Emits Increment Intent And Retry Is Idempotent.
     [<Test>]
     member _.ZeroToOneEmitsIncrementIntentAndRetryIsIdempotent() =
         let first = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-1") (metadata "corr-add-1")
@@ -66,6 +70,7 @@ type RepositoryContentCounterActorTests() =
             | Error error -> Assert.Fail($"Expected add replay to be idempotent, got {error.Error}.")
         | Error error -> Assert.Fail($"Expected add to succeed, got {error.Error}.")
 
+    /// Verifies that n To N Transitions Do Not Emit Intent And One To Zero Emits Decrement Intent.
     [<Test>]
     member _.NToNTransitionsDoNotEmitIntentAndOneToZeroEmitsDecrementIntent() =
         let first = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-1") (metadata "corr-add-1")
@@ -116,6 +121,7 @@ type RepositoryContentCounterActorTests() =
             )
         | Error error -> Assert.Fail($"Expected final remove to succeed, got {error.Error}.")
 
+    /// Verifies that one To Zero Retry Is Idempotent Without Second Decrement Intent.
     [<Test>]
     member _.OneToZeroRetryIsIdempotentWithoutSecondDecrementIntent() =
         let addDecision = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-1") (metadata "corr-add-1")
@@ -147,6 +153,7 @@ type RepositoryContentCounterActorTests() =
             Assert.That(decision.Counter.LifecycleState, Is.EqualTo(RepositoryContentCounterLifecycleState.NotReferenced))
         | Error error -> Assert.Fail($"Expected remove replay to be idempotent, got {error.Error}.")
 
+    /// Verifies that first Write Rejects Command Target That Does Not Match Grain Key.
     [<Test>]
     member _.FirstWriteRejectsCommandTargetThatDoesNotMatchGrainKey() =
         let wrongKey = RepositoryContentCounterActor.primaryKey otherRepositoryId storagePoolId manifestAddress
@@ -158,6 +165,7 @@ type RepositoryContentCounterActorTests() =
         | Ok _ -> Assert.Fail("Expected target mismatch to reject the first write.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter command target does not match the grain key."))
 
+    /// Verifies that reused Operation Id With Different Target Rejects Instead Of Replaying.
     [<Test>]
     member _.ReusedOperationIdWithDifferentTargetRejectsInsteadOfReplaying() =
         let first = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-add-1") (metadata "corr-add-1")
@@ -176,6 +184,7 @@ type RepositoryContentCounterActorTests() =
         | Ok _ -> Assert.Fail("Expected reused operation id with a different target to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter command target does not match the initialized counter."))
 
+    /// Verifies that reused Operation Id With Different Command Rejects Instead Of Replaying.
     [<Test>]
     member _.ReusedOperationIdWithDifferentCommandRejectsInsteadOfReplaying() =
         let first = RepositoryContentCounterActor.decideCommand [] RepositoryContentCounterDto.Default (add "op-shared") (metadata "corr-add")
@@ -193,6 +202,7 @@ type RepositoryContentCounterActorTests() =
         | Ok _ -> Assert.Fail("Expected reused operation id with a different command to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("RepositoryContentCounter operation id was already used for a different command."))
 
+    /// Verifies that primary Key And Targets Distinguish Same Manifest Address Across Storage Pools.
     [<Test>]
     member _.PrimaryKeyAndTargetsDistinguishSameManifestAddressAcrossStoragePools() =
         let defaultKey = RepositoryContentCounterActor.primaryKey repositoryId storagePoolId manifestAddress

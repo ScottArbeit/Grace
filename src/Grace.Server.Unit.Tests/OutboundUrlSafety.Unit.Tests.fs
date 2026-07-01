@@ -10,14 +10,20 @@ open System.Text
 open Grace.Shared.Utilities
 
 module OutboundUrlPolicy = Grace.Server.Security.OutboundUrlSafety
+/// Covers url Safety behavior in no-Aspire server unit tests.
 type UrlSafety = Grace.Types.Webhooks.OutboundUrlSafety
+/// Covers validation Failure behavior in no-Aspire server unit tests.
 type ValidationFailure = Grace.Server.Security.OutboundUrlSafety.ValidationFailure
+/// Covers validation Request behavior in no-Aspire server unit tests.
 type ValidationRequest = Grace.Server.Security.OutboundUrlSafety.ValidationRequest
+/// Covers validated Outbound Url behavior in no-Aspire server unit tests.
 type ValidatedOutboundUrl = Grace.Server.Security.OutboundUrlSafety.ValidatedOutboundUrl
 
+/// Covers outbound Url Safety Unit behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type OutboundUrlSafetyUnit() =
 
+    /// Builds configuration test data for the server unit outbound Url Safety scenarios in this file.
     let configuration (values: (string * string) list) =
         let pairs =
             values
@@ -30,11 +36,13 @@ type OutboundUrlSafetyUnit() =
 
     let emptyConfiguration = configuration []
 
+    /// Asserts the accepted condition so failures identify the violated server unit outbound Url Safety invariant.
     let assertAccepted (result: Result<ValidatedOutboundUrl, ValidationFailure>) =
         match result with
         | Ok value -> value
         | Error failure -> raise (AssertionException(sprintf "Expected URL to be accepted but got %A." failure))
 
+    /// Asserts the rejected condition so failures identify the violated server unit outbound Url Safety invariant.
     let assertRejected (expected: ValidationFailure) (result: Result<ValidatedOutboundUrl, ValidationFailure>) =
         match result with
         | Ok value -> raise (AssertionException(sprintf "Expected URL to be rejected with %A but got %s." expected value.ScopedUrl.Url))
@@ -44,6 +52,7 @@ type OutboundUrlSafetyUnit() =
 
     let localRequest url : ValidationRequest = { Url = url; RequestedSafety = UrlSafety.LocalUnsafeDevOnly; AcknowledgeUnsafeLocalDevelopment = true }
 
+    /// Builds public Resolver test data for the server unit outbound Url Safety scenarios in this file.
     let publicResolver host =
         match host with
         | "hooks.example.test" -> [| IPAddress.Parse("93.184.216.34") |]
@@ -58,6 +67,7 @@ type OutboundUrlSafetyUnit() =
         configuration [ "ASPNETCORE_ENVIRONMENT", "Development"
                         OutboundUrlPolicy.UnsafeLocalDevelopmentConfigKey, "true" ]
 
+    /// Exercises with Host Environment validation against the server unit outbound Url Safety contract under test.
     let validateWithHostEnvironment isDevelopmentHostEnvironment configuration request =
         OutboundUrlPolicy.validateWithResolver publicResolver isDevelopmentHostEnvironment configuration request
 
@@ -67,11 +77,13 @@ type OutboundUrlSafetyUnit() =
 
     let validatePublic request = validateOutsideDevelopment emptyConfiguration request
 
+    /// Builds address List test data for the server unit outbound Url Safety scenarios in this file.
     let addressList (addresses: IPAddress array) =
         addresses
         |> Array.map (fun address -> address.ToString())
         |> String.concat ","
 
+    /// Verifies that public Targets Require Absolute Https.
     [<Test>]
     member _.PublicTargetsRequireAbsoluteHttps() =
         let validated =
@@ -89,6 +101,7 @@ type OutboundUrlSafetyUnit() =
         validatePublic (publicRequest "relative/path")
         |> assertRejected ValidationFailure.InvalidUri
 
+    /// Verifies that rejects Unsupported Schemes And Embedded Credentials.
     [<Test>]
     member _.RejectsUnsupportedSchemesAndEmbeddedCredentials() =
         validatePublic (publicRequest "ftp://hooks.example.test/events")
@@ -97,6 +110,7 @@ type OutboundUrlSafetyUnit() =
         validatePublic (publicRequest "https://user:secret@hooks.example.test/events")
         |> assertRejected ValidationFailure.EmbeddedCredentialsRejected
 
+    /// Verifies that rejects Fragments Before Persisting Scoped Urls.
     [<Test>]
     member _.RejectsFragmentsBeforePersistingScopedUrls() =
         validatePublic (publicRequest "https://hooks.example.test/events#access_token=fragment-secret")
@@ -111,6 +125,7 @@ type OutboundUrlSafetyUnit() =
 
         Assert.That(validated.ScopedUrl.Url, Does.Not.Contain("#"))
 
+    /// Verifies that rejects Localhost Loopback And Private Targets By Default.
     [<Test>]
     member _.RejectsLocalhostLoopbackAndPrivateTargetsByDefault() =
         let rejectedUrls =
@@ -147,6 +162,7 @@ type OutboundUrlSafetyUnit() =
             | Error failure -> Assert.Fail(sprintf "Expected %s to be rejected as an unsafe host but got %A." url failure)
             | Ok value -> Assert.Fail($"Expected {url} to be rejected but got {value.ScopedUrl.Url}.")
 
+    /// Verifies that unsafe Local Development Requires Server Opt In And Per Command Acknowledgement.
     [<Test>]
     member _.UnsafeLocalDevelopmentRequiresServerOptInAndPerCommandAcknowledgement() =
         validateInDevelopment emptyConfiguration (localRequest "http://localhost:5000/webhook")
@@ -182,6 +198,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(addressList ipv4.ResolvedAddresses, Is.EqualTo("127.0.0.1"))
         Assert.That(addressList ipv6.ResolvedAddresses, Is.EqualTo("::1"))
 
+    /// Verifies that unsafe Local Development Config And Acknowledgement Are Insufficient Without Development Host Environment.
     [<Test>]
     member _.UnsafeLocalDevelopmentConfigAndAcknowledgementAreInsufficientWithoutDevelopmentHostEnvironment() =
         let productionConfig =
@@ -203,6 +220,7 @@ type OutboundUrlSafetyUnit() =
         |> assertAccepted
         |> ignore
 
+    /// Verifies that unsafe Local Development Still Rejects Private And Metadata Targets.
     [<Test>]
     member _.UnsafeLocalDevelopmentStillRejectsPrivateAndMetadataTargets() =
         for url in
@@ -217,6 +235,7 @@ type OutboundUrlSafetyUnit() =
             | Error failure -> Assert.Fail(sprintf "Expected %s to be rejected as an unsafe host but got %A." url failure)
             | Ok value -> Assert.Fail($"Expected {url} to be rejected but got {value.ScopedUrl.Url}.")
 
+    /// Verifies that public Hostnames Reject Unsafe Resolved Addresses.
     [<Test>]
     member _.PublicHostnamesRejectUnsafeResolvedAddresses() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://private.example.test/events")
@@ -228,10 +247,12 @@ type OutboundUrlSafetyUnit() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://mapped-public.example.test/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "8.8.8.8")
 
+    /// Verifies that resolver Failure Rejects Host Without Accepting Outbound Url.
     [<Test>]
     member _.ResolverFailureRejectsHostWithoutAcceptingOutboundUrl() =
         let mutable resolverCalls = 0
 
+        /// Builds resolver test data for the server unit outbound Url Safety scenarios in this file.
         let resolver (host: string) =
             resolverCalls <- resolverCalls + 1
             Assert.That(host, Is.EqualTo("timeout.example.test"))
@@ -248,8 +269,10 @@ type OutboundUrlSafetyUnit() =
         | Error failure -> Assert.Fail(sprintf "Expected UnsafeHostRejected but got %A." failure)
         | Ok value -> Assert.Fail($"Expected URL to be rejected but got {value.ScopedUrl.Url}.")
 
+    /// Verifies that public Hostnames Carry Resolved Addresses For Address Pinning.
     [<Test>]
     member _.PublicHostnamesCarryResolvedAddressesForAddressPinning() =
+        /// Builds resolver test data for the server unit outbound Url Safety scenarios in this file.
         let resolver host =
             match host with
             | "multi.example.test" ->
@@ -265,26 +288,31 @@ type OutboundUrlSafetyUnit() =
 
         Assert.That(addressList validated.ResolvedAddresses, Is.EqualTo("93.184.216.34,2606:2800:220:1:248:1893:25c8:1946"))
 
+    /// Verifies that i Pv4 Mapped I Pv6 Loopback Literal Is Rejected.
     [<Test>]
     member _.IPv4MappedIPv6LoopbackLiteralIsRejected() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://[::ffff:127.0.0.1]/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "127.0.0.1")
 
+    /// Verifies that well Known Nat64 I Pv6 Literal Is Rejected.
     [<Test>]
     member _.WellKnownNat64IPv6LiteralIsRejected() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://[64:ff9b::7f00:1]/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "64:ff9b::7f00:1")
 
+    /// Verifies that deprecated Orchid I Pv6 Literal Is Rejected.
     [<Test>]
     member _.DeprecatedOrchidIPv6LiteralIsRejected() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://[2001:10::1]/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "2001:10::1")
 
+    /// Verifies that deprecated Site Local I Pv6 Literal Is Rejected.
     [<Test>]
     member _.DeprecatedSiteLocalIPv6LiteralIsRejected() =
         validateOutsideDevelopment emptyConfiguration (publicRequest "https://[fec0::1]/events")
         |> assertRejected (ValidationFailure.UnsafeHostRejected "fec0::1")
 
+    /// Verifies that redirects Require Revalidation.
     [<Test>]
     member _.RedirectsRequireRevalidation() =
         let original =
@@ -297,6 +325,7 @@ type OutboundUrlSafetyUnit() =
             | Error failure -> Assert.Fail(sprintf "Expected redirect to metadata IP to be rejected but got %A." failure)
             | Ok value -> Assert.Fail($"Expected redirect to be rejected but got {value.ScopedUrl.Url}.")
 
+    /// Verifies that relative Redirects Are Rejected Without Dereferencing Absolute Uri.
     [<Test>]
     member _.RelativeRedirectsAreRejectedWithoutDereferencingAbsoluteUri() =
         let original =
@@ -306,6 +335,7 @@ type OutboundUrlSafetyUnit() =
         OutboundUrlPolicy.validateRedirect null emptyConfiguration original (Uri("/metadata", UriKind.Relative))
         |> assertRejected ValidationFailure.InvalidUri
 
+    /// Verifies that redacts User Info And Sensitive Query Values.
     [<Test>]
     member _.RedactsUserInfoAndSensitiveQueryValues() =
         let redacted =
@@ -319,6 +349,7 @@ type OutboundUrlSafetyUnit() =
             )
         )
 
+    /// Verifies that redacts Token And Credential Query Names Case Insensitively.
     [<Test>]
     member _.RedactsTokenAndCredentialQueryNamesCaseInsensitively() =
         let redacted =
@@ -332,6 +363,7 @@ type OutboundUrlSafetyUnit() =
             )
         )
 
+    /// Verifies that redacts Jwt Bearer O Auth Assertion Query Names Case Insensitively.
     [<Test>]
     member _.RedactsJwtBearerOAuthAssertionQueryNamesCaseInsensitively() =
         let redacted =
@@ -343,6 +375,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(redacted, Does.Not.Contain("header.payload.signature"))
         Assert.That(redacted, Does.Not.Contain("jwt-bearer-material"))
 
+    /// Verifies that redacts Google Cloud Signed Url Query Names Case Insensitively.
     [<Test>]
     member _.RedactsGoogleCloudSignedUrlQueryNamesCaseInsensitively() =
         let redacted =
@@ -356,6 +389,7 @@ type OutboundUrlSafetyUnit() =
             )
         )
 
+    /// Verifies that redacts Aws Sig V4 And Azure Sas Metadata Query Names Case Insensitively.
     [<Test>]
     member _.RedactsAwsSigV4AndAzureSasMetadataQueryNamesCaseInsensitively() =
         let redacted =
@@ -373,6 +407,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(redacted, Does.Not.Contain("20260602T120000Z"))
         Assert.That(redacted, Does.Not.Contain("2026-06-02T12%3A00%3A00Z"))
 
+    /// Verifies that redacts Sensitive Query Values Delimited With Semicolons.
     [<Test>]
     member _.RedactsSensitiveQueryValuesDelimitedWithSemicolons() =
         let redacted = OutboundUrlPolicy.Redaction.redactUri "https://hooks.example.test/path?keep=value;access_token=secret;client_secret=also-secret"
@@ -382,6 +417,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(redacted, Does.Not.Contain("=secret"))
         Assert.That(redacted, Does.Not.Contain("also-secret"))
 
+    /// Verifies that redaction Omits Fragments.
     [<Test>]
     member _.RedactionOmitsFragments() =
         let redacted = OutboundUrlPolicy.Redaction.redactUri "https://hooks.example.test/callback?keep=value#access_token=fragment-token&oauth_token=oauth"
@@ -390,6 +426,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(redacted, Does.Not.Contain("fragment-token"))
         Assert.That(redacted, Does.Not.Contain("oauth"))
 
+    /// Verifies that redaction Omits Secret Bearing Path Segments.
     [<Test>]
     member _.RedactionOmitsSecretBearingPathSegments() =
         let redacted =
@@ -401,6 +438,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(redacted, Does.Not.Contain("customer-secret-value"))
         Assert.That(redacted, Does.Not.Contain("logout-token"))
 
+    /// Verifies that malformed Secret Bearing Urls Are Not Returned During Redaction.
     [<Test>]
     member _.MalformedSecretBearingUrlsAreNotReturnedDuringRedaction() =
         let malformed = "https://[hooks.example.test/path?sig=abc&token=secret"
@@ -410,6 +448,7 @@ type OutboundUrlSafetyUnit() =
         Assert.That(redacted, Does.Not.Contain("abc"))
         Assert.That(redacted, Does.Not.Contain("secret"))
 
+    /// Verifies that signing Input Includes Identity Timestamp Key And Payload Hash.
     [<Test>]
     member _.SigningInputIncludesIdentityTimestampKeyAndPayloadHash() =
         let payload = Encoding.UTF8.GetBytes("""{"event":"promotion-set.applied"}""")

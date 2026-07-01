@@ -3,6 +3,7 @@ namespace Grace.Shared.Parameters
 open Grace.Shared.Parameters.Common
 open System
 
+/// Contains queue helpers.
 module Queue =
     /// Base parameters for queue endpoints.
     type QueueParameters() =

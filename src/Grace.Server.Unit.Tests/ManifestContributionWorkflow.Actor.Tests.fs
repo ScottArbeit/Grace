@@ -9,6 +9,7 @@ open System.Collections.Generic
 
 module ManifestContributionWorkflowActor = Grace.Actors.ManifestContributionWorkflow
 
+/// Covers manifest Contribution Workflow Actor behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ManifestContributionWorkflowActorTests() =
 
@@ -22,6 +23,7 @@ type ManifestContributionWorkflowActorTests() =
 
     let range1 = { StoragePoolId = storagePoolId; ContentBlockAddress = ContentBlockAddress "block-b"; OrdinalStart = 8; OrdinalCount = 4 }
 
+    /// Constructs metadata fixtures used by the server unit manifest Contribution Workflow Actor assertions.
     let metadata correlationId =
         {
             Timestamp = timestamp
@@ -31,9 +33,11 @@ type ManifestContributionWorkflowActorTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Builds start With Ranges test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let startWithRanges direction ranges =
         ManifestContributionWorkflowCommand.Start("workflow-start", repositoryId, storagePoolId, manifestAddress, direction, ranges)
 
+    /// Builds start With Operation test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let startWithOperation operationId direction ranges =
         ManifestContributionWorkflowCommand.Start(operationId, repositoryId, storagePoolId, manifestAddress, direction, ranges)
 
@@ -41,16 +45,20 @@ type ManifestContributionWorkflowActorTests() =
 
     let succeeded operationId range = ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, repositoryId, storagePoolId, manifestAddress, range)
 
+    /// Builds succeeded For test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let succeededFor repositoryId manifestAddress operationId range =
         ManifestContributionWorkflowCommand.RecordRangeSucceeded(operationId, repositoryId, storagePoolId, manifestAddress, range)
 
+    /// Builds failed test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let failed operationId range message =
         ManifestContributionWorkflowCommand.RecordRangeFailed(operationId, repositoryId, storagePoolId, manifestAddress, range, message)
 
+    /// Applies all inputs to drive the server unit manifest Contribution Workflow Actor state transition under test.
     let applyAll events current =
         events
         |> List.fold (fun state event -> ManifestContributionWorkflowDto.UpdateDto event state) current
 
+    /// Builds expect Ok test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
     let expectOk result =
         match result with
         | Ok decision -> decision
@@ -58,12 +66,14 @@ type ManifestContributionWorkflowActorTests() =
             Assert.Fail($"Expected command to succeed, got {error.Error}.")
             Unchecked.defaultof<ManifestContributionWorkflowDecision>
 
+    /// Verifies that workflow Primary Key Combines Repository Id Storage Pool Id And Manifest Address.
     [<Test>]
     member _.WorkflowPrimaryKeyCombinesRepositoryIdStoragePoolIdAndManifestAddress() =
         let key = ManifestContributionWorkflowActor.primaryKey repositoryId storagePoolId manifestAddress
 
         Assert.That(key, Is.EqualTo("a6c6b60ad4d240f68362258dbe75a5bf|pool-main|manifest:blake3:alpha"))
 
+    /// Verifies that start Rejects Duplicate Ranges.
     [<Test>]
     member _.StartRejectsDuplicateRanges() =
         let duplicateStart = startWithRanges ManifestContributionDirection.Increment [| range0; range0 |]
@@ -74,6 +84,7 @@ type ManifestContributionWorkflowActorTests() =
         | Ok _ -> Assert.Fail("Expected duplicate ranges to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow ranges must be unique."))
 
+    /// Verifies that start Rejects Ranges From Different Storage Pool.
     [<Test>]
     member _.StartRejectsRangesFromDifferentStoragePool() =
         let foreignRange = { range1 with StoragePoolId = otherStoragePoolId }
@@ -90,6 +101,7 @@ type ManifestContributionWorkflowActorTests() =
                 Is.EqualTo("ManifestContributionWorkflow range StoragePoolId must match workflow StoragePoolId. Expected pool-main, actual pool-archive.")
             )
 
+    /// Verifies that reused Start Operation Id With Different Payload Rejects Instead Of Replaying.
     [<Test>]
     member _.ReusedStartOperationIdWithDifferentPayloadRejectsInsteadOfReplaying() =
         let started =
@@ -109,6 +121,7 @@ type ManifestContributionWorkflowActorTests() =
         | Ok _ -> Assert.Fail("Expected reused start operation id with different payload to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow operation id was already used with a different payload."))
 
+    /// Verifies that reused Range Success Operation Id With Different Range Rejects Instead Of Replaying.
     [<Test>]
     member _.ReusedRangeSuccessOperationIdWithDifferentRangeRejectsInsteadOfReplaying() =
         let started =
@@ -134,6 +147,7 @@ type ManifestContributionWorkflowActorTests() =
         | Ok _ -> Assert.Fail("Expected reused range operation id with different range to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow operation id was already used with a different payload."))
 
+    /// Verifies that completed Workflow Can Start Next Cycle For Same Manifest.
     [<Test>]
     member _.CompletedWorkflowCanStartNextCycleForSameManifest() =
         let started =
@@ -178,6 +192,7 @@ type ManifestContributionWorkflowActorTests() =
         Assert.That(restartedPending.Length, Is.EqualTo(1))
         Assert.That(restartedPending[0], Is.EqualTo(range0))
 
+    /// Verifies that range Progress Rejects When Actor Key Does Not Match Workflow Target.
     [<Test>]
     member _.RangeProgressRejectsWhenActorKeyDoesNotMatchWorkflowTarget() =
         let started =
@@ -203,6 +218,7 @@ type ManifestContributionWorkflowActorTests() =
         | Ok _ -> Assert.Fail("Expected range progress for a mismatched grain key to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow command target does not match the grain key."))
 
+    /// Verifies that range Progress Rejects When Command Target Does Not Match Workflow Target.
     [<Test>]
     member _.RangeProgressRejectsWhenCommandTargetDoesNotMatchWorkflowTarget() =
         let started =
@@ -228,6 +244,7 @@ type ManifestContributionWorkflowActorTests() =
         | Ok _ -> Assert.Fail("Expected range progress for a mismatched command target to reject.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow command target does not match the grain key."))
 
+    /// Verifies that workflow Primary Key Distinguishes Same Manifest Address Across Storage Pools.
     [<Test>]
     member _.WorkflowPrimaryKeyDistinguishesSameManifestAddressAcrossStoragePools() =
         let mainKey = ManifestContributionWorkflowActor.primaryKey repositoryId storagePoolId manifestAddress
@@ -259,6 +276,7 @@ type ManifestContributionWorkflowActorTests() =
         | Ok _ -> Assert.Fail("Expected cross-pool workflow command on same manifest address to reject against the wrong grain key.")
         | Error error -> Assert.That(error.Error, Is.EqualTo("ManifestContributionWorkflow command target does not match the grain key."))
 
+    /// Verifies that activation Resume Returns Only Uncompleted Ranges.
     [<Test>]
     member _.ActivationResumeReturnsOnlyUncompletedRanges() =
         let started =
@@ -283,6 +301,7 @@ type ManifestContributionWorkflowActorTests() =
         Assert.That(pending.Length, Is.EqualTo(1))
         Assert.That(pending[0], Is.EqualTo(range1))
 
+    /// Verifies that partial Batch Failure Retries Only Failed Range And Then Completes.
     [<Test>]
     member _.PartialBatchFailureRetriesOnlyFailedRangeAndThenCompletes() =
         let started =
@@ -329,6 +348,7 @@ type ManifestContributionWorkflowActorTests() =
         Assert.That(retrySucceeded.Workflow.LifecycleState, Is.EqualTo(ManifestContributionWorkflowLifecycleState.Completed))
         Assert.That(ManifestContributionWorkflowActor.pendingRanges retrySucceeded.Workflow, Is.Empty)
 
+    /// Verifies that range Success Emits One Active Count Intent And Replay Does Not Emit Second Intent.
     [<Test>]
     member _.RangeSuccessEmitsOneActiveCountIntentAndReplayDoesNotEmitSecondIntent() =
         let started =
@@ -359,8 +379,10 @@ type ManifestContributionWorkflowActorTests() =
         Assert.That(replay.Events, Is.Empty)
         Assert.That(replay.Intents, Is.Empty)
 
+    /// Verifies that increment And Decrement Directions Produce Opposite Active Range Deltas.
     [<Test>]
     member _.IncrementAndDecrementDirectionsProduceOppositeActiveRangeDeltas() =
+        /// Builds start And Succeed test data for the server unit manifest Contribution Workflow Actor scenarios in this file.
         let startAndSucceed direction =
             let started =
                 ManifestContributionWorkflowActor.decideCommand
@@ -383,6 +405,7 @@ type ManifestContributionWorkflowActorTests() =
         Assert.That(decrement.Intents.Length, Is.EqualTo(1))
         Assert.That(decrement.Intents[0], Is.EqualTo(ManifestContributionWorkflowIntent.AdjustRangeActiveManifestCount(range0, -1)))
 
+    /// Verifies that pending Workflow Blocks Unsafe Deletion Until All Ranges Complete.
     [<Test>]
     member _.PendingWorkflowBlocksUnsafeDeletionUntilAllRangesComplete() =
         let started =

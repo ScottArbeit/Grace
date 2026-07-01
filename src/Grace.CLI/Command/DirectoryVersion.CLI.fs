@@ -38,9 +38,11 @@ open System.Text
 open System.Text.Json
 open Grace.Shared.Parameters.Storage
 
+/// Groups the directory version command parser, handlers, and output helpers.
 module DirectoryVersion =
     open Grace.Shared.Validation.Common.Input
 
+    /// Defines the options parsed by the directory version command handlers.
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -126,11 +128,14 @@ module DirectoryVersion =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Coordinates directory version validations behavior for this CLI command path.
     let private DirectoryVersionValidations parseResult = Ok parseResult
 
+    /// Executes the get zip file command by binding ParseResult values to the SDK request and CLI output contract.
     type GetZipFile() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get zip file action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: Threading.CancellationToken) : Task<int> =
             task {
                 try
@@ -197,6 +202,7 @@ module DirectoryVersion =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

@@ -11,8 +11,10 @@ open System.Collections.Generic
 open System.Security.Cryptography
 open System.Text
 
+/// Contains dedupe index helpers.
 module DedupeIndex =
 
+    /// Represents finalized manifest index source.
     type FinalizedManifestIndexSource =
         {
             StoragePoolId: StoragePoolId
@@ -22,6 +24,7 @@ module DedupeIndex =
             Metadata: ContentBlockMetadata array
         }
 
+    /// Represents dedupe index record.
     type DedupeIndexRecord =
         {
             StoragePoolId: StoragePoolId
@@ -33,6 +36,7 @@ module DedupeIndex =
             ProtectedChunkAddresses: string array
         }
 
+    /// Represents finalized manifest registration.
     type FinalizedManifestRegistration =
         {
             StoragePoolId: StoragePoolId
@@ -41,8 +45,10 @@ module DedupeIndex =
             BlockPayloads: FinalizeManifestBlockPayload array
         }
 
+    /// Represents the registered content block contract.
     type RegisteredContentBlock = { Address: ContentBlockAddress; ChunkAddresses: ChunkAddress array }
 
+    /// Represents runtime finalized manifest registration.
     type RuntimeFinalizedManifestRegistration =
         {
             StoragePoolId: StoragePoolId
@@ -51,6 +57,7 @@ module DedupeIndex =
             Blocks: RegisteredContentBlock array
         }
 
+    /// Represents dedupe index state.
     type DedupeIndexState =
         {
             Records: DedupeIndexRecord array
@@ -58,12 +65,14 @@ module DedupeIndex =
             MetadataRecords: ContentBlockMetadata array
         }
 
+        /// Represents the normalized empty instance used before persisted state or caller input contributes values.
         static member Empty = { Records = Array.empty; FinalizedManifests = Array.empty; MetadataRecords = Array.empty }
 
     let private globalGate = obj ()
     let mutable private globalState = DedupeIndexState.Empty
     let private MinimumIssuedReuseRunLength = 1
 
+    /// Builds the bounded, non-authoritative discovery policy returned with dedupe candidate responses.
     let discoveryPolicy () : ContentBlockDiscoveryPolicy =
         {
             MaxKeyChunkAddresses = MaxDiscoveryKeyChunkAddresses
@@ -77,8 +86,10 @@ module DedupeIndex =
             IsAuthoritative = false
         }
 
+    /// Derives the repository-scoped dedupe StoragePool identifier from the repository id.
     let storagePoolIdForRepositoryId (repositoryId: RepositoryId) = StoragePoolRouting.repositoryDedupeStoragePoolId repositoryId
 
+    /// Reads the configured repository StoragePool id and fails closed when routing is unsupported.
     let storagePoolIdForRepository (repositoryDto: RepositoryDto) =
         if isNull (box repositoryDto) then
             invalidOp "Repository state is required before resolving a StoragePool route."
@@ -90,24 +101,31 @@ module DedupeIndex =
         else
             repositoryDto.StoragePoolId
 
+    /// Hashes a chunk address with the StoragePool id before exposing it in dedupe discovery responses.
     let private protectChunkAddress (storagePoolId: StoragePoolId) (chunkAddress: ChunkAddress) =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
         let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
         $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
 
+    /// Builds the unique in-memory key for one dedupe record window and metadata version.
     let private recordKey (record: DedupeIndexRecord) =
         $"{record.StoragePoolId}|{record.ManifestAddress}|{record.ContentBlockAddress}|{record.OrdinalStart}|{record.OrdinalCount}|{record.MetadataVersion}"
 
+    /// Builds the repository/upload-session key that scopes finalized manifest registrations.
     let private finalizedSessionScopeKey (session: UploadSessionDto) = $"{session.RepositoryId:N}|{session.UploadSessionId:N}"
 
+    /// Builds the persisted finalized-manifest registration key from pool, session, and manifest address.
     let private finalizedManifestKey (registration: FinalizedManifestRegistration) =
         $"{registration.StoragePoolId}|{finalizedSessionScopeKey registration.Session}|{registration.Manifest.ManifestAddress}"
 
+    /// Builds the persisted finalized-manifest registration key from pool, session, and manifest address.
     let private runtimeFinalizedManifestKey (registration: RuntimeFinalizedManifestRegistration) =
         $"{registration.StoragePoolId}|{finalizedSessionScopeKey registration.Session}|{registration.ManifestAddress}"
 
+    /// Builds the content-block metadata key from StoragePool id and content block address.
     let private metadataKey (metadata: ContentBlockMetadata) = $"{metadata.StoragePoolId}|{metadata.ContentBlockAddress}"
 
+    /// Normalizes state.
     let private normalizeState (state: DedupeIndexState) =
         if isNull (box state) then
             DedupeIndexState.Empty
@@ -122,6 +140,7 @@ module DedupeIndex =
                 MetadataRecords = if isNull state.MetadataRecords then Array.empty else state.MetadataRecords
             }
 
+    /// Indexes normalized dedupe records by their stable record key for replacement.
     let private recordsDictionary state =
         let map = Dictionary<string, DedupeIndexRecord>()
 
@@ -130,6 +149,7 @@ module DedupeIndex =
 
         map
 
+    /// Indexes normalized finalized manifest registrations by their runtime key.
     let private finalizedManifestDictionary state =
         let map = Dictionary<string, RuntimeFinalizedManifestRegistration>()
 
@@ -139,6 +159,7 @@ module DedupeIndex =
 
         map
 
+    /// Indexes authoritative content block metadata by StoragePool id and content block address.
     let private metadataDictionary state =
         let map = Dictionary<string, ContentBlockMetadata>()
 
@@ -151,6 +172,7 @@ module DedupeIndex =
 
         map
 
+    /// Converts the working dictionaries back into immutable dedupe index state arrays.
     let private materializeState
         (records: Dictionary<string, DedupeIndexRecord>)
         (finalizedManifests: Dictionary<string, RuntimeFinalizedManifestRegistration>)
@@ -162,6 +184,7 @@ module DedupeIndex =
             MetadataRecords = metadataRecords.Values |> Seq.toArray
         }
 
+    /// Checks whether a file manifest declares the requested content block address.
     let private manifestContainsBlock contentBlockAddress (manifest: FileManifest) =
         not (isNull (box manifest))
         && not (isNull manifest.Blocks)
@@ -170,6 +193,7 @@ module DedupeIndex =
                not (isNull (box block))
                && block.Address = contentBlockAddress)
 
+    /// Indexes supplied content block metadata by content block address.
     let private metadataByAddress (metadata: ContentBlockMetadata array) =
         let map = Dictionary<ContentBlockAddress, ContentBlockMetadata>()
 
@@ -183,6 +207,7 @@ module DedupeIndex =
 
         map
 
+    /// Indexes supplied finalize payloads by content block address.
     let private payloadByAddress (blockPayloads: FinalizeManifestBlockPayload array) =
         let map = Dictionary<ContentBlockAddress, byte array>()
 
@@ -197,16 +222,19 @@ module DedupeIndex =
 
         map
 
+    /// Checks whether an upload session finalized exactly the manifest being indexed.
     let private isFinalizedForManifest (source: FinalizedManifestIndexSource) =
         not (isNull (box source.Session))
         && not (isNull (box source.Manifest))
         && source.Session.FinalizedManifestAddress = Some source.Manifest.ManifestAddress
 
+    /// Attempts to decode block.
     let private tryDecodeBlock payload =
         match ContentBlockFormat.decode payload with
         | Ok decodedBlock -> Some decodedBlock
         | Error _ -> None
 
+    /// Returns non-null manifest blocks only when the manifest contains a complete block list.
     let private manifestBlocks (manifest: FileManifest) =
         if isNull (box manifest) || isNull manifest.Blocks then
             None
@@ -220,6 +248,7 @@ module DedupeIndex =
             else
                 Some blocks
 
+    /// Attempts to create runtime registration.
     let private tryCreateRuntimeRegistration (registration: FinalizedManifestRegistration) =
         if isNull (box registration.Session)
            || isNull (box registration.Manifest)
@@ -259,18 +288,21 @@ module DedupeIndex =
                             Blocks = blocks.ToArray()
                         }
 
+    /// Computes an ordinal range end with saturation to avoid integer overflow.
     let private rangeEnd (range: ContentBlockMetadataRange) =
         if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
             Int32.MaxValue
         else
             range.OrdinalStart + range.OrdinalCount
 
+    /// Clamps the accepted reuse-run length to the available chunk count.
     let private minimumAcceptedOrdinalCountForBlock chunkAddressCount =
         if chunkAddressCount <= 0 then
             MinimumAcceptedReuseRunLength
         else
             Math.Min(MinimumAcceptedReuseRunLength, chunkAddressCount)
 
+    /// Attempts to create record from chunk addresses.
     let private tryCreateRecordFromChunkAddresses
         storagePoolId
         manifestAddress
@@ -317,9 +349,11 @@ module DedupeIndex =
                         ProtectedChunkAddresses = protectedChunkAddresses
                     }
 
+    /// Splits an active metadata range into bounded candidate windows for discovery responses.
     let private splitRangeIntoDedupeWindows minimumAcceptedOrdinalCount (range: ContentBlockMetadataRange) =
         let output = ResizeArray<ContentBlockMetadataRange>()
 
+        /// Interpolates a physical byte offset for an ordinal inside a metadata range.
         let physicalOffsetForOrdinal ordinalStart =
             let ordinalDelta = ordinalStart - range.OrdinalStart
 
@@ -404,6 +438,7 @@ module DedupeIndex =
 
         output.ToArray()
 
+    /// Combines adjacent active metadata ranges into one candidate chain.
     let private mergeActiveChain (ranges: ContentBlockMetadataRange list) =
         let ordered = ranges |> List.rev
         let first = ordered.Head
@@ -421,6 +456,7 @@ module DedupeIndex =
                 |> List.sumBy (fun range -> range.PhysicalLength)
         }
 
+    /// Selects active contiguous ranges that can safely contribute dedupe windows.
     let private contiguousActiveRanges chunkAddressCount (ranges: ContentBlockMetadataRange array) =
         let output = ResizeArray<ContentBlockMetadataRange>()
         let minimumAcceptedOrdinalCount = minimumAcceptedOrdinalCountForBlock chunkAddressCount
@@ -437,6 +473,7 @@ module DedupeIndex =
                     && range.PhysicalLength > 0L)
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
+            /// Computes the exclusive physical byte end for a metadata range with overflow protection.
             let rangePhysicalEnd (range: ContentBlockMetadataRange) =
                 if range.PhysicalLength > Int64.MaxValue - range.PhysicalOffset then
                     Int64.MaxValue
@@ -459,6 +496,7 @@ module DedupeIndex =
                 rangesWithPredecessors.Add(rangeEnd range, rangePhysicalEnd range)
                 |> ignore
 
+            /// Expands forward-linked active ranges into candidate chains.
             let rec collectChains (chain: ContentBlockMetadataRange list) =
                 let current = chain.Head
                 let activeChain = mergeActiveChain chain
@@ -485,6 +523,7 @@ module DedupeIndex =
                     for nextRange in nextRanges do
                         collectChains (nextRange :: chain)
 
+            /// Identifies ranges already reachable from an earlier active range.
             let hasPredecessor (range: ContentBlockMetadataRange) =
                 let startKey = range.OrdinalStart, range.PhysicalOffset
 
@@ -499,6 +538,7 @@ module DedupeIndex =
         |> Seq.distinctBy (fun range -> range.OrdinalStart, range.OrdinalCount, range.PhysicalOffset, range.PhysicalLength)
         |> Seq.toArray
 
+    /// Derives dedupe records from a finalized manifest, decoded block payloads, and authoritative metadata.
     let recordsAfterFinalize (source: FinalizedManifestIndexSource) =
         if not (isFinalizedForManifest source) then
             Array.empty
@@ -539,6 +579,7 @@ module DedupeIndex =
 
             output.ToArray()
 
+    /// Compares candidate window identity while ignoring metadata version freshness.
     let private isSameCandidateWindow (left: DedupeIndexRecord) (right: DedupeIndexRecord) =
         left.StoragePoolId = right.StoragePoolId
         && left.ManifestAddress = right.ManifestAddress
@@ -546,6 +587,7 @@ module DedupeIndex =
         && left.OrdinalStart = right.OrdinalStart
         && left.OrdinalCount = right.OrdinalCount
 
+    /// Upserts dedupe records while replacing older metadata versions for the same candidate window.
     let private writeRecords (records: Dictionary<string, DedupeIndexRecord>) (newRecords: DedupeIndexRecord array) =
         for record in newRecords do
             let hasNewerRecord =
@@ -565,6 +607,7 @@ module DedupeIndex =
 
                 records[recordKey record] <- record
 
+    /// Drops stale candidate windows for a content block when newer authoritative metadata arrives.
     let private removeRecordsForMetadataBlock (records: Dictionary<string, DedupeIndexRecord>) storagePoolId contentBlockAddress metadataVersion =
         records.Values
         |> Seq.filter (fun existing ->
@@ -575,6 +618,7 @@ module DedupeIndex =
         |> Seq.toArray
         |> Array.iter (fun key -> records.Remove key |> ignore)
 
+    /// Rebuilds dedupe records from finalized manifest sources.
     let rebuild sources =
         let records = Dictionary<string, DedupeIndexRecord>()
 
@@ -585,11 +629,13 @@ module DedupeIndex =
 
         records.Values |> Seq.toArray
 
+    /// Checks whether a finalized manifest registration contains the metadata content block.
     let private runtimeRegistrationMatchesMetadata (metadata: ContentBlockMetadata) (registration: RuntimeFinalizedManifestRegistration) =
         registration.StoragePoolId = metadata.StoragePoolId
         && (registration.Blocks
             |> Array.exists (fun block -> block.Address = metadata.ContentBlockAddress))
 
+    /// Writes candidate windows produced by one finalized registration and matching metadata record.
     let private writeForRegistrationWithMetadata
         (records: Dictionary<string, DedupeIndexRecord>)
         (registration: RuntimeFinalizedManifestRegistration)
@@ -619,6 +665,7 @@ module DedupeIndex =
         writeRecords records newRecords
         newRecords
 
+    /// Replaces state records with a normalized set while preserving registrations and metadata.
     let replaceAllInState state (newRecords: DedupeIndexRecord array) =
         let records = Dictionary<string, DedupeIndexRecord>()
         writeRecords records newRecords
@@ -627,6 +674,7 @@ module DedupeIndex =
 
         { normalized with Records = records.Values |> Seq.toArray }
 
+    /// Adds records produced by a finalized manifest into an explicit dedupe index state.
     let writeAfterFinalizeInState state (source: FinalizedManifestIndexSource) =
         let normalized = normalizeState state
         let records = recordsDictionary normalized
@@ -637,6 +685,7 @@ module DedupeIndex =
 
         materializeState records finalizedManifests metadataRecords, newRecords
 
+    /// Refreshes metadata and recomputes matching candidate windows in an explicit dedupe index state.
     let writeAfterAuthoritativeMetadataInState state (metadata: ContentBlockMetadata) =
         let normalized = normalizeState state
 
@@ -664,6 +713,7 @@ module DedupeIndex =
 
             materializeState records finalizedManifests metadataRecords, newRecords
 
+    /// Stores a finalized manifest registration and computes records for metadata already known in state.
     let registerFinalizedManifestInState state (registration: FinalizedManifestRegistration) =
         let normalized = normalizeState state
 
@@ -684,28 +734,34 @@ module DedupeIndex =
 
             materializeState records finalizedManifests metadataRecords, newRecords
 
+    /// Atomically replaces global dedupe records with the supplied normalized set.
     let replaceAll (newRecords: DedupeIndexRecord array) = lock globalGate (fun () -> globalState <- replaceAllInState globalState newRecords)
 
+    /// Atomically adds global dedupe records produced by a finalized manifest.
     let writeAfterFinalize (source: FinalizedManifestIndexSource) =
         lock globalGate (fun () ->
             let nextState, newRecords = writeAfterFinalizeInState globalState source
             globalState <- nextState
             newRecords)
 
+    /// Atomically refreshes global metadata and candidate windows for the content block.
     let writeAfterAuthoritativeMetadata (metadata: ContentBlockMetadata) =
         lock globalGate (fun () ->
             let nextState, newRecords = writeAfterAuthoritativeMetadataInState globalState metadata
             globalState <- nextState
             newRecords)
 
+    /// Atomically records a finalized manifest for later metadata-driven dedupe indexing.
     let registerFinalizedManifest (registration: FinalizedManifestRegistration) =
         lock globalGate (fun () ->
             let nextState, newRecords = registerFinalizedManifestInState globalState registration
             globalState <- nextState
             newRecords)
 
+    /// Returns a copy of the current global dedupe records.
     let snapshot () = lock globalGate (fun () -> Array.copy (normalizeState globalState).Records)
 
+    /// Checks whether a file manifest declares the requested content block address.
     let finalizedManifestContainsBlock storagePoolId manifestAddress contentBlockAddress (state: DedupeIndexState) =
         (normalizeState state).FinalizedManifests
         |> Array.exists (fun registration ->
@@ -718,6 +774,7 @@ module DedupeIndex =
                    not (isNull (box block))
                    && block.Address = contentBlockAddress))
 
+    /// Normalizes scope path.
     let private normalizeScopePath (path: RelativePath) =
         let normalized = (Utilities.normalizeFilePath $"{path}").Trim()
 
@@ -734,6 +791,7 @@ module DedupeIndex =
 
             withLeadingSlash.TrimEnd('/')
 
+    /// Compares normalized authorized scopes before serving scoped finalized metadata.
     let private finalizedScopeMatchesRequestedScope finalizedScope requestedScope =
         let finalizedScope = normalizeScopePath finalizedScope
         let requestedScope = normalizeScopePath requestedScope
@@ -744,6 +802,7 @@ module DedupeIndex =
         else
             String.Equals(finalizedScope, requestedScope, StringComparison.Ordinal)
 
+    /// Checks whether a file manifest declares the requested content block address.
     let finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
         (normalizeState state).FinalizedManifests
         |> Array.exists (fun registration ->
@@ -759,6 +818,7 @@ module DedupeIndex =
                    not (isNull (box block))
                    && block.Address = contentBlockAddress))
 
+    /// Attempts to find finalized scoped content block metadata.
     let tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress (state: DedupeIndexState) =
         if finalizedScopedManifestContainsBlock storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
            |> not then
@@ -770,6 +830,7 @@ module DedupeIndex =
                 && metadata.StoragePoolId = storagePoolId
                 && metadata.ContentBlockAddress = contentBlockAddress)
 
+    /// Projects an index record into a discovery candidate with the matching key-chunk count.
     let private candidateFromRecord matchingKeyChunkCount (record: DedupeIndexRecord) =
         {
             StoragePoolId = record.StoragePoolId
@@ -782,6 +843,7 @@ module DedupeIndex =
             ProtectedChunkAddresses = Array.copy record.ProtectedChunkAddresses
         }
 
+    /// Ranks bounded discovery candidates by protected key-chunk overlap and response budget.
     let private selectedCandidates (storagePoolId: StoragePoolId) (requested: ChunkAddress array) (records: DedupeIndexRecord array) =
         let requestedTokens =
             requested
@@ -830,6 +892,7 @@ module DedupeIndex =
 
         output.ToArray(), candidates.Length > output.Count
 
+    /// Returns bounded non-authoritative dedupe candidates for accepted key chunk addresses.
     let discover (storagePoolId: StoragePoolId) (keyChunkAddresses: ChunkAddress array) (_now: Instant) (records: DedupeIndexRecord array) =
         let requested = if isNull keyChunkAddresses then Array.empty else keyChunkAddresses
 
@@ -865,6 +928,7 @@ module DedupeIndex =
             Message = message
         }
 
+    /// Converts reuse range hint.
     let toReuseRangeHint (candidate: ContentBlockDiscoveryCandidate) =
         {
             StoragePoolId = candidate.StoragePoolId

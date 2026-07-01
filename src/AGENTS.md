@@ -103,7 +103,8 @@ update the issue before editing the new paths.
   to date. Do not wait for a separate user prompt before deleting the remote branch.
 - Record skipped validation, docs impact, residual risk, and follow-ups in the task record or pull request.
 - Write tests for new features and bug fixes; prioritize critical paths.
-- Document new public APIs with XML comments and update nearby `AGENTS.md`/docs when behavior changes.
+- Document new F# modules, types, functions, methods, members, and meaningful local helper functions with concise
+  `///` XML comments so future maintainers and IntelliSense users understand their purpose.
 - Treat secrets with care, avoid logging PII, and preserve structured logging (including correlation IDs).
 - Favor existing helpers in `Grace.Shared` before adding new utilities.
 
@@ -145,7 +146,12 @@ update the issue before editing the new paths.
 - Apply the modern indexer syntax (`myList[0]`) for lists, arrays, and sequences; avoid the legacy `.[ ]` form.
 - Structure modules so domain types live in `Grace.Types`, shared helpers in `Grace.Shared`, and orchestration in the
   project-specific assembly.
-- Add lightweight comments only where control flow or transformations are non-obvious.
+- Treat `///` XML documentation comments as required for new F# declaration surfaces: modules, types, functions,
+  methods, members, and meaningful local helper functions. Keep these comments concise and purpose-focused.
+- Do not satisfy the XML documentation rule with boilerplate such as "performs X", "returns X", "creates X", or
+  "for the current operation/request" when that repeats the declaration name. Describe the concrete Grace behavior,
+  invariant, route, command, state transition, storage operation, validation rule, or contract role instead.
+- Add ordinary inline comments only where control flow or transformations are non-obvious.
 - Run Fantomas formatting or a targeted Fantomas check before build and test validation. Avoid the slow loop where tests
   pass, Fantomas then changes files, and the same build/tests must be repeated. For broad F# edits, format with
   `dotnet tool run fantomas --recurse .` from `./src`; for narrow fixes, run targeted Fantomas on the touched files

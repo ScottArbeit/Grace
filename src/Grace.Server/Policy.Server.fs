@@ -25,11 +25,15 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Contains Grace Server policy behavior and supporting helpers.
 module Policy =
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> PolicyParameters> = 'T -> ValueTask<Result<unit, PolicyError>> array
 
+    /// Represents seed policy snapshot parameters used by Grace Server APIs and background services.
     type SeedPolicySnapshotParameters() =
         inherit PolicyParameters()
+        /// Identifies the default policy record returned by policy endpoints.
         member val public PolicySnapshotId = String.Empty with get, set
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Policy.Server")
@@ -38,20 +42,25 @@ module Policy =
 
     let private seededSnapshots = ConcurrentDictionary<BranchId, PolicySnapshot>()
 
+    /// Gets try get seeded snapshot data needed by the server flow.
     let internal tryGetSeededSnapshot (targetBranchId: BranchId) =
         match seededSnapshots.TryGetValue targetBranchId with
         | true, snapshot -> Some snapshot
         | _ -> None
 
+    /// Determines whether usable snapshot.
     let internal isUsableSnapshot (snapshot: PolicySnapshot) = not (String.IsNullOrEmpty snapshot.PolicySnapshotId)
 
+    /// Coordinates seed enabled processing for Grace Server.
     let private seedEnabled () =
+        /// Determines whether development.
         let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
 
         Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
         || isDevelopment (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
         || isDevelopment (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> PolicyParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<PolicyCommand>) =
         task {
             let commandName = context.Items["Command"] :?> string
@@ -68,6 +77,7 @@ module Policy =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand targetBranchId cmd =
                     task {
                         let actorProxy = Policy.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
@@ -141,6 +151,7 @@ module Policy =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> PolicyParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -198,18 +209,21 @@ module Policy =
                 return! context |> result500ServerError graceError
         }
 
+    /// Validates validate acknowledge parameters inputs before server processing continues.
     let internal validateAcknowledgeParameters (parameters: AcknowledgePolicyParameters) =
         [|
             Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
             String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId
         |]
 
+    /// Validates validate seed snapshot parameters inputs before server processing continues.
     let internal validateSeedSnapshotParameters (parameters: SeedPolicySnapshotParameters) =
         [|
             Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
             String.isNotEmpty parameters.PolicySnapshotId PolicyError.InvalidPolicySnapshotId
         |]
 
+    /// Handles the Grace Server seed snapshot request.
     let SeedSnapshot: HttpHandler =
         fun (_next: HttpFunc) (context: HttpContext) ->
             task {
@@ -264,6 +278,7 @@ module Policy =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: GetPolicyParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.TargetBranchId PolicyError.InvalidTargetBranchId
@@ -274,6 +289,7 @@ module Policy =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements query for the server request pipeline.
                 let query (context: HttpContext) _ (actorProxy: IPolicyActor) =
                     task {
                         let! current = actorProxy.GetCurrent(getCorrelationId context)
@@ -294,8 +310,10 @@ module Policy =
             task {
                 let graceIds = getGraceIds context
 
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: AcknowledgePolicyParameters) = validateAcknowledgeParameters parameters
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: AcknowledgePolicyParameters) =
                     let policySnapshotId = PolicySnapshotId parameters.PolicySnapshotId
                     let note = if String.IsNullOrEmpty(parameters.Note) then None else Some parameters.Note

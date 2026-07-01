@@ -19,11 +19,14 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Contains Grace Server validation set behavior and supporting helpers.
 module ValidationSet =
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> ValidationParameters> = 'T -> ValueTask<Result<unit, ValidationSetError>> array
 
     let activitySource = new ActivitySource("ValidationSet")
 
+    /// Reads the authenticated principal name for validation-set audit metadata.
     let private getPrincipal (context: HttpContext) =
         if
             isNull context.User
@@ -34,6 +37,7 @@ module ValidationSet =
         else
             context.User.Identity.Name
 
+    /// Treats `new` as an empty validation-set id and otherwise requires a valid GUID.
     let private parseValidationSetIdOrNew (rawValidationSetId: string) =
         if String.IsNullOrWhiteSpace(rawValidationSetId) then
             Ok(Guid.NewGuid())
@@ -48,6 +52,7 @@ module ValidationSet =
             else
                 Error ValidationSetError.InvalidValidationSetId
 
+    /// Coordinates process command processing for Grace Server.
     let private processCommand<'T when 'T :> ValidationParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -97,6 +102,7 @@ module ValidationSet =
                 return! context |> result400BadRequest graceError
         }
 
+    /// Coordinates process get processing for Grace Server.
     let private processGet (context: HttpContext) (parameters: GetValidationSetParameters) (validationSetId: ValidationSetId) =
         task {
             let graceIds = getGraceIds context
@@ -136,6 +142,7 @@ module ValidationSet =
                         context
                         |> result400BadRequest (GraceError.Create (ValidationSetError.getErrorMessage validationSetError) (getCorrelationId context))
                 | Ok validationSetId ->
+                    /// Implements validations for the server request pipeline.
                     let validations (_: CreateValidationSetParameters) =
                         [|
                             Guid.isValidAndNotEmptyGuid parameters.TargetBranchId ValidationSetError.InvalidTargetBranchId
@@ -179,6 +186,7 @@ module ValidationSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: GetValidationSetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.ValidationSetId ValidationSetError.InvalidValidationSetId
@@ -209,6 +217,7 @@ module ValidationSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: UpdateValidationSetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.ValidationSetId ValidationSetError.InvalidValidationSetId
@@ -259,6 +268,7 @@ module ValidationSet =
                 parameters.OrganizationId <- graceIds.OrganizationIdString
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
+                /// Implements validations for the server request pipeline.
                 let validations (_: DeleteValidationSetParameters) =
                     [|
                         Guid.isValidAndNotEmptyGuid parameters.ValidationSetId ValidationSetError.InvalidValidationSetId

@@ -34,21 +34,28 @@ open System.CommandLine.Help
 open FSharpPlus.Control
 open System.CommandLine.Invocation
 
+/// Groups the program command parser, handlers, and output helpers.
 module Configuration =
 
+    /// Defines structured data exchanged by CLI helpers.
     type GraceCLIConfiguration = { GraceWatchStatus: GraceWatchStatus }
 
     let mutable private cliConfiguration = { GraceWatchStatus = GraceWatchStatus.Default }
 
+    /// Defines root parser cliconfiguration behavior for Grace CLI startup and help output.
     let CLIConfiguration () = cliConfiguration
+    /// Defines root parser update configuration behavior for Grace CLI startup and help output.
     let updateConfiguration (config: GraceCLIConfiguration) = cliConfiguration <- config
 
+/// Groups the program command parser, handlers, and output helpers.
 module GraceCommand =
 
     exception private IntrospectionExit of int
 
+    /// Defines structured data exchanged by CLI helpers.
     type OptionToUpdate = { optionAlias: string; display: string; displayOnCreate: string; createParentCommand: string }
 
+    /// Defines root parser delete grace watch ipc file if owned behavior for Grace CLI startup and help output.
     let private deleteGraceWatchIpcFileIfOwned () =
         if graceWatchStatusUpdateTime <> Instant.MinValue then
             try
@@ -91,6 +98,7 @@ module GraceCommand =
         //aliases.Add("", [""; ""])
         aliases
 
+    /// Reads alias list dto from ParseResult, local configuration, or Grace ids.
     let private getAliasListDto () =
         let items: LocalOutputDto.AliasListItemDto array =
             aliases
@@ -129,6 +137,7 @@ module GraceCommand =
 
         AnsiConsole.Write(table)
 
+    /// Renders aliases results only when the selected output mode includes human-readable console text.
     let private renderAliases (parseResult: ParseResult) =
         if parseResult |> json then
             let result =
@@ -142,6 +151,7 @@ module GraceCommand =
             printAliases ()
             0
 
+    /// Tries to map get top level command from args and returns a GraceError instead of throwing on unsupported input.
     let internal tryGetTopLevelCommandFromArgs (args: string array) (isCaseInsensitive: bool) =
         if isNull args || args.Length = 0 then
             None
@@ -152,6 +162,7 @@ module GraceCommand =
                 else
                     StringComparison.InvariantCulture
 
+            /// Evaluates is option with value against parsed options and command state.
             let isOptionWithValue (token: string) =
                 token.Equals(OptionName.Output, comparison)
                 || token.Equals("-o", comparison)
@@ -160,6 +171,7 @@ module GraceCommand =
                 || token.Equals(OptionName.Source, comparison)
                 || token.Equals(OptionName.Select, comparison)
 
+            /// Defines root parser rec behavior for Grace CLI startup and help output.
             let rec loop index =
                 if index >= args.Length then
                     None
@@ -187,7 +199,9 @@ module GraceCommand =
         else
             allOptions
 
+    /// Defines root parser command identity from command result behavior for Grace CLI startup and help output.
     let private commandIdentityFromCommandResult (commandResult: CommandResult) =
+        /// Defines root parser rec behavior for Grace CLI startup and help output.
         let rec loop (current: SymbolResult) (names: string list) =
             match current with
             | :? CommandResult as currentCommand ->
@@ -212,6 +226,7 @@ module GraceCommand =
             let groupPath = path |> List.take (path.Length - 1)
             CommandOutputContract.commandIdentity groupPath commandName
 
+    /// Defines root parser introspection request from tokens behavior for Grace CLI startup and help output.
     let private introspectionRequestFromTokens (args: string array) =
         let tokens =
             if isNull args then
@@ -220,6 +235,7 @@ module GraceCommand =
                 args
                 |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
 
+        /// Defines the contains option used by this command parser.
         let containsOption optionName =
             tokens
             |> Array.exists (fun token -> token.Equals(optionName, StringComparison.OrdinalIgnoreCase))
@@ -233,18 +249,22 @@ module GraceCommand =
         | false, true -> Some(Ok CommandOutputContract.IntrospectionKind.Examples)
         | true, true -> Some(Error "--schema and --examples cannot be used together.")
 
+    /// Writes introspection error data through the CLI output contract.
     let private writeIntrospectionError parseResult message =
         let error = GraceError.Create message (getCorrelationId parseResult)
         Common.writeJsonErrorStdout error
         -1
 
+    /// Evaluates is ignorable introspection parse error against parsed options and command state.
     let private isIgnorableIntrospectionParseError (error: ParseError) =
         error.Message.StartsWith("Required argument missing for command:", StringComparison.Ordinal)
 
+    /// Evaluates has blocking introspection parse errors against parsed options and command state.
     let private hasBlockingIntrospectionParseErrors (parseResult: ParseResult) =
         parseResult.Errors
         |> Seq.exists (isIgnorableIntrospectionParseError >> not)
 
+    /// Writes introspection parse error data through the CLI output contract.
     let private writeIntrospectionParseError (parseResult: ParseResult) =
         let message =
             parseResult.Errors
@@ -254,6 +274,7 @@ module GraceCommand =
 
         writeIntrospectionError parseResult message
 
+    /// Coordinates the introspection request command path, including validation, service calls, and output.
     let private handleIntrospectionRequest (parseResult: ParseResult) kind =
         let identity = commandIdentityFromCommandResult parseResult.CommandResult
 
@@ -268,6 +289,7 @@ module GraceCommand =
                 writeIntrospectionError parseResult $"Command '{identity.CommandId}' is not routed for CLI introspection. {reason}"
         | None -> writeIntrospectionError parseResult $"Command '{identity.CommandId}' does not have CLI output contract metadata."
 
+    /// Evaluates is json output requested from tokens against parsed options and command state.
     let private isJsonOutputRequestedFromTokens (args: string array) =
         let tokens =
             if isNull args then
@@ -276,6 +298,7 @@ module GraceCommand =
                 args
                 |> Array.takeWhile (fun token -> not (token.Equals("--", StringComparison.Ordinal)))
 
+        /// Defines root parser rec behavior for Grace CLI startup and help output.
         let rec loop index =
             if index >= tokens.Length then
                 false
@@ -321,6 +344,7 @@ module GraceCommand =
 
         loop 0
 
+    /// Writes json parse error data through the CLI output contract.
     let private writeJsonParseError (parseResult: ParseResult) =
         let message =
             parseResult.Errors
@@ -331,6 +355,7 @@ module GraceCommand =
         Common.writeJsonErrorStdout error
         -1
 
+    /// Writes json exception data through the CLI output contract.
     let private writeJsonException (parseResult: ParseResult) (ex: exn) =
         let correlationId =
             if isNull parseResult then
@@ -342,6 +367,7 @@ module GraceCommand =
         Common.writeJsonErrorStdout error
         -1
 
+    /// Tries to map validate select request and returns a GraceError instead of throwing on unsupported input.
     let private tryValidateSelectRequest (parseResult: ParseResult) =
         match Common.tryGetSelect parseResult with
         | None -> None
@@ -358,7 +384,9 @@ module GraceCommand =
                 | Some _ -> Some(GraceError.Create $"Command '{identity.CommandId}' does not support --select in this release." correlationId)
                 | None -> Some(GraceError.Create $"Command '{identity.CommandId}' does not have CLI output contract metadata for --select." correlationId)
 
+    /// Tries to map find grace configuration file for json mode and returns a GraceError instead of throwing on unsupported input.
     let private tryFindGraceConfigurationFileForJsonMode () =
+        /// Defines root parser rec behavior for Grace CLI startup and help output.
         let rec loop (directory: DirectoryInfo) =
             if isNull directory then
                 None
@@ -369,6 +397,7 @@ module GraceCommand =
 
         loop (DirectoryInfo(Environment.CurrentDirectory))
 
+    /// Tries to map get json configuration error and returns a GraceError instead of throwing on unsupported input.
     let private tryGetJsonConfigurationError (parseResult: ParseResult) =
         if parseResult |> json then
             match tryFindGraceConfigurationFileForJsonMode () with
@@ -386,6 +415,7 @@ module GraceCommand =
         else
             None
 
+    /// Defines root parser replace default value behavior for Grace CLI startup and help output.
     let private replaceDefaultValue (line: string) (defaultValueText: string) =
         let startIndex = line.IndexOf("[default:", StringComparison.OrdinalIgnoreCase)
 
@@ -399,6 +429,7 @@ module GraceCommand =
         else
             line
 
+    /// Defines root parser rewrite help defaults behavior for Grace CLI startup and help output.
     let private rewriteHelpDefaults (helpText: string) (defaultsByAlias: IDictionary<string, string>) =
         let lines = helpText.Split(Environment.NewLine)
         let output = ResizeArray<string>(lines.Length)
@@ -471,6 +502,7 @@ module GraceCommand =
 
         String.Join(Environment.NewLine, output)
 
+    /// Defines structured data exchanged by CLI helpers.
     type HelpSection = { Heading: string; CommandNames: string list }
 
     let private rootHelpSections =
@@ -665,6 +697,7 @@ module GraceCommand =
         lookup["wi"] <- workItemHelpSections
         lookup
 
+    /// Formats display name values into the text shown in Spectre.Console tables or command output.
     let private formatDisplayName (command: Command) =
         let aliases =
             command.Aliases
@@ -680,6 +713,7 @@ module GraceCommand =
             let aliasText = String.Join(", ", aliases)
             $"{command.Name} ({aliasText})"
 
+    /// Reads grouped commands from ParseResult, local configuration, or Grace ids.
     let private getGroupedCommands (command: Command) (sections: HelpSection list) =
         let lookup = Dictionary<string, Command>(StringComparer.InvariantCultureIgnoreCase)
 
@@ -712,6 +746,7 @@ module GraceCommand =
 
         sections, unmapped
 
+    /// Builds command objects or parameters for execution.
     let private buildGroupedCommandLines (command: Command) (sections: HelpSection list) (indent: string) =
         let sections, unmapped = getGroupedCommands command sections
         let allCommands = (sections |> List.collect snd) @ unmapped
@@ -725,6 +760,7 @@ module GraceCommand =
         lines.Add($"{indent}Commands:")
         lines.Add(String.Empty)
 
+        /// Writes section data through the CLI output contract.
         let writeSection heading commands =
             lines.Add($"{indent}  {heading}:")
 
@@ -746,6 +782,7 @@ module GraceCommand =
 
         lines.ToArray()
 
+    /// Defines root parser strip ansi behavior for Grace CLI startup and help output.
     let private stripAnsi (text: string) =
         if String.IsNullOrEmpty(text) then
             text
@@ -753,6 +790,7 @@ module GraceCommand =
             let withoutCsi = Regex.Replace(text, "\x1B\\[[0-9;?]*[A-Za-z]", String.Empty)
             Regex.Replace(withoutCsi, "\x1B\\][^\x07]*\x07", String.Empty)
 
+    /// Defines root parser rewrite help commands behavior for Grace CLI startup and help output.
     let private rewriteHelpCommands (helpText: string) (command: Command) (sections: HelpSection list) =
         if command.Subcommands.Count = 0 then
             helpText
@@ -800,6 +838,7 @@ module GraceCommand =
 
                 String.Join(Environment.NewLine, Array.concat [ before; grouped; after ])
 
+    /// Defines root parser find target help command result behavior for Grace CLI startup and help output.
     let private findTargetHelpCommandResult (commandResult: CommandResult) =
         let mutable current = commandResult
         let mutable searching = true
@@ -978,11 +1017,14 @@ module GraceCommand =
         else
             false
 
+    /// Models feedback section values passed between the parser and program handlers.
     type FeedbackSection(action: HelpAction) =
         inherit SynchronousCommandLineAction()
 
+        /// Gets the help action used to render this feedback section.
         member _.HelpAction = action
 
+        /// Runs the asynchronous feedback section action when System.CommandLine dispatches the parsed command.
         override _.Invoke(parseResult: ParseResult) =
             let result = action.Invoke(parseResult)
             AnsiConsole.WriteLine()
@@ -1007,10 +1049,12 @@ module GraceCommand =
         let isCaseInsensitive = Environment.OSVersion.Platform = PlatformID.Win32NT
         let argvOriginal = args |> Array.copy
 
+        /// Normalizes Grace ids for args for history by keeping explicit scope values and clearing implicit child scopes.
         let normalizeArgsForHistory (args: string array) =
             if args.Length = 0 then
                 Array.empty<string>
             else
+                /// Normalizes Grace ids for output equals token by keeping explicit scope values and clearing implicit child scopes.
                 let normalizeOutputEqualsToken (arg: string) =
                     let outputEqualsPrefix = $"{OptionName.Output}="
 
@@ -1019,6 +1063,7 @@ module GraceCommand =
                     else
                         arg
 
+                /// Tries to map find top level command index and returns a GraceError instead of throwing on unsupported input.
                 let tryFindTopLevelCommandIndex (args: string array) =
                     let comparison =
                         if isCaseInsensitive then
@@ -1026,6 +1071,7 @@ module GraceCommand =
                         else
                             StringComparison.InvariantCulture
 
+                    /// Evaluates is option with value against parsed options and command state.
                     let isOptionWithValue (token: string) =
                         token.Equals(OptionName.Output, comparison)
                         || token.Equals("-o", comparison)
@@ -1034,6 +1080,7 @@ module GraceCommand =
                         || token.Equals(OptionName.Source, comparison)
                         || token.Equals(OptionName.Select, comparison)
 
+                    /// Defines root parser rec behavior for Grace CLI startup and help output.
                     let rec loop index =
                         if index >= args.Length then
                             None

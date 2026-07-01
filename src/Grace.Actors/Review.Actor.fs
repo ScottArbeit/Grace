@@ -22,8 +22,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for review keys, proxies, state, or workflow transitions.
 module Review =
 
+    /// Implements the Orleans grain for review actor.
     type ReviewActor([<PersistentState(StateName.Review, Constants.GraceActorStorage)>] state: IPersistentState<List<ReviewEvent>>) =
         inherit Grain()
 
@@ -37,6 +39,7 @@ module Review =
 
         let mutable checkpoints: ReviewCheckpoint list = []
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -44,6 +47,7 @@ module Review =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
+            /// Applies to state changes to the Review actor state.
             let applyToState (reviewEvent: ReviewEvent) =
                 match reviewEvent.Event with
                 | NotesUpserted notes ->
@@ -80,6 +84,7 @@ module Review =
 
             Task.CompletedTask
 
+        /// Applies one persisted Review event to this activation's in-memory state.
         member private this.ApplyEvent(reviewEvent: ReviewEvent) =
             task {
                 let correlationId = reviewEvent.Metadata.CorrelationId
@@ -157,6 +162,7 @@ module Review =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this Review actor state.
             member this.GetRepositoryId correlationId =
                 let repositoryId =
                     reviewNotes
@@ -166,17 +172,21 @@ module Review =
                 repositoryId |> returnTask
 
         interface IReviewActor with
+            /// Returns notes data from the Review actor state or related storage.
             member this.GetNotes correlationId =
                 this.correlationId <- correlationId
                 reviewNotes |> returnTask
 
+            /// Returns checkpoints data from the Review actor state or related storage.
             member this.GetCheckpoints correlationId =
                 this.correlationId <- correlationId
 
                 (checkpoints :> IReadOnlyList<ReviewCheckpoint>)
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: ReviewCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
@@ -200,6 +210,7 @@ module Review =
                                         return Error(GraceError.Create (ReviewError.getErrorMessage ReviewError.FindingDoesNotExist) metadata.CorrelationId)
                     }
 
+                /// Runs Review command decisions, applies emitted events, and persists the result.
                 let processCommand (command: ReviewCommand) (metadata: EventMetadata) =
                     task {
                         let! reviewEventType =

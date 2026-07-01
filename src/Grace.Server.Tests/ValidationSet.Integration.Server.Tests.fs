@@ -14,7 +14,9 @@ open System.Net.Http
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups shared helpers for validation set integration helpers.
 module private ValidationSetIntegrationHelpers =
+    /// Captures validation set route snapshot values used by the test suite.
     type ValidationSetRouteSnapshot =
         {
             ValidationSetId: Guid
@@ -26,6 +28,7 @@ module private ValidationSetIntegrationHelpers =
             PropertiesRaw: string
         }
 
+    /// Defines scoped behavior for the surrounding tests used by the server integration validation Set Integration scenario.
     let private scoped<'T when 'T :> ValidationParameters> (parameters: 'T) repositoryId : 'T =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
@@ -33,6 +36,7 @@ module private ValidationSetIntegrationHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Requires property and fails the test when missing.
     let private requireProperty (name: string) (element: JsonElement) =
         let mutable property = Unchecked.defaultof<JsonElement>
 
@@ -44,6 +48,7 @@ module private ValidationSetIntegrationHelpers =
             Assert.Fail($"Expected JSON property '{name}' in {element.GetRawText()}.")
             Unchecked.defaultof<JsonElement>
 
+    /// Parses validation set snapshot from response content.
     let parseValidationSetSnapshot (body: string) =
         use document = JsonDocument.Parse(body)
 
@@ -79,12 +84,14 @@ module private ValidationSetIntegrationHelpers =
             PropertiesRaw = properties.GetRawText()
         }
 
+    /// Posts Async to the running test server.
     let postAsync (route: string) (content: HttpContent) =
         let request = new HttpRequestMessage(HttpMethod.Post, route)
         request.Headers.Add(Constants.CorrelationIdHeaderKey, generateCorrelationId ())
         request.Content <- content
         Client.SendAsync(request)
 
+    /// Posts ok return to the running test server.
     let postOkReturnAsync<'T, 'P> route (parameters: 'P) =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -103,6 +110,7 @@ module private ValidationSetIntegrationHelpers =
                 return deserialize<'T> body
         }
 
+    /// Posts ok body to the running test server.
     let postOkBodyAsync route parameters =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -111,6 +119,7 @@ module private ValidationSetIntegrationHelpers =
             return body
         }
 
+    /// Posts status body to the running test server.
     let postStatusBodyAsync route parameters (expectedStatus: HttpStatusCode) expectedText =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -120,6 +129,7 @@ module private ValidationSetIntegrationHelpers =
             return body
         }
 
+    /// Builds create parameters for route calls.
     let createParameters repositoryId validationSetId targetBranchId validationName =
         let parameters = scoped (CreateValidationSetParameters()) repositoryId
         parameters.ValidationSetId <- validationSetId
@@ -143,6 +153,7 @@ module private ValidationSetIntegrationHelpers =
 
         parameters
 
+    /// Builds update parameters for route calls.
     let updateParameters repositoryId validationSetId targetBranchId validationName =
         let parameters = scoped (UpdateValidationSetParameters()) repositoryId
         parameters.ValidationSetId <- validationSetId
@@ -166,11 +177,13 @@ module private ValidationSetIntegrationHelpers =
 
         parameters
 
+    /// Gets Async from the running test server.
     let getAsync repositoryId validationSetId =
         let parameters = scoped (GetValidationSetParameters()) repositoryId
         parameters.ValidationSetId <- validationSetId
         postOkBodyAsync "/validation-set/get" parameters
 
+    /// Defines delete behavior for the surrounding tests used by the server integration validation Set Integration scenario.
     let deleteAsync repositoryId validationSetId =
         task {
             let parameters = scoped (DeleteValidationSetParameters()) repositoryId
@@ -180,9 +193,11 @@ module private ValidationSetIntegrationHelpers =
             return! postOkBodyAsync "/validation-set/delete" parameters
         }
 
+/// Covers validation set route scenarios.
 [<NonParallelizable>]
 type ValidationSetRouteIntegrationTests() =
 
+    /// Verifies the validation set crud pins current rule projection drift and delete state scenario.
     [<Test>]
     member _.ValidationSetCrudPinsCurrentRuleProjectionDriftAndDeleteState() =
         task {

@@ -14,8 +14,10 @@ open Orleans.Runtime
 open System
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for owner name keys, proxies, state, or workflow transitions.
 module OwnerName =
 
+    /// Implements the Orleans grain for owner name actor.
     type OwnerNameActor(log: ILogger<OwnerNameActor>) =
         inherit Grain()
 
@@ -25,6 +27,7 @@ module OwnerName =
 
         let mutable cachedOwnerId: OwnerId option = None
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -35,16 +38,19 @@ module OwnerName =
             Task.CompletedTask
 
         interface IOwnerNameActor with
+            /// Removes or invalidates clear owner id data from the OwnerName actor state.
             member this.ClearOwnerId correlationId =
                 this.correlationId <- correlationId
                 cachedOwnerId <- None
 
                 Task.CompletedTask
 
+            /// Returns owner id data from the OwnerName actor state or related storage.
             member this.GetOwnerId(correlationId) =
                 this.correlationId <- correlationId
                 cachedOwnerId |> returnTask
 
+            /// Stores set owner id data in the OwnerName actor state.
             member this.SetOwnerId (ownerId: OwnerId) correlationId =
                 this.correlationId <- correlationId
                 cachedOwnerId <- Some ownerId

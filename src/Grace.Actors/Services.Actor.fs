@@ -59,50 +59,82 @@ open System.Text.RegularExpressions
 open Microsoft.Azure.Amqp
 open Azure.Core.Amqp
 
+/// Groups Orleans actor helpers for services keys, proxies, state, or workflow transitions.
 module Services =
+    /// Wraps server grace index records exchanged by actor queries or projections.
     type ServerGraceIndex = Dictionary<RelativePath, DirectoryVersion>
+    /// Wraps owner id record records exchanged by actor queries or projections.
     type OwnerIdRecord = { OwnerId: string }
+    /// Wraps organization id record records exchanged by actor queries or projections.
     type OrganizationIdRecord = { organizationId: string }
+    /// Wraps repository id record records exchanged by actor queries or projections.
     type RepositoryIdRecord = { repositoryId: string }
+    /// Wraps branch id record records exchanged by actor queries or projections.
     type BranchIdRecord = { branchId: string }
 
+    /// Wraps organization dto value records exchanged by actor queries or projections.
     type OrganizationDtoValue() =
+        /// Stores the service query value returned from Orleans storage.
         member val public value = OrganizationDto.Default with get, set
 
+    /// Wraps repository dto value records exchanged by actor queries or projections.
     type RepositoryDtoValue() =
+        /// Stores the service query value returned from Orleans storage.
         member val public value = RepositoryDto.Default with get, set
 
+    /// Wraps branch dto value records exchanged by actor queries or projections.
     type BranchDtoValue() =
+        /// Stores the service query value returned from Orleans storage.
         member val public value = BranchDto.Default with get, set
 
+    /// Wraps branch id value records exchanged by actor queries or projections.
     type BranchIdValue() =
+        /// Stores the branch id returned from service lookup storage.
         member val public branchId = BranchId.Empty with get, set
 
+    /// Wraps actor id value records exchanged by actor queries or projections.
     type ActorIdValue() =
+        /// Stores the Orleans grain identifier used by custom storage adapters.
         member val public id = String.Empty with get, set
 
+    /// Wraps owner event value records exchanged by actor queries or projections.
     type OwnerEventValue() =
+        /// Stores the actor state payload returned from Orleans storage.
         member val public State: OwnerEvent array = Array.Empty<OwnerEvent>() with get, set
 
+    /// Wraps organization event value records exchanged by actor queries or projections.
     type OrganizationEventValue() =
+        /// Stores the actor state payload returned from Orleans storage.
         member val public State: OrganizationEvent array = Array.Empty<OrganizationEvent>() with get, set
 
+    /// Wraps repository event value records exchanged by actor queries or projections.
     type RepositoryEventValue() =
+        /// Stores the actor state payload returned from Orleans storage.
         member val public State: RepositoryEvent array = Array.Empty<RepositoryEvent>() with get, set
 
+    /// Wraps branch event value records exchanged by actor queries or projections.
     type BranchEventValue() =
+        /// Stores the actor state payload returned from Orleans storage.
         member val public State: BranchEvent array = Array.Empty<BranchEvent>() with get, set
 
+    /// Wraps reference event value records exchanged by actor queries or projections.
     type ReferenceEventValue() =
+        /// Stores the actor state payload returned from Orleans storage.
         member val public State: ReferenceEvent array = Array.Empty<ReferenceEvent>() with get, set
 
+    /// Wraps directory version event value records exchanged by actor queries or projections.
     type DirectoryVersionEventValue() =
+        /// Stores the actor state payload returned from Orleans storage.
         member val public State: DirectoryVersionEvent array = Array.Empty<DirectoryVersionEvent>() with get, set
 
+    /// Wraps directory version value records exchanged by actor queries or projections.
     type DirectoryVersionValue() =
+        /// Stores the service query value returned from Orleans storage.
         member val public value = DirectoryVersion.Default with get, set
 
+    /// Wraps reminder value records exchanged by actor queries or projections.
     type ReminderValue() =
+        /// Stores the reminder payload returned from reminder lookup storage.
         member val public Reminder: ReminderDto = ReminderDto.Default with get, set
 
     /// Dictionary for caching blob container clients
@@ -114,6 +146,7 @@ module Services =
             AzureEnvironment.storageAccountKey
             |> Option.map (fun accountKey -> StorageSharedKeyCredential(AzureEnvironment.storageEndpoints.AccountName, accountKey))
 
+    /// Coordinates normalize local azurite blob uri logic for the Services workflow.
     let private normalizeLocalAzuriteBlobUri (accountName: string) (blobUri: Uri) =
         let accountPathPrefix = $"/{accountName}/"
 
@@ -127,6 +160,7 @@ module Services =
         else
             blobUri
 
+    /// Coordinates shard blob host for configured host logic for the Services workflow.
     let internal shardBlobHostForConfiguredHost (accountName: string) (configuredHost: string) =
         let firstDot = configuredHost.IndexOf('.')
 
@@ -139,6 +173,7 @@ module Services =
         else
             $"{accountName}.blob.core.windows.net"
 
+    /// Coordinates shard blob endpoint uri logic for the Services workflow.
     let private shardBlobEndpointUri (accountName: string) (containerAndObjectPath: string) =
         let configuredEndpoint = AzureEnvironment.storageEndpoints.BlobEndpoint
 
@@ -154,14 +189,17 @@ module Services =
             )
                 .Uri
 
+    /// Coordinates storage shared key credential for shard logic for the Services workflow.
     let private storageSharedKeyCredentialForShard (shard: StoragePoolRouting.StorageShard) =
         if StoragePoolRouting.sharedKeyCanSignShard shard then
             sharedKeyCredential.Value
         else
             None
 
+    /// Coordinates cas user delegation sas signing account name logic for the Services workflow.
     let internal casUserDelegationSasSigningAccountName (route: StoragePoolRouting.StoragePoolRoute) = route.Shard.StorageAccountName
 
+    /// Builds blob container client from endpoint data needed by Services workflows.
     let private createBlobContainerClientFromEndpoint containerName =
         if AzureEnvironment.useManagedIdentityForStorage then
             Context.blobServiceClient.GetBlobContainerClient(containerName)
@@ -175,6 +213,7 @@ module Services =
                 BlobContainerClient(containerUri, credential)
             | None -> Context.blobServiceClient.GetBlobContainerClient(containerName)
 
+    /// Builds blob container client for shard data needed by Services workflows.
     let private createBlobContainerClientForShard (shard: StoragePoolRouting.StorageShard) =
         let containerUri = shardBlobEndpointUri shard.StorageAccountName $"{shard.StorageContainerName}"
 
@@ -188,6 +227,7 @@ module Services =
     /// Logger instance for the Services.Actor module.
     let private log = loggerFactory.CreateLogger("Services.Actor")
 
+    /// Wraps version hash prefix resolution t records exchanged by actor queries or projections.
     type VersionHashPrefixResolution<'T> =
         | NoMatches
         | UniqueMatch of 'T
@@ -195,6 +235,7 @@ module Services =
 
     let internal maxVersionHashPrefixResolutionMatches = 2
 
+    /// Resolves version hash prefix matches data required by the Services workflow.
     let internal resolveVersionHashPrefixMatches<'T> (matches: seq<'T>) : VersionHashPrefixResolution<'T> =
         let boundedMatches =
             matches
@@ -206,16 +247,19 @@ module Services =
         | 1 -> UniqueMatch boundedMatches[0]
         | _ -> AmbiguousMatches boundedMatches
 
+    /// Attempts to load unique version hash prefix match data and returns None when it is unavailable.
     let internal tryGetUniqueVersionHashPrefixMatch<'T> (resolution: VersionHashPrefixResolution<'T>) =
         match resolution with
         | UniqueMatch value -> Some value
         | NoMatches
         | AmbiguousMatches _ -> None
 
+    /// Coordinates hash matches prefix logic for the Services workflow.
     let private hashMatchesPrefix (hashPrefix: string) (candidateHash: string) =
         not (String.IsNullOrWhiteSpace candidateHash)
         && candidateHash.StartsWith(hashPrefix, StringComparison.OrdinalIgnoreCase)
 
+    /// Resolves scoped version hash prefix data required by the Services workflow.
     let internal resolveScopedVersionHashPrefix<'T> (hashPrefix: string) (getHash: 'T -> string) (matches: seq<'T>) : VersionHashPrefixResolution<'T> =
         let normalizedPrefix = hashPrefix.Trim()
 
@@ -243,6 +287,7 @@ module Services =
             && hashMatchesPrefix normalizedBlake3HashPrefix (getBlake3Hash candidate))
         |> resolveVersionHashPrefixMatches
 
+    /// Coordinates is root directory version logic for the Services workflow.
     let private isRootDirectoryVersion (directoryVersion: DirectoryVersion) =
         directoryVersion.RelativePath = Constants.RootDirectoryPath
         || directoryVersion.RelativePath = RelativePath "/"
@@ -410,11 +455,14 @@ module Services =
             return containerClient.GetBlockBlobClient blobName
         }
 
+    /// Resolves repository storage pool route data required by the Services workflow.
     let resolveRepositoryStoragePoolRoute repositoryDto correlationId = StoragePoolRouting.resolveRepositoryRoute repositoryDto correlationId
 
+    /// Resolves upload session storage pool route data required by the Services workflow.
     let resolveUploadSessionStoragePoolRoute repositoryId storagePoolId correlationId =
         StoragePoolRouting.resolveStoragePoolRouteForStoragePoolId repositoryId storagePoolId correlationId
 
+    /// Returns cas container client data from Services storage or actor state.
     let getCasContainerClient (shard: StoragePoolRouting.StorageShard) correlationId =
         task {
             match StoragePoolRouting.validateShard correlationId shard with
@@ -437,6 +485,7 @@ module Services =
                 return Ok blobContainerClient
         }
 
+    /// Returns azure content block client data from Services storage or actor state.
     let getAzureContentBlockClient (route: StoragePoolRouting.StoragePoolRoute) (contentBlockAddress: ContentBlockAddress) correlationId =
         task {
             let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
@@ -446,6 +495,7 @@ module Services =
             | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient objectKey)
         }
 
+    /// Returns azure content block client for placement data from Services storage or actor state.
     let getAzureContentBlockClientForPlacement (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
         task {
             let shard: StoragePoolRouting.StorageShard =
@@ -456,6 +506,7 @@ module Services =
             | Ok containerClient -> return Ok(containerClient.GetBlockBlobClient placement.ObjectKey)
         }
 
+    /// Returns content block staging object key data from Services storage or actor state.
     let getContentBlockStagingObjectKey (repositoryId: RepositoryId) (uploadSessionId: UploadSessionId) (contentBlockAddress: ContentBlockAddress) =
         $"staging/repositories/{repositoryId}/upload-sessions/{uploadSessionId:N}/content-blocks/{contentBlockAddress}"
 
@@ -468,6 +519,7 @@ module Services =
         =
         StoragePoolRouting.storagePlacementForObjectKey route.Shard (getContentBlockStagingObjectKey repositoryId uploadSessionId contentBlockAddress) eTag
 
+    /// Deletes azure content block placement if exists data from Services storage.
     let deleteAzureContentBlockPlacementIfExists (placement: Grace.Types.ContentBlockMetadata.ContentBlockStoragePlacement) correlationId =
         task {
             try
@@ -481,6 +533,7 @@ module Services =
                 return Error(GraceError.Create $"ContentBlock payload could not be deleted from object storage: {ex.Message}" correlationId)
         }
 
+    /// Deletes upload session staging payloads for route data from Services storage.
     let deleteUploadSessionStagingPayloadsForRoute (route: StoragePoolRouting.StoragePoolRoute) (session: UploadSessionDto) correlationId =
         task {
             if session.UploadSessionId = UploadSessionId.Empty
@@ -520,6 +573,7 @@ module Services =
                 | None -> return Ok deletedCount
         }
 
+    /// Deletes upload session staging payloads data from Services storage.
     let deleteUploadSessionStagingPayloads (session: UploadSessionDto) correlationId =
         task {
             if session.UploadSessionId = UploadSessionId.Empty
@@ -533,15 +587,18 @@ module Services =
                 | Ok route -> return! deleteUploadSessionStagingPayloadsForRoute route session correlationId
         }
 
+    /// Returns azure blob client for file version data from Services storage or actor state.
     let getAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
             return! getAzureBlobClient repositoryDto blobName correlationId
         }
 
+    /// Returns readable whole file content object key data from Services storage or actor state.
     let private getReadableWholeFileContentObjectKey (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task { return StorageKeys.wholeFileContentObjectKey fileVersion }
 
+    /// Returns readable azure blob client for file version data from Services storage or actor state.
     let getReadableAzureBlobClientForFileVersion (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (correlationId: CorrelationId) =
         task {
             let! blobName = getReadableWholeFileContentObjectKey repositoryDto fileVersion correlationId
@@ -1618,8 +1675,10 @@ module Services =
                     .ToArray()
         }
 
+    /// Coordinates is not deleted reference logic for the Services workflow.
     let internal isNotDeletedReference (referenceDto: ReferenceDto) = referenceDto.DeletedAt.IsNone
 
+    /// Coordinates has promotion set terminal link logic for the Services workflow.
     let internal hasPromotionSetTerminalLink (referenceDto: ReferenceDto) =
         referenceDto.Links
         |> Seq.exists (fun link ->
@@ -1627,14 +1686,17 @@ module Services =
             | ReferenceLinkType.PromotionSetTerminal _ -> true
             | _ -> false)
 
+    /// Attempts to load latest not deleted reference data and returns None when it is unavailable.
     let internal tryGetLatestNotDeletedReference (references: seq<ReferenceDto>) = references |> Seq.tryFind isNotDeletedReference
 
+    /// Attempts to load latest effective promotion reference data and returns None when it is unavailable.
     let internal tryGetLatestEffectivePromotionReference (references: seq<ReferenceDto>) =
         references
         |> Seq.tryFind (fun referenceDto ->
             isNotDeletedReference referenceDto
             && hasPromotionSetTerminalLink referenceDto)
 
+    /// Returns root directory version by directory version id data from Services storage or actor state.
     let internal getRootDirectoryVersionByDirectoryVersionId (repositoryId: RepositoryId) (directoryVersionId: DirectoryVersionId) correlationId =
         task {
             let mutable directoryVersion = DirectoryVersion.Default
@@ -1726,6 +1788,7 @@ module Services =
 
                 match directoryVersion with
                 | Some rootDirectoryVersion ->
+                    /// Holds a reference DTO after legacy root-directory hash hydration.
                     let hydratedReferenceDto, _ = ReferenceDto.HydrateLegacyRootDirectoryHash rootDirectoryVersion referenceDto
                     return hydratedReferenceDto
                 | None -> return referenceDto
@@ -1733,6 +1796,7 @@ module Services =
                 return referenceDto
         }
 
+    /// Projects reference events while hydrating missing legacy Blake3 root hashes.
     let internal projectReferenceEventsWithLegacyBlake3Hydration getDirectoryVersion correlationId referenceEvents =
         task {
             let referenceDto =
@@ -1906,11 +1970,16 @@ module Services =
                     .ToArray()
         }
 
+    /// Wraps document identifier records exchanged by actor queries or projections.
     type DocumentIdentifier() =
+        /// Stores the Orleans grain identifier used by custom storage adapters.
         member val id = String.Empty with get, set
+        /// Stores the Orleans grain partition key used to colocate persisted actor state.
         member val PartitionKey = String.Empty with get, set
 
+    /// Wraps partition key identifier records exchanged by actor queries or projections.
     type PartitionKeyIdentifier() =
+        /// Stores the Orleans grain partition key used to colocate persisted actor state.
         member val PartitionKey = String.Empty with get, set
 
     /// Deletes all documents from CosmosDb.
@@ -2100,6 +2169,7 @@ module Services =
     let getExternals = getReferencesByType ReferenceType.External
     let getRebases = getReferencesByType ReferenceType.Rebase
 
+    /// Returns latest reference data from Services storage or actor state.
     let getLatestReference repositoryId branchId =
         task {
             match actorStateStorageProvider with
@@ -2639,6 +2709,7 @@ module Services =
             return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
+    /// Returns directory version resolution by hash prefixes data from Services storage or actor state.
     let private getDirectoryVersionResolutionByHashPrefixes (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
         task {
             let directoryVersions = List<DirectoryVersion>()
@@ -2724,6 +2795,7 @@ module Services =
                     directoryVersions
         }
 
+    /// Returns directory version resolution by hash query data from Services storage or actor state.
     let getDirectoryVersionResolutionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
         task {
             if
@@ -2739,6 +2811,7 @@ module Services =
                 return NoMatches
         }
 
+    /// Returns directory version by hash query data from Services storage or actor state.
     let getDirectoryVersionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
         task {
             let! resolution = getDirectoryVersionResolutionByHashQuery repositoryId sha256Hash blake3Hash correlationId
@@ -2818,6 +2891,7 @@ module Services =
                 return None
         }
 
+    /// Returns root directory version resolution by hash prefix data from Services storage or actor state.
     let private getRootDirectoryVersionResolutionByHashPrefix hashFieldName repositoryId hashPrefix getHash correlationId =
         task {
             let directoryVersions = List<DirectoryVersion>()
@@ -2942,6 +3016,7 @@ module Services =
             return tryGetUniqueVersionHashPrefixMatch resolution
         }
 
+    /// Returns root directory version resolution by hash prefixes data from Services storage or actor state.
     let private getRootDirectoryVersionResolutionByHashPrefixes repositoryId (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
         task {
             let directoryVersions = List<DirectoryVersion>()
@@ -3034,6 +3109,7 @@ module Services =
                     (fun (directoryVersion: DirectoryVersion) -> directoryVersion.Blake3Hash)
         }
 
+    /// Returns root directory version resolution by hash query data from Services storage or actor state.
     let getRootDirectoryVersionResolutionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
         task {
             if
@@ -3049,6 +3125,7 @@ module Services =
                 return NoMatches
         }
 
+    /// Returns root directory version by hash query data from Services storage or actor state.
     let getRootDirectoryVersionByHashQuery (repositoryId: RepositoryId) (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) correlationId =
         task {
             let! resolution = getRootDirectoryVersionResolutionByHashQuery repositoryId sha256Hash blake3Hash correlationId
@@ -3492,6 +3569,7 @@ module Services =
                 |> Seq.toList
         }
 
+    /// Returns work item id by number data from Services storage or actor state.
     let getWorkItemIdByNumber (repositoryId: RepositoryId) (workItemNumber: WorkItemNumber) (correlationId: CorrelationId) =
         task {
             match actorStateStorageProvider with

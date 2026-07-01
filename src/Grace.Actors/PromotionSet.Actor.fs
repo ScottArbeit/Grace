@@ -36,6 +36,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for promotion set keys, proxies, state, or workflow transitions.
 module PromotionSet =
 
     type private RecomputeFailure =
@@ -44,8 +45,10 @@ module PromotionSet =
 
     type private DirectorySnapshot = { DirectoriesByPath: Dictionary<RelativePath, DirectoryVersion>; FilesByPath: Dictionary<RelativePath, FileVersion> }
 
+    /// Defines the contract for internal.
     type internal ComputedDirectoryMetadata = { DirectoryVersionId: DirectoryVersionId; Sha256Hash: Sha256Hash; Blake3Hash: Blake3Hash; Size: int64 }
 
+    /// Coordinates local directory version for promotion hash logic for the PromotionSet actor.
     let internal localDirectoryVersionForPromotionHash ownerId organizationId repositoryId relativePath metadata lastWriteTimeUtc =
         LocalDirectoryVersion.CreateWithHashes
             metadata.DirectoryVersionId
@@ -60,6 +63,7 @@ module PromotionSet =
             metadata.Size
             lastWriteTimeUtc
 
+    /// Coordinates file version equivalent logic for the PromotionSet actor.
     let internal fileVersionEquivalent (left: FileVersion option) (right: FileVersion option) =
         match left, right with
         | Option.None, Option.None -> true
@@ -118,22 +122,27 @@ module PromotionSet =
 
     let private approvalSubject = "promotion"
 
+    /// Coordinates canonical segment logic for the PromotionSet actor.
     let private canonicalSegment (value: string) =
         let segment = if isNull value then String.Empty else value
         $"{segment.Length}:{segment}"
 
+    /// Coordinates canonical guid logic for the PromotionSet actor.
     let private canonicalGuid (value: Guid) = value.ToString("D").ToLowerInvariant()
 
+    /// Coordinates canonical optional guid logic for the PromotionSet actor.
     let private canonicalOptionalGuid (value: Guid option) =
         match value with
         | Some guid -> canonicalGuid guid
         | Option.None -> String.Empty
 
+    /// Coordinates canonical optional int logic for the PromotionSet actor.
     let private canonicalOptionalInt (value: int option) =
         match value with
         | Some attempt -> attempt.ToString(CultureInfo.InvariantCulture)
         | Option.None -> String.Empty
 
+    /// Builds deterministic guid data needed by the PromotionSet actor.
     let private createDeterministicGuid (seed: string) =
         let seedBytes = Encoding.UTF8.GetBytes(seed)
 
@@ -144,6 +153,7 @@ module PromotionSet =
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 
+    /// Builds build generated approval request id data returned by the PromotionSet actor workflow.
     let internal buildGeneratedApprovalRequestId (request: ApprovalRequest) =
         let scope = if isNull (box request.Scope) then ApprovalScope.Default else request.Scope
 
@@ -164,6 +174,7 @@ module PromotionSet =
         |> String.concat "|"
         |> createDeterministicGuid
 
+    /// Coordinates policy matches apply scope logic for the PromotionSet actor.
     let internal policyMatchesApplyScope (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         policy.OwnerId = promotionSetDto.OwnerId
         && policy.OrganizationId = promotionSetDto.OrganizationId
@@ -171,16 +182,19 @@ module PromotionSet =
         && policy.TargetBranchId = promotionSetDto.TargetBranchId
         && String.Equals(policy.Subject, approvalSubject, StringComparison.OrdinalIgnoreCase)
 
+    /// Coordinates policy is valid for apply logic for the PromotionSet actor.
     let internal policyIsValidForApply (policy: PromotionSetApprovalPolicySnapshot) =
         policy.ApprovalPolicyId <> Guid.Empty
         && policy.Version > 0
         && String.IsNullOrWhiteSpace policy.RequiredResponder
            |> not
 
+    /// Coordinates scope matches policy logic for the PromotionSet actor.
     let internal scopeMatchesPolicy (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         policyMatchesApplyScope promotionSetDto policy
         && policyIsValidForApply policy
 
+    /// Coordinates invalid matching approval policy logic for the PromotionSet actor.
     let internal invalidMatchingApprovalPolicy (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
         approvalPolicies
         |> List.filter (policyMatchesApplyScope promotionSetDto)
@@ -188,19 +202,23 @@ module PromotionSet =
         |> List.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
         |> List.tryHead
 
+    /// Coordinates valid matching approval policies logic for the PromotionSet actor.
     let internal validMatchingApprovalPolicies (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
         approvalPolicies
         |> List.filter (scopeMatchesPolicy promotionSetDto)
         |> List.sortBy (fun policy -> policy.ApprovalPolicyId, policy.Version)
 
+    /// Selects select approval policy data for the PromotionSet actor workflow.
     let internal selectApprovalPolicy (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
         validMatchingApprovalPolicies promotionSetDto approvalPolicies
         |> List.tryHead
 
+    /// Wraps approval policy selection failure records exchanged by actor queries or projections.
     type ApprovalPolicySelectionFailure =
         | InvalidMatchingApprovalPolicy of PromotionSetApprovalPolicySnapshot
         | MultipleMatchingApprovalPolicies of PromotionSetApprovalPolicySnapshot list
 
+    /// Selects select approval policy or invalid data for the PromotionSet actor workflow.
     let selectApprovalPolicyOrInvalid (promotionSetDto: PromotionSetDto) (approvalPolicies: PromotionSetApprovalPolicySnapshot list) =
         match invalidMatchingApprovalPolicy promotionSetDto approvalPolicies with
         | Option.Some invalidPolicy -> Error(InvalidMatchingApprovalPolicy invalidPolicy)
@@ -234,6 +252,7 @@ module PromotionSet =
             | Option.None -> return Ok fallbackApprovalPolicies
         }
 
+    /// Coordinates approval scope logic for the PromotionSet actor.
     let internal approvalScope (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         { ApprovalScope.Default with
             OwnerId = promotionSetDto.OwnerId
@@ -246,6 +265,7 @@ module PromotionSet =
             ApprovalPolicyVersion = Option.Some policy.Version
         }
 
+    /// Coordinates request matches current attempt logic for the PromotionSet actor.
     let internal requestMatchesCurrentAttempt (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) (request: ApprovalRequest) =
         request.ApprovalPolicyId = policy.ApprovalPolicyId
         && request.ApprovalPolicyVersion = policy.Version
@@ -253,11 +273,13 @@ module PromotionSet =
         && request.RequiredResponder = policy.RequiredResponder
         && request.Scope = approvalScope promotionSetDto policy
 
+    /// Coordinates expiration is valid logic for the PromotionSet actor.
     let internal expirationIsValid (now: NodaTime.Instant) (request: ApprovalRequest) =
         match request.ExpiresAt with
         | Some expiresAt when expiresAt <= now -> false
         | _ -> true
 
+    /// Coordinates approval summary logic for the PromotionSet actor.
     let private approvalSummary (promotionSetDto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) (request: ApprovalRequest option) state reason =
         { (PromotionSetApprovalSummary.NotRequired promotionSetDto.PromotionSetId promotionSetDto.TargetBranchId promotionSetDto.StepsComputationAttempt) with
             State = state
@@ -277,6 +299,7 @@ module PromotionSet =
             Reason = reason
         }
 
+    /// Implements the Orleans grain for promotion set actor.
     type PromotionSetActor([<PersistentState(StateName.PromotionSet, Constants.GraceActorStorage)>] state: IPersistentState<List<PromotionSetEvent>>) =
         inherit Grain()
 
@@ -286,6 +309,7 @@ module PromotionSet =
         let mutable currentCommand = String.Empty
         let mutable promotionSetDto = PromotionSetDto.Default
 
+        /// Returns int environment setting data from the PromotionSet actor state or related storage.
         let getIntEnvironmentSetting (name: string) (defaultValue: int) =
             let rawValue = Environment.GetEnvironmentVariable(name)
             let mutable parsedValue = 0
@@ -305,8 +329,10 @@ module PromotionSet =
 
         let maxFilesPerStep = getIntEnvironmentSetting "grace__promotionset__recompute__max_files_per_step" 20000
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Coordinates with actor metadata logic for the PromotionSet actor.
         member private this.WithActorMetadata(metadata: EventMetadata) =
             let properties = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
 
@@ -333,6 +359,7 @@ module PromotionSet =
 
             { metadata with Principal = principal; Properties = properties }
 
+        /// Builds build success data returned by the PromotionSet actor workflow.
         member private this.BuildSuccess(message: string, correlationId: CorrelationId) =
             let graceReturnValue: GraceReturnValue<string> =
                 (GraceReturnValue.Create message correlationId)
@@ -342,6 +369,7 @@ module PromotionSet =
 
             Ok graceReturnValue
 
+        /// Builds build error data returned by the PromotionSet actor workflow.
         member private this.BuildError(errorMessage: string, correlationId: CorrelationId) =
             Error(
                 (GraceError.Create errorMessage correlationId)
@@ -349,6 +377,7 @@ module PromotionSet =
                     .enhance (nameof PromotionSetId, promotionSetDto.PromotionSetId)
             )
 
+        /// Returns current terminal promotion data from the PromotionSet actor state or related storage.
         member private this.GetCurrentTerminalPromotion() =
             task {
                 let! latestPromotion = getLatestPromotion promotionSetDto.RepositoryId promotionSetDto.TargetBranchId
@@ -374,6 +403,7 @@ module PromotionSet =
                     return ReferenceId.Empty, baseDirectoryVersionId
             }
 
+        /// Returns conflict resolution policy data from the PromotionSet actor state or related storage.
         member private this.GetConflictResolutionPolicy() =
             task {
                 let repositoryActorProxy = Repository.CreateActorProxy promotionSetDto.OrganizationId promotionSetDto.RepositoryId this.correlationId
@@ -381,12 +411,14 @@ module PromotionSet =
                 return repositoryDto.ConflictResolutionPolicy
             }
 
+        /// Returns repository dto data from the PromotionSet actor state or related storage.
         member private this.GetRepositoryDto() =
             task {
                 let repositoryActorProxy = Repository.CreateActorProxy promotionSetDto.OrganizationId promotionSetDto.RepositoryId this.correlationId
                 return! repositoryActorProxy.Get this.correlationId
             }
 
+        /// Returns conflict resolution model provider data from the PromotionSet actor state or related storage.
         member private this.GetConflictResolutionModelProvider() =
             match hostServiceProvider with
             | null -> NullConflictResolutionModelProvider() :> IConflictResolutionModelProvider
@@ -395,6 +427,7 @@ module PromotionSet =
                 | null -> NullConflictResolutionModelProvider() :> IConflictResolutionModelProvider
                 | provider -> provider :?> IConflictResolutionModelProvider
 
+        /// Returns approval policy snapshot resolver data from the PromotionSet actor state or related storage.
         member private this.GetApprovalPolicySnapshotResolver() =
             match hostServiceProvider with
             | null -> Option.None
@@ -403,6 +436,7 @@ module PromotionSet =
                 | null -> Option.None
                 | resolver -> Option.Some(resolver :?> IApprovalPolicySnapshotResolver)
 
+        /// Coordinates upload artifact payload logic for the PromotionSet actor.
         member private this.UploadArtifactPayload(blobPath: string, payloadJson: string, metadata: EventMetadata) =
             task {
                 try
@@ -426,6 +460,7 @@ module PromotionSet =
                     return Error(graceError)
             }
 
+        /// Returns artifact text data from the PromotionSet actor state or related storage.
         member private this.GetArtifactText(artifactId: ArtifactId, metadata: EventMetadata) =
             task {
                 let artifactActorProxy = Artifact.CreateActorProxy artifactId promotionSetDto.RepositoryId this.correlationId
@@ -462,6 +497,7 @@ module PromotionSet =
                         return Error(graceError)
             }
 
+        /// Validates manual override artifacts before the operation continues.
         member private this.ValidateManualOverrideArtifacts(decisions: ConflictResolutionDecision list, metadata: EventMetadata) =
             task {
                 let overrideArtifactIds =
@@ -498,6 +534,7 @@ module PromotionSet =
                 | Option.None -> return Ok()
             }
 
+        /// Coordinates hydrate step provenance logic for the PromotionSet actor.
         member private this.HydrateStepProvenance(step: PromotionSetStep) =
             task {
                 let referenceActorProxy = Reference.CreateActorProxy step.OriginalPromotion.ReferenceId promotionSetDto.RepositoryId this.correlationId
@@ -559,6 +596,7 @@ module PromotionSet =
                             }
             }
 
+        /// Attempts to get file version and returns no value when the required invariant is not met.
         member private this.TryGetFileVersion(fileLookup: Dictionary<RelativePath, FileVersion>, filePath: RelativePath) =
             let mutable fileVersion = FileVersion.Default
 
@@ -567,8 +605,10 @@ module PromotionSet =
             else
                 Option.None
 
+        /// Coordinates file version equivalent logic for the PromotionSet actor.
         member private this.FileVersionEquivalent(left: FileVersion option, right: FileVersion option) = fileVersionEquivalent left right
 
+        /// Loads load directory snapshot data required by the PromotionSet actor workflow.
         member private this.LoadDirectorySnapshot(directoryVersionId: DirectoryVersionId) =
             task {
                 let directoriesByPath = Dictionary<RelativePath, DirectoryVersion>(StringComparer.OrdinalIgnoreCase)
@@ -613,6 +653,7 @@ module PromotionSet =
                         return Ok { DirectoriesByPath = directoriesByPath; FilesByPath = filesByPath }
             }
 
+        /// Reads read text file version content required by the PromotionSet actor workflow.
         member private this.ReadTextFileVersion(repositoryDto, fileVersion: FileVersion option, correlationId: CorrelationId) =
             task {
                 match fileVersion with
@@ -639,6 +680,7 @@ module PromotionSet =
                             )
             }
 
+        /// Builds text override file version data needed by the PromotionSet actor.
         member private this.CreateTextOverrideFileVersion(filePath: RelativePath, textContent: string, repositoryDto, metadata: EventMetadata) =
             task {
                 try
@@ -670,6 +712,7 @@ module PromotionSet =
                         )
             }
 
+        /// Reads read conflict text pair content required by the PromotionSet actor workflow.
         member private this.ReadConflictTextPair(repositoryDto, conflictFile: StepConflictFile) =
             task {
                 let! oursTextResult = this.ReadTextFileVersion(repositoryDto, conflictFile.OursFile, this.correlationId)
@@ -703,6 +746,7 @@ module PromotionSet =
                         return Ok(oursContent, theirsContent)
             }
 
+        /// Resolves resolve conflict with model data required by the PromotionSet actor workflow.
         member private this.ResolveConflictWithModel(repositoryDto, conflictFile: StepConflictFile, metadata: EventMetadata) =
             task {
                 let modelProvider = this.GetConflictResolutionModelProvider()
@@ -775,6 +819,7 @@ module PromotionSet =
                                                 )
             }
 
+        /// Builds build conflict analyses data returned by the PromotionSet actor workflow.
         member private this.BuildConflictAnalyses
             (
                 repositoryDto,
@@ -850,6 +895,7 @@ module PromotionSet =
                     return Ok(conflictAnalyses |> Seq.toList)
             }
 
+        /// Coordinates materialize merged directory version logic for the PromotionSet actor.
         member private this.MaterializeMergedDirectoryVersion
             (
                 repositoryDto,
@@ -989,6 +1035,7 @@ module PromotionSet =
                     let computedSha = computeSha256ForDirectoryEntries directoryPath preimageEntries
                     let computedBlake3 = computeBlake3ForDirectory directoryPath preimageEntries
 
+                    /// Attempts to reuse directory id and returns no value when the required invariant is not met.
                     let tryReuseDirectoryId (snapshot: DirectorySnapshot) =
                         let mutable existingDirectoryVersion = DirectoryVersion.Default
 
@@ -1070,6 +1117,7 @@ module PromotionSet =
                             )
             }
 
+        /// Computes the directory version produced by applying one promotion step.
         member private this.ComputeAppliedDirectoryVersionForStep
             (
                 step: PromotionSetStep,
@@ -1132,6 +1180,7 @@ module PromotionSet =
                                     not
                                     <| this.FileVersionEquivalent(baseFile, theirsFile)
 
+                                /// Stores set merged file data in the PromotionSet actor state.
                                 let setMergedFile (fileVersion: FileVersion option) =
                                     match fileVersion with
                                     | Option.Some selected -> mergedFilesByPath[filePath] <- selected
@@ -1421,6 +1470,7 @@ module PromotionSet =
                                             | Error graceError -> return Error(Failed graceError.Error)
             }
 
+        /// Builds conflict artifact data needed by the PromotionSet actor.
         member private this.CreateConflictArtifact
             (
                 step: PromotionSetStep,
@@ -1550,6 +1600,7 @@ module PromotionSet =
             Task.CompletedTask
 
         interface IGraceReminderWithGuidKey with
+            /// Schedules schedule reminder async work for the PromotionSet actor.
             member this.ScheduleReminderAsync reminderType delay reminderState correlationId =
                 task {
                     let reminderDto =
@@ -1568,6 +1619,7 @@ module PromotionSet =
                 }
                 :> Task
 
+            /// Handles receive reminder async callbacks for the PromotionSet actor.
             member this.ReceiveReminderAsync(reminder: ReminderDto) : Task<Result<unit, GraceError>> =
                 task {
                     this.correlationId <- reminder.CorrelationId
@@ -1581,6 +1633,7 @@ module PromotionSet =
                         )
                 }
 
+        /// Applies one persisted PromotionSet event to this activation's in-memory state.
         member private this.ApplyEvent(promotionSetEvent: PromotionSetEvent) =
             task {
                 let normalizedMetadata = this.WithActorMetadata promotionSetEvent.Metadata
@@ -1617,6 +1670,7 @@ module PromotionSet =
                         )
             }
 
+        /// Coordinates recompute steps logic for the PromotionSet actor.
         member private this.RecomputeSteps
             (
                 metadata: EventMetadata,
@@ -1753,6 +1807,7 @@ module PromotionSet =
                                 | Error graceError -> return Error graceError
             }
 
+        /// Coordinates rollback created promotions logic for the PromotionSet actor.
         member private this.RollbackCreatedPromotions(createdReferenceIds: List<ReferenceId>, rollbackReason: string, metadata: EventMetadata) =
             task {
                 let mutable index = 0
@@ -1782,6 +1837,7 @@ module PromotionSet =
                 do! branchActorProxy.MarkForRecompute metadata.CorrelationId
             }
 
+        /// Builds promotion reference data needed by the PromotionSet actor.
         member private this.CreatePromotionReference(step: PromotionSetStep, isTerminal: bool, metadata: EventMetadata) =
             task {
                 let directoryVersionActorProxy =
@@ -1830,6 +1886,7 @@ module PromotionSet =
                     | Error graceError -> return Error graceError
             }
 
+        /// Returns required validations for apply data from the PromotionSet actor state or related storage.
         member private this.GetRequiredValidationsForApply() =
             task {
                 let! validationSets = getValidationSets promotionSetDto.RepositoryId 500 false this.correlationId
@@ -1842,6 +1899,7 @@ module PromotionSet =
                     |> List.distinctBy (fun validation -> $"{validation.Name.Trim().ToLowerInvariant()}::{validation.Version.Trim().ToLowerInvariant()}")
             }
 
+        /// Validates required validations pass before the operation continues.
         member private this.EnsureRequiredValidationsPass(metadata: EventMetadata) =
             task {
                 let! requiredValidations = this.GetRequiredValidationsForApply()
@@ -1857,6 +1915,7 @@ module PromotionSet =
                             5000
                             this.correlationId
 
+                    /// Checks whether has pass is true for the PromotionSet actor state.
                     let hasPass (validationName: string) (validationVersion: string) =
                         scopedValidationResults
                         |> List.exists (fun validationResult ->
@@ -1886,6 +1945,7 @@ module PromotionSet =
                             )
             }
 
+        /// Returns approval request from durable history data from the PromotionSet actor state or related storage.
         member private this.GetApprovalRequestFromDurableHistory(approvalRequestId: ApprovalRequestId, scope: ApprovalScope, correlationId: CorrelationId) =
             task {
                 let actor = ApprovalRequest.CreateActorProxy approvalRequestId scope.RepositoryId correlationId
@@ -1910,6 +1970,7 @@ module PromotionSet =
                         return Option.Some request
             }
 
+        /// Builds pending approval request data needed by the PromotionSet actor.
         member private this.CreatePendingApprovalRequest(request: ApprovalRequest, metadata: EventMetadata) =
             task {
                 let scope = request.Scope
@@ -1931,6 +1992,7 @@ module PromotionSet =
                     | Ok _ -> return Ok request
             }
 
+        /// Validates approval allows apply before the operation continues.
         member private this.EnsureApprovalAllowsApply(approvalPolicies: PromotionSetApprovalPolicySnapshot list, metadata: EventMetadata) =
             task {
                 let! currentApprovalPoliciesResult =
@@ -2045,6 +2107,7 @@ module PromotionSet =
                                         .enhance ("ApprovalSummary", summary)
                                 )
                         | Option.Some request ->
+                            /// Coordinates state logic for the PromotionSet actor.
                             let state, message =
                                 match request.Status with
                                 | ApprovalRequestStatus.Rejected -> PromotionSetApprovalState.Rejected, "Approval request was rejected."
@@ -2080,6 +2143,7 @@ module PromotionSet =
                                     )
             }
 
+        /// Applies promotion set changes to the PromotionSet actor state.
         member private this.ApplyPromotionSet(approvalPolicies: PromotionSetApprovalPolicySnapshot list, metadata: EventMetadata) =
             task {
                 if promotionSetDto.Status = PromotionSetStatus.Succeeded then
@@ -2195,9 +2259,11 @@ module PromotionSet =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this PromotionSet actor state.
             member this.GetRepositoryId correlationId = promotionSetDto.RepositoryId |> returnTask
 
         interface IPromotionSetActor with
+            /// Reports whether this PromotionSet actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -2205,24 +2271,30 @@ module PromotionSet =
                 <| promotionSetDto.PromotionSetId.Equals(PromotionSetId.Empty)
                 |> returnTask
 
+            /// Reports whether this PromotionSet actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
                 promotionSetDto.DeletedAt.IsSome |> returnTask
 
+            /// Returns the current PromotionSet actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 promotionSetDto |> returnTask
 
+            /// Returns the persisted PromotionSet event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 state.State :> IReadOnlyList<PromotionSetEvent>
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (promotionSetCommand: PromotionSetCommand) (eventMetadata: EventMetadata) =
                     task { return validateCommandForState state.State promotionSetDto promotionSetCommand eventMetadata }
 
+                /// Runs PromotionSet command decisions, applies emitted events, and persists the result.
                 let processCommand (promotionSetCommand: PromotionSetCommand) (eventMetadata: EventMetadata) =
                     task {
                         match promotionSetCommand with

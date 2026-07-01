@@ -14,8 +14,10 @@ open System.Net.Http
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups shared helpers for notification hub test helpers.
 module private NotificationHubTestHelpers =
 
+    /// Builds a deterministic connection for integration setup fixture for the server integration notification Hub assertions.
     let createConnection includeAuthentication =
         let builder = HubConnectionBuilder()
 
@@ -28,6 +30,7 @@ module private NotificationHubTestHelpers =
             .WithAutomaticReconnect()
             .Build()
 
+    /// Defines start agent session behavior for the surrounding tests used by the server integration notification Hub scenario.
     let startAgentSessionAsync repositoryId agentId workItemId operationId =
         task {
             let parameters = Parameters.Common.StartAgentSessionParameters()
@@ -48,6 +51,7 @@ module private NotificationHubTestHelpers =
             return deserialize<GraceReturnValue<AgentSessionOperationResult>> body
         }
 
+    /// Tries to resolve stop agent session without failing the caller.
     let tryStopAgentSessionAsync repositoryId agentId sessionId workItemId =
         task {
             if not <| String.IsNullOrWhiteSpace sessionId then
@@ -88,6 +92,7 @@ module private NotificationHubTestHelpers =
             let completion = TaskCompletionSource<AutomationEventEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously)
             let unexpectedCompletion = TaskCompletionSource<AutomationEventEnvelope>(TaskCreationOptions.RunContinuationsAsynchronously)
 
+            /// Defines matches expected event behavior for the surrounding tests used by the server integration notification Hub scenario.
             let matchesExpectedEvent (envelope: AutomationEventEnvelope) =
                 envelope.ActorId.Equals(agentId, StringComparison.OrdinalIgnoreCase)
                 && envelope.EventType = expectedEventType
@@ -142,9 +147,11 @@ module private NotificationHubTestHelpers =
             return envelope
         }
 
+/// Covers notification hub scenarios.
 [<NonParallelizable>]
 type NotificationHubTests() =
 
+    /// Verifies the authenticated client receives repository automation event scenario.
     [<Test>]
     member _.AuthenticatedClientReceivesRepositoryAutomationEvent() =
         task {
@@ -192,6 +199,7 @@ type NotificationHubTests() =
             do! NotificationHubTestHelpers.tryStopAgentSessionAsync repositoryId agentId sessionId workItemId
         }
 
+    /// Verifies the unauthenticated client cannot connect to notifications hub scenario.
     [<Test>]
     member _.UnauthenticatedClientCannotConnectToNotificationsHub() =
         task {

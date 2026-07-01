@@ -15,7 +15,9 @@ open Grace.Types.Validation
 open Grace.Types.WorkItem
 open System
 
+/// Contains Grace Server eventing publisher behavior and supporting helpers.
 module EventingPublisher =
+    /// Gets try get guid from metadata data needed by the server flow.
     let private tryGetGuidFromMetadata (propertyName: string) (metadata: EventMetadata) =
         match metadata.Properties.TryGetValue(propertyName) with
         | true, rawValue ->
@@ -24,17 +26,22 @@ module EventingPublisher =
             | _ -> Option.None
         | _ -> Option.None
 
+    /// Gets try get repository id data needed by the server flow.
     let private tryGetRepositoryId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof RepositoryId) metadata
 
+    /// Gets try get owner id data needed by the server flow.
     let private tryGetOwnerId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof OwnerId) metadata
 
+    /// Gets try get organization id data needed by the server flow.
     let private tryGetOrganizationId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof OrganizationId) metadata
 
+    /// Gets try get actor id data needed by the server flow.
     let private tryGetActorId (metadata: EventMetadata) (defaultActorId: string) =
         match metadata.Properties.TryGetValue("ActorId") with
         | true, actorId when String.IsNullOrWhiteSpace actorId |> not -> actorId
         | _ -> defaultActorId
 
+    /// Implements envelope for the server request pipeline.
     let private envelope
         (eventType: AutomationEventType)
         (metadata: EventMetadata)
@@ -46,6 +53,7 @@ module EventingPublisher =
         =
         AutomationEventEnvelope.Create eventType metadata.Timestamp metadata.CorrelationId ownerId organizationId repositoryId actorId dataJson
 
+    /// Gets try get terminal promotion set id data needed by the server flow.
     let private tryGetTerminalPromotionSetId (links: ReferenceLinkType seq) =
         links
         |> Seq.tryPick (fun link ->
@@ -53,6 +61,7 @@ module EventingPublisher =
             | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
             | _ -> Option.None)
 
+    /// Computes map promotion set event type data used by Grace Server.
     let private mapPromotionSetEventType (eventType: PromotionSetEventType) =
         match eventType with
         | PromotionSetEventType.Created _ -> AutomationEventType.PromotionSetCreated
@@ -66,6 +75,7 @@ module EventingPublisher =
         | PromotionSetEventType.ApplyFailed _ -> AutomationEventType.PromotionSetApplyFailed
         | PromotionSetEventType.LogicalDeleted _ -> AutomationEventType.PromotionSetUpdated
 
+    /// Wraps an agent-session operation result in an automation envelope using metadata scope and actor identity.
     let tryCreateAgentSessionEnvelope (eventType: AutomationEventType) (metadata: EventMetadata) (operationResult: AgentSessionOperationResult) =
         let actorId =
             if String.IsNullOrWhiteSpace operationResult.Session.AgentId then
@@ -86,6 +96,7 @@ module EventingPublisher =
             (serialize operationResult)
         |> Some
 
+    /// Converts Grace domain events that have automation mappings into serialized event envelopes for dispatch.
     let tryCreateEnvelope (graceEvent: GraceEvent) =
         match graceEvent with
         | PromotionSetEvent promotionSetEvent ->

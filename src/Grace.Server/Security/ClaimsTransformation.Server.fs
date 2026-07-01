@@ -9,6 +9,7 @@ open System.Threading.Tasks
 type GraceClaimsTransformation(log: ILogger<GraceClaimsTransformation>) =
 
     interface IClaimsTransformation with
+        /// Adds Grace-specific mapped claims to authenticated principals after bearer token validation.
         member _.TransformAsync(principal: ClaimsPrincipal) =
             task {
                 if isNull principal then

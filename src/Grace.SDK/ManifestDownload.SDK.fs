@@ -10,7 +10,9 @@ open System
 open System.IO
 open System.Threading.Tasks
 
+/// Downloads manifest-backed files by resolving ContentBlock URIs and streaming validated bytes.
 module ManifestDownload =
+    /// Repository, FileVersion, output stream, and chunking expectations for manifest reconstruction.
     type ManifestDownloadRequest =
         {
             OwnerId: string
@@ -25,6 +27,7 @@ module ManifestDownload =
             ExpectedChunkingSuiteId: ChunkingSuiteId
         }
 
+    /// Reports whether manifest reconstruction was used and how many bytes and blocks were written.
     type ManifestDownloadResult =
         {
             FileVersion: FileVersion
@@ -34,12 +37,14 @@ module ManifestDownload =
             UsedManifestDownload: bool
         }
 
+    /// Storage callbacks that let tests or hosts provide URI resolution and ContentBlock downloads.
     type ManifestDownloadClient =
         {
             GetContentBlockDownloadUri: GetContentBlockDownloadUriParameters -> Task<GraceResult<string>>
             DownloadContentBlock: ContentBlockAddress -> Uri -> Task<GraceResult<byte array>>
         }
 
+    /// Copies repository identity and correlation fields from a download request into storage parameters.
     let private setStorageParameters (request: ManifestDownloadRequest) (parameters: StorageParameters) =
         parameters.OwnerId <- request.OwnerId
         parameters.OwnerName <- request.OwnerName
@@ -50,11 +55,14 @@ module ManifestDownload =
         parameters.CorrelationId <- request.CorrelationId
         parameters
 
+    /// Wraps a manifest download validation or transfer failure in a correlated Grace error.
     let private error correlationId message = Error(GraceError.Create message correlationId)
 
+    /// Reports a whole-file download path where no manifest bytes were streamed.
     let private emptyResult fileVersion =
         { FileVersion = fileVersion; Manifest = None; BytesWritten = 0L; DownloadedBlockCount = 0; UsedManifestDownload = false }
 
+    /// Builds the server request for a SAS-backed ContentBlock download URI.
     let private buildDownloadUriParameters request contentBlockAddress =
         let parameters = GetContentBlockDownloadUriParameters()
         setStorageParameters request parameters |> ignore
@@ -71,6 +79,7 @@ module ManifestDownload =
 
         parameters
 
+    /// Converts manifest validation failures into user-facing download error text.
     let private describeValidationError validationError =
         match validationError with
         | ManifestValidation.ContentBlockPayloadInvalid (_, contentBlockError) -> $"ContentBlock payload is invalid: {contentBlockError}"
@@ -83,6 +92,7 @@ module ManifestDownload =
         | ManifestValidation.ManifestAddressMismatch (expected, actual) -> $"Manifest address mismatch. Expected {expected}, actual {actual}."
         | other -> $"{other}"
 
+    /// Checks required manifest metadata before any ContentBlock downloads are attempted.
     let private validateManifestShape expectedChunkingSuiteId (manifest: FileManifest) =
         if isNull (box manifest) then
             Error ManifestValidation.NullManifest
@@ -105,6 +115,7 @@ module ManifestDownload =
         else
             Ok()
 
+    /// Ensures manifest blocks are non-empty, addressable, contiguous, and total to the manifest size.
     let private validateManifestRanges (manifest: FileManifest) =
         let mutable expectedOffset = 0L
         let mutable validationError = None
@@ -132,6 +143,7 @@ module ManifestDownload =
         | None when expectedOffset <> manifest.Size -> Error(ManifestValidation.ManifestSizeMismatch(manifest.Size, expectedOffset))
         | None -> Ok()
 
+    /// Recomputes the manifest address and compares it with the address carried by the FileManifest.
     let private validateManifestAddress (manifest: FileManifest) =
         let expectedAddress = ContentAddress.computeManifestAddressForManifest manifest
 
@@ -140,11 +152,13 @@ module ManifestDownload =
         else
             Ok()
 
+    /// Runs all manifest metadata, range, and address checks required before download reconstruction.
     let private validateManifest expectedChunkingSuiteId manifest =
         validateManifestShape expectedChunkingSuiteId manifest
         |> Result.bind (fun () -> validateManifestRanges manifest)
         |> Result.bind (fun () -> validateManifestAddress manifest)
 
+    /// Downloads each manifest ContentBlock, validates block and file hashes, and writes bytes to the output stream.
     let private writeManifestToStream (client: ManifestDownloadClient) (request: ManifestDownloadRequest) (manifest: FileManifest) (outputStream: Stream) =
         task {
             use hasher = Hasher.New()
@@ -240,6 +254,7 @@ module ManifestDownload =
                         )
         }
 
+    /// Downloads a FileVersion through the supplied storage callbacks, using manifest blocks when available.
     let downloadFileWithClient (client: ManifestDownloadClient) (request: ManifestDownloadRequest) : Task<GraceResult<ManifestDownloadResult>> =
         if isNull (box request.FileVersion) then
             Task.FromResult(error request.CorrelationId "FileVersion is required for manifest download.")
@@ -260,10 +275,12 @@ module ManifestDownload =
                         Task.FromResult(error request.CorrelationId $"Manifest download reconstruction failed: {describeValidationError validationError}")
                     | Ok () -> writeManifestToStream client request manifest outputStream
 
+    /// Wires manifest download callbacks to the live Grace storage endpoints and object-storage transfer helper.
     let serverClient correlationId =
         {
             GetContentBlockDownloadUri = Storage.GetContentBlockDownloadUri
             DownloadContentBlock = fun contentBlockAddress uri -> Storage.DownloadContentBlockFromObjectStorage contentBlockAddress uri correlationId
         }
 
+    /// Downloads a FileVersion with the default server-backed manifest download client.
     let downloadFile request = downloadFileWithClient (serverClient request.CorrelationId) request

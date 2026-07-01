@@ -15,10 +15,12 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Plans manifest-backed file uploads, coordinates dedupe discovery, transfers missing blocks, and finalizes manifests.
 module ManifestUpload =
     [<Literal>]
     let OptInEnvironmentVariable = "GRACE_MANIFEST_UPLOADS"
 
+    /// Repository identity, source file, FileVersion, correlation id, and planner options for a manifest upload.
     type ManifestUploadRequest =
         {
             OwnerId: OwnerId
@@ -34,6 +36,7 @@ module ManifestUpload =
             PlannerOptions: LocalPlanner.Options
         }
 
+    /// Reports the returned FileVersion plus manifest session details and uploaded block count.
     type ManifestUploadResult =
         {
             FileVersion: FileVersion
@@ -43,6 +46,7 @@ module ManifestUpload =
             UsedManifestUpload: bool
         }
 
+    /// Storage callbacks that let tests or hosts drive upload sessions, dedupe discovery, block transfer, and finalization.
     type ManifestUploadClient =
         {
             StartSession: StartManifestUploadSessionParameters -> Task<GraceResult<UploadSessionDecision>>
@@ -55,8 +59,10 @@ module ManifestUpload =
             FinalizeManifest: FinalizeManifestUploadParameters -> Task<GraceResult<UploadSessionDecision>>
         }
 
+    /// Indicates that manifest-backed uploads are enabled for SDK callers.
     let isOptedIn () = true
 
+    /// Copies repository identity and correlation fields from an upload request into storage parameters.
     let private setStorageParameters (request: ManifestUploadRequest) (parameters: StorageParameters) =
         parameters.OwnerId <- $"{request.OwnerId}"
         parameters.OwnerName <- request.OwnerName
@@ -67,8 +73,10 @@ module ManifestUpload =
         parameters.CorrelationId <- request.CorrelationId
         parameters
 
+    /// Wraps a manifest upload validation or transfer failure in a correlated Grace error.
     let private error correlationId message = Error(GraceError.Create message correlationId)
 
+    /// Converts a local manifest upload plan into the FileManifest sent during finalization.
     let private createManifest (plan: LocalPlanner.LocalFilePlan) =
         match plan.ManifestAddress with
         | None -> None
@@ -80,6 +88,7 @@ module ManifestUpload =
 
             Some(FileManifest.Create(manifestAddress, plan.ChunkingSuiteId, plan.FileContentHash, plan.ExpectedSize, blocks))
 
+    /// Encodes one planned ContentBlock payload and verifies that the encoded address still matches the plan.
     let private encodeBlock correlationId (uploadPlan: LocalPlanner.ContentBlockUploadPlan) =
         match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = uploadPlan.Bytes } ] with
         | Error encodeError -> error correlationId $"Failed to encode ContentBlock {uploadPlan.BlockAddress}: {encodeError}."
@@ -87,6 +96,7 @@ module ManifestUpload =
             error correlationId $"Encoded ContentBlock address mismatch. Expected {uploadPlan.BlockAddress}, actual {encodedBlock.Address}."
         | Ok encodedBlock -> Ok encodedBlock
 
+    /// Builds the upload-session start request with manifest hash, size, chunking suite, and operation id.
     let private buildStartParameters request uploadSessionId (plan: LocalPlanner.LocalFilePlan) =
         let parameters = StartManifestUploadSessionParameters()
         setStorageParameters request parameters |> ignore
@@ -99,6 +109,7 @@ module ManifestUpload =
         parameters.OperationId <- $"manifest-upload-{uploadSessionId:N}-start"
         parameters
 
+    /// Builds the key-chunk discovery request used to find reusable ContentBlocks.
     let private buildDiscoveryParameters request (plan: LocalPlanner.LocalFilePlan) =
         let parameters = DiscoverContentBlocksParameters()
         setStorageParameters request parameters |> ignore
@@ -111,6 +122,7 @@ module ManifestUpload =
 
         parameters
 
+    /// Builds the positive-candidate dedupe discovery request with reusable range hints.
     let private buildIssueDiscoveryParameters request uploadSessionId operationIndex expiresAt minimumReuseRunLength keyChunkAddresses hints =
         let parameters = IssueDedupeDiscoveryParameters()
         setStorageParameters request parameters |> ignore
@@ -123,6 +135,7 @@ module ManifestUpload =
         parameters.Hints <- hints
         parameters
 
+    /// Builds the request that claims server-accepted reusable ContentBlock ranges for the upload session.
     let private buildClaimReuseRangesParameters request uploadSessionId operationIndex discoveryOperationId hints =
         let parameters = ClaimReuseRangesParameters()
         setStorageParameters request parameters |> ignore
@@ -133,6 +146,7 @@ module ManifestUpload =
         parameters.Hints <- hints
         parameters
 
+    /// Builds the request that reserves a missing ContentBlock payload before direct object-storage upload.
     let private buildRegisterParameters request uploadSessionId operationIndex (block: ContentBlockFormat.EncodedContentBlock) logicalOffset logicalLength =
         let parameters = RegisterContentBlockUploadParameters()
         setStorageParameters request parameters |> ignore
@@ -145,6 +159,7 @@ module ManifestUpload =
         parameters.ExpectedPayloadLength <- int64 block.Payload.Length
         parameters
 
+    /// Builds the request for a SAS-backed ContentBlock upload URI.
     let private buildUploadUriParameters request uploadSessionId contentBlockAddress =
         let parameters = GetContentBlockUploadUriParameters()
         setStorageParameters request parameters |> ignore
@@ -153,6 +168,7 @@ module ManifestUpload =
         parameters.AuthorizedScope <- request.AuthorizedScope
         parameters
 
+    /// Builds the request that confirms object-storage placement after a ContentBlock payload upload.
     let private buildConfirmParameters request uploadSessionId operationIndex (block: ContentBlockFormat.EncodedContentBlock) placement =
         let parameters = ConfirmContentBlockUploadParameters()
         setStorageParameters request parameters |> ignore
@@ -164,6 +180,7 @@ module ManifestUpload =
         parameters.StoragePlacement <- placement
         parameters
 
+    /// Builds the request that finalizes the upload session with the completed file manifest.
     let private buildFinalizeParameters request uploadSessionId manifest =
         let parameters = FinalizeManifestUploadParameters()
         setStorageParameters request parameters |> ignore
@@ -173,6 +190,7 @@ module ManifestUpload =
         parameters.Manifest <- manifest
         parameters
 
+    /// Produces the returned FileVersion that points at the finalized manifest instead of whole-file bytes.
     let private manifestFileVersion (fileVersion: FileVersion) (manifest: FileManifest) =
         let manifestVersion =
             FileVersion.CreateWithHashes
@@ -187,11 +205,13 @@ module ManifestUpload =
         manifestVersion.ContentReference <- FileContentReference.FileManifest manifest
         manifestVersion
 
+    /// Hashes a storage-pool and chunk-address pair into the protected dedupe index address format.
     let private protectedChunkAddress storagePoolId chunkAddress =
         let preimage = $"grace.dedupe-index.v1.protected-window\n{storagePoolId}\n{chunkAddress}"
         let hash = SHA256.HashData(Encoding.UTF8.GetBytes(preimage))
         $"protected-sha256:{Convert.ToHexString(hash).ToLowerInvariant()}"
 
+    /// Checks whether a discovery candidate proves reuse for one planned ContentBlock.
     let private candidateMatchesBlock (block: LocalPlanner.ContentBlockPlan) (candidate: ContentBlockDiscoveryCandidate) =
         candidate.ContentBlockAddress = block.Address
         && block.ChunkAddresses
@@ -199,6 +219,7 @@ module ManifestUpload =
                candidate.ProtectedChunkAddresses
                |> Array.exists (fun protectedAddress -> protectedAddress = protectedChunkAddress candidate.StoragePoolId chunkAddress))
 
+    /// Selects dedupe reuse hints from discovery candidates that meet the policy run-length threshold.
     let private reusableHints (plan: LocalPlanner.LocalFilePlan) (discovery: DiscoverContentBlocksResult) =
         if isNull discovery.CandidateContentBlocks
            || isNull (box discovery.Policy)
@@ -248,6 +269,7 @@ module ManifestUpload =
 
                 claimedRangeIndex <- claimedRangeIndex + 1
 
+    /// Uploads a local file through injected storage callbacks, reusing claimed blocks and uploading only missing payloads.
     let uploadFileWithClient (client: ManifestUploadClient) (request: ManifestUploadRequest) : Task<GraceResult<ManifestUploadResult>> =
         task {
             if isNull (box request.FileVersion) then
@@ -436,4 +458,5 @@ module ManifestUpload =
             FinalizeManifest = Storage.FinalizeManifestUpload
         }
 
+    /// Uploads a local file with the default server-backed manifest upload client.
     let uploadFile request = uploadFileWithClient serverClient request

@@ -7,8 +7,10 @@ open NodaTime
 open System
 open System.Collections.Generic
 
+/// Contains tests covering validation quick scan determinism behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ValidationQuickScanDeterminism() =
+    /// Exercises metadata coverage for the types validation contract.
     let metadata timestamp =
         {
             Timestamp = timestamp
@@ -18,6 +20,7 @@ type ValidationQuickScanDeterminism() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Verifies that update uses event payload and timestamp.
     [<Test>]
     member _.UpdateUsesEventPayloadAndTimestamp() =
         let timestamp = Instant.FromUtc(2025, 1, 1, 0, 0)
@@ -42,6 +45,7 @@ type ValidationQuickScanDeterminism() =
         Assert.That(updated.UpdatedAt, Is.EqualTo(Some timestamp))
         Assert.That(updated.OnBehalfOf, Is.EquivalentTo([ UserId "tester" ]))
 
+    /// Verifies that update is deterministic for same event.
     [<Test>]
     member _.UpdateIsDeterministicForSameEvent() =
         let timestamp = Instant.FromUtc(2025, 2, 1, 0, 0)

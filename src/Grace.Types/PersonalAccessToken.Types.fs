@@ -5,12 +5,15 @@ open Orleans
 open System
 open System.Text
 
+/// Contains personal access token helpers.
 module PersonalAccessToken =
     [<Literal>]
     let TokenPrefix = "grace_pat_v1_"
 
+    /// Represents personal access token id.
     type PersonalAccessTokenId = Guid
 
+    /// Represents personal access token summary.
     [<GenerateSerializer>]
     type PersonalAccessTokenSummary =
         {
@@ -28,6 +31,7 @@ module PersonalAccessToken =
             RevokedAt: Instant option
         }
 
+    /// Represents personal access token created.
     [<GenerateSerializer>]
     type PersonalAccessTokenCreated =
         {
@@ -37,6 +41,7 @@ module PersonalAccessToken =
             Summary: PersonalAccessTokenSummary
         }
 
+    /// Represents personal access token validation result.
     [<GenerateSerializer>]
     type PersonalAccessTokenValidationResult =
         {
@@ -50,6 +55,7 @@ module PersonalAccessToken =
             GroupIds: string list
         }
 
+    /// Encodes token bytes with URL-safe Base64 and no padding.
     let private base64UrlEncode (bytes: byte array) =
         Convert
             .ToBase64String(bytes)
@@ -57,6 +63,7 @@ module PersonalAccessToken =
             .Replace('+', '-')
             .Replace('/', '_')
 
+    /// Attempts to base64 url decode.
     let private tryBase64UrlDecode (value: string) =
         try
             let normalized = value.Replace('-', '+').Replace('_', '/')
@@ -66,6 +73,7 @@ module PersonalAccessToken =
         with
         | _ -> None
 
+    /// Formats token.
     let formatToken (userId: string) (tokenId: Guid) (secret: byte array) =
         let userIdBytes = Encoding.UTF8.GetBytes(userId)
         let userIdB64 = base64UrlEncode userIdBytes
@@ -73,6 +81,7 @@ module PersonalAccessToken =
         let secretB64 = base64UrlEncode secret
         $"{TokenPrefix}{userIdB64}.{tokenIdN}.{secretB64}"
 
+    /// Attempts to parse token.
     let tryParseToken (token: string) =
         if String.IsNullOrWhiteSpace token then
             None

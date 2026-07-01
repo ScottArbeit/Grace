@@ -5,12 +5,14 @@ open Grace.Shared.Parameters.Webhook
 open Grace.Types.Webhooks
 open System.Collections.Generic
 
+/// Server webhook-rule contract returned by webhook rule endpoints.
 type WebhookRuleDto = Grace.Types.Webhooks.WebhookRule
+/// Server webhook-delivery contract returned by webhook delivery endpoints.
 type WebhookDeliveryDto = Grace.Types.Webhooks.WebhookDelivery
 
-/// The WebhookRule module provides webhook rule lifecycle helpers.
+/// SDK entry point for webhook rule configuration and test-delivery recording.
 type WebhookRule() =
-    /// Creates a webhook rule with its destination URL.
+    /// Registers a webhook rule and destination URL for the requested repository or branch scope.
     static member public Create(parameters: CreateWebhookRuleParameters) =
         postServer<CreateWebhookRuleParameters, WebhookRuleDto> (parameters |> ensureCorrelationIdIsSet, "webhook/rule/create")
 
@@ -42,7 +44,7 @@ type WebhookRule() =
     static member public Test(parameters: TestWebhookRuleParameters) =
         postServer<TestWebhookRuleParameters, WebhookDeliveryDto> (parameters |> ensureCorrelationIdIsSet, "webhook/rule/test")
 
-/// The WebhookDelivery module provides read helpers for webhook delivery observability.
+/// SDK entry point for inspecting recorded webhook delivery attempts.
 type WebhookDelivery() =
     /// Lists webhook deliveries for a repository or branch scope.
     static member public List(parameters: ListWebhookDeliveriesParameters) =

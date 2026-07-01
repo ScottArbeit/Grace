@@ -21,7 +21,9 @@ open System.Security.Cryptography
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the agent command parser, handlers, and output helpers.
 module AgentCommand =
+    /// Defines the options parsed by the agent command handlers.
     module private Options =
         let addSummaryWorkItemId =
             new Option<string>(
@@ -194,8 +196,10 @@ module AgentCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Defines structured data exchanged by CLI helpers.
     type private AddSummaryResult = { WorkItem: string; SummaryArtifactId: string; PromptArtifactId: string option; PromotionSetId: string option }
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private LocalAgentSessionState =
         {
             AgentId: string
@@ -224,6 +228,7 @@ module AgentCommand =
 
     let private localStateFileName = "agent-session-state.json"
 
+    /// Tries to map parse guid and returns a GraceError instead of throwing on unsupported input.
     let private tryParseGuid (value: string) (errorMessage: string) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
@@ -234,6 +239,7 @@ module AgentCommand =
         else
             Ok parsed
 
+    /// Tries to map normalize work item identifier and returns a GraceError instead of throwing on unsupported input.
     let private tryNormalizeWorkItemIdentifier (value: string) (parseResult: ParseResult) =
         let mutable parsedGuid = Guid.Empty
 
@@ -255,12 +261,14 @@ module AgentCommand =
             else
                 Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemId) (getCorrelationId parseResult))
 
+    /// Tries to map get option string and returns a GraceError instead of throwing on unsupported input.
     let private tryGetOptionString (parseResult: ParseResult) (option: Option<string>) =
         parseResult.GetValue(option)
         |> Option.ofObj
         |> Option.map (fun value -> value.Trim())
         |> Option.filter (fun value -> not <| String.IsNullOrWhiteSpace(value))
 
+    /// Evaluates has repository context option against parsed options and command state.
     let private hasRepositoryContextOption (parseResult: ParseResult) =
         [
             OptionName.OwnerId
@@ -272,6 +280,7 @@ module AgentCommand =
         ]
         |> List.exists (isOptionPresent parseResult)
 
+    /// Ensures required command context is present.
     let private ensureRepositoryContextIsAvailable (parseResult: ParseResult) =
         if configurationFileExists ()
            || hasRepositoryContextOption parseResult then
@@ -283,6 +292,7 @@ module AgentCommand =
                     (getCorrelationId parseResult)
             )
 
+    /// Ensures required command context is present.
     let private ensureRepositoryContextIsComplete (graceIds: GraceIds) (parseResult: ParseResult) =
         if
             graceIds.OwnerId = Guid.Empty
@@ -302,6 +312,7 @@ module AgentCommand =
         else
             Ok()
 
+    /// Reads local state file path from ParseResult, local configuration, or Grace ids.
     let private getLocalStateFilePath () =
         let graceDirectory =
             if configurationFileExists () then
@@ -311,6 +322,7 @@ module AgentCommand =
 
         Path.GetFullPath(Path.Combine(graceDirectory, localStateFileName))
 
+    /// Tries to map read local state and returns a GraceError instead of throwing on unsupported input.
     let private tryReadLocalState (parseResult: ParseResult) =
         let stateFilePath = getLocalStateFilePath ()
         let correlationId = getCorrelationId parseResult
@@ -335,6 +347,7 @@ module AgentCommand =
                     correlationId
             )
 
+    /// Tries to map write local state and returns a GraceError instead of throwing on unsupported input.
     let private tryWriteLocalState (parseResult: ParseResult) (stateFilePath: string) (state: LocalAgentSessionState) =
         let correlationId = getCorrelationId parseResult
 
@@ -347,26 +360,32 @@ module AgentCommand =
         with
         | ex -> Error(GraceError.Create ($"Unable to write local agent session state to {stateFilePath}: {ex.Message}") correlationId)
 
+    /// Evaluates has bootstrapped identity against parsed options and command state.
     let private hasBootstrappedIdentity (state: LocalAgentSessionState) =
         not <| String.IsNullOrWhiteSpace(state.AgentId)
         && not
            <| String.IsNullOrWhiteSpace(state.AgentDisplayName)
 
+    /// Evaluates has active session against parsed options and command state.
     let private hasActiveSession (state: LocalAgentSessionState) =
         not
         <| String.IsNullOrWhiteSpace(state.ActiveSessionId)
         || not
            <| String.IsNullOrWhiteSpace(state.ActiveWorkItemIdOrNumber)
 
+    /// Combines an operation prefix and correlation id into the local agent operation id.
     let private createDefaultOperationId (prefix: string) (correlationId: string) = $"{prefix}:{correlationId}"
 
+    /// Normalizes Grace ids for operation id by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeOperationId (explicitOperationId: string option) (fallbackPrefix: string) (correlationId: string) =
         explicitOperationId
         |> Option.defaultValue (createDefaultOperationId fallbackPrefix correlationId)
 
+    /// Coordinates stale state error behavior for this CLI command path.
     let private staleStateError (parseResult: ParseResult) (details: string) =
         GraceError.Create $"{details} Run `grace agent work status` and then `grace agent work stop` to reconcile local state." (getCorrelationId parseResult)
 
+    /// Ensures required command context is present.
     let private ensureBootstrapped (parseResult: ParseResult) (state: LocalAgentSessionState) =
         if hasBootstrappedIdentity state then
             Ok()
@@ -377,6 +396,7 @@ module AgentCommand =
                     (getCorrelationId parseResult)
             )
 
+    /// Converts command data into the required shape.
     let private toSessionInfo (state: LocalAgentSessionState) (lifecycleState: AgentSessionLifecycleState) =
         { AgentSessionInfo.Default with
             SessionId = state.ActiveSessionId
@@ -388,6 +408,7 @@ module AgentCommand =
             LifecycleState = lifecycleState
         }
 
+    /// Packages a local agent operation result with ids, state, timestamps, and optional diagnostics.
     let private createLocalOperationResult
         (state: LocalAgentSessionState)
         (lifecycleState: AgentSessionLifecycleState)
@@ -402,6 +423,7 @@ module AgentCommand =
             WasIdempotentReplay = wasReplay
         }
 
+    /// Writes operation summary data through the CLI output contract.
     let private writeOperationSummary (parseResult: ParseResult) (result: AgentSessionOperationResult) =
         if
             not (parseResult |> json)
@@ -433,6 +455,7 @@ module AgentCommand =
             if result.WasIdempotentReplay then
                 AnsiConsole.MarkupLine("[yellow]Operation was handled as an idempotent replay.[/]")
 
+    /// Clears inherited active session values so explicitly scoped access commands do not target child resources accidentally.
     let private clearActiveSession (state: LocalAgentSessionState) (operationId: string) (correlationId: string) =
         { state with
             ActiveSessionId = String.Empty
@@ -443,6 +466,7 @@ module AgentCommand =
             LastUpdatedAtUtc = DateTime.UtcNow
         }
 
+    /// Tries to map normalize promotion set id and returns a GraceError instead of throwing on unsupported input.
     let private tryNormalizePromotionSetId (value: string option) (parseResult: ParseResult) =
         match value with
         | None -> Ok String.Empty
@@ -451,6 +475,7 @@ module AgentCommand =
             | Error error -> Error error
             | Ok parsed -> Ok(parsed.ToString())
 
+    /// Infers command metadata from the supplied input.
     let private inferMimeType (filePath: string) =
         match Path.GetExtension(filePath).ToLowerInvariant() with
         | ".md" -> "text/markdown"
@@ -458,12 +483,14 @@ module AgentCommand =
         | ".json" -> "application/json"
         | _ -> "application/octet-stream"
 
+    /// Tries to map read file content and returns a GraceError instead of throwing on unsupported input.
     let private tryReadFileContent (filePath: string) (displayName: string) (parseResult: ParseResult) =
         try
             Ok(File.ReadAllText(filePath))
         with
         | ex -> Error(GraceError.Create ($"Failed to read {displayName} file '{filePath}': {ex.Message}") (getCorrelationId parseResult))
 
+    /// Adds options or child commands to a command definition.
     let private addSummaryHandler (parseResult: ParseResult) =
         async {
             if verbose parseResult then printParseResult parseResult
@@ -599,6 +626,7 @@ module AgentCommand =
         }
         |> Async.StartAsTask
 
+    /// Routes the bootstrap command from parsed options through validation, the SDK call, and result rendering.
     let private bootstrapHandler (parseResult: ParseResult) =
         async {
             let correlationId = getCorrelationId parseResult
@@ -679,6 +707,7 @@ module AgentCommand =
         }
         |> Async.StartAsTask
 
+    /// Runs the work start flow with an injected service function so tests can exercise the command without the real SDK call.
     let internal workStartWith (startSession: StartAgentSessionParameters -> Task<GraceResult<AgentSessionOperationResult>>) (parseResult: ParseResult) =
         async {
             match ensureRepositoryContextIsAvailable parseResult with
@@ -811,6 +840,7 @@ module AgentCommand =
         }
         |> Async.StartAsTask
 
+    /// Runs the work stop flow with an injected service function so tests can exercise the command without the real SDK call.
     let internal workStopWith (stopSession: StopAgentSessionParameters -> Task<GraceResult<AgentSessionOperationResult>>) (parseResult: ParseResult) =
         async {
             match ensureRepositoryContextIsAvailable parseResult with
@@ -941,6 +971,7 @@ module AgentCommand =
         }
         |> Async.StartAsTask
 
+    /// Runs the work status flow with an injected service function so tests can exercise the command without the real SDK call.
     let internal workStatusWith (getStatus: GetAgentSessionStatusParameters -> Task<GraceResult<AgentSessionOperationResult>>) (parseResult: ParseResult) =
         async {
             match ensureRepositoryContextIsAvailable parseResult with
@@ -1065,49 +1096,62 @@ module AgentCommand =
         }
         |> Async.StartAsTask
 
+    /// Routes the work start command from parsed options through validation, the SDK call, and result rendering.
     let private workStartHandler (parseResult: ParseResult) = workStartWith AgentSession.Start parseResult
+    /// Routes the work stop command from parsed options through validation, the SDK call, and result rendering.
     let private workStopHandler (parseResult: ParseResult) = workStopWith AgentSession.Stop parseResult
+    /// Routes the work status command from parsed options through validation, the SDK call, and result rendering.
     let private workStatusHandler (parseResult: ParseResult) = workStatusWith AgentSession.Status parseResult
 
+    /// Executes the add summary command by binding ParseResult values to the SDK request and CLI output contract.
     type AddSummary() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous add summary action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = addSummaryHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the bootstrap command by binding ParseResult values to the SDK request and CLI output contract.
     type Bootstrap() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous bootstrap action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = bootstrapHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the work start command by binding ParseResult values to the SDK request and CLI output contract.
     type WorkStart() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous work start action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = workStartHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the work stop command by binding ParseResult values to the SDK request and CLI output contract.
     type WorkStop() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous work stop action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = workStopHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the work status command by binding ParseResult values to the SDK request and CLI output contract.
     type WorkStatus() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous work status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = workStatusHandler parseResult
@@ -1115,6 +1159,7 @@ module AgentCommand =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

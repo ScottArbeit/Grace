@@ -19,6 +19,7 @@ open Grace.Types.Common
 open Grace.Types
 open System.Net.Http
 
+/// Captures owner values used by the test suite.
 [<Parallelizable(ParallelScope.All)>]
 type Owner() =
 
@@ -27,6 +28,7 @@ type Owner() =
             .Create(fun builder -> builder.AddConsole().AddDebug() |> ignore)
             .CreateLogger("Owner.Server.Tests")
 
+    /// Builds a deterministic owner for integration setup fixture for the server integration owner assertions.
     let createOwnerAsync () =
         task {
             let createdOwnerId = $"{Guid.NewGuid()}"
@@ -41,6 +43,7 @@ type Owner() =
             return createdOwnerId
         }
 
+    /// Gets owner from the running test server.
     let getOwnerAsync ownerId =
         task {
             let parameters = Parameters.Owner.GetOwnerParameters()
@@ -56,8 +59,10 @@ type Owner() =
             return returnValue.ReturnValue
         }
 
+    /// Exposes test context for test diagnostics.
     member val public TestContext = TestContext.CurrentContext with get, set
 
+    /// Verifies the set description with valid values scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithValidValues() =
@@ -80,6 +85,7 @@ type Owner() =
             Assert.That(stored.Description, Is.EqualTo(expectedDescription))
         }
 
+    /// Verifies the set type to public scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetTypeToPublic() =
@@ -94,6 +100,7 @@ type Owner() =
             Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
+    /// Verifies the set type to private scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetTypeToPrivate() =
@@ -108,6 +115,7 @@ type Owner() =
             Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
+    /// Verifies the set type to invalid type scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetTypeToInvalidType() =
@@ -121,6 +129,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerType))
         }
 
+    /// Verifies the set type to empty type scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetTypeToEmptyType() =
@@ -134,6 +143,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.OwnerTypeIsRequired))
         }
 
+    /// Verifies the set description with invalid description scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithInvalidDescription() =
@@ -163,6 +173,7 @@ type Owner() =
             Assert.That(stored.Description, Is.EqualTo(baseline))
         }
 
+    /// Verifies the set description with invalid owner ID scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithInvalidOwnerId() =
@@ -178,6 +189,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerId))
         }
 
+    /// Verifies the set description with empty description scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithEmptyDescription() =
@@ -194,6 +206,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.DescriptionIsRequired))
         }
 
+    /// Verifies the set description with empty owner ID scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetDescriptionWithEmptyOwnerId() =
@@ -208,6 +221,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired))
         }
 
+    /// Verifies the set search visibility to visible scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSearchVisibilityToVisible() =
@@ -227,6 +241,7 @@ type Owner() =
             Assert.That(stored.SearchVisibility, Is.EqualTo(SearchVisibility.Visible))
         }
 
+    /// Verifies the set search visibility to not visible scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSearchVisibilityToNotVisible() =
@@ -241,6 +256,7 @@ type Owner() =
             Assert.That(ownerGuid, Is.EqualTo(Guid.Parse(ownerId)))
         }
 
+    /// Verifies the set search visibility to invalid visibility scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSearchVisibilityToInvalidVisibility() =
@@ -254,6 +270,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidSearchVisibility))
         }
 
+    /// Verifies the set search visibility to empty visibility scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSearchVisibilityToEmptyVisibility() =
@@ -267,6 +284,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.SearchVisibilityIsRequired))
         }
 
+    /// Verifies the set search visibility with invalid owner ID scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSearchVisibilityWithInvalidOwnerId() =
@@ -280,6 +298,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerId))
         }
 
+    /// Verifies the set search visibility with empty owner ID scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetSearchVisibilityWithEmptyOwnerId() =
@@ -294,6 +313,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.EitherOwnerIdOrOwnerNameRequired))
         }
 
+    /// Verifies the set name to valid name scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetNameToValidName() =
@@ -313,6 +333,7 @@ type Owner() =
             Assert.That(stored.OwnerName, Is.EqualTo(parameters.NewName))
         }
 
+    /// Verifies the set name to invalid name scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetNameToInvalidName() =
@@ -326,6 +347,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerName))
         }
 
+    /// Verifies the set name to empty name scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetNameToEmptyName() =
@@ -339,6 +361,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.OwnerNameIsRequired))
         }
 
+    /// Verifies the set name with invalid owner ID scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetNameWithInvalidOwnerId() =
@@ -352,6 +375,7 @@ type Owner() =
             Assert.That(error.Error, Is.EqualTo(getErrorMessage OwnerError.InvalidOwnerId))
         }
 
+    /// Verifies the set name with empty owner ID scenario.
     [<Test>]
     [<Repeat(1)>]
     member public this.SetNameWithEmptyOwnerId() =

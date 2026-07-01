@@ -6,14 +6,19 @@ open Grace.Types.Common
 open System
 open System.Text
 
+/// Contains annotation line core helpers.
 module AnnotationLineCore =
 
+    /// Represents annotation text error.
     type AnnotationTextError = InvalidUtf8 of Message: string
 
+    /// Represents the visible text document contract.
     type VisibleTextDocument = { Text: string; Lines: string array }
 
+    /// Represents the annotation history document contract.
     type AnnotationHistoryDocument = { SourceReference: AnnotationSourceReference; Path: RelativePath; Content: byte array }
 
+    /// Represents effective history document.
     type EffectiveHistoryDocument =
         {
             Document: AnnotationHistoryDocument
@@ -22,16 +27,21 @@ module AnnotationLineCore =
             BoundaryKind: string option
         }
 
+    /// Represents the effective history traversal result contract.
     type EffectiveHistoryTraversalResult = { History: AnnotationHistoryDocument array; BoundaryKind: string option }
 
+    /// Represents the annotation line source contract.
     type AnnotationLineSource = { SourceReferenceId: AnnotationSourceReferenceId; Path: RelativePath; LineNumber: int }
 
+    /// Represents the annotation boundary state contract.
     type AnnotationBoundaryState = { BoundaryKind: string; SourceRows: AnnotationLineSource array }
 
+    /// Represents annotation line state.
     type AnnotationLineState =
         | Resolved of AnnotationLineSource
         | Boundary of AnnotationBoundaryState
 
+    /// Represents annotation line core result.
     type AnnotationLineCoreResult =
         {
             Lines: AnnotationLine array
@@ -42,14 +52,17 @@ module AnnotationLineCore =
 
     let private strictUtf8 = UTF8Encoding(false, true)
 
+    /// Detects the UTF-8 byte-order mark so visible text can be normalized before line attribution.
     let private hasUtf8Bom (bytes: byte array) =
         bytes.Length >= 3
         && bytes[0] = 0xEFuy
         && bytes[1] = 0xBBuy
         && bytes[2] = 0xBFuy
 
+    /// Normalizes line endings.
     let private normalizeLineEndings (text: string) = text.Replace("\r\n", "\n").Replace('\r', '\n')
 
+    /// Strictly decodes UTF-8 content, removes a leading BOM, and normalizes line endings for annotation tracing.
     let decodeVisibleText (content: byte array) =
         try
             let decoded = strictUtf8.GetString(content)
@@ -79,6 +92,7 @@ module AnnotationLineCore =
         with
         | :? DecoderFallbackException as ex -> Error(InvalidUtf8 ex.Message)
 
+    /// Gets requested lines.
     let getRequestedLines (lineRange: AnnotationLineRange) (document: VisibleTextDocument) =
         let firstExistingLine = max lineRange.StartLine 1
         let lastExistingLine = min lineRange.EndLine document.Lines.Length
@@ -90,6 +104,7 @@ module AnnotationLineCore =
                 { LineNumber = lineNumber; Text = document.Lines[index] }
         |]
 
+    /// Walks effective branch history until a parent boundary, authorization boundary, loop, or traversal budget stops attribution.
     let traverseEffectiveBranchHistory targetReferenceId maxReferences (history: EffectiveHistoryDocument array) =
         let byReferenceId =
             history
@@ -122,14 +137,17 @@ module AnnotationLineCore =
 
         { History = chronological.ToArray() |> Array.rev; BoundaryKind = boundary }
 
+    /// Groups annotation line sources by source reference and path before checking contiguous spans.
     let private sourceKey (source: AnnotationLineSource) = source.SourceReferenceId, source.Path
 
+    /// Groups boundary rows by boundary kind and source coordinates before checking contiguous spans.
     let private boundaryKey (boundary: AnnotationBoundaryState) =
         boundary.BoundaryKind,
         boundary.SourceRows
         |> Array.map (fun source -> source.SourceReferenceId, source.Path, source.LineNumber)
         |> Array.toList
 
+    /// Determines whether two traced target lines can share one output span without losing source or boundary detail.
     let private canAppend previousState currentState previousTargetLine currentTargetLine =
         currentTargetLine = previousTargetLine + 1
         && match previousState, currentState with
@@ -139,25 +157,33 @@ module AnnotationLineCore =
            | Boundary previous, Boundary current -> boundaryKey previous = boundaryKey current
            | _ -> false
 
+    /// Creates the inclusive annotation line range used by lines, spans, and source rows.
     let private lineRange startLine endLine = { StartLine = startLine; EndLine = endLine }
 
+    /// Creates the stable source-row identifier used inside one annotation response.
     let private sourceRowId index = $"source-row-{index}"
 
+    /// Creates the stable span identifier used inside one annotation response.
     let private spanId index = $"span-{index}"
 
+    /// Creates the stable boundary identifier used inside one annotation response.
     let private boundaryId index = $"boundary-{index}"
 
+    /// Converts a reference type union case to the public filter name accepted by annotation requests.
     let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
 
     let private knownReferenceTypeNames = listCases<ReferenceType> () |> Set.ofArray
 
+    /// Converts a reference type union case to the public filter name accepted by annotation requests.
     let private isKnownReferenceTypeName referenceTypeName = knownReferenceTypeNames.Contains referenceTypeName
 
+    /// Applies the optional reference-type filter when selecting attribution sources.
     let private matchesReferenceTypeFilter (referenceTypeNames: Set<string>) (document: AnnotationHistoryDocument) =
         referenceTypeNames.Count = 0
         || (isKnownReferenceTypeName document.SourceReference.ReferenceType
             && referenceTypeNames.Contains document.SourceReference.ReferenceType)
 
+    /// Validates source references.
     let private validateSourceReferences (history: AnnotationHistoryDocument array) =
         [
             for document in history do
@@ -180,6 +206,7 @@ module AnnotationLineCore =
                 $"SourceReferenceId '{sourceReferenceId}' appears more than once in annotation history."
         ]
 
+    /// Adds a source row and returns the row identifier that spans or boundaries can reference.
     let private appendSourceRow (rows: ResizeArray<AnnotationSourceRow>) path sourceReferenceId sourceRange =
         let rowId = sourceRowId (rows.Count + 1)
 
@@ -187,10 +214,12 @@ module AnnotationLineCore =
 
         rowId
 
+    /// Adds a source row and returns the row identifier that spans or boundaries can reference.
     let private appendSourceRowsForBoundary rows (boundary: AnnotationBoundaryState) =
         boundary.SourceRows
         |> Array.map (fun source -> appendSourceRow rows source.Path source.SourceReferenceId (lineRange source.LineNumber source.LineNumber))
 
+    /// Coalesces per-line attribution states into contiguous target-line segments.
     let private segmentStates requestedLineRange states =
         let expectedLineCount =
             requestedLineRange.EndLine
@@ -226,6 +255,7 @@ module AnnotationLineCore =
             segments.Add(segmentStart, previousLine, segmentState)
             segments.ToArray()
 
+    /// Builds components from segments.
     let private buildComponentsFromSegments lines segments =
         let sourceRows = ResizeArray<AnnotationSourceRow>()
         let boundaries = ResizeArray<AnnotationBoundary>()
@@ -254,6 +284,7 @@ module AnnotationLineCore =
 
         { Lines = lines; Boundaries = boundaries.ToArray(); Spans = spans.ToArray(); SourceRows = sourceRows.ToArray() }
 
+    /// Builds components.
     let buildComponents requestedLineRange lines states =
         let segments = segmentStates requestedLineRange states
 
@@ -263,8 +294,10 @@ module AnnotationLineCore =
 
     let private shiftedAlignmentBudgetExceeded = { BoundaryKind = "ShiftedAlignmentBudgetExceeded"; SourceRows = Array.empty }
 
+    /// Builds a boundary state that preserves the source row where history traversal stopped.
     let private traversalBoundaryReached boundaryKind source = { BoundaryKind = boundaryKind; SourceRows = [| source |] }
 
+    /// Builds a boundary state for a line whose source is excluded by the reference-type filter.
     let private referenceTypeFiltered source = { BoundaryKind = "ReferenceTypeFiltered"; SourceRows = [| source |] }
 
     let private maxShiftedAlignmentPairScans = 16_384L
@@ -273,13 +306,16 @@ module AnnotationLineCore =
 
     let private unknownAlignment = -1
 
+    /// Represents the line alignment contract.
     type private LineAlignment = { FirstLineNumber: int; Values: int array }
 
+    /// Represents common block search result.
     type private CommonBlockSearchResult =
         | SearchExceededBudget
         | NoCommonBlock
         | CommonBlock of OldStart: int * NewStart: int * Length: int
 
+    /// Reads a one-based line from a normalized visible text document when it exists.
     let private lineAt lineNumber (document: VisibleTextDocument) =
         let index = lineNumber - 1
 
@@ -288,6 +324,7 @@ module AnnotationLineCore =
         else
             None
 
+    /// Checks whether pairwise shifted-line alignment can run without exceeding the configured scan budget.
     let private shiftedAlignmentScanFitsBudget oldStart oldEnd newStart newEnd =
         let oldLength = int64 (oldEnd - oldStart + 1)
         let newLength = int64 (newEnd - newStart + 1)
@@ -297,6 +334,7 @@ module AnnotationLineCore =
         && oldLength * newLength
            <= maxShiftedAlignmentPairScans
 
+    /// Determines whether a common text block can anchor line attribution across an edit.
     let private canAnchorBlock oldStart oldEnd newStart newEnd oldBlockStart newBlockStart blockLength =
         let leftOldLength = oldBlockStart - oldStart
         let leftNewLength = newBlockStart - newStart
@@ -321,6 +359,7 @@ module AnnotationLineCore =
             && rightIsInsertionOrDeletion
             && editsStayOnOneSide)
 
+    /// Finds an anchorable common line block between old and new ranges, or reports that the scan budget was exceeded.
     let private findLongestCommonBlock oldStart oldEnd newStart newEnd (oldLines: string array) (newLines: string array) =
         let mutable bestOldStart = 0
         let mutable bestNewStart = 0
@@ -362,9 +401,11 @@ module AnnotationLineCore =
         else
             SearchExceededBudget
 
+    /// Builds line alignment range.
     let private buildLineAlignmentRange firstLineNumber lineCount (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
         let mapping = Array.zeroCreate<int> newDocument.Lines.Length
 
+        /// Recursively maps unchanged or anchorable new lines back to their previous line numbers.
         let rec alignRange oldStart oldEnd newStart newEnd =
             if oldStart <= oldEnd && newStart <= newEnd then
                 let mutable oldFirst = oldStart
@@ -415,6 +456,7 @@ module AnnotationLineCore =
                     mapping[startIndex .. startIndex + boundedLineCount - 1]
         }
 
+    /// Builds line alignment for request.
     let private buildLineAlignmentForRequest requestedLineRange (oldDocument: VisibleTextDocument) (newDocument: VisibleTextDocument) =
         let firstExistingLine = max requestedLineRange.StartLine 1
         let lastExistingLine = min requestedLineRange.EndLine newDocument.Lines.Length
@@ -432,6 +474,7 @@ module AnnotationLineCore =
 
             buildLineAlignmentRange 1 lineCount oldDocument newDocument
 
+    /// Attempts to get previous line number.
     let private tryGetPreviousLineNumber lineNumber (alignment: LineAlignment) =
         let alignmentIndex = lineNumber - alignment.FirstLineNumber
 
@@ -446,14 +489,17 @@ module AnnotationLineCore =
         else
             None, false
 
+    /// Attempts to get next line number.
     let private tryGetNextLineNumber lineNumber (alignment: LineAlignment) =
         alignment.Values
         |> Array.tryFindIndex (fun previousLineNumber -> previousLineNumber = lineNumber)
         |> Option.map (fun index -> alignment.FirstLineNumber + index)
 
+    /// Creates an annotation source coordinate from a history document and one-based line number.
     let private lineSourceFromDocument lineNumber document =
         { SourceReferenceId = document.SourceReference.SourceReferenceId; Path = document.Path; LineNumber = lineNumber }
 
+    /// Attempts to project attribution source.
     let private tryProjectAttributionSource sourceIndex sourceLineNumber documents (lineAlignments: LineAlignment array) referenceTypeNames =
         let mutable projected = None
         let mutable index = sourceIndex
@@ -476,6 +522,7 @@ module AnnotationLineCore =
 
         projected
 
+    /// Traces one target line backward through aligned history until it resolves to a source or boundary.
     let private traceLineSource
         lineNumber
         (documents: (AnnotationHistoryDocument * VisibleTextDocument) array)
@@ -524,6 +571,7 @@ module AnnotationLineCore =
                         Resolved(lineSourceFromDocument projectedLineNumber projectedDocument)
                     | None -> Boundary(referenceTypeFiltered sourceLine)
 
+    /// Traces the requested target range into contiguous resolved and boundary segments.
     let private traceRequestedSegments
         requestedLineRange
         (targetDocument: VisibleTextDocument)
@@ -568,6 +616,7 @@ module AnnotationLineCore =
 
         segments.ToArray()
 
+    /// Builds annotation with traversal boundary.
     let private buildAnnotationWithTraversalBoundary
         (
             requestedLineRange: AnnotationLineRange,

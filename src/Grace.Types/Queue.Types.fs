@@ -8,6 +8,7 @@ open NodaTime
 open Orleans
 open System.Runtime.Serialization
 
+/// Contains queue helpers.
 module Queue =
     /// Queue state for a target branch.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
@@ -17,6 +18,7 @@ module Queue =
         | Paused
         | Degraded
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<QueueState>()
 
     /// Promotion queue for a target branch.
@@ -32,6 +34,7 @@ module Queue =
             UpdatedAt: Instant option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof PromotionQueue
@@ -55,6 +58,7 @@ module Queue =
         | SetDegraded
         | UpdatePolicySnapshot of policySnapshotId: PolicySnapshotId
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PromotionQueueCommand>()
 
     /// Defines the events for the PromotionQueue actor.
@@ -69,6 +73,7 @@ module Queue =
         | Degraded
         | PolicySnapshotUpdated of policySnapshotId: PolicySnapshotId
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PromotionQueueEventType>()
 
     /// Record that holds the event type and metadata for a PromotionQueue event.
@@ -82,6 +87,7 @@ module Queue =
 
     /// Updates the PromotionQueue based on the PromotionQueueEvent.
     module PromotionQueueDto =
+        /// Carries optional queue fields that can be patched without replacing the full promotion queue.
         let UpdateDto (promotionQueueEvent: PromotionQueueEvent) (currentQueue: PromotionQueue) =
             let newQueue =
                 match promotionQueueEvent.Event with

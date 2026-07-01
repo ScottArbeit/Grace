@@ -3,6 +3,7 @@ namespace Grace.Shared.Parameters
 open Grace.Shared.Parameters.Common
 open System
 
+/// Contains organization helpers.
 module Organization =
 
     /// Common parameters for endpoints in the /organization path.

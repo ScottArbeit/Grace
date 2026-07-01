@@ -8,6 +8,7 @@ open System.Collections.Generic
 open System.Runtime.Serialization
 open Orleans
 
+/// Contains dto helpers.
 module Dto =
 
     let x = 1

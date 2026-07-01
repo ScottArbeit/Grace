@@ -7,18 +7,22 @@ open NUnit.Framework
 open System
 open System.Security.Claims
 
+/// Contains tests covering claim mapping behavior.
 [<Parallelizable(ParallelScope.All)>]
 type ClaimMappingTests() =
 
+    /// Builds a deterministic principal fixture for the authorization claim mapping assertions.
     let createPrincipal (claims: Claim list) =
         let identity = ClaimsIdentity(claims, "Bearer")
         ClaimsPrincipal(identity)
 
+    /// Exercises find values coverage for the authorization claim mapping contract.
     let findValues (claimType: string) (claims: Claim list) =
         claims
         |> List.filter (fun claim -> String.Equals(claim.Type, claimType, StringComparison.Ordinal))
         |> List.map (fun claim -> claim.Value)
 
+    /// Verifies that claims transformation does not duplicate grace user id.
     [<Test>]
     member _.ClaimsTransformationDoesNotDuplicateGraceUserId() =
         let principal =
@@ -42,6 +46,7 @@ type ClaimMappingTests() =
 
         Assert.That(graceUserIds, Is.EquivalentTo([ "existing-user" ]))
 
+    /// Verifies that claim mapping is idempotent.
     [<Test>]
     member _.ClaimMappingIsIdempotent() =
         let principal =
@@ -55,6 +60,7 @@ type ClaimMappingTests() =
 
         Assert.That(second, Is.Empty)
 
+    /// Verifies that dedupes grace claims and groups.
     [<Test>]
     member _.DedupesGraceClaimsAndGroups() =
         let principal =
@@ -78,6 +84,7 @@ type ClaimMappingTests() =
         Assert.That(graceClaims, Is.EquivalentTo([]))
         Assert.That(graceGroups, Is.EquivalentTo([]))
 
+    /// Verifies that splits scopes on spaces without empty entries.
     [<Test>]
     member _.SplitsScopesOnSpacesWithoutEmptyEntries() =
         let principal =

@@ -9,6 +9,7 @@ open NUnit.Framework
 open System
 open System.Threading.Tasks
 
+/// Covers creator Scope Admin Grant Unit behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type CreatorScopeAdminGrantUnit() =
 
@@ -18,17 +19,21 @@ type CreatorScopeAdminGrantUnit() =
 
     let groupPrincipal groupId = { PrincipalType = PrincipalType.Group; PrincipalId = groupId }
 
+    /// Builds assignment test data for the server unit creator Scope Admin Grant scenarios in this file.
     let assignment (principal: Principal) (scope: Scope) (roleId: RoleId) : RoleAssignment =
         { Principal = principal; Scope = scope; RoleId = roleId; Source = "test"; SourceDetail = None; CreatedAt = getCurrentInstant () }
 
+    /// Runs ensure through the server unit creator Scope Admin Grant path exercised by these tests.
     let runEnsure (creatorUserId: string option) (principals: Principal list) (initialAssignments: RoleAssignment list) (scope: Scope) =
         task {
             let grants = ResizeArray<RoleAssignment>()
             let mutable assignments: RoleAssignment list = initialAssignments
 
+            /// Builds check Admin test data for the server unit creator Scope Admin Grant scenarios in this file.
             let checkAdmin principals effectiveClaims operation resource =
                 Task.FromResult(checkPermission roleCatalog assignments [] principals effectiveClaims operation resource)
 
+            /// Builds grant Creator Admin test data for the server unit creator Scope Admin Grant scenarios in this file.
             let grantCreatorAdmin (grant: RoleAssignment) =
                 task {
                     grants.Add grant
@@ -41,6 +46,7 @@ type CreatorScopeAdminGrantUnit() =
             return result, Seq.toList grants
         }
 
+    /// Asserts the single Grant condition so failures identify the violated server unit creator Scope Admin Grant invariant.
     let assertSingleGrant (expectedPrincipal: Principal) (expectedScope: Scope) (expectedRole: RoleId) (grants: RoleAssignment list) =
         Assert.That(grants.Length, Is.EqualTo(1))
         let grant = grants.Head
@@ -50,11 +56,13 @@ type CreatorScopeAdminGrantUnit() =
         Assert.That(grant.Source, Is.EqualTo("scope-create"))
         Assert.That(grant.SourceDetail, Is.EqualTo(Some "creator-admin"))
 
+    /// Asserts the ok condition so failures identify the violated server unit creator Scope Admin Grant invariant.
     let assertOk (expected: CreatorScopeAdminGrant.CreatorAdminGrantResult) (result: Result<CreatorScopeAdminGrant.CreatorAdminGrantResult, GraceError>) =
         match result with
         | Ok actual -> Assert.That(actual, Is.EqualTo(expected))
         | Error error -> Assert.Fail($"Expected Ok {expected} but got Error: {error.Error}")
 
+    /// Verifies that owner Creation Grants Owner Admin To Creator User When No Inherited Admin Applies.
     [<Test>]
     member _.OwnerCreationGrantsOwnerAdminToCreatorUserWhenNoInheritedAdminApplies() =
         task {
@@ -68,6 +76,7 @@ type CreatorScopeAdminGrantUnit() =
             assertSingleGrant creator scope "OwnerAdmin" grants
         }
 
+    /// Verifies that organization Creation By Owner Contributor Grants Organization Admin To Creator User.
     [<Test>]
     member _.OrganizationCreationByOwnerContributorGrantsOrganizationAdminToCreatorUser() =
         task {
@@ -88,6 +97,7 @@ type CreatorScopeAdminGrantUnit() =
             assertSingleGrant creator organizationScope "OrganizationAdmin" grants
         }
 
+    /// Verifies that repository Creation By Organization Contributor Grants Repository Admin To Creator User.
     [<Test>]
     member _.RepositoryCreationByOrganizationContributorGrantsRepositoryAdminToCreatorUser() =
         task {
@@ -109,6 +119,7 @@ type CreatorScopeAdminGrantUnit() =
             assertSingleGrant creator repositoryScope "RepositoryAdmin" grants
         }
 
+    /// Verifies that branch Creation By Repository Contributor Grants Branch Admin To Creator User.
     [<Test>]
     member _.BranchCreationByRepositoryContributorGrantsBranchAdminToCreatorUser() =
         task {
@@ -131,6 +142,7 @@ type CreatorScopeAdminGrantUnit() =
             assertSingleGrant creator branchScope "BranchAdmin" grants
         }
 
+    /// Verifies that inherited Admin Does Not Create Redundant Direct Grant.
     [<Test>]
     member _.InheritedAdminDoesNotCreateRedundantDirectGrant() =
         task {
@@ -151,6 +163,7 @@ type CreatorScopeAdminGrantUnit() =
             Assert.That(grants, Is.Empty)
         }
 
+    /// Verifies that group Authorized Creation Grants Only The Creating User Principal.
     [<Test>]
     member _.GroupAuthorizedCreationGrantsOnlyTheCreatingUserPrincipal() =
         task {
@@ -172,6 +185,7 @@ type CreatorScopeAdminGrantUnit() =
             assertSingleGrant creator organizationScope "OrganizationAdmin" grants
         }
 
+    /// Verifies that grant Persistence Failure Prevents Success.
     [<Test>]
     member _.GrantPersistenceFailurePreventsSuccess() =
         task {
@@ -196,6 +210,7 @@ type CreatorScopeAdminGrantUnit() =
             | Ok value -> Assert.Fail($"Expected grant failure but got {value}.")
         }
 
+    /// Verifies that unproven Grant Prevents Success.
     [<Test>]
     member _.UnprovenGrantPreventsSuccess() =
         task {
@@ -220,6 +235,7 @@ type CreatorScopeAdminGrantUnit() =
             | Ok value -> Assert.Fail($"Expected unproven grant failure but got {value}.")
         }
 
+    /// Verifies that missing Mapped Creator User Prevents Success.
     [<Test>]
     member _.MissingMappedCreatorUserPreventsSuccess() =
         task {

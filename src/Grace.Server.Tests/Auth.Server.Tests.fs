@@ -15,12 +15,15 @@ open System.Net.Http
 open System.Net.Http.Headers
 open System.Threading.Tasks
 
+/// Captures auth info values used by the test suite.
 [<Parallelizable(ParallelScope.All)>]
 type AuthInfo = { GraceUserId: string; Claims: string list; RawClaims: (string * string) list }
 
+/// Covers auth endpoints scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type AuthEndpoints() =
 
+    /// Verifies the login page shows no providers when not configured scenario.
     [<Test>]
     member _.LoginPageShowsNoProvidersWhenNotConfigured() =
         task {
@@ -34,6 +37,7 @@ type AuthEndpoints() =
             Assert.That(body, Does.Contain("grace authenticate login"))
         }
 
+    /// Verifies the login provider returns not found when not configured scenario.
     [<Test>]
     member _.LoginProviderReturnsNotFoundWhenNotConfigured() =
         task {
@@ -43,6 +47,7 @@ type AuthEndpoints() =
             Assert.That(body, Does.Contain("Login provider not available."))
         }
 
+    /// Verifies the auth OIDC config returns configured values scenario.
     [<Test>]
     member _.AuthOidcConfigReturnsConfiguredValues() =
         task {
@@ -56,6 +61,7 @@ type AuthEndpoints() =
             Assert.That(rawAudience, Is.Not.Null.And.Not.Empty)
             Assert.That(rawClientId, Is.Not.Null.And.Not.Empty)
 
+            /// Normalizes authority for stable assertions.
             let normalizeAuthority (value: string) =
                 let trimmed = value.Trim()
 
@@ -77,6 +83,7 @@ type AuthEndpoints() =
             Assert.That(returnValue.ReturnValue.CliClientId, Is.EqualTo(rawClientId.Trim()))
         }
 
+    /// Verifies the auth me returns grace user ID scenario.
     [<Test>]
     member _.AuthMeReturnsGraceUserId() =
         task {
@@ -88,6 +95,7 @@ type AuthEndpoints() =
             Assert.That(returnValue.ReturnValue.RawClaims, Has.Some.EqualTo((PrincipalMapper.GraceUserIdClaim, testUserId)))
         }
 
+    /// Verifies the auth me requires authentication scenario.
     [<Test>]
     member _.AuthMeRequiresAuthentication() =
         task {
@@ -97,6 +105,7 @@ type AuthEndpoints() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }
 
+    /// Verifies the auth token create and use scenario.
     [<Test>]
     member _.AuthTokenCreateAndUse() =
         task {
@@ -119,6 +128,7 @@ type AuthEndpoints() =
             Assert.That(meValue.ReturnValue.GraceUserId, Is.EqualTo(testUserId))
         }
 
+    /// Verifies the auth token revoke blocks access scenario.
     [<Test>]
     member _.AuthTokenRevokeBlocksAccess() =
         task {
@@ -141,6 +151,7 @@ type AuthEndpoints() =
             Assert.That(meResponse.StatusCode, Is.EqualTo(HttpStatusCode.Unauthorized))
         }
 
+    /// Verifies the auth token max lifetime enforced scenario.
     [<Test>]
     member _.AuthTokenMaxLifetimeEnforced() =
         task {
@@ -151,6 +162,7 @@ type AuthEndpoints() =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest))
         }
 
+    /// Verifies the auth token list includes created scenario.
     [<Test>]
     member _.AuthTokenListIncludesCreated() =
         task {

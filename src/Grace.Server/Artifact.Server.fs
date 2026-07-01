@@ -22,15 +22,19 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Contains Grace Server artifact behavior and supporting helpers.
 module Artifact =
     let activitySource = new ActivitySource("Artifact")
 
+    /// Places uploaded artifact content under a time-partitioned blob key based on its creation timestamp.
     let internal buildBlobPath (createdAt: Instant) (artifactId: ArtifactId) =
         let utc = createdAt.ToDateTimeUtc()
         $"grace-artifacts/{utc:yyyy}/{utc:MM}/{utc:dd}/{utc:HH}/{artifactId}"
 
+    /// Uses the artifact id as the stable blob key for deterministic or replayable artifact writes.
     let internal buildDeterministicBlobPath (artifactId: ArtifactId) = $"grace-artifacts/by-id/{artifactId}"
 
+    /// Hashes a normalized seed into a deterministic artifact identifier for idempotent artifact creation.
     let internal createDeterministicArtifactId (seed: string) =
         let normalizedSeed =
             if String.IsNullOrWhiteSpace(seed) then
@@ -47,6 +51,7 @@ module Artifact =
         guidBytes[8] <- (guidBytes[8] &&& 0x3Fuy) ||| 0x80uy
         Guid(guidBytes)
 
+    /// Converts the artifact type parameter into the server union while preserving unknown values as `Other`.
     let internal parseArtifactType (rawArtifactType: string) =
         if String.Equals(rawArtifactType, "AgentSummary", StringComparison.OrdinalIgnoreCase) then
             ArtifactType.AgentSummary
@@ -63,6 +68,7 @@ module Artifact =
         else
             ArtifactType.Other rawArtifactType
 
+    /// Reads the authenticated principal name, falling back to the Grace system user for unauthenticated server work.
     let private getPrincipal (context: HttpContext) =
         if
             isNull context.User
@@ -73,6 +79,7 @@ module Artifact =
         else
             context.User.Identity.Name
 
+    /// Reads a non-empty GUID query parameter and maps invalid or missing values to the supplied artifact error.
     let private parseGuidQueryParameter (context: HttpContext) (queryParameterName: string) (error: ArtifactError) =
         match context.TryGetQueryStringValue queryParameterName with
         | Some rawValue when not (String.IsNullOrWhiteSpace rawValue) ->

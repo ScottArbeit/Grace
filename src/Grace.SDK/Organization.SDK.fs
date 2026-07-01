@@ -5,10 +5,11 @@ open Grace.Types.Organization
 open Grace.Shared.Parameters.Organization
 open System
 
+/// SDK entry point for organization creation, lookup, profile updates, and deletion.
 type Organization() =
 
     /// <summary>
-    /// Creates a new organization.
+    /// Registers an organization under the requested owner.
     /// </summary>
     /// <param name="parameters">Values to use when creating the new organization.</param>
     static member public Create(parameters: CreateOrganizationParameters) =

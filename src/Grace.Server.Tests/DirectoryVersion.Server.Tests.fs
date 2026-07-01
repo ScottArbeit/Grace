@@ -14,9 +14,12 @@ open System.Collections.Generic
 open System.Net
 open System.Net.Http
 
+/// Groups shared helpers for directory version server test helpers.
 module DirectoryVersionServerTestHelpers =
+    /// Captures directory version model values used by the test suite.
     type DirectoryVersionModel = Grace.Types.Common.DirectoryVersion
 
+    /// Normalizes d directory size for hash for stable assertions.
     let normalizedDirectorySizeForHash (directoryVersion: DirectoryVersionModel) =
         if directoryVersion.Size = Constants.InitialDirectorySize then
             0L
@@ -61,6 +64,7 @@ module DirectoryVersionServerTestHelpers =
             (List<FileVersion>())
             Constants.InitialDirectorySize
 
+    /// Builds create parameters for route calls.
     let createParameters (directoryVersion: DirectoryVersionModel) =
         let parameters = Parameters.DirectoryVersion.CreateParameters()
         parameters.OwnerId <- ownerId
@@ -71,6 +75,7 @@ module DirectoryVersionServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds get parameters for route calls.
     let getParameters (repositoryId: string) (directoryVersionId: DirectoryVersionId) =
         let parameters = Parameters.DirectoryVersion.GetParameters()
         parameters.OwnerId <- ownerId
@@ -80,6 +85,7 @@ module DirectoryVersionServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds get by SHA256 hash parameters for route calls.
     let getBySha256HashParameters (repositoryId: string) (directoryVersionId: DirectoryVersionId) (sha256Hash: Sha256Hash) =
         let parameters = Parameters.DirectoryVersion.GetBySha256HashParameters()
         parameters.OwnerId <- ownerId
@@ -90,6 +96,7 @@ module DirectoryVersionServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds get by BLAKE3 hash parameters for route calls.
     let getByBlake3HashParameters (repositoryId: string) (blake3Hash: Blake3Hash) =
         let parameters = Parameters.DirectoryVersion.GetByBlake3HashParameters()
         parameters.OwnerId <- ownerId
@@ -99,6 +106,7 @@ module DirectoryVersionServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds save parameters for route calls.
     let saveParameters (repositoryId: string) (directoryVersions: DirectoryVersionModel seq) =
         let parameters = Parameters.DirectoryVersion.SaveDirectoryVersionsParameters()
         parameters.OwnerId <- ownerId
@@ -111,6 +119,7 @@ module DirectoryVersionServerTestHelpers =
 
         parameters
 
+    /// Builds a deterministic same SHA256 prefix directory pair for integration setup fixture for the server integration directory Version assertions.
     let createSameSha256PrefixDirectoryPair repositoryId pathPrefix =
         let candidates =
             [|
@@ -126,6 +135,7 @@ module DirectoryVersionServerTestHelpers =
             | Some pair -> pair
             | None -> failwith "Could not generate same-prefix SHA-256 directory versions for directory route tests."
 
+    /// Asserts ok for integration responses.
     let assertOk (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -133,6 +143,7 @@ module DirectoryVersionServerTestHelpers =
             Assert.That(response.Content.Headers.ContentType.MediaType, Is.EqualTo("application/json"))
         }
 
+    /// Asserts bad request grace error for integration responses.
     let assertBadRequestGraceError (expectedError: string) (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
@@ -142,6 +153,7 @@ module DirectoryVersionServerTestHelpers =
             Assert.That(error.CorrelationId, Is.Not.Empty)
         }
 
+    /// Builds a deterministic directory version for integration setup fixture for the server integration directory Version assertions.
     let createDirectoryVersionAsync (directoryVersion: DirectoryVersionModel) =
         task {
             let! response = Client.PostAsync("/directory/create", createJsonContent (createParameters directoryVersion))
@@ -151,6 +163,7 @@ module DirectoryVersionServerTestHelpers =
             Assert.That(returnValue.Properties.ContainsKey(nameof DirectoryVersionId), Is.True)
         }
 
+    /// Gets directory version from the running test server.
     let getDirectoryVersionAsync (repositoryId: string) (directoryVersionId: DirectoryVersionId) =
         task {
             let! response = Client.PostAsync("/directory/get", createJsonContent (getParameters repositoryId directoryVersionId))
@@ -159,6 +172,7 @@ module DirectoryVersionServerTestHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Asserts directory version DTO for integration responses.
     let assertDirectoryVersionDto (expected: DirectoryVersionModel) (actual: DirectoryVersionDto) =
         Assert.That(actual.DirectoryVersion.DirectoryVersionId, Is.EqualTo(expected.DirectoryVersionId))
         Assert.That(actual.DirectoryVersion.OwnerId, Is.EqualTo(expected.OwnerId))
@@ -169,6 +183,7 @@ module DirectoryVersionServerTestHelpers =
         Assert.That(actual.DirectoryVersion.Blake3Hash, Is.EqualTo(expected.Blake3Hash))
         Assert.That(actual.DirectoryVersion.HashesValidated, Is.True)
 
+    /// Asserts directory version for integration responses.
     let assertDirectoryVersion (expected: DirectoryVersionModel) (actual: DirectoryVersionModel) =
         Assert.That(actual.DirectoryVersionId, Is.EqualTo(expected.DirectoryVersionId))
         Assert.That(actual.OwnerId, Is.EqualTo(expected.OwnerId))
@@ -179,9 +194,11 @@ module DirectoryVersionServerTestHelpers =
         Assert.That(actual.Blake3Hash, Is.EqualTo(expected.Blake3Hash))
         Assert.That(actual.HashesValidated, Is.True)
 
+/// Covers directory version server scenarios.
 [<NonParallelizable>]
 type DirectoryVersionServer() =
 
+    /// Verifies the create get get by SHA and recursive routes preserve directory DTO shape and identity scenario.
     [<Test>]
     member _.CreateGetGetByShaAndRecursiveRoutesPreserveDirectoryDtoShapeAndIdentity() =
         task {
@@ -244,6 +261,7 @@ type DirectoryVersionServer() =
             )
         }
 
+    /// Verifies the get by SHA returns default sentinel when no directory version matches scenario.
     [<Test>]
     member _.GetByShaReturnsDefaultSentinelWhenNoDirectoryVersionMatches() =
         task {
@@ -261,6 +279,7 @@ type DirectoryVersionServer() =
             Assert.That(getBySha.ReturnValue.Blake3Hash, Is.EqualTo(DirectoryVersion.Default.Blake3Hash))
         }
 
+    /// Verifies the get by SHA rejects malformed prefixes before lookup scenario.
     [<TestCase("not-a-sha")>]
     [<TestCase("f")>]
     member _.GetByShaRejectsMalformedPrefixesBeforeLookup(sha256Hash: string) =
@@ -275,11 +294,13 @@ type DirectoryVersionServer() =
             Assert.That((deserialize<GraceError> getByShaBody).Error, Is.EqualTo(DirectoryVersionError.getErrorMessage DirectoryVersionError.InvalidSha256Hash))
         }
 
+    /// Verifies the get by SHA rejects ambiguous prefix instead of returning default sentinel scenario.
     [<Test>]
     member _.GetByShaRejectsAmbiguousPrefixInsteadOfReturningDefaultSentinel() =
         task {
             let repositoryId = repositoryIds[0]
 
+            /// Defines first behavior for the surrounding tests used by the server integration directory Version scenario.
             let first, second, sharedPrefix =
                 DirectoryVersionServerTestHelpers.createSameSha256PrefixDirectoryPair repositoryId $"ambiguous-directory-sha/{Guid.NewGuid():N}"
 
@@ -300,6 +321,7 @@ type DirectoryVersionServer() =
             Assert.That((deserialize<GraceError> getByShaBody).Error, Does.Contain("ambiguous"))
         }
 
+    /// Verifies the save directory versions creates missing directories and keeps missing get as grace error scenario.
     [<Test>]
     member _.SaveDirectoryVersionsCreatesMissingDirectoriesAndKeepsMissingGetAsGraceError() =
         task {
@@ -340,6 +362,7 @@ type DirectoryVersionServer() =
                     missingResponse
         }
 
+    /// Verifies the save directory versions orders dot root after direct children when input is root first scenario.
     [<Test>]
     member _.SaveDirectoryVersionsOrdersDotRootAfterDirectChildrenWhenInputIsRootFirst() =
         task {

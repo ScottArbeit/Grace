@@ -18,8 +18,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Contains Grace Server access behavior and supporting helpers.
 module Access =
 
+    /// Handles the Grace Server require grace user request.
     let private requireGraceUser (handler: HttpHandler) : HttpHandler =
         fun next context ->
             match PrincipalMapper.tryGetUserId context.User with
@@ -28,6 +30,7 @@ module Access =
 
     let private includeReason = Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
 
+    /// Implements forbidden result for the server request pipeline.
     let private forbiddenResult (context: HttpContext) (reason: string) =
         let message =
             if
@@ -44,6 +47,7 @@ module Access =
             return Some context
         }
 
+    /// Computes scope kind data used by Grace Server.
     let private scopeKind (scope: Scope) =
         match scope with
         | Scope.System -> "system"
@@ -52,6 +56,7 @@ module Access =
         | Scope.Repository _ -> "repository"
         | Scope.Branch _ -> "branch"
 
+    /// Computes resource for scope data used by Grace Server.
     let private resourceForScope (scope: Scope) =
         match scope with
         | Scope.System -> Resource.System
@@ -60,6 +65,7 @@ module Access =
         | Scope.Repository (ownerId, organizationId, repositoryId) -> Resource.Repository(ownerId, organizationId, repositoryId)
         | Scope.Branch (ownerId, organizationId, repositoryId, branchId) -> Resource.Branch(ownerId, organizationId, repositoryId, branchId)
 
+    /// Selects the administrative RBAC operation needed for the created scope.
     let private adminOperationForScope (scope: Scope) =
         match scope with
         | Scope.System -> Operation.SystemAdmin
@@ -68,6 +74,7 @@ module Access =
         | Scope.Repository _ -> Operation.RepositoryAdmin
         | Scope.Branch _ -> Operation.BranchAdmin
 
+    /// Implements admin operation for resource for the server request pipeline.
     let private adminOperationForResource (resource: Resource) =
         match resource with
         | Resource.System -> Operation.SystemAdmin
@@ -77,6 +84,7 @@ module Access =
         | Resource.Branch _ -> Operation.BranchAdmin
         | Resource.Path (ownerId, organizationId, repositoryId, _relativePath) -> Operation.RepositoryAdmin
 
+    /// Checks authorization needed for authorize server behavior.
     let private authorize (context: HttpContext) (operation: Operation) (resource: Resource) =
         task {
             let principals = PrincipalMapper.getPrincipals context.User
@@ -89,11 +97,13 @@ module Access =
             | Denied reason -> return Error reason
         }
 
+    /// Checks authorization needed for authorize scope admin server behavior.
     let private authorizeScopeAdmin (context: HttpContext) (scope: Scope) =
         let operation = adminOperationForScope scope
         let resource = resourceForScope scope
         authorize context operation resource
 
+    /// Validates a required GUID parameter and returns a Grace error when it is missing, empty, or malformed.
     let private parseGuid (value: string) (fieldName: string) (correlationId: CorrelationId) =
         let mutable parsed = Guid.Empty
 
@@ -104,6 +114,7 @@ module Access =
         else
             Error(GraceError.Create $"{fieldName} must be a valid Guid." correlationId)
 
+    /// Converts principal parameters into either user or claim principals for authorization commands.
     let private parsePrincipal (principalType: string) (principalId: string) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace principalType
            || String.IsNullOrWhiteSpace principalId then
@@ -113,6 +124,7 @@ module Access =
             | Some parsed -> Ok { PrincipalType = parsed; PrincipalId = principalId }
             | None -> Error(GraceError.Create $"Invalid PrincipalType '{principalType}'." correlationId)
 
+    /// Normalizes normalize scope kind data for stable server comparisons.
     let private normalizeScopeKind (scopeKind: string) =
         let value =
             if String.IsNullOrWhiteSpace scopeKind then
@@ -131,6 +143,7 @@ module Access =
         | "branch" -> Ok "branch"
         | other -> Error other
 
+    /// Converts scope parameters into the authorization scope required by role-assignment commands.
     let private parseScope (scopeKind: string) (parameters: AccessParameters) (correlationId: CorrelationId) =
         let normalized = normalizeScopeKind scopeKind
 
@@ -170,6 +183,7 @@ module Access =
         | Ok other -> Error(GraceError.Create $"Invalid ScopeKind '{other}'." correlationId)
         | Error other -> Error(GraceError.Create $"Invalid ScopeKind '{other}'." correlationId)
 
+    /// Parses try parse repository resource input into the server model.
     let private tryParseRepositoryResource (parameters: AccessParameters) (correlationId: CorrelationId) =
         match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
         | Error error -> Error error
@@ -181,6 +195,7 @@ module Access =
                 | Error error -> Error error
                 | Ok repositoryId -> Ok(Resource.Repository(ownerId, organizationId, repositoryId))
 
+    /// Accepts absent optional GUID parameters while rejecting malformed non-empty values.
     let private parseOptionalGuid (value: string) (fieldName: string) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace value then
             Ok None
@@ -192,6 +207,7 @@ module Access =
             else
                 Error(GraceError.Create $"{fieldName} must be a valid Guid." correlationId)
 
+    /// Parses try parse current context resource input into the server model.
     let private tryParseCurrentContextResource (parameters: AccessParameters) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace parameters.OwnerId then
             if String.IsNullOrWhiteSpace parameters.OrganizationId
@@ -226,6 +242,7 @@ module Access =
                         | Ok None -> Ok(Resource.Repository(ownerId, organizationId, repositoryId))
                         | Ok (Some branchId) -> Ok(Resource.Branch(ownerId, organizationId, repositoryId, branchId))
 
+    /// Builds the authorization resource from entity, repository, and optional path parameters.
     let private parseResource (resourceKind: string) (parameters: CheckPermissionParameters) (correlationId: CorrelationId) =
         let normalized =
             if String.IsNullOrWhiteSpace resourceKind then
@@ -282,6 +299,7 @@ module Access =
                         |> Result.map (fun repositoryId -> Resource.Path(ownerId, organizationId, repositoryId, parameters.Path))
         | other -> Error(GraceError.Create $"Invalid ResourceKind '{other}'." correlationId)
 
+    /// Maps the requested authorization operation string to the RBAC operation union.
     let private parseOperation (operation: string) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace operation then
             Error(GraceError.Create "Operation is required." correlationId)
@@ -290,6 +308,7 @@ module Access =
             | Some parsed -> Ok parsed
             | None -> Error(GraceError.Create $"Invalid Operation '{operation}'." correlationId)
 
+    /// Validates grant-role scope parameters before constructing the RBAC role scope.
     let private parseRoleScope (roleId: string) (requestedScopeKind: string) (parameters: AccessParameters) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace roleId then
             Error(GraceError.Create "RoleId is required." correlationId)
@@ -314,6 +333,7 @@ module Access =
                         )
                     | Error requestedScopeKind -> Error(GraceError.Create $"Invalid ScopeKind '{requestedScopeKind}'." correlationId)
 
+    /// Validates revoke-role scope parameters while allowing the actor to resolve unspecified optional boundaries.
     let parseRevokeRoleScope (roleId: string) (requestedScopeKind: string) (parameters: AccessParameters) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace roleId then
             Error(GraceError.Create "RoleId is required." correlationId)
@@ -326,6 +346,7 @@ module Access =
                 | Ok scopeKind -> parseScope scopeKind parameters correlationId
                 | Error scopeKind -> Error(GraceError.Create $"Invalid ScopeKind '{scopeKind}'." correlationId)
 
+    /// Implements self assignment queries for resource for the server request pipeline.
     let selfAssignmentQueriesForResource (principals: Principal list) (resource: Resource) =
         let distinctPrincipals = principals |> List.distinct
 
@@ -334,6 +355,7 @@ module Access =
             distinctPrincipals
             |> List.map (fun principal -> scope, principal))
 
+    /// Parses try parse principal filter input into the server model.
     let private tryParsePrincipalFilter (principalType: string) (principalId: string) (correlationId: CorrelationId) =
         if String.IsNullOrWhiteSpace principalType
            && String.IsNullOrWhiteSpace principalId then
@@ -345,6 +367,7 @@ module Access =
             parsePrincipal principalType principalId correlationId
             |> Result.map Some
 
+    /// Handles the Grace Server grant role request.
     let GrantRole: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -393,6 +416,7 @@ module Access =
                         | Error error -> return! context |> result400BadRequest error
             })
 
+    /// Handles the Grace Server revoke role request.
     let RevokeRole: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -423,6 +447,7 @@ module Access =
                                 | Error error -> return! context |> result400BadRequest error
             })
 
+    /// Handles the Grace Server show role assignments request.
     let ShowRoleAssignments: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -469,6 +494,7 @@ module Access =
                             return! context |> result200Ok returnValue
             })
 
+    /// Handles the Grace Server list role assignments request.
     let ListRoleAssignments: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -494,11 +520,13 @@ module Access =
                             | Error error -> return! context |> result400BadRequest error
             })
 
+    /// Validates claim permission parameters and converts each directory permission string into the access-control model.
     let private parseClaimPermissions (claimPermissions: IList<ClaimPermissionParameters>) (correlationId: string) : Result<List<ClaimPermission>, GraceError> =
         if isNull claimPermissions
            || claimPermissions.Count = 0 then
             Error(GraceError.Create "ClaimPermissions are required." correlationId)
         else
+            /// Implements folder for the server request pipeline.
             let folder (state: Result<List<ClaimPermission>, GraceError>) (permission: ClaimPermissionParameters) =
                 match state with
                 | Error _ -> state
@@ -515,6 +543,7 @@ module Access =
             claimPermissions
             |> Seq.fold folder (Ok(List<ClaimPermission>()))
 
+    /// Validates an upsert-path request and returns the repository plus normalized path-permission payload for the actor.
     let private tryBuildUpsertPathPermission (parameters: UpsertPathPermissionParameters) (correlationId: string) =
         match parseGuid parameters.OwnerId (nameof parameters.OwnerId) correlationId with
         | Error error -> Error error
@@ -532,6 +561,7 @@ module Access =
                         | Error error -> Error error
                         | Ok permissions -> Ok(repositoryId, { Path = parameters.Path; Permissions = permissions })
 
+    /// Handles the Grace Server upsert path permission request.
     let UpsertPathPermission: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -558,6 +588,7 @@ module Access =
                             | Error error -> return! context |> result400BadRequest error
             })
 
+    /// Handles the Grace Server remove path permission request.
     let RemovePathPermission: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -587,6 +618,7 @@ module Access =
                                 | Error error -> return! context |> result400BadRequest error
             })
 
+    /// Handles the Grace Server list path permissions request.
     let ListPathPermissions: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -613,6 +645,7 @@ module Access =
                             | Error error -> return! context |> result400BadRequest error
             })
 
+    /// Handles the Grace Server check permission request.
     let CheckPermission: HttpHandler =
         requireGraceUser (fun next context ->
             task {
@@ -632,6 +665,7 @@ module Access =
                         | Ok principalOption ->
                             let principals = PrincipalMapper.getPrincipals context.User
 
+                            /// Determines whether caller principal.
                             let isCallerPrincipal principalToCheck =
                                 principals
                                 |> List.exists (fun principal -> principal = principalToCheck)
@@ -659,6 +693,7 @@ module Access =
                                 return! context |> result200Ok returnValue
             })
 
+    /// Handles the Grace Server list roles request.
     let ListRoles: HttpHandler =
         requireGraceUser (fun next context ->
             task {

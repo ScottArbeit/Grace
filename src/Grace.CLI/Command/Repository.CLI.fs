@@ -29,8 +29,10 @@ open System.Threading
 open System.Threading.Tasks
 open Spectre.Console.Json
 
+/// Groups the repository command parser, handlers, and output helpers.
 module Repository =
 
+    /// Defines the options parsed by the repository command handlers.
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -262,9 +264,11 @@ module Repository =
                 optionResult.AddError("The confidence threshold must be between 0.0 and 1.0."))
 
     // Create subcommand.
+    /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous create action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -382,6 +386,7 @@ module Repository =
         else
             Ok parseResult
 
+    /// Routes the init command from parsed options through validation, the SDK call, and result rendering.
     let private initHandler (parseResult: ParseResult) (parameters: InitParameters) =
         task {
             try
@@ -750,9 +755,11 @@ module Repository =
             | ex -> return Error(GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Executes the init command by binding ParseResult values to the SDK request and CLI output contract.
     type Init() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous init action when System.CommandLine dispatches the parsed command.
         override this.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -796,6 +803,7 @@ module Repository =
     type Get() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -854,6 +862,7 @@ module Repository =
     type GetBranches() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get branches action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -995,6 +1004,7 @@ module Repository =
     type SetVisibility() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set visibility action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1051,6 +1061,7 @@ module Repository =
     type SetStatus() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1105,6 +1116,7 @@ module Repository =
     type SetRecordSaves() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set record saves action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1159,6 +1171,7 @@ module Repository =
     type SetSaveDays() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set save days action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1213,6 +1226,7 @@ module Repository =
     type SetCheckpointDays() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set checkpoint days action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1267,6 +1281,7 @@ module Repository =
     type SetDiffCacheDays() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set diff cache days action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1321,6 +1336,7 @@ module Repository =
     type SetDirectoryVersionCacheDays() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set directory version cache days action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1375,6 +1391,7 @@ module Repository =
     type SetLogicalDeleteDays() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set logical delete days action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1425,11 +1442,15 @@ module Repository =
             }
 
     // Enable promotion type subcommands
+    /// Models enable promotion type command values passed between the parser and repository handlers.
     type EnablePromotionTypeCommand = EnablePromotionTypeParameters -> Task<GraceResult<string>>
 
+    /// Executes the enable promotion parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type EnablePromotionParameters() =
+        /// Stores a parsed command value for handler execution.
         member val public Enabled = false with get, set
 
+    /// Routes the enable promotion type command from parsed options through validation, the SDK call, and result rendering.
     let private enablePromotionTypeHandler
         (parseResult: ParseResult)
         (parameters: EnablePromotionParameters)
@@ -1482,6 +1503,7 @@ module Repository =
     type SetDefaultServerApiVersion() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set default server api version action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1537,6 +1559,7 @@ module Repository =
     type SetName() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set name action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1591,6 +1614,7 @@ module Repository =
     type SetDescription() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set description action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1645,6 +1669,7 @@ module Repository =
     type SetConflictResolutionPolicy() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set conflict resolution policy action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1700,6 +1725,7 @@ module Repository =
     type Delete() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous delete action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1755,6 +1781,7 @@ module Repository =
     type Undelete() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous undelete action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1808,6 +1835,7 @@ module Repository =
     type SetAnonymousAccess() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set anonymous access action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1861,6 +1889,7 @@ module Repository =
     type SetAllowsLargeFiles() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set allows large files action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1912,6 +1941,7 @@ module Repository =
 
     /// Builds the Repository subcommand.
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptionsExceptForRepositoryInfo (command: Command) =
             command
             |> addOption Options.ownerName
@@ -1920,6 +1950,7 @@ module Repository =
             |> addOption Options.organizationId
             |> addOption Options.repositoryId
 
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.repositoryName

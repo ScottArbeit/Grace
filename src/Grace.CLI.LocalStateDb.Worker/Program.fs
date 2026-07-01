@@ -6,7 +6,9 @@ open Grace.CLI
 open Grace.Types.Common
 open NodaTime
 
+/// Hosts the command-line entry points for this executable.
 module Program =
+    /// Runs the command workflow with the supplied inputs.
     let private run (dbPath: string) (rootId: Guid) (rootSha256Hash: string) (rootBlake3Hash: string) (iterations: int) =
         task {
             let baseTicks =
@@ -50,6 +52,7 @@ module Program =
                 index <- index + 1
         }
 
+    /// Runs the process entry point.
     [<EntryPoint>]
     let main argv =
         try

@@ -7,15 +7,19 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains repository content counter helpers.
 module RepositoryContentCounter =
 
+    /// Represents repository content counter lifecycle state.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type RepositoryContentCounterLifecycleState =
         | NotReferenced
         | Referenced
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterLifecycleState>()
 
+    /// Represents repository content counter command.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterCommand =
         | AddReference of
@@ -29,8 +33,10 @@ module RepositoryContentCounter =
             storagePoolId: StoragePoolId *
             manifestAddress: ManifestAddress
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterCommand>()
 
+    /// Represents repository content counter event type.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterEventType =
         | ReferenceAdded of
@@ -40,17 +46,22 @@ module RepositoryContentCounter =
             manifestAddress: ManifestAddress
         | ReferenceRemoved of operationId: RepositoryContentCounterOperationId
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterEventType>()
 
+    /// Represents repository content counter intent.
     [<KnownType("GetKnownTypes")>]
     type RepositoryContentCounterIntent =
         | IncrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
         | DecrementManifestReferenceCount of repositoryId: RepositoryId * storagePoolId: StoragePoolId * manifestAddress: ManifestAddress
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<RepositoryContentCounterIntent>()
 
+    /// Represents the repository content counter event contract.
     type RepositoryContentCounterEvent = { Event: RepositoryContentCounterEventType; Metadata: EventMetadata }
 
+    /// Represents repository content counter dto.
     [<GenerateSerializer>]
     type RepositoryContentCounterDto =
         {
@@ -63,6 +74,7 @@ module RepositoryContentCounter =
             LastOperationId: RepositoryContentCounterOperationId option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof RepositoryContentCounterDto
@@ -74,6 +86,7 @@ module RepositoryContentCounter =
                 LastOperationId = None
             }
 
+        /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto counterEvent current =
             match counterEvent.Event with
             | RepositoryContentCounterEventType.ReferenceAdded (operationId, repositoryId, storagePoolId, manifestAddress) ->
@@ -110,6 +123,7 @@ module RepositoryContentCounter =
                     LastOperationId = Some operationId
                 }
 
+    /// Represents repository content counter decision.
     [<GenerateSerializer>]
     type RepositoryContentCounterDecision =
         {

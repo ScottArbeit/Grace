@@ -33,20 +33,25 @@ type EntityProperties =
             BranchName = None
         }
 
+/// Contains Grace Server validate ids decisions behavior and supporting helpers.
 module ValidateIdsDecisions =
 
+    /// Represents entity kind used by Grace Server APIs and background services.
     type EntityKind =
         | Owner = 0
         | Organization = 1
         | Repository = 2
         | Branch = 3
 
+    /// Represents entity validation mode used by Grace Server APIs and background services.
     type EntityValidationMode =
         | Create = 0
         | Existing = 1
 
+    /// Represents bad request response contract used by Grace Server APIs and background services.
     type BadRequestResponseContract = { StatusCode: int; Error: GraceError }
 
+    /// Implements bad request response for the server request pipeline.
     let badRequestResponse error = { StatusCode = StatusCodes.Status400BadRequest; Error = error }
 
     /// Paths that we want to ignore, because they won't have Ids and Names in the body.
@@ -57,6 +62,7 @@ module ValidateIdsDecisions =
             "/approval/request/_seedGenerated"
         ]
 
+    /// Determines whether ignored path.
     let isIgnoredPath (path: string) =
         ignoredPaths
         |> Seq.exists (fun ignoredPath -> path.StartsWith(ignoredPath, StringComparison.InvariantCultureIgnoreCase))
@@ -73,6 +79,7 @@ module ValidateIdsDecisions =
                 | :? Type as requestBodyType -> Some requestBodyType
                 | _ -> None)
 
+    /// Discovers entity properties used by request validation.
     let discoverEntityProperties (requestBodyType: Type) =
         let properties = requestBodyType.GetProperties(BindingFlags.Public ||| BindingFlags.Instance)
 
@@ -92,8 +99,10 @@ module ValidateIdsDecisions =
             BranchName = findProperty (nameof BranchName)
         }
 
+    /// Implements path equals for the server request pipeline.
     let private pathEquals expectedPath (path: string) = path.Equals(expectedPath, StringComparison.InvariantCultureIgnoreCase)
 
+    /// Implements validation mode for path for the server request pipeline.
     let validationModeForPath entityKind path =
         match entityKind with
         | EntityKind.Owner when pathEquals "/owner/create" path -> EntityValidationMode.Create
@@ -102,11 +111,13 @@ module ValidateIdsDecisions =
         | EntityKind.Branch when pathEquals "/branch/create" path -> EntityValidationMode.Create
         | _ -> EntityValidationMode.Existing
 
+    /// Determines whether validate entity.
     let shouldValidateEntity currentError idProperty nameProperty =
         currentError |> Option.isNone
         && idProperty |> Option.isSome
         && nameProperty |> Option.isSome
 
+    /// Selects the validation error message that matches the entity identifier currently being checked.
     let getEntityValidationErrorMessage entityKind validationMode id name =
         task {
             match entityKind, validationMode with
@@ -209,6 +220,7 @@ module ValidateIdsDecisions =
             | _ -> return invalidArg (nameof entityKind) $"Unknown entity validation decision: {entityKind}/{validationMode}."
         }
 
+    /// Implements not found error message for the server request pipeline.
     let notFoundErrorMessage entityKind id =
         let byId = not <| String.IsNullOrEmpty(id)
 
@@ -223,6 +235,7 @@ module ValidateIdsDecisions =
         | EntityKind.Branch, false -> BranchError.getErrorMessage BranchError.BranchDoesNotExist
         | _ -> invalidArg (nameof entityKind) $"Unknown entity kind: {entityKind}."
 
+    /// Adds entity id to the server request model.
     let withEntityId entityKind (id: string) graceIds =
         let parsedId = Guid.Parse(id)
 

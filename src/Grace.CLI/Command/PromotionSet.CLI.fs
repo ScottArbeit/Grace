@@ -20,7 +20,9 @@ open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the promotion set command parser, handlers, and output helpers.
 module PromotionSetCommand =
+    /// Defines the options parsed by the promotion set command handlers.
     module private Options =
         let promotionSetId =
             new Option<string>(
@@ -169,6 +171,7 @@ module PromotionSetCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private ConflictStepDisplay =
         {
             StepId: PromotionSetStepId
@@ -179,6 +182,7 @@ module PromotionSetCommand =
             DownloadUriError: string option
         }
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private ConflictShowResult =
         {
             PromotionSetId: PromotionSetId
@@ -188,9 +192,12 @@ module PromotionSetCommand =
             ConflictedSteps: ConflictStepDisplay list
         }
 
+    /// Defines structured data exchanged by CLI helpers.
     type private ConflictDecisionsWrapper = { Decisions: ConflictResolutionDecision list }
+    /// Defines structured data exchanged by CLI helpers.
     type private PromotionPointersWrapper = { PromotionPointers: PromotionPointer list }
 
+    /// Tries to map parse guid and returns a GraceError instead of throwing on unsupported input.
     let private tryParseGuid (value: string) (errorMessage: string) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
@@ -201,12 +208,14 @@ module PromotionSetCommand =
         else
             Ok parsed
 
+    /// Parses command input into typed values.
     let private parseOptionalPromotionSetId (value: string) (parseResult: ParseResult) =
         if String.IsNullOrWhiteSpace(value) then
             Ok(Guid.NewGuid())
         else
             tryParseGuid value (QueueError.getErrorMessage QueueError.InvalidPromotionSetId) parseResult
 
+    /// Tries to map deserialize decisions from file and returns a GraceError instead of throwing on unsupported input.
     let private tryDeserializeDecisionsFromFile (filePath: string) =
         if not <| File.Exists filePath then
             Error $"Decisions file does not exist: {filePath}"
@@ -232,6 +241,7 @@ module PromotionSetCommand =
             with
             | ex -> Error($"Unable to read decisions file: {ex.Message}")
 
+    /// Tries to map deserialize promotion pointers from file and returns a GraceError instead of throwing on unsupported input.
     let private tryDeserializePromotionPointersFromFile (filePath: string) =
         if not <| File.Exists filePath then
             Error $"Promotion pointers file does not exist: {filePath}"
@@ -262,6 +272,7 @@ module PromotionSetCommand =
             with
             | ex -> Error($"Unable to read promotion pointers file: {ex.Message}")
 
+    /// Tries to map approval summary from properties and returns a GraceError instead of throwing on unsupported input.
     let internal tryApprovalSummaryFromProperties (properties: Collections.Generic.IDictionary<string, obj>) =
         match properties.TryGetValue("ApprovalSummary") with
         | true, value when not (isNull value) ->
@@ -276,6 +287,7 @@ module PromotionSetCommand =
             | _ -> Option.None
         | _ -> Option.None
 
+    /// Reads promotion set from ParseResult, local configuration, or Grace ids.
     let private getPromotionSet (graceIds: GraceIds) (promotionSetId: PromotionSetId) =
         let parameters =
             Parameters.PromotionSet.GetPromotionSetParameters(
@@ -291,6 +303,7 @@ module PromotionSetCommand =
 
         Grace.SDK.PromotionSet.Get(parameters)
 
+    /// Reads artifact download uri from ParseResult, local configuration, or Grace ids.
     let private getArtifactDownloadUri (graceIds: GraceIds) (artifactId: ArtifactId) =
         let parameters =
             Parameters.Artifact.GetArtifactDownloadUriParameters(
@@ -306,6 +319,7 @@ module PromotionSetCommand =
 
         Artifact.GetDownloadUri(parameters)
 
+    /// Renders promotion set results only when the selected output mode includes human-readable console text.
     let private renderPromotionSet (parseResult: ParseResult) (promotionSet: PromotionSetDto) =
         if
             not (parseResult |> json)
@@ -335,6 +349,7 @@ module PromotionSetCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders promotion set with approval summary results only when the selected output mode includes human-readable console text.
     let internal renderPromotionSetWithApprovalSummary
         (parseResult: ParseResult)
         (promotionSet: PromotionSetDto)
@@ -350,6 +365,7 @@ module PromotionSetCommand =
             ApprovalCommand.renderApprovalSummary parseResult summary
         | _ -> ()
 
+    /// Renders promotion set list results only when the selected output mode includes human-readable console text.
     let internal renderPromotionSetList (parseResult: ParseResult) (items: (PromotionSetDto * PromotionSetApprovalSummary option) seq) =
         if
             not (parseResult |> json)
@@ -386,6 +402,7 @@ module PromotionSetCommand =
 
             AnsiConsole.Write(table)
 
+    /// Renders promotion set events results only when the selected output mode includes human-readable console text.
     let private renderPromotionSetEvents (parseResult: ParseResult) (promotionSetId: PromotionSetId) (events: PromotionSetEvent seq) =
         if
             not (parseResult |> json)
@@ -412,6 +429,7 @@ module PromotionSetCommand =
 
                 AnsiConsole.Write(table)
 
+    /// Builds command objects or parameters for execution.
     let private buildConflictStepDisplay (graceIds: GraceIds) (step: PromotionSetStep) =
         task {
             let baseDisplay =
@@ -432,6 +450,7 @@ module PromotionSetCommand =
                 | Error error -> return { baseDisplay with DownloadUriError = Option.Some error.Error }
         }
 
+    /// Renders conflict summary results only when the selected output mode includes human-readable console text.
     let private renderConflictSummary (parseResult: ParseResult) (result: ConflictShowResult) =
         if
             not (parseResult |> json)
@@ -483,6 +502,7 @@ module PromotionSetCommand =
 
                 AnsiConsole.Write(table)
 
+    /// Routes the show conflicts command from parsed options through validation, the SDK call, and result rendering.
     let private showConflictsHandler (parseResult: ParseResult) =
         task {
             try
@@ -526,15 +546,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the show conflicts command by binding ParseResult values to the SDK request and CLI output contract.
     type ShowConflicts() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous show conflicts action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = showConflictsHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the create promotion set command from parsed options through validation, the SDK call, and result rendering.
     let private createPromotionSetHandler (parseResult: ParseResult) =
         task {
             try
@@ -580,15 +603,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the create promotion set command by binding ParseResult values to the SDK request and CLI output contract.
     type CreatePromotionSet() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous create promotion set action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = createPromotionSetHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Reads promotion set handler from ParseResult, local configuration, or Grace ids.
     let private getPromotionSetHandler (parseResult: ParseResult) =
         task {
             try
@@ -615,15 +641,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the get promotion set command by binding ParseResult values to the SDK request and CLI output contract.
     type GetPromotionSet() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get promotion set action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = getPromotionSetHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Resolves target branch id from command options, configuration, or local state.
     let private resolveTargetBranchId (parseResult: ParseResult) (graceIds: GraceIds) =
         task {
             let branchRaw =
@@ -659,6 +688,7 @@ module PromotionSetCommand =
                     | Error error -> return Error error
         }
 
+    /// Runs the list promotion sets flow with an injected service function so tests can exercise the command without the real SDK call.
     let internal listPromotionSetsWith
         (getQueueStatus: Parameters.Queue.QueueStatusParameters -> Task<GraceResult<Grace.Types.Queue.PromotionQueue>>)
         (getPromotionSet: Parameters.PromotionSet.GetPromotionSetParameters -> Task<GraceResult<PromotionSetDto>>)
@@ -743,17 +773,21 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Routes the list promotion sets command from parsed options through validation, the SDK call, and result rendering.
     let private listPromotionSetsHandler parseResult = listPromotionSetsWith Grace.SDK.Queue.Status Grace.SDK.PromotionSet.Get parseResult
 
+    /// Executes the list promotion sets command by binding ParseResult values to the SDK request and CLI output contract.
     type ListPromotionSets() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous list promotion sets action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = listPromotionSetsHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Reads promotion set events handler from ParseResult, local configuration, or Grace ids.
     let private getPromotionSetEventsHandler (parseResult: ParseResult) =
         task {
             try
@@ -787,15 +821,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the get promotion set events command by binding ParseResult values to the SDK request and CLI output contract.
     type GetPromotionSetEvents() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get promotion set events action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = getPromotionSetEventsHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the update input promotions command from parsed options through validation, the SDK call, and result rendering.
     let private updateInputPromotionsHandler (parseResult: ParseResult) =
         task {
             try
@@ -841,15 +878,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the update input promotions command by binding ParseResult values to the SDK request and CLI output contract.
     type UpdateInputPromotions() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous update input promotions action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = updateInputPromotionsHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the recompute promotion set command from parsed options through validation, the SDK call, and result rendering.
     let private recomputePromotionSetHandler (parseResult: ParseResult) =
         task {
             try
@@ -894,15 +934,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the recompute promotion set command by binding ParseResult values to the SDK request and CLI output contract.
     type RecomputePromotionSet() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous recompute promotion set action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = recomputePromotionSetHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the apply promotion set command from parsed options through validation, the SDK call, and result rendering.
     let private applyPromotionSetHandler (parseResult: ParseResult) =
         task {
             try
@@ -948,15 +991,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the apply promotion set command by binding ParseResult values to the SDK request and CLI output contract.
     type ApplyPromotionSet() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous apply promotion set action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = applyPromotionSetHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the delete promotion set command from parsed options through validation, the SDK call, and result rendering.
     let private deletePromotionSetHandler (parseResult: ParseResult) =
         task {
             try
@@ -1003,15 +1049,18 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the delete promotion set command by binding ParseResult values to the SDK request and CLI output contract.
     type DeletePromotionSet() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous delete promotion set action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = deletePromotionSetHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the resolve conflicts command from parsed options through validation, the SDK call, and result rendering.
     let private resolveConflictsHandler (parseResult: ParseResult) =
         task {
             try
@@ -1076,9 +1125,11 @@ module PromotionSetCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the resolve conflicts command by binding ParseResult values to the SDK request and CLI output contract.
     type ResolveConflicts() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous resolve conflicts action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, _: CancellationToken) : Task<int> =
             task {
                 let! result = resolveConflictsHandler parseResult
@@ -1086,6 +1137,7 @@ module PromotionSetCommand =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

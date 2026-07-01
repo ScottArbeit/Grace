@@ -7,6 +7,7 @@ open NodaTime
 open System
 open System.Collections.Generic
 
+/// Contains reminder helpers.
 module Reminder =
 
     /// Base parameters for reminder admin endpoints - scoped by repository.

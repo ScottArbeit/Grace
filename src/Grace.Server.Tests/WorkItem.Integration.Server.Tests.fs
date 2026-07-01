@@ -18,18 +18,22 @@ open System.Net.Http.Headers
 open System.Text
 open System.Threading.Tasks
 
+/// Groups shared helpers for work item integration helpers.
 module private WorkItemIntegrationHelpers =
+    /// Builds a deterministic authenticated client for integration setup fixture for the server integration work Item Integration assertions.
     let createAuthenticatedClient (userId: string) =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
         client
 
+    /// Builds a deterministic unauthenticated client for integration setup fixture for the server integration work Item Integration assertions.
     let createUnauthenticatedClient () =
         let client = new HttpClient()
         client.BaseAddress <- Client.BaseAddress
         client
 
+    /// Grants repo role needed by authorization-sensitive tests.
     let grantRepoRoleAsync (repositoryId: string) (principalId: string) (roleId: string) =
         task {
             let parameters = Parameters.Access.GrantRoleParameters()
@@ -48,6 +52,7 @@ module private WorkItemIntegrationHelpers =
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
         }
 
+    /// Builds a deterministic repository for integration setup fixture for the server integration work Item Integration assertions.
     let createRepositoryAsync (repositoryNamePrefix: string) =
         task {
             let repositoryId = Guid.NewGuid().ToString()
@@ -92,6 +97,7 @@ module private WorkItemIntegrationHelpers =
             return repositoryId
         }
 
+    /// Builds a deterministic work item with ID response for integration setup fixture for the server integration work Item Integration assertions.
     let createWorkItemWithIdResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
         task {
             let workItemId = Guid.NewGuid().ToString()
@@ -108,12 +114,14 @@ module private WorkItemIntegrationHelpers =
             return workItemId, response
         }
 
+    /// Builds a deterministic work item response for integration setup fixture for the server integration work Item Integration assertions.
     let createWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (title: string) =
         task {
             let! _, response = createWorkItemWithIdResponseAsync client repositoryId title
             return response
         }
 
+    /// Builds a deterministic work item for integration setup fixture for the server integration work Item Integration assertions.
     let createWorkItemAsync (repositoryId: string) (title: string) =
         task {
             let! workItemId, response = createWorkItemWithIdResponseAsync Client repositoryId title
@@ -121,6 +129,7 @@ module private WorkItemIntegrationHelpers =
             return workItemId
         }
 
+    /// Defines update work item response behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let updateWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
             let parameters = Parameters.WorkItem.UpdateWorkItemParameters()
@@ -133,6 +142,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/update", createJsonContent parameters)
         }
 
+    /// Gets work item response from the running test server.
     let getWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
             let parameters = Parameters.WorkItem.GetWorkItemParameters()
@@ -144,6 +154,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/get", createJsonContent parameters)
         }
 
+    /// Gets work item DTO from the running test server.
     let getWorkItemDtoAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
             let! response = getWorkItemResponseAsync client repositoryId workItemIdentifier
@@ -152,6 +163,7 @@ module private WorkItemIntegrationHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Gets work item links from the running test server.
     let getWorkItemLinksAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
             let parameters = Parameters.WorkItem.GetWorkItemLinksParameters()
@@ -172,6 +184,7 @@ module private WorkItemIntegrationHelpers =
                 return returnValue.ReturnValue
         }
 
+    /// Lists work item attachments response from the running test server.
     let listWorkItemAttachmentsResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
             let parameters = Parameters.WorkItem.ListWorkItemAttachmentsParameters()
@@ -183,6 +196,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/attachments/list", createJsonContent parameters)
         }
 
+    /// Lists work item attachments from the running test server.
     let listWorkItemAttachmentsAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
             let! response = listWorkItemAttachmentsResponseAsync client repositoryId workItemIdentifier
@@ -196,6 +210,7 @@ module private WorkItemIntegrationHelpers =
                 return returnValue.ReturnValue
         }
 
+    /// Defines show work item attachment response behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let showWorkItemAttachmentResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (attachmentType: string) (latest: bool) =
         task {
             let parameters = Parameters.WorkItem.ShowWorkItemAttachmentParameters()
@@ -209,6 +224,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/attachments/show", createJsonContent parameters)
         }
 
+    /// Defines show work item attachment behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let showWorkItemAttachmentAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (attachmentType: string) (latest: bool) =
         task {
             let! response = showWorkItemAttachmentResponseAsync client repositoryId workItemIdentifier attachmentType latest
@@ -222,6 +238,7 @@ module private WorkItemIntegrationHelpers =
                 return returnValue.ReturnValue
         }
 
+    /// Downloads work item attachment response through storage test infrastructure.
     let downloadWorkItemAttachmentResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
         task {
             let parameters = Parameters.WorkItem.DownloadWorkItemAttachmentParameters()
@@ -234,6 +251,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/attachments/download", createJsonContent parameters)
         }
 
+    /// Downloads work item attachment through storage test infrastructure.
     let downloadWorkItemAttachmentAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
         task {
             let! response = downloadWorkItemAttachmentResponseAsync client repositoryId workItemIdentifier artifactId
@@ -298,6 +316,7 @@ module private WorkItemIntegrationHelpers =
                 return returnValue.ReturnValue
         }
 
+    /// Gets artifact download URI from the running test server.
     let getArtifactDownloadUriAsync (client: HttpClient) (repositoryId: string) (artifactId: Guid) =
         task {
             let correlationId = generateCorrelationId ()
@@ -311,6 +330,7 @@ module private WorkItemIntegrationHelpers =
             return returnValue.ReturnValue.DownloadUri
         }
 
+    /// Gets artifact download URI response from the running test server.
     let getArtifactDownloadUriResponseAsync (client: HttpClient) (repositoryId: string) (artifactId: Guid) =
         task {
             let correlationId = generateCorrelationId ()
@@ -321,6 +341,7 @@ module private WorkItemIntegrationHelpers =
             return! client.GetAsync(route)
         }
 
+    /// Defines link reference behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let linkReferenceAsync (repositoryId: string) (workItemIdentifier: string) (referenceId: Guid) =
         task {
             let parameters = Parameters.WorkItem.LinkReferenceParameters()
@@ -335,6 +356,7 @@ module private WorkItemIntegrationHelpers =
             response.EnsureSuccessStatusCode() |> ignore
         }
 
+    /// Defines link promotion set behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let linkPromotionSetAsync (repositoryId: string) (workItemIdentifier: string) (promotionSetId: Guid) =
         task {
             let parameters = Parameters.WorkItem.LinkPromotionSetParameters()
@@ -377,6 +399,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/artifact/create", createJsonContent parameters)
         }
 
+    /// Builds a deterministic artifact for integration setup fixture for the server integration work Item Integration assertions.
     let createArtifactAsync (repositoryId: string) (artifactType: string) =
         task {
             let! response = createArtifactResponseAsync Client repositoryId artifactType "text/plain" 16L None
@@ -404,6 +427,7 @@ module private WorkItemIntegrationHelpers =
             return returnValue.ReturnValue
         }
 
+    /// Defines link artifact behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let linkArtifactAsync (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
         task {
             let parameters = Parameters.WorkItem.LinkArtifactParameters()
@@ -418,6 +442,7 @@ module private WorkItemIntegrationHelpers =
             response.EnsureSuccessStatusCode() |> ignore
         }
 
+    /// Defines link artifact response behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let linkArtifactResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
         task {
             let parameters = Parameters.WorkItem.LinkArtifactParameters()
@@ -431,6 +456,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/link/artifact", createJsonContent parameters)
         }
 
+    /// Gets links response from the running test server.
     let getLinksResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
             let parameters = Parameters.WorkItem.GetWorkItemLinksParameters()
@@ -443,6 +469,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/links/list", createJsonContent parameters)
         }
 
+    /// Defines remove reference link behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let removeReferenceLinkAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (referenceId: Guid) =
         task {
             let parameters = Parameters.WorkItem.RemoveReferenceLinkParameters()
@@ -455,6 +482,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/links/remove/reference", createJsonContent parameters)
         }
 
+    /// Defines remove promotion set link behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let removePromotionSetLinkAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (promotionSetId: Guid) =
         task {
             let parameters = Parameters.WorkItem.RemovePromotionSetLinkParameters()
@@ -467,6 +495,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/links/remove/promotion-set", createJsonContent parameters)
         }
 
+    /// Defines remove artifact link behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let removeArtifactLinkAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactId: Guid) =
         task {
             let parameters = Parameters.WorkItem.RemoveArtifactLinkParameters()
@@ -479,6 +508,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/links/remove/artifact", createJsonContent parameters)
         }
 
+    /// Defines remove artifact type links behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let removeArtifactTypeLinksAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) (artifactType: string) =
         task {
             let parameters = Parameters.WorkItem.RemoveArtifactTypeLinksParameters()
@@ -491,6 +521,7 @@ module private WorkItemIntegrationHelpers =
             return! client.PostAsync("/work/links/remove/artifact-type", createJsonContent parameters)
         }
 
+    /// Uploads bytes with SAS through storage test infrastructure.
     let uploadBytesWithSasAsync (uploadUri: Uri) (payload: byte array) =
         task {
             let blobClient = Azure.Storage.Blobs.Specialized.BlockBlobClient(uploadUri)
@@ -500,6 +531,7 @@ module private WorkItemIntegrationHelpers =
             ()
         }
 
+    /// Downloads bytes with SAS through storage test infrastructure.
     let downloadBytesWithSasAsync (downloadUri: string) =
         task {
             let blobClient = BlobClient(Uri downloadUri)
@@ -507,6 +539,7 @@ module private WorkItemIntegrationHelpers =
             return response.Value.Content.ToArray()
         }
 
+    /// Builds a deterministic personal access token for integration setup fixture for the server integration work Item Integration assertions.
     let createPersonalAccessTokenAsync () =
         task {
             let parameters = Parameters.Auth.CreatePersonalAccessTokenParameters()
@@ -519,6 +552,7 @@ module private WorkItemIntegrationHelpers =
             return returnValue.ReturnValue.Token
         }
 
+    /// Defines configure SDK for server behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let configureSdkForServerAsync () =
         task {
             let configuration = Current()
@@ -529,9 +563,11 @@ module private WorkItemIntegrationHelpers =
             Grace.SDK.Auth.setTokenProvider (fun () -> task { return Some token })
         }
 
+/// Covers work item number and links scenarios.
 [<NonParallelizable>]
 type WorkItemNumberAndLinksIntegrationTests() =
 
+    /// Verifies the create then fetch by guid and number returns same work item scenario.
     [<Test>]
     member _.CreateThenFetchByGuidAndNumberReturnsSameWorkItem() =
         task {
@@ -546,6 +582,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(byNumber.Description, Is.EqualTo(byId.Description))
         }
 
+    /// Verifies the unknown numeric identifier returns not found error scenario.
     [<Test>]
     member _.UnknownNumericIdentifierReturnsNotFoundError() =
         task {
@@ -558,6 +595,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(error.Error, Does.Contain(WorkItemError.getErrorMessage WorkItemError.WorkItemDoesNotExist))
         }
 
+    /// Verifies the non positive numeric identifier returns validation error scenario.
     [<Test>]
     member _.NonPositiveNumericIdentifierReturnsValidationError() =
         task {
@@ -570,6 +608,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(error.Error, Does.Contain(WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber))
         }
 
+    /// Verifies the sequential creates produce unique monotonic numbers scenario.
     [<Test>]
     member _.SequentialCreatesProduceUniqueMonotonicNumbers() =
         task {
@@ -600,6 +639,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(strictlyIncreasing, Is.True)
         }
 
+    /// Verifies the concurrent creates produce unique numbers without collisions scenario.
     [<Test>]
     member _.ConcurrentCreatesProduceUniqueNumbersWithoutCollisions() =
         task {
@@ -626,6 +666,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(numbers |> Array.forall (fun value -> value > 0L), Is.True)
         }
 
+    /// Verifies the work item links lifecycle round trips across reference promotion set and artifacts scenario.
     [<Test>]
     member _.WorkItemLinksLifecycleRoundTripsAcrossReferencePromotionSetAndArtifacts() =
         task {
@@ -695,9 +736,11 @@ type WorkItemNumberAndLinksIntegrationTests() =
             Assert.That(afterRemoval.ArtifactIds, Is.Empty)
         }
 
+/// Covers work item add summary scenarios.
 [<NonParallelizable>]
 type WorkItemAddSummaryIntegrationTests() =
 
+    /// Verifies the add summary with guid creates summary link and download URI scenario.
     [<Test>]
     member _.AddSummaryWithGuidCreatesSummaryLinkAndDownloadUri() =
         task {
@@ -729,6 +772,7 @@ type WorkItemAddSummaryIntegrationTests() =
             Assert.That(String.IsNullOrWhiteSpace(summaryDownloadUri.AbsoluteUri), Is.False)
         }
 
+    /// Verifies the add summary with work item number round trips prompt and links across both identifiers scenario.
     [<Test>]
     member _.AddSummaryWithWorkItemNumberRoundTripsPromptAndLinksAcrossBothIdentifiers() =
         task {
@@ -774,6 +818,7 @@ type WorkItemAddSummaryIntegrationTests() =
             Assert.That(String.IsNullOrWhiteSpace(promptDownloadUri.AbsoluteUri), Is.False)
         }
 
+    /// Verifies the add summary rejects caller supplied artifact IDs for numeric identifiers scenario.
     [<Test>]
     member _.AddSummaryRejectsCallerSuppliedArtifactIdsForNumericIdentifiers() =
         task {
@@ -800,9 +845,11 @@ type WorkItemAddSummaryIntegrationTests() =
             Assert.That(graceError.Error, Does.Contain("Canonical add-summary requests must provide SummaryContent"))
         }
 
+/// Covers work item attachment endpoints scenarios.
 [<NonParallelizable>]
 type WorkItemAttachmentEndpointsIntegrationTests() =
 
+    /// Verifies the attachment list supports guid and number and filters to reviewer attachment types scenario.
     [<Test>]
     member _.AttachmentListSupportsGuidAndNumberAndFiltersToReviewerAttachmentTypes() =
         task {
@@ -848,6 +895,7 @@ type WorkItemAttachmentEndpointsIntegrationTests() =
             Assert.That(attachmentIdsByGuid.Length, Is.GreaterThanOrEqualTo(1))
         }
 
+    /// Verifies the attachment show selects deterministic latest or earliest by attachment type scenario.
     [<Test>]
     member _.AttachmentShowSelectsDeterministicLatestOrEarliestByAttachmentType() =
         task {
@@ -888,6 +936,7 @@ type WorkItemAttachmentEndpointsIntegrationTests() =
             Assert.That(showLatest.AvailableAttachmentCount, Is.GreaterThanOrEqualTo(1))
         }
 
+    /// Verifies the attachment download returns download URI for linked reviewer attachment and rejects invalid artifacts scenario.
     [<Test>]
     member _.AttachmentDownloadReturnsDownloadUriForLinkedReviewerAttachmentAndRejectsInvalidArtifacts() =
         task {
@@ -922,9 +971,11 @@ type WorkItemAttachmentEndpointsIntegrationTests() =
             Assert.That(notLinkedError.Error, Does.Contain("not linked"))
         }
 
+/// Covers work item links authorization scenarios.
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemLinksAuthorizationIntegrationTests() =
 
+    /// Verifies the work item and attachment routes enforce repository permissions by role and repository scope scenario.
     [<Test>]
     member _.WorkItemAndAttachmentRoutesEnforceRepositoryPermissionsByRoleAndRepositoryScope() =
         task {
@@ -1070,6 +1121,7 @@ type WorkItemLinksAuthorizationIntegrationTests() =
             Assert.That(adminRemoveArtifact.StatusCode, Is.EqualTo(HttpStatusCode.OK))
         }
 
+    /// Verifies the artifact routes enforce repository permissions and preserve download identity path and bytes scenario.
     [<Test>]
     member _.ArtifactRoutesEnforceRepositoryPermissionsAndPreserveDownloadIdentityPathAndBytes() =
         task {
@@ -1170,9 +1222,11 @@ type WorkItemLinksAuthorizationIntegrationTests() =
             Assert.That(Convert.ToHexString(downloadedBytes), Is.EqualTo(Convert.ToHexString(payload)))
         }
 
+/// Covers work item SDK smoke scenarios.
 [<NonParallelizable>]
 type WorkItemSdkSmokeIntegrationTests() =
 
+    /// Runs with SDK authentication with the configured test context.
     let runWithSdkAuthentication (testBody: unit -> Task<unit>) =
         task {
             do! WorkItemIntegrationHelpers.configureSdkForServerAsync ()
@@ -1183,6 +1237,7 @@ type WorkItemSdkSmokeIntegrationTests() =
                 Grace.SDK.Auth.clearTokenProvider ()
         }
 
+    /// Verifies the SDK work item link apis round trip scenario.
     [<Test>]
     member _.SdkWorkItemLinkApisRoundTrip() =
         task {
@@ -1330,6 +1385,7 @@ type WorkItemSdkSmokeIntegrationTests() =
                     })
         }
 
+    /// Verifies the SDK work item attachment apis support list show and download scenario.
     [<Test>]
     member _.SdkWorkItemAttachmentApisSupportListShowAndDownload() =
         task {
@@ -1427,6 +1483,7 @@ type WorkItemSdkSmokeIntegrationTests() =
                     })
         }
 
+    /// Verifies the SDK work item link apis propagate validation not found and authorization errors scenario.
     [<Test>]
     member _.SdkWorkItemLinkApisPropagateValidationNotFoundAndAuthorizationErrors() =
         task {

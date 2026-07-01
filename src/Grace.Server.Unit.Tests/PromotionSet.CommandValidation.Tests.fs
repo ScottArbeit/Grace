@@ -11,13 +11,17 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Covers private behavior in no-Aspire server unit tests.
 type private FixedApprovalPolicySnapshotResolver(policies: PromotionSetApprovalPolicySnapshot list) =
     interface IApprovalPolicySnapshotResolver with
+        /// Verifies that get Current Approval Policies For Promotion Apply.
         member _.GetCurrentApprovalPoliciesForPromotionApply(_, _, _, _, _) = Task.FromResult policies
 
+/// Covers promotion Set Command Validation behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type PromotionSetCommandValidationTests() =
 
+    /// Constructs metadata fixtures used by the server unit promotion Set Command Validation assertions.
     let createMetadata correlationId =
         {
             Timestamp = Instant.FromUtc(2026, 2, 21, 11, 0)
@@ -27,6 +31,7 @@ type PromotionSetCommandValidationTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Builds existing Promotion Set test data for the server unit promotion Set Command Validation scenarios in this file.
     let existingPromotionSet status computationStatus =
         { PromotionSetDto.Default with
             PromotionSetId = Guid.NewGuid()
@@ -38,6 +43,7 @@ type PromotionSetCommandValidationTests() =
             StepsComputationStatus = computationStatus
         }
 
+    /// Builds approval Policy For test data for the server unit promotion Set Command Validation scenarios in this file.
     let approvalPolicyFor (dto: PromotionSetDto) policyId version =
         { PromotionSetApprovalPolicySnapshot.Default with
             ApprovalPolicyId = policyId
@@ -50,6 +56,7 @@ type PromotionSetCommandValidationTests() =
             RequiredResponder = "role:ApprovalResponder"
         }
 
+    /// Builds stored Approval Policy For test data for the server unit promotion Set Command Validation scenarios in this file.
     let storedApprovalPolicyFor (dto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         { ApprovalPolicy.Default with
             ApprovalPolicyId = policy.ApprovalPolicyId
@@ -69,6 +76,7 @@ type PromotionSetCommandValidationTests() =
             Status = ApprovalPolicyStatus.Enabled
         }
 
+    /// Builds approval Request For test data for the server unit promotion Set Command Validation scenarios in this file.
     let approvalRequestFor (dto: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
         { ApprovalRequest.Default with
             ApprovalRequestId = Guid.NewGuid()
@@ -80,6 +88,7 @@ type PromotionSetCommandValidationTests() =
             Status = ApprovalRequestStatus.Pending
         }
 
+    /// Asserts the past Expires At Summary Is Stale For condition so failures identify the violated server unit promotion Set Command Validation invariant.
     let assertPastExpiresAtSummaryIsStaleFor status =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
         let policy = approvalPolicyFor dto (Guid.NewGuid()) 1
@@ -92,6 +101,7 @@ type PromotionSetCommandValidationTests() =
         Assert.That(summary.ApprovalPolicyId, Is.EqualTo(Some policy.ApprovalPolicyId))
         Assert.That(summary.Reason, Is.EqualTo(Some "Approval request is expired."))
 
+    /// Verifies that apply Rejected When Promotion Set Already Succeeded.
     [<Test>]
     member _.ApplyRejectedWhenPromotionSetAlreadySucceeded() =
         let dto = existingPromotionSet PromotionSetStatus.Succeeded StepsComputationStatus.Computed
@@ -101,6 +111,7 @@ type PromotionSetCommandValidationTests() =
         | Ok _ -> Assert.Fail("Expected apply validation to fail for succeeded PromotionSet.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet has already been applied successfully."))
 
+    /// Verifies that apply Rejected When Promotion Set Already Running.
     [<Test>]
     member _.ApplyRejectedWhenPromotionSetAlreadyRunning() =
         let dto = existingPromotionSet PromotionSetStatus.Running StepsComputationStatus.Computing
@@ -110,6 +121,7 @@ type PromotionSetCommandValidationTests() =
         | Ok _ -> Assert.Fail("Expected apply validation to fail for running PromotionSet.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet is already running."))
 
+    /// Verifies that recompute Rejected When Steps Already Computing.
     [<Test>]
     member _.RecomputeRejectedWhenStepsAlreadyComputing() =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computing
@@ -119,6 +131,7 @@ type PromotionSetCommandValidationTests() =
         | Ok _ -> Assert.Fail("Expected recompute validation to fail while already computing.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet steps are already computing."))
 
+    /// Verifies that resolve Conflicts Rejected When Not Blocked.
     [<Test>]
     member _.ResolveConflictsRejectedWhenNotBlocked() =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.ComputeFailed
@@ -133,6 +146,7 @@ type PromotionSetCommandValidationTests() =
         | Ok _ -> Assert.Fail("Expected resolve validation to fail when PromotionSet is not blocked.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet is not blocked for conflict review."))
 
+    /// Verifies that duplicate Correlation Id Rejected.
     [<Test>]
     member _.DuplicateCorrelationIdRejected() =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
@@ -147,6 +161,7 @@ type PromotionSetCommandValidationTests() =
         | Ok _ -> Assert.Fail("Expected duplicate correlation ID validation to fail.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("Duplicate correlation ID for PromotionSet command."))
 
+    /// Verifies that approval Policy Selection Uses Deterministic Matching Order.
     [<Test>]
     member _.ApprovalPolicySelectionUsesDeterministicMatchingOrder() =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
@@ -170,6 +185,7 @@ type PromotionSetCommandValidationTests() =
         | Option.Some selected -> Assert.That(selected.ApprovalPolicyId, Is.EqualTo(earlierPolicy.ApprovalPolicyId))
         | Option.None -> Assert.Fail("Expected a matching approval policy.")
 
+    /// Verifies that invalid Matching Approval Policy Is Reported Instead Of Dropped.
     [<Test>]
     member _.InvalidMatchingApprovalPolicyIsReportedInsteadOfDropped() =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
@@ -181,6 +197,7 @@ type PromotionSetCommandValidationTests() =
         | Ok _ -> Assert.Fail("Expected invalid matching approval policy to block apply gate selection.")
         | Error _ -> Assert.Fail("Expected the invalid matching approval policy to be reported.")
 
+    /// Verifies that multiple Matching Approval Policies Are Rejected Instead Of Collapsed.
     [<Test>]
     member _.MultipleMatchingApprovalPoliciesAreRejectedInsteadOfCollapsed() =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
@@ -194,6 +211,7 @@ type PromotionSetCommandValidationTests() =
         | Ok _ -> Assert.Fail("Expected multiple matching approval policies to block apply gate selection.")
         | Error _ -> Assert.Fail("Expected multiple matching approval policies to be reported.")
 
+    /// Verifies that current Policy Resolver Overrides Stale Caller Snapshot At Apply Gate.
     [<Test>]
     member _.CurrentPolicyResolverOverridesStaleCallerSnapshotAtApplyGate() =
         task {
@@ -212,6 +230,7 @@ type PromotionSetCommandValidationTests() =
             | Error graceError -> Assert.Fail($"Expected resolver policies, but got {graceError.Error}.")
         }
 
+    /// Verifies that missing Current Policy Resolver Fails Closed When No Fallback Snapshots Exist.
     [<Test>]
     member _.MissingCurrentPolicyResolverFailsClosedWhenNoFallbackSnapshotsExist() =
         task {
@@ -224,6 +243,7 @@ type PromotionSetCommandValidationTests() =
             | Ok _ -> Assert.Fail("Expected missing resolver without fallback snapshots to fail closed.")
         }
 
+    /// Verifies that non Hosted Fallback Snapshots Remain Usable When Explicitly Supplied.
     [<Test>]
     member _.NonHostedFallbackSnapshotsRemainUsableWhenExplicitlySupplied() =
         task {
@@ -238,6 +258,7 @@ type PromotionSetCommandValidationTests() =
             | Error graceError -> Assert.Fail($"Expected fallback snapshots, but got {graceError.Error}.")
         }
 
+    /// Verifies that derived Approval Summary Reports Invalid Matching Policy As Stale.
     [<Test>]
     member _.DerivedApprovalSummaryReportsInvalidMatchingPolicyAsStale() =
         task {
@@ -258,6 +279,7 @@ type PromotionSetCommandValidationTests() =
             )
         }
 
+    /// Verifies that derived Approval Summary Reports Multiple Matching Policies As Stale.
     [<Test>]
     member _.DerivedApprovalSummaryReportsMultipleMatchingPoliciesAsStale() =
         task {
@@ -278,6 +300,7 @@ type PromotionSetCommandValidationTests() =
             Assert.That(summary.Reason, Is.EqualTo(Some "Multiple enabled approval policies match promotion apply scope; apply requires exactly one."))
         }
 
+    /// Verifies that derived Approval Summary Keeps Explicit Expired Status When Request Expires At Is Past.
     [<Test>]
     member _.DerivedApprovalSummaryKeepsExplicitExpiredStatusWhenRequestExpiresAtIsPast() =
         let dto = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
@@ -291,12 +314,15 @@ type PromotionSetCommandValidationTests() =
         Assert.That(summary.ApprovalPolicyId, Is.EqualTo(Some policy.ApprovalPolicyId))
         Assert.That(summary.Reason, Is.EqualTo(Some "Approval request is expired."))
 
+    /// Verifies that derived Approval Summary Reports Past Expires At Pending Request As Stale.
     [<Test>]
     member _.DerivedApprovalSummaryReportsPastExpiresAtPendingRequestAsStale() = assertPastExpiresAtSummaryIsStaleFor ApprovalRequestStatus.Pending
 
+    /// Verifies that derived Approval Summary Reports Past Expires At Approved Request As Stale.
     [<Test>]
     member _.DerivedApprovalSummaryReportsPastExpiresAtApprovedRequestAsStale() = assertPastExpiresAtSummaryIsStaleFor ApprovalRequestStatus.Approved
 
+    /// Verifies that approval Request Must Match Exact Current Attempt Identity.
     [<Test>]
     member _.ApprovalRequestMustMatchExactCurrentAttemptIdentity() =
         let dto = { existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed with StepsComputationAttempt = 4 }
@@ -316,6 +342,7 @@ type PromotionSetCommandValidationTests() =
         Assert.That(PromotionSet.requestMatchesCurrentAttempt dto policy priorAttemptRequest, Is.False)
         Assert.That(PromotionSet.requestMatchesCurrentAttempt dto policy priorPolicyVersionRequest, Is.False)
 
+    /// Verifies that generated Approval Request Id Includes Current Attempt Identity.
     [<Test>]
     member _.GeneratedApprovalRequestIdIncludesCurrentAttemptIdentity() =
         let dto = { existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed with StepsComputationAttempt = 4 }
@@ -334,6 +361,7 @@ type PromotionSetCommandValidationTests() =
             Is.Not.EqualTo(PromotionSet.buildGeneratedApprovalRequestId currentRequest)
         )
 
+    /// Verifies that update Input Promotions Rejected After Success.
     [<Test>]
     member _.UpdateInputPromotionsRejectedAfterSuccess() =
         let dto = existingPromotionSet PromotionSetStatus.Succeeded StepsComputationStatus.Computed

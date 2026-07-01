@@ -23,8 +23,10 @@ open System.Text
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the work item command parser, handlers, and output helpers.
 module WorkItemCommand =
 
+    /// Defines the options parsed by the work item command handlers.
     module private Options =
         let workItemId =
             new Option<string>(
@@ -144,6 +146,7 @@ module WorkItemCommand =
                 Arity = ArgumentArity.ExactlyOne
             )
 
+    /// Groups the work item command parser, handlers, and output helpers.
     module private Arguments =
         let workItemIdentifier = new Argument<string>("work-item", Description = "Work item ID <Guid> or work item number <positive integer>.")
 
@@ -151,12 +154,16 @@ module WorkItemCommand =
 
         let promotionSetId = new Argument<string>("promotion-set-id", Description = "Promotion set ID <Guid>.")
 
+    /// Defines structured data exchanged by CLI helpers.
     type private AttachmentInput = { Bytes: byte array; MimeType: string }
 
+    /// Defines structured data exchanged by CLI helpers.
     type private AttachmentResult = { WorkItem: string; ArtifactId: ArtifactId; ArtifactType: string }
 
+    /// Defines structured data exchanged by CLI helpers.
     type private AttachmentDownloadResult = { WorkItem: string; ArtifactId: ArtifactId; AttachmentType: string; OutputFile: string; Size: int64 }
 
+    /// Tries to map parse guid and returns a GraceError instead of throwing on unsupported input.
     let private tryParseGuid (value: string) (error: WorkItemError) (parseResult: ParseResult) =
         let mutable parsed = Guid.Empty
 
@@ -167,6 +174,7 @@ module WorkItemCommand =
         else
             Ok parsed
 
+    /// Tries to map normalize work item identifier and returns a GraceError instead of throwing on unsupported input.
     let private tryNormalizeWorkItemIdentifier (value: string) (parseResult: ParseResult) =
         let mutable parsedGuid = Guid.Empty
 
@@ -188,6 +196,7 @@ module WorkItemCommand =
             else
                 Error(GraceError.Create (WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemId) (getCorrelationId parseResult))
 
+    /// Submits a work-item creation request while keeping Spectre progress output in sync.
     let private createWorkItemWithProgress (parameters: Parameters.WorkItem.CreateWorkItemParameters) =
         progress
             .Columns(progressColumns)
@@ -199,6 +208,7 @@ module WorkItemCommand =
                     return result
                 })
 
+    /// Infers command metadata from the supplied input.
     let private inferMimeTypeFromFilePath (filePath: string) =
         match Path.GetExtension(filePath).ToLowerInvariant() with
         | ".md" -> "text/markdown"
@@ -206,11 +216,13 @@ module WorkItemCommand =
         | ".json" -> "application/json"
         | _ -> "application/octet-stream"
 
+    /// Coordinates compute sha256 behavior for this CLI command path.
     let private computeSha256 (contentBytes: byte array) =
         use hasher = SHA256.Create()
         let hash = hasher.ComputeHash(contentBytes)
         Convert.ToHexString(hash).ToLowerInvariant()
 
+    /// Reads upload artifact content data needed by the command workflow without changing remote state.
     let private uploadArtifactContent (uploadUri: UriWithSharedAccessSignature) (contentBytes: byte array) =
         task {
             use stream = new MemoryStream(contentBytes)
@@ -219,6 +231,7 @@ module WorkItemCommand =
             return ()
         }
 
+    /// Tries to map get attachment input and returns a GraceError instead of throwing on unsupported input.
     let private tryGetAttachmentInput (parseResult: ParseResult) =
         task {
             let filePath =
@@ -253,6 +266,7 @@ module WorkItemCommand =
                 return Ok { Bytes = Encoding.UTF8.GetBytes(stdinText); MimeType = "text/plain" }
         }
 
+    /// Adds a work-item attachment and uploads the local artifact content for it.
     let private createAndUploadArtifact (graceIds: GraceIds) (artifactType: ArtifactType) (attachmentInput: AttachmentInput) =
         task {
             let createParameters =
@@ -288,6 +302,7 @@ module WorkItemCommand =
                         )
         }
 
+    /// Tries to map resolve attachment type and returns a GraceError instead of throwing on unsupported input.
     let private tryResolveAttachmentType (parseResult: ParseResult) =
         let attachmentTypeRaw =
             parseResult.GetValue(Options.attachmentType)
@@ -299,6 +314,7 @@ module WorkItemCommand =
         else
             Ok(attachmentTypeRaw.Trim().ToLowerInvariant())
 
+    /// Tries to map resolve output file path and returns a GraceError instead of throwing on unsupported input.
     let private tryResolveOutputFilePath (parseResult: ParseResult) =
         let outputFileRaw =
             parseResult.GetValue(Options.outputFile)
@@ -325,6 +341,7 @@ module WorkItemCommand =
             with
             | ex -> Error(GraceError.Create $"Output file path is invalid: {ex.Message}" (getCorrelationId parseResult))
 
+    /// Reads download attachment bytes data needed by the command workflow without changing remote state.
     let private downloadAttachmentBytes (downloadUri: string) (parseResult: ParseResult) =
         task {
             if String.IsNullOrWhiteSpace(downloadUri) then
@@ -338,6 +355,7 @@ module WorkItemCommand =
                 | ex -> return Error(GraceError.Create ($"Failed to download attachment bytes: {ex.Message}") (getCorrelationId parseResult))
         }
 
+    /// Routes the create handler command from parsed options through validation, the SDK call, and result rendering.
     let private createHandlerImpl (parseResult: ParseResult) =
         if parseResult |> verbose then printParseResult parseResult
         let graceIds = parseResult |> getNormalizedIdsAndNames
@@ -376,6 +394,7 @@ module WorkItemCommand =
             else
                 WorkItem.Create(parameters)
 
+    /// Routes the create command from parsed options through validation, the SDK call, and result rendering.
     let private createHandler (parseResult: ParseResult) =
         task {
             try
@@ -384,15 +403,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous create action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = createHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the show command from parsed options through validation, the SDK call, and result rendering.
     let private showHandler (parseResult: ParseResult) =
         task {
             try
@@ -430,15 +452,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the show command by binding ParseResult values to the SDK request and CLI output contract.
     type Show() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous show action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = showHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the status command from parsed options through validation, the SDK call, and result rendering.
     let private statusHandler (parseResult: ParseResult) =
         task {
             try
@@ -472,15 +497,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the status command by binding ParseResult values to the SDK request and CLI output contract.
     type Status() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = statusHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the link reference command from parsed options through validation, the SDK call, and result rendering.
     let private linkReferenceHandler (parseResult: ParseResult) =
         task {
             try
@@ -513,15 +541,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the link reference command by binding ParseResult values to the SDK request and CLI output contract.
     type LinkReference() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous link reference action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = linkReferenceHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the link promotion set command from parsed options through validation, the SDK call, and result rendering.
     let private linkPromotionSetHandler (parseResult: ParseResult) =
         task {
             try
@@ -554,15 +585,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the link promotion set command by binding ParseResult values to the SDK request and CLI output contract.
     type LinkPromotionSet() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous link promotion set action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = linkPromotionSetHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the attach command from parsed options through validation, the SDK call, and result rendering.
     let private attachHandler (artifactType: ArtifactType) (artifactTypeLabel: string) (parseResult: ParseResult) =
         task {
             try
@@ -610,33 +644,40 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the attach summary command by binding ParseResult values to the SDK request and CLI output contract.
     type AttachSummary() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous attach summary action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = attachHandler ArtifactType.AgentSummary "summary" parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the attach prompt command by binding ParseResult values to the SDK request and CLI output contract.
     type AttachPrompt() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous attach prompt action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = attachHandler ArtifactType.Prompt "prompt" parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the attach notes command by binding ParseResult values to the SDK request and CLI output contract.
     type AttachNotes() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous attach notes action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = attachHandler ArtifactType.ReviewNotes "notes" parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Writes attachment list table data through the CLI output contract.
     let private writeAttachmentListTable (attachments: Parameters.WorkItem.ListWorkItemAttachmentsResult) =
         let table = Table(Border = TableBorder.Rounded)
         table.AddColumn("[bold]Artifact ID[/]") |> ignore
@@ -666,6 +707,7 @@ module WorkItemCommand =
         AnsiConsole.MarkupLine($"[bold]Work item number:[/] {attachments.WorkItemNumber}")
         AnsiConsole.Write(table)
 
+    /// Writes show attachment output data through the CLI output contract.
     let private writeShowAttachmentOutput (workItem: string) (showResult: Parameters.WorkItem.ShowWorkItemAttachmentResult) =
         let selection = if showResult.SelectedUsingLatest then "latest" else "earliest"
 
@@ -690,6 +732,7 @@ module WorkItemCommand =
                 $"[yellow]Use[/] [bold]grace workitem attachments download {Markup.Escape(workItem)} --artifact-id {Markup.Escape(showResult.ArtifactId)} --output-file <path>[/] [yellow]to save this attachment.[/]"
             )
 
+    /// Routes the attachments list handler command from parsed options through validation, the SDK call, and result rendering.
     let private attachmentsListHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -725,6 +768,7 @@ module WorkItemCommand =
                     return Ok graceReturnValue
         }
 
+    /// Routes the attachments list command from parsed options through validation, the SDK call, and result rendering.
     let private attachmentsListHandler (parseResult: ParseResult) =
         task {
             try
@@ -733,15 +777,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the attachments list command by binding ParseResult values to the SDK request and CLI output contract.
     type AttachmentsList() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous attachments list action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = attachmentsListHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the attachments show handler command from parsed options through validation, the SDK call, and result rendering.
     let private attachmentsShowHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -784,6 +831,7 @@ module WorkItemCommand =
                         return Ok graceReturnValue
         }
 
+    /// Routes the attachments show command from parsed options through validation, the SDK call, and result rendering.
     let private attachmentsShowHandler (parseResult: ParseResult) =
         task {
             try
@@ -792,15 +840,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the attachments show command by binding ParseResult values to the SDK request and CLI output contract.
     type AttachmentsShow() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous attachments show action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = attachmentsShowHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the attachments download handler command from parsed options through validation, the SDK call, and result rendering.
     let private attachmentsDownloadHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -865,6 +916,7 @@ module WorkItemCommand =
                                 return Ok(GraceReturnValue.Create output graceIds.CorrelationId)
         }
 
+    /// Routes the attachments download command from parsed options through validation, the SDK call, and result rendering.
     let private attachmentsDownloadHandler (parseResult: ParseResult) =
         task {
             try
@@ -873,15 +925,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the attachments download command by binding ParseResult values to the SDK request and CLI output contract.
     type AttachmentsDownload() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous attachments download action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = attachmentsDownloadHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Formats guid list values into the text shown in Spectre.Console tables or command output.
     let private formatGuidList (values: Guid list) =
         if values.IsEmpty then
             "-"
@@ -890,6 +945,7 @@ module WorkItemCommand =
             |> List.map (fun value -> value.ToString())
             |> String.concat Environment.NewLine
 
+    /// Writes links table data through the CLI output contract.
     let private writeLinksTable (links: WorkItemLinksDto) =
         let table = Table(Border = TableBorder.Rounded)
 
@@ -924,6 +980,7 @@ module WorkItemCommand =
 
         AnsiConsole.Write(table)
 
+    /// Routes the links list handler command from parsed options through validation, the SDK call, and result rendering.
     let private linksListHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -959,6 +1016,7 @@ module WorkItemCommand =
                     return Ok graceReturnValue
         }
 
+    /// Routes the links list command from parsed options through validation, the SDK call, and result rendering.
     let private linksListHandler (parseResult: ParseResult) =
         task {
             try
@@ -967,15 +1025,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the links list command by binding ParseResult values to the SDK request and CLI output contract.
     type LinksList() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous links list action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = linksListHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the remove reference link command from parsed options through validation, the SDK call, and result rendering.
     let private removeReferenceLinkHandler (parseResult: ParseResult) =
         task {
             try
@@ -1008,15 +1069,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the remove reference link command by binding ParseResult values to the SDK request and CLI output contract.
     type RemoveReferenceLink() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous remove reference link action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = removeReferenceLinkHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the remove promotion set link command from parsed options through validation, the SDK call, and result rendering.
     let private removePromotionSetLinkHandler (parseResult: ParseResult) =
         task {
             try
@@ -1049,15 +1113,18 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the remove promotion set link command by binding ParseResult values to the SDK request and CLI output contract.
     type RemovePromotionSetLink() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous remove promotion set link action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = removePromotionSetLinkHandler parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Routes the remove artifact type links command from parsed options through validation, the SDK call, and result rendering.
     let private removeArtifactTypeLinksHandler (artifactType: string) (parseResult: ParseResult) =
         task {
             try
@@ -1086,27 +1153,33 @@ module WorkItemCommand =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (getCorrelationId parseResult))
         }
 
+    /// Executes the remove summary links command by binding ParseResult values to the SDK request and CLI output contract.
     type RemoveSummaryLinks() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous remove summary links action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = removeArtifactTypeLinksHandler "summary" parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the remove prompt links command by binding ParseResult values to the SDK request and CLI output contract.
     type RemovePromptLinks() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous remove prompt links action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = removeArtifactTypeLinksHandler "prompt" parseResult
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the remove notes links command by binding ParseResult values to the SDK request and CLI output contract.
     type RemoveNotesLinks() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous remove notes links action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Task<int> =
             task {
                 let! result = removeArtifactTypeLinksHandler "notes" parseResult
@@ -1114,6 +1187,7 @@ module WorkItemCommand =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName
@@ -1123,6 +1197,7 @@ module WorkItemCommand =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
 
+        /// Adds options or child commands to a command definition.
         let addAttachInputOptions (command: Command) =
             command
             |> addOption Options.file

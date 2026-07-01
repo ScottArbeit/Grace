@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open Grace.Types.Webhooks
 open System
 
+/// Contains approval helpers.
 module Approval =
 
     /// Base parameters for approval policy endpoints.

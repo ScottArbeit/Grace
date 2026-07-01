@@ -9,8 +9,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// SDK wrappers for administrative repository maintenance endpoints.
 module Admin =
 
+    /// SDK entry point for repository reminder list, lookup, scheduling, and deletion endpoints.
     type Reminder() =
 
         /// <summary>
@@ -49,7 +51,7 @@ module Admin =
             postServer<RescheduleReminderParameters, String> (parameters |> ensureCorrelationIdIsSet, $"reminder/{nameof (Reminder.Reschedule)}")
 
         /// <summary>
-        /// Creates a new manual reminder.
+        /// Schedules a manual reminder for the repository scope described by the request.
         /// </summary>
         /// <param name="parameters">Values to use when creating the reminder.</param>
         static member public Create(parameters: CreateReminderParameters) =

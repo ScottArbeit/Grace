@@ -10,18 +10,22 @@ open System.Linq
 open System.Reflection
 open System.Diagnostics
 
+/// Groups Orleans actor helpers for timing keys, proxies, state, or workflow transitions.
 module Timing =
 
+    /// Coordinates publish timings logic for the Timing actor.
     let publishTimings sb =
         let message = sb.ToString()
         logToConsole message
 
+    /// Adds add timing data to the Timing actor workflow or state.
     let addTiming flag actorStateName correlationId =
         //let timingList = timings.GetOrAdd(correlationId, (fun _ -> List<Timing>()))
         //let timing = Timing.Create flag actorStateName
         //timingList.Add(timing)
         ()
 
+    /// Coordinates report timings logic for the Timing actor.
     let reportTimings path correlationId =
         let mutable timingList = null
         let sb = stringBuilderPool.Get()
@@ -103,6 +107,7 @@ module Timing =
         finally
             stringBuilderPool.Return(sb)
 
+    /// Removes or invalidates remove timing data from the Timing actor state.
     let removeTiming correlationId =
         let mutable x = null
         timings.TryRemove(correlationId, &x) |> ignore

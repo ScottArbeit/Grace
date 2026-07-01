@@ -41,6 +41,7 @@ open Grace.Types.Branch
 open Grace.Types.Reference
 open System.Runtime.Intrinsics.Arm
 
+/// Groups the services command parser, handlers, and output helpers.
 module Services =
 
     let mutable lockObject = new Lock()
@@ -82,6 +83,7 @@ module Services =
             DirectoryIds: HashSet<DirectoryVersionId>
         }
 
+        /// Defines the empty Grace Watch status used before a live status snapshot is available.
         static member Default =
             {
                 UpdatedAt = Instant.MinValue
@@ -98,6 +100,7 @@ module Services =
     let mutable parseResult: ParseResult = null
     let mutable private invocationCorrelationId: CorrelationId option = None
 
+    /// Coordinates directory version preimage entries behavior for this CLI command path.
     let private directoryVersionPreimageEntries (directories: seq<LocalDirectoryVersion>) (files: seq<LocalFileVersion>) =
         let directoryEntries =
             directories
@@ -110,6 +113,7 @@ module Services =
         Seq.append directoryEntries fileEntries
         |> Seq.toArray
 
+    /// Checks whether compute directory version hashes is true for the parsed command input.
     let private computeDirectoryVersionHashes relativeDirectoryPath directories files =
         let entries = directoryVersionPreimageEntries directories files
 
@@ -118,8 +122,10 @@ module Services =
 
         sha256Hash, blake3Hash
 
+    /// Coordinates reset invocation correlation id behavior for this CLI command path.
     let resetInvocationCorrelationId () = invocationCorrelationId <- None
 
+    /// Reads cli assembly file version from ParseResult, local configuration, or Grace ids.
     let getCliAssemblyFileVersion () =
         let assembly = Assembly.GetExecutingAssembly()
 
@@ -138,16 +144,20 @@ module Services =
             else
                 fileVersion
 
+    /// Reads cli client type from ParseResult, local configuration, or Grace ids.
     let getCliClientType () = ClientType.CLI(getCliAssemblyFileVersion ())
 
+    /// Coordinates configure sdk client identity behavior for this CLI command path.
     let configureSdkClientIdentity () = Grace.SDK.ClientIdentity.configure (getCliClientType ())
 
     // Extension methods for dealing with local file changes.
+    /// Adds CLI helper members to an existing Grace type.
     type DirectoryVersion with
         /// Gets the full path for this file in the working directory.
         member this.FullName = Path.Combine(Current().RootDirectory, $"{this.RelativePath}")
 
     // Extension methods for dealing with local files.
+    /// Adds CLI helper members to an existing Grace type.
     type LocalDirectoryVersion with
         /// Gets the full path for this file in the working directory.
         member this.FullName = Path.Combine(Current().RootDirectory, $"{this.RelativePath}")
@@ -163,6 +173,7 @@ module Services =
             getObjectFileName relativePath (Sha256Hash $"{sha256Hash}_{blake3Hash}")
 
     // Extension methods for dealing with local files.
+    /// Adds CLI helper members to an existing Grace type.
     type LocalFileVersion with
         /// Gets the full path for this file in the working directory.
         member this.FullName = getNativeFilePath (Path.Combine(Current().RootDirectory, $"{this.RelativePath}"))
@@ -181,6 +192,7 @@ module Services =
                 Path.Combine(Current().ObjectDirectory, this.RelativePath, getLocalObjectCacheFileName this.RelativePath this.Sha256Hash this.Blake3Hash)
             )
 
+    /// Reads local object cache path for file version from ParseResult, local configuration, or Grace ids.
     let getLocalObjectCachePathForFileVersion (fileVersion: FileVersion) =
         getNativeFilePath (
             Path.Combine(
@@ -193,7 +205,7 @@ module Services =
     /// Flag to determine if we should do case-insensitive file name processing on the current platform.
     let ignoreCase = runningOnWindows
 
-    /// Returns true if fileToCheck matches this graceIgnoreEntry; otherwise returns false.
+    /// Checks whether a file path matches the parsed `.graceignore` entry.
     let checkIgnoreLineAgainstFile (fileToCheck: FilePath) (graceIgnoreEntry: string) =
         let fileName = Path.GetFileName(fileToCheck)
 
@@ -201,7 +213,7 @@ module Services =
 
         ignoreEntryMatches
 
-    /// Returns true if directory matches this graceIgnoreEntry; otherwise returns false.
+    /// Checks whether a directory path matches the parsed `.graceignore` entry.
     let checkIgnoreLineAgainstDirectory (directoryInfoToCheck: DirectoryInfo) (graceIgnoreEntry: string) =
         let normalizedDirectoryPath =
             if Path.EndsInDirectorySeparator(directoryInfoToCheck.FullName) then
@@ -225,7 +237,7 @@ module Services =
 
             false
 
-    /// Returns true if filePath should be ignored by Grace, otherwise returns false.
+    /// Checks whether a repository file path should be skipped by Grace indexing.
     let shouldIgnoreFile (filePath: FilePath) =
         let mutable shouldIgnore = false
         let wasAlreadyCached = shouldIgnoreCache.TryGetValue(filePath, &shouldIgnore)
@@ -266,7 +278,7 @@ module Services =
 
     let private notString = "not "
 
-    /// Returns true if directoryPath should be ignored by Grace, otherwise returns false.
+    /// Checks whether a repository directory should be skipped by Grace indexing.
     let shouldIgnoreDirectory (directoryPath: string) =
         let mutable shouldIgnore = false
         let wasAlreadyCached = shouldIgnoreCache.TryGetValue(directoryPath, &shouldIgnore)
@@ -286,10 +298,10 @@ module Services =
             //logToAnsiConsole Colors.Verbose $"In shouldIgnoreDirectory: directoryPath: {directoryPath}; shouldIgnore: {shouldIgnoreDirectory}"
             shouldIgnoreDirectory
 
-    /// Returns true if directoryPath should not be ignored by Grace, otherwise returns false.
+    /// Checks whether a repository directory remains eligible for Grace indexing.
     let shouldNotIgnoreDirectory (directoryPath: string) = not <| shouldIgnoreDirectory directoryPath
 
-    /// Creates a LocalFileVersion for the given FileInfo instance.
+    /// Maps a FileInfo entry into the local file-version shape used by repository scans.
     let createLocalFileVersion (fileInfo: FileInfo) =
         task {
             if fileInfo.Exists then
@@ -328,6 +340,7 @@ module Services =
                 return None
         }
 
+    /// Models working tree scan input values passed between the parser and services handlers.
     type WorkingTreeScanInput =
         {
             RootDirectory: string
@@ -337,11 +350,13 @@ module Services =
             FileIgnoreEntries: string array
         }
 
+    /// Normalizes Grace ids for full path by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeFullPath path =
         Path
             .GetFullPath(path)
             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
 
+    /// Evaluates is within grace directory against parsed options and command state.
     let private isWithinGraceDirectory (scanInput: WorkingTreeScanInput) path =
         let graceDirectory = normalizeFullPath scanInput.GraceDirectory
         let candidate = Path.GetFullPath(path)
@@ -358,6 +373,7 @@ module Services =
             StringComparison.OrdinalIgnoreCase
         )
 
+    /// Coordinates should ignore file for scan behavior for this CLI command path.
     let private shouldIgnoreFileForScan (scanInput: WorkingTreeScanInput) (cache: ConcurrentDictionary<FilePath, bool>) (filePath: FilePath) =
         let mutable shouldIgnore = false
 
@@ -386,6 +402,7 @@ module Services =
 
             shouldIgnoreThisFile
 
+    /// Coordinates should ignore directory for scan behavior for this CLI command path.
     let private shouldIgnoreDirectoryForScan (scanInput: WorkingTreeScanInput) (cache: ConcurrentDictionary<FilePath, bool>) (directoryPath: string) =
         let mutable shouldIgnore = false
 
@@ -403,6 +420,7 @@ module Services =
 
             shouldIgnoreDirectory
 
+    /// Converts a scanned file into the local file-version record stored in the index.
     let private createLocalFileVersionForScan (scanInput: WorkingTreeScanInput) (fileInfo: FileInfo) =
         task {
             if fileInfo.Exists then
@@ -434,10 +452,12 @@ module Services =
                 return None
         }
 
+    /// Reads working directory write times for scan from ParseResult, local configuration, or Grace ids.
     let private getWorkingDirectoryWriteTimesForScan (scanInput: WorkingTreeScanInput) =
         let cache = ConcurrentDictionary<FilePath, bool>()
         let localWriteTimes = Dictionary<FileSystemEntryType * RelativePath, DateTime>()
 
+        /// Coordinates rec behavior for this CLI command path.
         let rec collect (directoryInfo: DirectoryInfo) =
             if not (shouldIgnoreDirectoryForScan scanInput cache directoryInfo.FullName) then
                 let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(scanInput.RootDirectory, directoryInfo.FullName)))
@@ -459,11 +479,13 @@ module Services =
         collect (DirectoryInfo(scanInput.RootDirectory))
         localWriteTimes
 
+    /// Evaluates has file content changed against parsed options and command state.
     let private hasFileContentChanged existingSha256Hash existingBlake3Hash (newFileVersion: LocalFileVersion) =
         newFileVersion.Sha256Hash <> existingSha256Hash
         || (existingBlake3Hash <> Blake3Hash String.Empty
             && newFileVersion.Blake3Hash <> existingBlake3Hash)
 
+    /// Coordinates scan working tree for differences read only behavior for this CLI command path.
     let scanWorkingTreeForDifferencesReadOnly (scanInput: WorkingTreeScanInput) (previousGraceStatus: GraceStatus) =
         task {
             try
@@ -521,6 +543,7 @@ module Services =
             LocalDirectoryVersion.Default
         )
 
+    /// Checks whether sync grace status root directory hash is true for the parsed command input.
     let syncGraceStatusRootDirectoryHash (graceStatus: GraceStatus) =
         let rootDirectoryVersion = getRootDirectoryVersion graceStatus
 
@@ -537,10 +560,13 @@ module Services =
 
     let mutable private lastScanForDifferencesSucceeded = true
 
+    /// Coordinates was last scan for differences successful behavior for this CLI command path.
     let internal wasLastScanForDifferencesSuccessful () = lastScanForDifferencesSucceeded
 
+    /// Coordinates set last scan for differences successful for watch tests behavior for this CLI command path.
     let internal setLastScanForDifferencesSuccessfulForWatchTests succeeded = lastScanForDifferencesSucceeded <- succeeded
 
+    /// Clears inherited working directory write times for watch rescan values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearWorkingDirectoryWriteTimesForWatchRescan () = localWriteTimes.Clear()
 
     /// Gets a dictionary of local paths and their last write times.
@@ -577,6 +603,7 @@ module Services =
 
         localWriteTimes
 
+    /// Reads local state db path from ParseResult, local configuration, or Grace ids.
     let private getLocalStateDbPath () = Current().GraceStatusFile
 
     /// Reads only GraceStatus meta fields (no index).
@@ -854,7 +881,7 @@ module Services =
                 return (List<LocalDirectoryVersion>(), List<LocalFileVersion>(), Sha256Hash.Empty, Blake3Hash String.Empty)
         }
 
-    /// Creates the Grace index file by scanning the repository's working directory.
+    /// Scans the repository working directory and writes the Grace index file.
     let createNewGraceStatusFile (previousGraceStatus: GraceStatus) (parseResult: ParseResult) =
         task {
             try
@@ -960,18 +987,23 @@ module Services =
     let removeDirectoryFromObjectCache (directoryId: DirectoryVersionId) =
         task { do! LocalStateDb.removeObjectCacheDirectory (getLocalStateDbPath ()) directoryId }
 
+    /// Defines structured data exchanged by CLI helpers.
     type internal ObjectStorageDownloadFile = { LocalFileVersion: LocalFileVersion; SourceFileVersion: FileVersion option }
 
+    /// Reads object storage download file from local data needed by the command workflow without changing remote state.
     let internal objectStorageDownloadFileFromLocal localFileVersion = { LocalFileVersion = localFileVersion; SourceFileVersion = None }
 
+    /// Reads object storage download file from file version data needed by the command workflow without changing remote state.
     let internal objectStorageDownloadFileFromFileVersion (fileVersion: FileVersion) =
         { LocalFileVersion = fileVersion.ToLocalFileVersion DateTime.UtcNow; SourceFileVersion = Some fileVersion }
 
+    /// Reads file version for object storage download data needed by the command workflow without changing remote state.
     let internal fileVersionForObjectStorageDownload downloadFile =
         match downloadFile.SourceFileVersion with
         | Some fileVersion -> fileVersion
         | None -> downloadFile.LocalFileVersion.ToFileVersion
 
+    /// Reads download files from object storage with clients data needed by the command workflow without changing remote state.
     let internal downloadFilesFromObjectStorageWithClients
         (manifestDownload: ManifestDownload.ManifestDownloadRequest -> Task<GraceResult<ManifestDownload.ManifestDownloadResult>>)
         (wholeFileDownload: GetDownloadUriParameters -> string -> Task<GraceResult<string>>)
@@ -1005,6 +1037,7 @@ module Services =
                             if fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
                                 let objectFilePath = localFileVersion.FullObjectPath
 
+                                /// Coordinates delete partial manifest cache file behavior for this CLI command path.
                                 let deletePartialManifestCacheFile () =
                                     try
                                         if File.Exists objectFilePath then File.Delete objectFilePath
@@ -1106,6 +1139,7 @@ module Services =
             downloadFiles
             correlationId
 
+    /// Scans the repository working directory and writes the Grace index file.
     let downloadFileVersionsFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) (files: IEnumerable<FileVersion>) (correlationId: string) =
         let downloadFiles =
             files
@@ -1118,16 +1152,20 @@ module Services =
             downloadFiles
             correlationId
 
+    /// Reads find file version for upload metadata data needed by the command workflow without changing remote state.
     let internal findFileVersionForUploadMetadata (fileVersions: IEnumerable<FileVersion>) (uploadMetadata: UploadMetadata) =
         fileVersions.First (fun fileVersion ->
             fileVersion.RelativePath = uploadMetadata.RelativePath
             && fileVersion.Sha256Hash = uploadMetadata.Sha256Hash
             && fileVersion.Blake3Hash = uploadMetadata.Blake3Hash)
 
+    /// Reads upload metadata identity data needed by the command workflow without changing remote state.
     let internal uploadMetadataIdentity (uploadMetadata: UploadMetadata) = uploadMetadata.RelativePath, uploadMetadata.Sha256Hash, uploadMetadata.Blake3Hash
 
+    /// Coordinates local file version identity behavior for this CLI command path.
     let internal localFileVersionIdentity (fileVersion: LocalFileVersion) = fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash
 
+    /// Reads upload whole files to object storage data needed by the command workflow without changing remote state.
     let private uploadWholeFilesToObjectStorage (parameters: GetUploadMetadataForFilesParameters) =
         task {
             match Current().ObjectStorageProvider with
@@ -1186,6 +1224,7 @@ module Services =
             | GoogleCloudStorage -> return Error(GraceError.Create (getErrorMessage StorageError.NotImplemented) parameters.CorrelationId)
         }
 
+    /// Carries the parsed values consumed by the copy storage command handler.
     let private copyStorageParameters (source: GetUploadMetadataForFilesParameters) (fileVersions: FileVersion array) =
         let copy = GetUploadMetadataForFilesParameters()
         copy.OwnerId <- source.OwnerId
@@ -1198,9 +1237,11 @@ module Services =
         copy.FileVersions <- fileVersions
         copy
 
+    /// Coordinates storage id or current behavior for this CLI command path.
     let private storageIdOrCurrent<'Id> (rawValue: string) (currentValue: 'Id) (parse: string -> 'Id) =
         if String.IsNullOrWhiteSpace rawValue then currentValue else parse rawValue
 
+    /// Converts CLI parameter values into the manifest upload request sent to Grace services.
     let private createManifestUploadRequest (parameters: GetUploadMetadataForFilesParameters) (fileVersion: FileVersion) =
         let current = Current()
 
@@ -1221,6 +1262,7 @@ module Services =
 
         request
 
+    /// Reads upload files to object storage with clients data needed by the command workflow without changing remote state.
     let internal uploadFilesToObjectStorageWithClients
         (manifestUpload: FileVersion -> Task<GraceResult<ManifestUpload.ManifestUploadResult>>)
         (wholeFileUpload: GetUploadMetadataForFilesParameters -> Task<GraceResult<FileVersion array>>)
@@ -1274,19 +1316,24 @@ module Services =
             uploadWholeFilesToObjectStorage
             parameters
 
+    /// Reads uploaded file version identity data needed by the command workflow without changing remote state.
     let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
+    /// Reads uploaded file version path and sha identity data needed by the command workflow without changing remote state.
     let private uploadedFileVersionPathAndShaIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash)
 
+    /// Evaluates is manifest backed file version against parsed options and command state.
     let private isManifestBackedFileVersion (fileVersion: FileVersion) =
         not (isNull (box fileVersion.ContentReference))
         && fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest
 
+    /// Coordinates local unknown or same blake3 matches trusted behavior for this CLI command path.
     let private localUnknownOrSameBlake3MatchesTrusted savedBlake3 localBlake3 =
         not (String.IsNullOrWhiteSpace(string savedBlake3))
         && (String.IsNullOrWhiteSpace(string localBlake3)
             || savedBlake3 = localBlake3)
 
+    /// Tries to map find single trusted path sha match and returns a GraceError instead of throwing on unsupported input.
     let private tryFindSingleTrustedPathShaMatch
         (savedManifestBackedByPathAndSha: Dictionary<RelativePath * Sha256Hash, List<FileVersion>>)
         (localFileVersion: FileVersion)
@@ -1344,6 +1391,7 @@ module Services =
         for localDirectoryVersion in localDirectoryVersions do
             localDirectoryVersionsById[localDirectoryVersion.DirectoryVersionId] <- localDirectoryVersion
 
+        /// Builds command objects or parameters for execution.
         let rec buildDirectoryVersion (localDirectoryVersion: LocalDirectoryVersion) =
             if directoryVersions.ContainsKey localDirectoryVersion.DirectoryVersionId then
                 directoryVersions[localDirectoryVersion.DirectoryVersionId]
@@ -1421,7 +1469,7 @@ module Services =
         =
         applyUploadedFileVersionsToDirectoryVersionsWithSavedDirectoryVersions uploadedFileVersions Array.empty localDirectoryVersions
 
-    /// Creates an updated LocalDirectoryVersion instance, with a new DirectoryId, based on changes to an existing one.
+    /// Rebuilds a LocalDirectoryVersion with a new directory id after child file or directory changes.
     ///
     /// If this is a new subdirectory, the LocalDirectoryVersion will have just been created with empty subdirectory and file lists.
     let processChangedDirectoryVersion (newGraceStatus: GraceStatus) (previousDirectoryVersion: LocalDirectoryVersion) =
@@ -1673,6 +1721,7 @@ module Services =
                     processChangedDirectoriesBottomUp newGraceStatus changedDirectoryVersions newDirectoryVersions
                 | None -> ()
 
+    /// Normalizes Grace ids for directory difference path by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeDirectoryDifferencePath (relativePath: RelativePath) =
         let normalized = normalizeFilePath $"{relativePath}"
 
@@ -1681,6 +1730,7 @@ module Services =
         else
             normalized.TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
 
+    /// Evaluates is directory path in subtree against parsed options and command state.
     let private isDirectoryPathInSubtree (subtreeRoot: RelativePath) (candidate: RelativePath) =
         let normalizedSubtreeRoot = normalizeDirectoryDifferencePath subtreeRoot
         let normalizedCandidate = normalizeDirectoryDifferencePath candidate
@@ -1688,6 +1738,7 @@ module Services =
         normalizedCandidate.Equals(normalizedSubtreeRoot, StringComparison.Ordinal)
         || normalizedCandidate.StartsWith($"{normalizedSubtreeRoot}/", StringComparison.Ordinal)
 
+    /// Coordinates select top level deleted directories behavior for this CLI command path.
     let private selectTopLevelDeletedDirectories (differences: IEnumerable<FileSystemDifference>) =
         let topLevelDeletedDirectories = List<RelativePath>()
 
@@ -1712,6 +1763,7 @@ module Services =
 
         topLevelDeletedDirectories
 
+    /// Tries to map find surviving directory version and returns a GraceError instead of throwing on unsupported input.
     let private tryFindSurvivingDirectoryVersion
         (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
         (newGraceStatus: GraceStatus)
@@ -1730,6 +1782,7 @@ module Services =
             else
                 None
 
+    /// Coordinates rec behavior for this CLI command path.
     let rec private tryFindNearestSurvivingParentDirectoryVersion
         (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
         (newGraceStatus: GraceStatus)
@@ -1743,6 +1796,7 @@ module Services =
             | Some parentDirectoryVersion -> Some parentDirectoryVersion
             | None -> tryFindNearestSurvivingParentDirectoryVersion changedDirectoryVersions newGraceStatus parentPath
 
+    /// Coordinates process directory deletion behavior for this CLI command path.
     let private processDirectoryDeletion
         (changedDirectoryVersions: ConcurrentDictionary<RelativePath, LocalDirectoryVersion>)
         (newGraceStatus: GraceStatus)
@@ -1885,9 +1939,11 @@ module Services =
 
         DirectoryVersion.SaveDirectoryVersions saveParameters
 
+    /// Reads upload directory versions data needed by the command workflow without changing remote state.
     let uploadDirectoryVersions (localDirectoryVersions: List<LocalDirectoryVersion>) correlationId =
         saveDirectoryVersions (localDirectoryVersions.Select(fun ldv -> ldv.ToDirectoryVersion)) correlationId
 
+    /// Reads saved directory versions for root directory from ParseResult, local configuration, or Grace ids.
     let getSavedDirectoryVersionsForRootDirectory (rootDirectoryId: DirectoryVersionId) (correlationId: CorrelationId) =
         task {
             if rootDirectoryId = DirectoryVersionId.Empty then
@@ -1921,6 +1977,7 @@ module Services =
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
+    /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
     let private createGraceWatchStatus (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         let directoryIds =
             match directoryIdsOverride with
@@ -1948,12 +2005,15 @@ module Services =
             DirectoryIds = directoryIds
         }
 
+    /// Builds the startup-claim record that prevents duplicate Grace Watch instances.
     let private createGraceWatchStartupClaim () = { GraceWatchStatus.Default with UpdatedAt = getCurrentInstant (); IsStartupClaim = true }
 
+    /// Checks if the Grace Watch status is within the past 5m.
     let private isGraceWatchStatusFresh (graceWatchStatus: GraceWatchStatus) =
         graceWatchStatus.UpdatedAt > getCurrentInstant()
             .Minus(Duration.FromMinutes(5.0))
 
+    /// Checks if the Grace Watch status is valid and has data.
     let private isGraceWatchStatusUsable (graceWatchStatus: GraceWatchStatus) =
         isGraceWatchStatusFresh graceWatchStatus
         && not graceWatchStatus.IsStartupClaim
@@ -1963,6 +2023,7 @@ module Services =
         && not (isNull graceWatchStatus.DirectoryIds)
         && graceWatchStatus.DirectoryIds.Count > 0
 
+    /// Writes grace watch status data through the CLI output contract.
     let private writeGraceWatchStatus fileMode graceWatchStatus =
         task {
             Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
@@ -2028,6 +2089,7 @@ module Services =
         task {
             let claimStatus = createGraceWatchStartupClaim ()
 
+            /// Writes claim to existing file data through the CLI output contract.
             let writeClaimToExistingFile (fileStream: FileStream) =
                 task {
                     fileStream.SetLength(0L)
@@ -2299,7 +2361,7 @@ module Services =
                         fileInfo.Delete()
         }
 
-    /// Creates a save reference with the given message.
+    /// Sends the current save message to the SDK and records the resulting Grace reference.
     let createSaveReference (rootDirectoryVersion: LocalDirectoryVersion) message correlationId =
         task {
             //Activity.Current <- new Activity("createSaveReference")
@@ -2334,12 +2396,14 @@ module Services =
             return result
         }
 
+    /// Models cli current state capture source values passed between the parser and services handlers.
     type CliCurrentStateCaptureSource =
         | ExplicitReference
         | ExistingReference
         | GraceWatch
         | CreatedSave
 
+    /// Models cli current state capture result values passed between the parser and services handlers.
     type CliCurrentStateCaptureResult =
         {
             TargetReferenceId: ReferenceId
@@ -2350,6 +2414,7 @@ module Services =
             CreatedSaveMessage: string option
         }
 
+    /// Models cli current state capture operations values passed between the parser and services handlers.
     type CliCurrentStateCaptureOperations =
         {
             GetBranch: unit -> Task<GraceResult<BranchDto>>
@@ -2365,6 +2430,7 @@ module Services =
             CreateSaveReference: LocalDirectoryVersion -> string -> Task<Result<ReferenceId, GraceError>>
         }
 
+    /// Checks whether reference has root on branch is true for the parsed command input.
     let private referenceHasRootOnBranch branchId rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
         && referenceDto.BranchId = branchId
@@ -2372,6 +2438,7 @@ module Services =
         && referenceDto.Sha256Hash = rootDirectorySha256Hash
         && localUnknownOrSameBlake3MatchesTrusted referenceDto.Blake3Hash rootDirectoryBlake3Hash
 
+    /// Tries to map find reference for root and returns a GraceError instead of throwing on unsupported input.
     let private tryFindReferenceForRoot rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash (branchDto: BranchDto) =
         [
             branchDto.LatestReference
@@ -2382,6 +2449,7 @@ module Services =
         ]
         |> Seq.tryFind (referenceHasRootOnBranch branchDto.BranchId rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash)
 
+    /// Reads changed file versions referenced by updated directories from ParseResult, local configuration, or Grace ids.
     let internal getChangedFileVersionsReferencedByUpdatedDirectories
         (differences: List<FileSystemDifference>)
         (directoryVersions: List<LocalDirectoryVersion>)
@@ -2404,9 +2472,11 @@ module Services =
         |> Seq.distinctBy (fun fileVersion -> fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
         |> Seq.toList
 
+    /// Updates CLI authentication state for save disabled error while keeping token handling centralized.
     let private saveDisabledError correlationId =
         GraceError.Create "Save is disabled on this branch, and local changes require a Save before branch annotation can continue." correlationId
 
+    /// Summarizes the files captured by Grace Watch and the save reference created for them.
     let private createCaptureResult source createdSaveMessage rootDirectoryId rootDirectorySha256Hash rootDirectoryBlake3Hash targetReferenceId =
         {
             TargetReferenceId = targetReferenceId
@@ -2417,12 +2487,14 @@ module Services =
             CreatedSaveMessage = createdSaveMessage
         }
 
+    /// Coordinates trusted root blake3 for capture behavior for this CLI command path.
     let private trustedRootBlake3ForCapture localRootBlake3 (referenceDto: ReferenceDto) =
         if String.IsNullOrWhiteSpace(string localRootBlake3) then
             referenceDto.Blake3Hash
         else
             localRootBlake3
 
+    /// Reads sync grace status with uploaded directory versions data needed by the command workflow without changing remote state.
     let private syncGraceStatusWithUploadedDirectoryVersions
         (updatedGraceStatus: GraceStatus)
         (newDirectoryVersions: List<LocalDirectoryVersion>)
@@ -2472,6 +2544,7 @@ module Services =
         { updatedGraceStatus with Index = syncedIndex; RootDirectorySha256Hash = rootDirectorySha256Hash; RootDirectoryBlake3Hash = rootDirectoryBlake3Hash },
         List<LocalDirectoryVersion>(syncedDirectoryVersions)
 
+    /// Captures the current repository root into a Grace save reference for watch-driven persistence.
     let private createSaveForCurrentRoot operations branchDto saveMessage correlationId rootDirectoryVersion =
         task {
             if not branchDto.SaveEnabled then
@@ -2492,6 +2565,7 @@ module Services =
                 | Error error -> return Error error
         }
 
+    /// Resolves cli current state target reference from command options, configuration, or local state.
     let resolveCliCurrentStateTargetReference operations (explicitReferenceId: ReferenceId option) (saveMessage: string) (correlationId: CorrelationId) =
         task {
             match explicitReferenceId with
@@ -2604,6 +2678,7 @@ module Services =
                                             return Ok captured
         }
 
+    /// Parses command input into typed values.
     let parseCreatedReferenceId correlationId (returnValue: GraceReturnValue<string>) =
         let mutable referenceIdProperty = Unchecked.defaultof<obj>
 
@@ -2662,6 +2737,7 @@ module Services =
                     let objectFilePath = Path.Combine(objectDirectoryPath, objectFileName)
                     //logToConsole $"relativeDirectoryPath: {relativeDirectoryPath}; objectFileName: {objectFileName}; objectFilePath: {objectFilePath}"
 
+                    /// Converts a filesystem entry into the file-version payload sent during save capture.
                     let createFileVersion (objectFilePathInfo: FileInfo) =
                         FileVersion.CreateWithHashes
                             (RelativePath relativeFilePath)
@@ -2710,6 +2786,7 @@ module Services =
                 return None
         }
 
+    /// Coordinates copy updated files to object cache core behavior for this CLI command path.
     let private copyUpdatedFilesToObjectCacheCore (progressTask: ProgressTask option) (differences: List<FileSystemDifference>) =
         task {
             // Get the list of files that have been added or changed.
@@ -2766,9 +2843,12 @@ module Services =
     /// Copies new and updated files found in a list of FileSystemDifferences to the object directory.
     let copyUpdatedFilesToObjectCache (t: ProgressTask) (differences: List<FileSystemDifference>) = copyUpdatedFilesToObjectCacheCore (Some t) differences
 
+    /// Coordinates copy updated files to object cache without progress behavior for this CLI command path.
     let copyUpdatedFilesToObjectCacheWithoutProgress (differences: List<FileSystemDifference>) = copyUpdatedFilesToObjectCacheCore None differences
 
+    /// Coordinates default cli current state capture operations behavior for this CLI command path.
     let defaultCliCurrentStateCaptureOperations (correlationId: CorrelationId) =
+        /// Reads branch from ParseResult, local configuration, or Grace ids.
         let getBranch () =
             let current = Current()
 
@@ -2787,6 +2867,7 @@ module Services =
 
             Grace.SDK.Branch.Get parameters
 
+        /// Reads upload file versions data needed by the command workflow without changing remote state.
         let uploadFileVersions (fileVersions: seq<LocalFileVersion>) =
             task {
                 let current = Current()
@@ -2811,6 +2892,7 @@ module Services =
                 | Error error -> return Error error
             }
 
+        /// Reads upload directory versions for capture data needed by the command workflow without changing remote state.
         let uploadDirectoryVersionsForCapture directoryVersions =
             task {
                 match! saveDirectoryVersions directoryVersions correlationId with
@@ -2818,6 +2900,7 @@ module Services =
                 | Error error -> return Error error
             }
 
+        /// Builds the save-reference request that records a Grace Watch capture in the branch history.
         let createSaveReferenceForCapture rootDirectoryVersion saveMessage =
             task {
                 match! createSaveReference rootDirectoryVersion saveMessage correlationId with
@@ -2846,6 +2929,7 @@ module Services =
 
     let branchAnnotateImplicitSaveMessage = "Created during `grace branch annotate` operation."
 
+    /// Resolves cli current state target reference for branch annotate from command options, configuration, or local state.
     let resolveCliCurrentStateTargetReferenceForBranchAnnotate (explicitReferenceId: ReferenceId option) (correlationId: CorrelationId) =
         resolveCliCurrentStateTargetReference
             (defaultCliCurrentStateCaptureOperations correlationId)
@@ -2853,9 +2937,11 @@ module Services =
             branchAnnotateImplicitSaveMessage
             correlationId
 
+    /// Coordinates matches option name behavior for this CLI command path.
     let private matchesOptionName (option: Option) (optionName: string) =
         let normalizedName = optionName.TrimStart('-')
 
+        /// Evaluates has alias against parsed options and command state.
         let hasAlias alias =
             option.Aliases
             |> Seq.exists (fun optionAlias -> optionAlias = alias)
@@ -2865,6 +2951,7 @@ module Services =
         || hasAlias optionName
         || hasAlias normalizedName
 
+    /// Coordinates rec behavior for this CLI command path.
     let rec private hasOptionInCommandResult (commandResult: CommandResult) (optionName: string) =
         if isNull commandResult then
             false
@@ -2896,6 +2983,7 @@ module Services =
         else
             false
 
+    /// Resolves correlation id from command options, configuration, or local state.
     let resolveCorrelationId (parseResult: ParseResult) : CorrelationId =
         if isOptionPresent parseResult OptionName.CorrelationId
            && not
@@ -2913,6 +3001,7 @@ module Services =
     ///    or should be taken from default values.
     let getNormalizedIdsAndNames (parseResult: ParseResult) =
 
+        /// Evaluates is explicit name against parsed options and command state.
         let isExplicitName (nameOption: string) =
             isOptionPresent parseResult nameOption
             && not
@@ -2920,6 +3009,7 @@ module Services =
             && not
                <| String.IsNullOrWhiteSpace(parseResult.GetValue<string>(nameOption))
 
+        /// Coordinates needs fallback behavior for this CLI command path.
         let needsFallback (idOption: string) (nameOption: string) =
             isOptionPresent parseResult idOption
             && isOptionResultImplicit parseResult idOption
@@ -2934,6 +3024,7 @@ module Services =
 
         let config = if needsConfigFallback then Some(Current()) else None
 
+        /// Reads normalized id from ParseResult, local configuration, or Grace ids.
         let getNormalizedId (idOption: string) (nameOption: string) (configValue: Guid) =
             let isImplicit = isOptionResultImplicit parseResult idOption
             let explicitName = isExplicitName nameOption

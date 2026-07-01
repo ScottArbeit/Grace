@@ -3,6 +3,7 @@ namespace Grace.Shared.Parameters
 open Grace.Shared.Parameters.Common
 open System
 
+/// Contains policy helpers.
 module Policy =
     /// Base parameters for policy endpoints.
     type PolicyParameters() =

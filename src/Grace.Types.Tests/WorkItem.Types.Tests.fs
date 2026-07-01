@@ -7,8 +7,10 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Contains tests covering work item types behavior.
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemTypesTests() =
+    /// Exercises metadata coverage for the types work Item contract.
     let metadata timestamp =
         {
             Timestamp = timestamp
@@ -18,6 +20,7 @@ type WorkItemTypesTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Verifies that update dto preserves created fields.
     [<Test>]
     member _.UpdateDtoPreservesCreatedFields() =
         let createdAt = Instant.FromUtc(2025, 1, 1, 0, 0)
@@ -35,6 +38,7 @@ type WorkItemTypesTests() =
         Assert.That(updated.CreatedBy, Is.EqualTo(createdBy))
         Assert.That(updated.UpdatedAt, Is.EqualTo(Some updatedAt))
 
+    /// Verifies that created event sets work item number.
     [<Test>]
     member _.CreatedEventSetsWorkItemNumber() =
         let createdAt = Instant.FromUtc(2025, 2, 1, 0, 0)

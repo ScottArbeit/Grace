@@ -11,6 +11,7 @@ open System
 open System.Runtime.Serialization
 open System.Collections
 
+/// Contains branch helpers.
 module Branch =
 
     /// The state held in the database when creating a physical deletion reminder for a branch.
@@ -60,6 +61,7 @@ module Branch =
         | DeletePhysical
         | Undelete
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<BranchCommand>()
 
     /// Defines the events for the Branch actor.
@@ -133,6 +135,7 @@ module Branch =
         | PhysicalDeleted
         | Undeleted
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<BranchEventType>()
 
     /// Record that holds the event type and metadata for a Branch event.
@@ -177,6 +180,7 @@ module Branch =
             DeleteReason: DeleteReason
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof BranchDto
@@ -209,6 +213,7 @@ module Branch =
                 DeleteReason = String.Empty
             }
 
+        /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto branchEvent currentBranchDto =
             let branchEventType = branchEvent.Event
 

@@ -7,9 +7,11 @@ open Grace.Types.Owner
 open NUnit.Framework
 open System.Net.Http
 
+/// Covers slop scenarios.
 [<TestFixture>]
 type Slop() =
     // Slop guard: if correlation middleware is removed or renamed, this breaks.
+    /// Verifies the owner get echoes correlation ID header scenario.
     [<Test; Category("Slop")>]
     member _.OwnerGetEchoesCorrelationIdHeader() =
         task {
@@ -35,6 +37,7 @@ type Slop() =
         }
 
     // Slop guard: if OwnerDto.Class or response shape changes, this breaks.
+    /// Verifies the owner get returns owner DTO class scenario.
     [<Test; Category("Slop")>]
     member _.OwnerGetReturnsOwnerDtoClass() =
         task {

@@ -22,6 +22,7 @@ open FSharpPlus.Data
 open System.Collections.Generic
 open Grace.Shared.Parameters
 
+/// Contains Grace Server orleans behavior and supporting helpers.
 module Orleans =
 
     /// Provides partition keys for grains based on their type and context when Orleans is used with Cosmos DB.
@@ -29,6 +30,7 @@ module Orleans =
         let log = loggerFactory.CreateLogger("OrleansFilters.Server")
 
         interface Cosmos.IPartitionKeyProvider with
+            /// Chooses the Orleans request-context partition key used by grain-call filters.
             member _.GetPartitionKey(grainType: string, grainId: GrainId) =
                 ValueTask<string>(
                     task {
@@ -42,8 +44,11 @@ module Orleans =
                         //orleansContext
                         //|> Seq.iter (fun kvp -> logToConsole $"**** - {kvp.Key}: {kvp.Value}")
 
+                        /// Implements organization id for the server request pipeline.
                         let organizationId () = $"{orleansContext[nameof OrganizationId]}"
+                        /// Implements repository id for the server request pipeline.
                         let repositoryId () = $"{orleansContext[nameof RepositoryId]}"
+                        /// Implements first grain key segment for the server request pipeline.
                         let firstGrainKeySegment () = $"{grainId.Key}".Split('|')[0]
 
                         let partitionKey =
@@ -102,6 +107,7 @@ module Orleans =
         let log = loggerFactory.CreateLogger("OrleansFilters.Server")
 
         interface IIncomingGrainCallFilter with
+            /// Adds request partition metadata around Orleans grain calls before invoking the next filter.
             member _.Invoke(context: IIncomingGrainCallContext) =
                 task {
                     let correlationId = getCorrelationId ()

@@ -9,6 +9,7 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains review helpers.
 module Review =
     /// Defines the change type for a modified path.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
@@ -18,6 +19,7 @@ module Review =
         | Deleted
         | Renamed
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<PathChangeType>()
 
     /// Represents a modified path in a deterministic analysis.
@@ -35,6 +37,7 @@ module Review =
         | Present
         | Missing
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<TestEvidencePresence>()
 
     /// Volatility signal representing reference creation activity.
@@ -54,6 +57,7 @@ module Review =
         | BinaryFilesChanged
         | HighVolatility
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<DeterministicTrigger>()
 
     /// Deterministic analysis output.
@@ -77,6 +81,7 @@ module Review =
             CreatedAt: Instant
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 ReferenceId = ReferenceId.Empty
@@ -102,6 +107,7 @@ module Review =
         | Triage
         | Deep
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<EvidenceStage>()
 
     /// Budget limits for evidence selection.
@@ -154,6 +160,7 @@ module Review =
             Principal: UserId
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 AnalysisReceiptId = Guid.Empty
@@ -196,6 +203,7 @@ module Review =
         | High
         | Critical
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<FindingSeverity>()
 
     /// Categories for review findings.
@@ -209,6 +217,7 @@ module Review =
         | Behavior
         | Other of string
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<FindingCategory>()
 
     /// Resolution state for a finding.
@@ -221,6 +230,7 @@ module Review =
         | Deferred
         | Superseded
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<FindingResolutionState>()
 
     /// Evidence reference for a finding.
@@ -294,6 +304,7 @@ module Review =
             UpdatedAt: Instant option
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof ReviewNotes
@@ -321,6 +332,7 @@ module Review =
         | ResolveFinding of findingId: FindingId * resolutionState: FindingResolutionState * resolvedBy: UserId * note: string option
         | AddCheckpoint of checkpoint: ReviewCheckpoint
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReviewCommand>()
 
     /// Defines the events for the Review actor.
@@ -330,6 +342,7 @@ module Review =
         | FindingResolved of findingId: FindingId * resolutionState: FindingResolutionState * resolvedBy: UserId * note: string option
         | CheckpointAdded of checkpoint: ReviewCheckpoint
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ReviewEventType>()
 
     /// Record that holds the event type and metadata for a Review event.

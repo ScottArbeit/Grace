@@ -22,8 +22,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for policy keys, proxies, state, or workflow transitions.
 module Policy =
 
+    /// Implements the Orleans grain for policy actor.
     type PolicyActor([<PersistentState(StateName.Policy, Constants.GraceActorStorage)>] state: IPersistentState<List<PolicyEvent>>) =
         inherit Grain()
 
@@ -39,6 +41,7 @@ module Policy =
 
         let mutable repositoryId: RepositoryId = RepositoryId.Empty
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -46,6 +49,7 @@ module Policy =
 
             logActorActivation log this.IdentityString activateStartTime (getActorActivationMessage state.RecordExists)
 
+            /// Applies to state changes to the Policy actor state.
             let applyToState (policyEvent: PolicyEvent) =
                 match policyEvent.Event with
                 | SnapshotCreated snapshot ->
@@ -65,11 +69,13 @@ module Policy =
 
             Task.CompletedTask
 
+        /// Returns current snapshot data from the Policy actor state or related storage.
         member private this.GetCurrentSnapshot() =
             snapshots
             |> List.sortBy (fun snapshot -> snapshot.CreatedAt)
             |> List.tryLast
 
+        /// Applies one persisted Policy event to this activation's in-memory state.
         member private this.ApplyEvent(policyEvent: PolicyEvent) =
             task {
                 let correlationId = policyEvent.Metadata.CorrelationId
@@ -131,26 +137,32 @@ module Policy =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this Policy actor state.
             member this.GetRepositoryId correlationId = repositoryId |> returnTask
 
         interface IPolicyActor with
+            /// Returns current data from the Policy actor state or related storage.
             member this.GetCurrent correlationId =
                 this.correlationId <- correlationId
                 this.GetCurrentSnapshot() |> returnTask
 
+            /// Returns snapshots data from the Policy actor state or related storage.
             member this.GetSnapshots correlationId =
                 this.correlationId <- correlationId
 
                 (snapshots :> IReadOnlyList<PolicySnapshot>)
                 |> returnTask
 
+            /// Returns acknowledgements data from the Policy actor state or related storage.
             member this.GetAcknowledgements correlationId =
                 this.correlationId <- correlationId
 
                 (acknowledgements :> IReadOnlyList<PolicyAcknowledgement>)
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: PolicyCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
@@ -177,6 +189,7 @@ module Policy =
                                     return Error(GraceError.Create (PolicyError.getErrorMessage PolicyError.PolicySnapshotDoesNotExist) metadata.CorrelationId)
                     }
 
+                /// Runs Policy command decisions, applies emitted events, and persists the result.
                 let processCommand (command: PolicyCommand) (metadata: EventMetadata) =
                     task {
                         let! policyEventType =

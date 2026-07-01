@@ -41,13 +41,16 @@ open Grace.Shared.Parameters.Storage
 open Grace.CLI.Text
 open Grace.Types.Automation
 
+/// Groups the watch command parser, handlers, and output helpers.
 module Watch =
     exception private WatchCommandExit of int
 
     let private uploadedFileVersions = ConcurrentDictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
 
+    /// Reads uploaded file version identity data needed by the command workflow without changing remote state.
     let private uploadedFileVersionIdentity (fileVersion: FileVersion) = (fileVersion.RelativePath, fileVersion.Sha256Hash, fileVersion.Blake3Hash)
 
+    /// Defines the options parsed by the watch command handlers.
     module private Options =
         let ownerId =
             new Option<OwnerId>(
@@ -124,8 +127,10 @@ module Watch =
         let check =
             new Option<bool>(OptionName.Check, Required = false, Description = "Checks whether GraceWatch is already running without starting the watcher.")
 
+    /// Evaluates is check requested against parsed options and command state.
     let isCheckRequested (parseResult: ParseResult) = parseResult.GetValue(Options.check)
 
+    /// Defines structured data exchanged by CLI helpers.
     type private PendingFileWorkSnapshot = { FullPath: string; Generation: int64 }
 
     /// Holds a list of the created or changed files that we need to process, as determined by the FileSystemWatcher.
@@ -141,6 +146,7 @@ module Watch =
     /// Note: We're using ConcurrentDictionary because it's safe for multithreading, doesn't allow us to insert the same key twice, and for its algorithms. We're not using the values of the ConcurrentDictionary here, only the keys.
     let private directoriesToProcess = ConcurrentDictionary<string, unit>()
 
+    /// Defines structured data exchanged by CLI helpers.
     type private StatusUpdateTriggerSnapshot = { RelativePath: string; Generation: int64 }
 
     /// Holds a list of repo-relative paths that should trigger a Grace Status scan without uploading file content.
@@ -151,11 +157,15 @@ module Watch =
 
     let private statusUpdateTriggers = ConcurrentDictionary<string, int64>()
 
+    /// Defines structured data exchanged by CLI helpers.
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
 
+    /// Executes the watch parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type WatchParameters() =
         inherit ParameterBase()
+        /// Stores a parsed command value for handler execution.
         member val public RepositoryPath: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public NamedSections: string [] = Array.empty with get, set
 
     let mutable private graceStatus = GraceStatus.Default
@@ -163,18 +173,24 @@ module Watch =
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
 
+    /// Coordinates file deleted behavior for this CLI command path.
     let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
 
+    /// Evaluates is not directory against parsed options and command state.
     let isNotDirectory path = not <| Directory.Exists(path)
+    /// Coordinates update in progress behavior for this CLI command path.
     let updateInProgress () = File.Exists(updateInProgressFileName ())
+    /// Coordinates update not in progress behavior for this CLI command path.
     let updateNotInProgress () = not <| updateInProgress ()
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
         | DeletedFile
         | DeletedDirectory
         | DeletedPathKindUnknown
         | DeletedPathStatusUnavailable
 
+    /// Coordinates repository relative path behavior for this CLI command path.
     let private repositoryRelativePath (fullPath: string) =
         let rootDirectory =
             Current().RootDirectory
@@ -196,11 +212,13 @@ module Watch =
             else
                 None
 
+    /// Normalizes Grace ids for relative path by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeRelativePath (relativePath: RelativePath) =
         $"{relativePath}"
             .Replace(Path.DirectorySeparatorChar, '/')
             .Replace(Path.AltDirectorySeparatorChar, '/')
 
+    /// Coordinates tracked deleted path kind behavior for this CLI command path.
     let private trackedDeletedPathKind (status: GraceStatus) (relativePath: string) =
         let deletedRelativePath = normalizeRelativePath relativePath
 
@@ -225,6 +243,7 @@ module Watch =
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
+    /// Coordinates default watch path comparison behavior for this CLI command path.
     let private defaultWatchPathComparison () =
         if OperatingSystem.IsWindows() then
             StringComparison.OrdinalIgnoreCase
@@ -233,6 +252,7 @@ module Watch =
 
     let mutable private watchPathComparison = defaultWatchPathComparison ()
 
+    /// Reads tracked deleted path kind data needed by the CLI workflow.
     let private readTrackedDeletedPathKind (relativePath: string) =
         try
             let status =
@@ -252,12 +272,18 @@ module Watch =
         with
         | _ -> DeletedPathStatusUnavailable
 
+    /// Coordinates set grace status for watch tests behavior for this CLI command path.
     let internal setGraceStatusForWatchTests status = graceStatus <- status
+    /// Checks whether set grace status has changed for watch tests is true for the parsed command input.
     let internal setGraceStatusHasChangedForWatchTests hasChanged = graceStatusHasChanged <- hasChanged
+    /// Coordinates set read grace status file for watch tests behavior for this CLI command path.
     let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
+    /// Reads set enumerate files for directory upload for watch tests data needed by the command workflow without changing remote state.
     let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
+    /// Coordinates set watch path comparison for watch tests behavior for this CLI command path.
     let internal setWatchPathComparisonForWatchTests comparison = watchPathComparison <- comparison
 
+    /// Coordinates should ignore deleted path behavior for this CLI command path.
     let private shouldIgnoreDeletedPath (pathKind: DeletedPathKind) (fullPath: string) =
         let configuration = Current()
         let normalizedFullPath = Path.GetFullPath(fullPath)
@@ -284,6 +310,7 @@ module Watch =
         elif pathKind = DeletedPathStatusUnavailable then
             false
         else
+            /// Coordinates directory ignore matches behavior for this CLI command path.
             let directoryIgnoreMatches graceIgnoreLine =
                 if isNull fileInfo.Directory then
                     false
@@ -305,6 +332,7 @@ module Watch =
                 && configuration.GraceFileIgnoreEntries
                    |> Array.exists (fun graceIgnoreLine -> checkIgnoreLineAgainstFile normalizedFullPath graceIgnoreLine))
 
+    /// Coordinates enqueue status update trigger behavior for this CLI command path.
     let private enqueueStatusUpdateTrigger fullPath =
         match repositoryRelativePath fullPath with
         | Some relativePath when
@@ -319,6 +347,7 @@ module Watch =
             true
         | _ -> false
 
+    /// Coordinates remove status update trigger behavior for this CLI command path.
     let private removeStatusUpdateTrigger fullPath =
         match repositoryRelativePath fullPath with
         | Some relativePath ->
@@ -328,6 +357,7 @@ module Watch =
             |> ignore
         | _ -> ()
 
+    /// Reads enqueue file upload data needed by the command workflow without changing remote state.
     let private enqueueFileUpload fullPath =
         let shouldIgnore = shouldIgnoreFile fullPath
 
@@ -341,12 +371,14 @@ module Watch =
         else
             false
 
+    /// Reads remove pending file upload data needed by the command workflow without changing remote state.
     let private removePendingFileUpload filePath =
         let mutable generation = 0L
 
         filesToProcess.TryRemove(filePath, &generation)
         |> ignore
 
+    /// Reads cancel pending uploads for deleted path data needed by the command workflow without changing remote state.
     let private cancelPendingUploadsForDeletedPath fullPath =
         removePendingFileUpload fullPath
 
@@ -381,6 +413,7 @@ module Watch =
 
             if removeQueuedFile then removePendingFileUpload queuedFile
 
+    /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
         filesToProcess.Clear()
         directoriesToProcess.Clear()
@@ -399,6 +432,7 @@ module Watch =
         watchPathComparison <- defaultWatchPathComparison ()
         setLastScanForDifferencesSuccessfulForWatchTests true
 
+    /// Coordinates pending watch work snapshot for tests behavior for this CLI command path.
     let internal pendingWatchWorkSnapshotForTests () =
         {
             FilesToProcess = filesToProcess.Keys.OrderBy(id).ToArray()
@@ -406,6 +440,7 @@ module Watch =
             StatusUpdateTriggers = statusUpdateTriggers.Keys.OrderBy(id).ToArray()
         }
 
+    /// Evaluates has pending watch work against parsed options and command state.
     let private hasPendingWatchWork () =
         not (
             filesToProcess.IsEmpty
@@ -413,6 +448,7 @@ module Watch =
             && statusUpdateTriggers.IsEmpty
         )
 
+    /// Coordinates status only trigger snapshot behavior for this CLI command path.
     let private statusOnlyTriggerSnapshot () =
         directoriesToProcess.Keys.ToArray(),
         statusUpdateTriggers
@@ -420,11 +456,13 @@ module Watch =
             .Select(fun trigger -> { RelativePath = trigger.Key; Generation = trigger.Value })
             .ToArray()
 
+    /// Coordinates reset working tree scan cache for status only triggers behavior for this CLI command path.
     let private resetWorkingTreeScanCacheForStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
         if directorySnapshot.Length > 0
            || statusTriggerSnapshot.Length > 0 then
             clearWorkingDirectoryWriteTimesForWatchRescan ()
 
+    /// Coordinates drain status only triggers behavior for this CLI command path.
     let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
         let mutable unitValue = ()
 
@@ -439,6 +477,7 @@ module Watch =
                 .Remove(pair)
             |> ignore
 
+    /// Resolves signal raccess token result from command options, configuration, or local state.
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
         match tokenResult with
         | Ok (Some token) when not (String.IsNullOrWhiteSpace token) -> Ok token
@@ -446,12 +485,14 @@ module Watch =
             Error $"No access token is available. Run `grace authenticate login` or set {Constants.EnvironmentVariables.GraceToken} before starting watch."
         | Error message -> Error $"Unable to acquire an access token for SignalR notifications: {message}"
 
+    /// Reads signal raccess token from ParseResult, local configuration, or Grace ids.
     let private getSignalRAccessToken () =
         task {
             let! tokenResult = Grace.CLI.Command.Auth.tryGetAccessToken ()
             return resolveSignalRAccessTokenResult tokenResult
         }
 
+    /// Renders json result results only when the selected output mode includes human-readable console text.
     let private renderJsonResult parseResult started completed message =
         let configuration = Current()
 
@@ -469,10 +510,12 @@ module Watch =
         Ok(GraceReturnValue.Create dto (getCorrelationId parseResult))
         |> renderOutput parseResult
 
+    /// Renders json error results only when the selected output mode includes human-readable console text.
     let private renderJsonError parseResult message =
         Error(GraceError.Create message (getCorrelationId parseResult))
         |> renderOutput parseResult
 
+    /// Opens the SignalR connection Grace Watch uses to receive server-side notifications.
     let private createSignalRConnection (signalRUrl: Uri) =
         HubConnectionBuilder()
             .WithAutomaticReconnect()
@@ -493,6 +536,7 @@ module Watch =
             )
             .Build()
 
+    /// Evaluates is grace status artifact against parsed options and command state.
     let private isGraceStatusArtifact (fullPath: string) =
         let statusFile = Current().GraceStatusFile
 
@@ -501,6 +545,7 @@ module Watch =
         || fullPath.Equals(statusFile + "-shm", StringComparison.InvariantCultureIgnoreCase)
         || fullPath.Equals(statusFile + "-journal", StringComparison.InvariantCultureIgnoreCase)
 
+    /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
         // Ignore directory creation; need to think about this more... should we capture new empty directories?
         if updateNotInProgress ()
@@ -516,6 +561,7 @@ module Watch =
                && (not <| graceStatusHasChanged) then
                 graceStatusHasChanged <- true
 
+    /// Coordinates on changed behavior for this CLI command path.
     let OnChanged (args: FileSystemEventArgs) =
         if updateNotInProgress ()
            && isNotDirectory args.FullPath then
@@ -533,6 +579,7 @@ module Watch =
                 graceStatusHasChanged <- true
                 logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
+    /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
     let private enqueueDirectoryContentsForUpload directoryPath =
         if
             Directory.Exists(directoryPath)
@@ -553,6 +600,7 @@ module Watch =
         else
             true
 
+    /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
         if updateNotInProgress () then
             cancelPendingUploadsForDeletedPath args.FullPath
@@ -564,6 +612,7 @@ module Watch =
                && (not <| graceStatusHasChanged) then
                 graceStatusHasChanged <- true
 
+    /// Coordinates on renamed behavior for this CLI command path.
     let OnRenamed (args: RenamedEventArgs) =
         if updateNotInProgress () then
             let newPathIsDirectory = Directory.Exists(args.FullPath)
@@ -581,11 +630,13 @@ module Watch =
             elif enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
+    /// Coordinates on error behavior for this CLI command path.
     let OnError (args: ErrorEventArgs) =
         let correlationId = generateCorrelationId ()
 
         logToAnsiConsole Colors.Error $"I saw that the FileSystemWatcher threw an exception: {args.GetException().Message}. grace watch should be restarted."
 
+    /// Coordinates on grace update in progress created behavior for this CLI command path.
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
@@ -593,6 +644,7 @@ module Watch =
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
 
+    /// Coordinates on grace update in progress deleted behavior for this CLI command path.
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateNotInProgress () then
@@ -600,7 +652,7 @@ module Watch =
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
 
-    /// Creates a FileSystemWatcher for the given path.
+    /// Instantiates the FileSystemWatcher used to observe repository changes under the requested path.
     let createFileSystemWatcher path =
         let fileSystemWatcher = new FileSystemWatcher(path)
         fileSystemWatcher.InternalBufferSize <- (64 * 1024) // Default is 4K, choosing maximum of 64K for safety.
@@ -614,6 +666,7 @@ module Watch =
 
         fileSystemWatcher
 
+    /// Formats print differences data for Spectre.Console output.
     let printDifferences (differences: List<FileSystemDifference>) =
         if differences.Count > 0 then
             logToAnsiConsole Colors.Verbose $"Differences detected since last save/checkpoint/commit:"
@@ -773,6 +826,7 @@ module Watch =
                         return None
         }
 
+    /// Reads cached file version for upload skip from ParseResult, local configuration, or Grace ids.
     let private getCachedFileVersionForUploadSkip (fullPath: FilePath) =
         task {
             let fileInfo = FileInfo(fullPath)
@@ -795,6 +849,7 @@ module Watch =
             | _ -> return None
         }
 
+    /// Reads upload file version to storage data needed by the command workflow without changing remote state.
     let internal uploadFileVersionToStorage
         (uploadFileVersions: GetUploadMetadataForFilesParameters -> Task<GraceResult<FileVersion array>>)
         (getUploadMetadataForFilesParameters: GetUploadMetadataForFilesParameters)
@@ -812,6 +867,7 @@ module Watch =
             | Error error -> raise (InvalidOperationException($"Failed to upload {fileVersion.GetObjectFileName} to storage: {error.Error}"))
         }
 
+    /// Reads copy file to object directory and upload to storage with clients data needed by the command workflow without changing remote state.
     let internal copyFileToObjectDirectoryAndUploadToStorageWithClients
         (copyFileToObjectCache: FilePath -> Task<FileVersion option>)
         (getCachedFileVersion: FilePath -> Task<FileVersion option>)
@@ -870,6 +926,7 @@ module Watch =
             graceStatus <- GraceStatus.Default
         }
 
+    /// Coordinates update grace status directory ids behavior for this CLI command path.
     let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
 
     /// Processes any changed files since the last timer tick.
@@ -971,6 +1028,7 @@ module Watch =
                 GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
         }
 
+    /// Coordinates process changed files behavior for this CLI command path.
     let processChangedFiles () =
         processChangedFilesWithClients
             readGraceStatusMeta
@@ -980,6 +1038,7 @@ module Watch =
             applyGraceStatusIncremental
             updateGraceWatchInterprocessFile
 
+    /// Coordinates queue startup difference for watch behavior for this CLI command path.
     let internal queueStartupDifferenceForWatch difference =
         match difference.FileSystemEntryType, difference.DifferenceType with
         | Directory, _ ->
@@ -994,9 +1053,11 @@ module Watch =
             enqueueFileUpload difference.RelativePath
             |> ignore
 
+    /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous watch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
                 try
@@ -1118,6 +1179,7 @@ module Watch =
                                             use document = JsonDocument.Parse(envelope.DataJson)
                                             let root = document.RootElement
 
+                                            /// Tries to map parse guid property and returns a GraceError instead of throwing on unsupported input.
                                             let tryParseGuidProperty (propertyName: string) : Guid option =
                                                 let mutable propertyValue = Unchecked.defaultof<JsonElement>
 
@@ -1337,6 +1399,7 @@ module Watch =
             }
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

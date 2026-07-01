@@ -15,12 +15,14 @@ open System.Security.Cryptography
 open System.Threading
 open System.Threading.Tasks
 
+/// Console load generator that creates temporary Grace resources, drives mixed repository operations, and tears them down.
 module Load =
 
     let numberOfRepositories = 10
     let numberOfBranches = 100
     let numberOfEvents = 50000
 
+    /// Consumes SDK results during load generation while preserving the option to log correlation details.
     let showResult<'T> (r: GraceResult<'T>) =
         match r with
         | Ok result -> () //logToConsole (sprintf "%s - CorrelationId: %s" (result.Properties["EventType"]) result.CorrelationId)
@@ -32,6 +34,7 @@ module Load =
 
     let parallelOptions = ParallelOptions(MaxDegreeOfParallelism = Environment.ProcessorCount * 4)
 
+    /// Runs the end-to-end load scenario: setup, parallel event generation, throughput reporting, and cleanup.
     [<EntryPoint>]
     let main args =
         (task {

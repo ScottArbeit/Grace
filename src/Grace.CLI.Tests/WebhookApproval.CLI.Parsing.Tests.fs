@@ -5,6 +5,7 @@ open Grace.CLI
 open NUnit.Framework
 open System
 
+/// Groups webhook approval command parsing coverage for the CLI test project.
 [<Parallelizable(ParallelScope.All)>]
 module WebhookApprovalCommandParsingTests =
     let private ownerId = Guid.NewGuid()
@@ -12,6 +13,7 @@ module WebhookApprovalCommandParsingTests =
     let private repositoryId = Guid.NewGuid()
     let private branchId = Guid.NewGuid()
 
+    /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
             args
@@ -24,16 +26,19 @@ module WebhookApprovalCommandParsingTests =
                 repositoryId.ToString()
             |]
 
+    /// Asserts that parses matches the expected contract.
     let private assertParses (args: string array) =
         let parseResult = GraceCommand.rootCommand.Parse(withIds args)
         parseResult.Errors |> should be Empty
 
+    /// Asserts that does not parse matches the expected contract.
     let private assertDoesNotParse (args: string array) =
         let parseResult = GraceCommand.rootCommand.Parse(args)
 
         parseResult.Errors.Count
         |> should be (greaterThan 0)
 
+    /// Verifies that webhook command parses required verbs.
     [<TestCase("create")>]
     [<TestCase("list")>]
     [<TestCase("show")>]
@@ -102,6 +107,7 @@ module WebhookApprovalCommandParsingTests =
 
         assertParses args
 
+    /// Verifies that webhook delivery show parses.
     [<Test>]
     let ``webhook delivery show parses`` () =
         assertParses [| "webhook"
@@ -110,6 +116,7 @@ module WebhookApprovalCommandParsingTests =
                         "--delivery"
                         Guid.NewGuid().ToString() |]
 
+    /// Verifies that approval policy command parses required verbs.
     [<TestCase("create")>]
     [<TestCase("list")>]
     [<TestCase("show")>]
@@ -177,6 +184,7 @@ module WebhookApprovalCommandParsingTests =
 
         assertParses args
 
+    /// Verifies that approval request command parses required verbs.
     [<TestCase("list")>]
     [<TestCase("show")>]
     [<TestCase("approve")>]
@@ -210,6 +218,7 @@ module WebhookApprovalCommandParsingTests =
 
         assertParses args
 
+    /// Verifies that promotion set approval commands parse.
     [<Test>]
     let ``promotion set approval commands parse`` () =
         let promotionSetId = Guid.NewGuid().ToString()
@@ -229,6 +238,7 @@ module WebhookApprovalCommandParsingTests =
                         "--promotion-set"
                         promotionSetId |]
 
+    /// Verifies that forbidden webhook and approval nouns do not parse.
     [<Test>]
     let ``forbidden webhook and approval nouns do not parse`` () =
         assertDoesNotParse [| "hook"; "list" |]
@@ -244,6 +254,7 @@ module WebhookApprovalCommandParsingTests =
                               "request"
                               "create" |]
 
+    /// Verifies that webhook create requires event and url.
     [<Test>]
     let ``webhook create requires event and url`` () =
         assertDoesNotParse (
@@ -260,6 +271,7 @@ module WebhookApprovalCommandParsingTests =
                        "promotion-set.applied" |]
         )
 
+    /// Verifies that webhook update requires url to match server update contract.
     [<Test>]
     let ``webhook update requires url to match server update contract`` () =
         assertDoesNotParse (
@@ -271,6 +283,7 @@ module WebhookApprovalCommandParsingTests =
                        "promotion-set.applied" |]
         )
 
+    /// Verifies that approval policy create requires name subject and required responder.
     [<Test>]
     let ``approval policy create requires name subject and required responder`` () =
         assertDoesNotParse (

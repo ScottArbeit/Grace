@@ -45,19 +45,30 @@ open Grace.Shared.Client
 open System.Text.RegularExpressions
 open System.CommandLine.Completions
 
+/// Groups the branch command parser, handlers, and output helpers.
 module Branch =
 
+    /// Executes the common parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type CommonParameters() =
         inherit ParameterBase()
+        /// Stores a parsed command value for handler execution.
         member val public BranchId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public BranchName: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OwnerId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OwnerName: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OrganizationId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public OrganizationName: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public RepositoryId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val public RepositoryName: string = String.Empty with get, set
 
+    /// Defines the options parsed by the branch command handlers.
     module private Options =
 
         let ownerId =
@@ -398,6 +409,7 @@ module Branch =
     //let listDirectories = new Option<bool>("--listDirectories", Required = false, Description = "Show directories when listing contents. [default: false]")
     //let listFiles = new Option<bool>("--listFiles", Required = false, Description = "Show files when listing contents. Implies --listDirectories. [default: false]")
 
+    /// Validates must be avalid guid and adds a parser error when the command input is not acceptable.
     let mustBeAValidGuid (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
         let mutable guid = Guid.Empty
 
@@ -409,6 +421,7 @@ module Branch =
         else
             Ok(parseResult, parameters)
 
+    /// Validates must be avalid grace name and adds a parser error when the command input is not acceptable.
     let mustBeAValidGraceName (parseResult: ParseResult) (parameters: CommonParameters) (option: Option) (value: string) (error: BranchError) =
         if parseResult.GetResult(option) <> null
            && not <| Constants.GraceNameRegex.IsMatch(value) then
@@ -416,6 +429,7 @@ module Branch =
         else
             Ok(parseResult, parameters)
 
+    /// Validates one of these options must be provided and adds a parser error when the command input is not acceptable.
     let oneOfTheseOptionsMustBeProvided (parseResult: ParseResult) (options: Option array) (error: BranchError) =
         match options
               |> Array.tryFind (fun opt -> not <| isNull (parseResult.GetResult(opt)))
@@ -464,6 +478,7 @@ module Branch =
 
         parameters
 
+    /// Coordinates common validations behavior for this CLI command path.
     let private CommonValidations parseResult =
         let ``Message must not be empty`` (parseResult: ParseResult) =
             if parseResult.CommandResult.Command.Options.FirstOrDefault(fun option -> option.Name = OptionName.Message)
@@ -499,6 +514,7 @@ module Branch =
         |> ``Message must not be empty``
         >>= ``Message must be less than 2048 characters``
 
+    /// Validates branch name must not be empty and adds a parser error when the command input is not acceptable.
     let private ``BranchName must not be empty`` (parseResult: ParseResult) =
         let graceIds = getNormalizedIdsAndNames parseResult
 
@@ -509,19 +525,25 @@ module Branch =
         else
             Error(GraceError.Create (getErrorMessage BranchError.BranchNameIsRequired) (getCorrelationId parseResult))
 
+    /// Coordinates value or empty behavior for this CLI command path.
     let private valueOrEmpty (value: string) = if String.IsNullOrWhiteSpace(value) then String.Empty else value
 
+    /// Coordinates guid to string behavior for this CLI command path.
     let private guidToString (value: Guid) = if value = Guid.Empty then String.Empty else $"{value}"
 
+    /// Coordinates fallback string behavior for this CLI command path.
     let private fallbackString hasValue supplied fallbackValue = if hasValue then supplied |> valueOrEmpty else fallbackValue |> valueOrEmpty
 
+    /// Coordinates fallback guid string behavior for this CLI command path.
     let private fallbackGuidString hasValue supplied fallbackValue = if hasValue then supplied |> valueOrEmpty else fallbackValue |> guidToString
 
+    /// Checks whether switch hash locator evidence is true for the parsed command input.
     let internal switchHashLocatorEvidence (sha256Hash: string) (blake3Hash: string) =
         if not <| String.IsNullOrEmpty(sha256Hash) then sha256Hash, blake3Hash
         elif not <| String.IsNullOrEmpty(blake3Hash) then String.Empty, blake3Hash
         else String.Empty, String.Empty
 
+    /// Checks whether file content hashes match is true for the parsed command input.
     let internal fileContentHashesMatch (left: LocalFileVersion) (right: LocalFileVersion) =
         let leftBlake3Hash = string left.Blake3Hash
         let rightBlake3Hash = string right.Blake3Hash
@@ -531,14 +553,18 @@ module Branch =
             || String.IsNullOrWhiteSpace rightBlake3Hash
             || left.Blake3Hash = right.Blake3Hash)
 
+    /// Reads sha256 hash prefix from ParseResult, local configuration, or Grace ids.
     let private getSha256HashPrefix (parseResult: ParseResult) = HashOptions.getSha256CompatibilityHashPrefix parseResult
 
+    /// Reads blake3 hash prefix from ParseResult, local configuration, or Grace ids.
     let private getBlake3HashPrefix (parseResult: ParseResult) = HashOptions.getBlake3HashPrefix parseResult
 
     // Create subcommand.
+    /// Executes the create command by binding ParseResult values to the SDK request and CLI output contract.
     type Create() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous create action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -688,6 +714,7 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Reads recursive size impl from ParseResult, local configuration, or Grace ids.
     let private getRecursiveSizeImpl (parseResult: ParseResult) : Tasks.Task<int> =
         if parseResult |> verbose then printParseResult parseResult
 
@@ -757,9 +784,11 @@ module Branch =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the get recursive size command by binding ParseResult values to the SDK request and CLI output contract.
     type GetRecursiveSize() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get recursive size action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -771,14 +800,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Formats list contents version hash values into the text shown in Spectre.Console tables or command output.
     let internal formatListContentsVersionHash (hashDisplayMode: HashOptions.VersionHashDisplayMode) (blake3Hash: Blake3Hash) (sha256Hash: Sha256Hash) =
         HashOptions.formatVersionHashPair hashDisplayMode blake3Hash sha256Hash
 
+    /// Tries to map get root version hashes and returns a GraceError instead of throwing on unsupported input.
     let private tryGetRootVersionHashes (directoryVersions: IEnumerable<DirectoryVersion>) =
         directoryVersions
         |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = Constants.RootDirectoryPath)
         |> Option.map (fun directoryVersion -> directoryVersion.Blake3Hash, directoryVersion.Sha256Hash)
 
+    /// Formats print contents data for Spectre.Console output.
     let printContents (parseResult: ParseResult) (directoryVersions: IEnumerable<DirectoryVersion>) =
         let hashDisplayMode = HashOptions.bindVersionHashDisplayMode parseResult
         let directoryVersionArray = directoryVersions |> Seq.toArray
@@ -825,6 +857,7 @@ module Branch =
                         $"[{Colors.Verbose}]{formatInstantAligned file.CreatedAt}   {formatListContentsVersionHash hashDisplayMode file.Blake3Hash file.Sha256Hash}  {file.Size, 13:N0}  |- {file.RelativePath.Split('/').LastOrDefault()}[/]"
                     ))
 
+    /// Routes the list contents command from parsed options through validation, the SDK call, and result rendering.
     let private listContentsImpl (parseResult: ParseResult) : Tasks.Task<int> =
         if parseResult |> verbose then printParseResult parseResult
 
@@ -926,9 +959,11 @@ module Branch =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the list contents command by binding ParseResult values to the SDK request and CLI output contract.
     type ListContents() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous list contents action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) =
             task {
                 try
@@ -940,9 +975,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the set name command by binding ParseResult values to the SDK request and CLI output contract.
     type SetName() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set name action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -990,6 +1027,7 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Routes the assign command from parsed options through validation, the SDK call, and result rendering.
     let private assignImpl (parseResult: ParseResult) : Tasks.Task<int> =
         if parseResult |> verbose then printParseResult parseResult
 
@@ -1060,9 +1098,11 @@ module Branch =
                 return result |> renderOutput parseResult
             }
 
+    /// Executes the assign command by binding ParseResult values to the SDK request and CLI output contract.
     type Assign() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous assign action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1074,9 +1114,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Validates and clean message from parsed options and returns a correlated GraceError when input is invalid.
     let private validateAndCleanMessage (message: string) (correlationId: CorrelationId) : Result<string, GraceError> =
 
         // Helpers local to this function to keep things simple.
+        /// Builds a correlated GraceError for validation failures in this command path.
         let fail msg = Error(GraceError.Create msg correlationId)
 
         // Regexes: created per-call for simplicity;
@@ -1135,8 +1177,10 @@ module Branch =
         else
             Ok cleaned
 
+    /// Models create reference command values passed between the parser and branch handlers.
     type CreateReferenceCommand = CreateReferenceParameters -> Task<GraceResult<String>>
 
+    /// Routes the create reference command from parsed options through validation, the SDK call, and result rendering.
     let private createReferenceHandler (parseResult: ParseResult) (message: string) (command: CreateReferenceCommand) (commandType: string) =
         task {
             try
@@ -1420,6 +1464,7 @@ module Branch =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Routes the promotion command from parsed options through validation, the SDK call, and result rendering.
     let private promotionHandler (parseResult: ParseResult) (message: string) =
         task {
             try
@@ -1621,9 +1666,11 @@ module Branch =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Executes the promote command by binding ParseResult values to the SDK request and CLI output contract.
     type Promote() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous promote action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1643,9 +1690,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the commit command by binding ParseResult values to the SDK request and CLI output contract.
     type Commit() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous commit action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1657,6 +1706,7 @@ module Branch =
                         parseResult.GetValue(Options.messageRequired)
                         |> valueOrEmpty
 
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Commit(parameters) }
 
                     let! result = createReferenceHandler parseResult message command (nameof(Commit).ToLowerInvariant())
@@ -1668,9 +1718,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the checkpoint command by binding ParseResult values to the SDK request and CLI output contract.
     type Checkpoint() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous checkpoint action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1682,6 +1734,7 @@ module Branch =
                         parseResult.GetValue(Options.message)
                         |> valueOrEmpty
 
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Checkpoint(parameters) }
 
                     let! result = createReferenceHandler parseResult message command (nameof(Checkpoint).ToLowerInvariant())
@@ -1693,9 +1746,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the save command by binding ParseResult values to the SDK request and CLI output contract.
     type Save() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous save action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1707,6 +1762,7 @@ module Branch =
                         parseResult.GetValue(Options.message)
                         |> valueOrEmpty
 
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Save(parameters) }
 
                     let! result = createReferenceHandler parseResult message command (nameof(Save).ToLowerInvariant())
@@ -1718,9 +1774,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the tag command by binding ParseResult values to the SDK request and CLI output contract.
     type Tag() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous tag action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1732,6 +1790,7 @@ module Branch =
                         parseResult.GetValue(Options.messageRequired)
                         |> valueOrEmpty
 
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.Tag(parameters) }
 
                     let! result = createReferenceHandler parseResult message command (nameof(Tag).ToLowerInvariant())
@@ -1743,9 +1802,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the create external command by binding ParseResult values to the SDK request and CLI output contract.
     type CreateExternal() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous create external action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -1757,6 +1818,7 @@ module Branch =
                         parseResult.GetValue(Options.messageRequired)
                         |> valueOrEmpty
 
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: CreateReferenceParameters) = task { return! Branch.CreateExternal(parameters) }
 
                     let! result = createReferenceHandler parseResult message command ("External".ToLowerInvariant())
@@ -1768,24 +1830,30 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Models enable feature command values passed between the parser and branch handlers.
     type EnableFeatureCommand = EnableFeatureParameters -> Task<GraceResult<string>>
 
+    /// Models branch annotate show values passed between the parser and branch handlers.
     type BranchAnnotateShow =
         | LastChanged
         | Introduced
         | Both
 
+    /// Models branch annotate command values passed between the parser and branch handlers.
     type BranchAnnotateCommand = AnnotateParameters -> Task<GraceResult<BranchAnnotationDto>>
 
+    /// Models branch annotate target reference resolver values passed between the parser and branch handlers.
     type BranchAnnotateTargetReferenceResolver = ReferenceId option -> CorrelationId -> Task<Result<CliCurrentStateCaptureResult, GraceError>>
 
     let private validReferenceTypeNames = listCases<ReferenceType> ()
 
+    /// Tries to map parse reference type and returns a GraceError instead of throwing on unsupported input.
     let private tryParseReferenceType (value: string) =
         validReferenceTypeNames
         |> Array.tryFind (fun name -> String.Equals(name, value.Trim(), StringComparison.OrdinalIgnoreCase))
         |> Option.bind (fun canonicalName -> discriminatedUnionFromString<ReferenceType> canonicalName)
 
+    /// Tries to map parse branch annotate reference types and returns a GraceError instead of throwing on unsupported input.
     let internal tryParseBranchAnnotateReferenceTypes correlationId (value: string) =
         if String.IsNullOrWhiteSpace(value) then
             Ok Array.empty
@@ -1813,12 +1881,14 @@ module Branch =
                 |> Array.distinct
                 |> Ok
 
+    /// Evaluates is windows drive rooted path against parsed options and command state.
     let private isWindowsDriveRootedPath (path: string) =
         path.Length >= 3
         && Char.IsLetter(path[0])
         && path[1] = ':'
         && (path[2] = '/' || path[2] = '\\')
 
+    /// Normalizes Grace ids for branch annotate path by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeBranchAnnotatePath correlationId (path: string) =
         let trimmed = if isNull path then String.Empty else path.Trim()
 
@@ -1849,6 +1919,7 @@ module Branch =
             else
                 Ok(RelativePath normalized)
 
+    /// Parses command input into typed values.
     let internal parseBranchAnnotateLineRange correlationId (lineRange: string) startLine endLine endLineWasSpecified =
         let parsedRange =
             if String.IsNullOrWhiteSpace(lineRange) then
@@ -1876,16 +1947,19 @@ module Branch =
             let errorText = String.Join(" ", errors)
             Error(GraceError.Create $"Invalid annotation line range: {errorText}" correlationId)
 
+    /// Parses command input into typed values.
     let private parseBranchAnnotateShow (value: string) =
         match value with
         | value when String.Equals(value, "introduced", StringComparison.OrdinalIgnoreCase) -> Introduced
         | value when String.Equals(value, "both", StringComparison.OrdinalIgnoreCase) -> Both
         | _ -> LastChanged
 
+    /// Tries to map get source reference and returns a GraceError instead of throwing on unsupported input.
     let private tryGetSourceReference (annotation: BranchAnnotationDto) sourceReferenceId =
         annotation.SourceReferences
         |> Array.tryFind (fun sourceReference -> sourceReference.SourceReferenceId = sourceReferenceId)
 
+    /// Tries to map get source row and reference and returns a GraceError instead of throwing on unsupported input.
     let private tryGetSourceRowAndReference annotation sourceRowId =
         annotation.SourceRows
         |> Array.tryFind (fun sourceRow -> sourceRow.SourceRowId = sourceRowId)
@@ -1893,6 +1967,7 @@ module Branch =
             tryGetSourceReference annotation sourceRow.SourceReferenceId
             |> Option.map (fun sourceReference -> sourceRow, sourceReference))
 
+    /// Coordinates source reference text behavior for this CLI command path.
     let private sourceReferenceText label (source: AnnotationSourceRow * AnnotationSourceReference) =
         let sourceRow, sourceReference = source
 
@@ -1908,6 +1983,7 @@ module Branch =
 
         $"{label}: {sourceReference.ReferenceType} {sourceReference.ReferenceId} lines {sourceRow.LineRange.StartLine}-{sourceRow.LineRange.EndLine}; creator {createdBy}{referenceText}"
 
+    /// Renders branch annotation span results only when the selected output mode includes human-readable console text.
     let private renderBranchAnnotationSpan (parseResult: ParseResult) (showMode: BranchAnnotateShow) (annotation: BranchAnnotationDto) (span: AnnotationSpan) =
         let spanLines =
             annotation.Lines
@@ -1957,6 +2033,7 @@ module Branch =
 
         AnsiConsole.WriteLine()
 
+    /// Renders branch annotation human output results only when the selected output mode includes human-readable console text.
     let internal renderBranchAnnotationHumanOutput parseResult showMode (annotation: BranchAnnotationDto) =
         if
             (parseResult |> hasOutput)
@@ -1970,6 +2047,7 @@ module Branch =
 
             AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {annotation.Spans.Length} annotation spans.[/]")
 
+    /// Runs the annotate handler flow with an injected service function so tests can exercise the command without the real SDK call.
     let internal annotateHandlerWith
         (annotateCommand: BranchAnnotateCommand)
         (resolveTargetReference: BranchAnnotateTargetReferenceResolver)
@@ -2050,9 +2128,11 @@ module Branch =
                     return! annotateCommand parameters
         }
 
+    /// Executes the annotate command by binding ParseResult values to the SDK request and CLI output contract.
     type Annotate() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous annotate action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -2079,6 +2159,7 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Routes the enable feature command from parsed options through validation, the SDK call, and result rendering.
     let private enableFeatureHandler (parseResult: ParseResult) (enabled: bool) (command: EnableFeatureCommand) =
         task {
             try
@@ -2114,14 +2195,17 @@ module Branch =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Executes the enable assign command by binding ParseResult values to the SDK request and CLI output contract.
     type EnableAssign() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable assign action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableAssign(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2132,14 +2216,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the enable promotion command by binding ParseResult values to the SDK request and CLI output contract.
     type EnablePromotion() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable promotion action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnablePromotion(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2150,14 +2237,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the enable commit command by binding ParseResult values to the SDK request and CLI output contract.
     type EnableCommit() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable commit action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableCommit(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2168,14 +2258,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the enable checkpoint command by binding ParseResult values to the SDK request and CLI output contract.
     type EnableCheckpoint() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable checkpoint action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableCheckpoint(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2186,14 +2279,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the enable save command by binding ParseResult values to the SDK request and CLI output contract.
     type EnableSave() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable save action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableSave(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2204,14 +2300,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the enable tag command by binding ParseResult values to the SDK request and CLI output contract.
     type EnableTag() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable tag action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableTag(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2222,14 +2321,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the enable external command by binding ParseResult values to the SDK request and CLI output contract.
     type EnableExternal() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable external action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableExternal(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2240,14 +2342,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the enable auto rebase command by binding ParseResult values to the SDK request and CLI output contract.
     type EnableAutoRebase() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous enable auto rebase action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let graceIds = parseResult |> getNormalizedIdsAndNames
                     let enabled = parseResult.GetValue(Options.enabled)
+                    /// Delegates parsed parameters to the SDK operation owned by this subcommand.
                     let command (parameters: EnableFeatureParameters) = task { return! Branch.EnableAutoRebase(parameters) }
 
                     let! result = enableFeatureHandler parseResult enabled command
@@ -2258,9 +2363,11 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the set promotion mode command by binding ParseResult values to the SDK request and CLI output contract.
     type SetPromotionMode() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous set promotion mode action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -2310,9 +2417,11 @@ module Branch =
             }
 
     // Get subcommand
+    /// Executes the get command by binding ParseResult values to the SDK request and CLI output contract.
     type Get() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -2416,8 +2525,10 @@ module Branch =
             }
 
 
+    /// Models get reference query values passed between the parser and branch handlers.
     type GetReferenceQuery = GetReferencesParameters -> Task<GraceResult<ReferenceDto array>>
 
+    /// Coordinates fetch references behavior for this CLI command path.
     let private fetchReferences
         (getBranchParameters: GetBranchParameters)
         (getReferencesParameters: GetReferencesParameters)
@@ -2440,6 +2551,7 @@ module Branch =
             | (Error error, _) -> return Error error
         }
 
+    /// Reads reference handler impl from ParseResult, local configuration, or Grace ids.
     let private getReferenceHandlerImpl (parseResult: ParseResult) (maxCount: int) (query: GetReferenceQuery) =
         if parseResult |> verbose then printParseResult parseResult
 
@@ -2476,6 +2588,7 @@ module Branch =
                     CorrelationId = graceIds.CorrelationId
                 )
 
+            /// Coordinates fetch behavior for this CLI command path.
             let fetch () = fetchReferences getBranchParameters getReferencesParameters query graceIds
 
             if parseResult |> hasOutput then
@@ -2492,6 +2605,7 @@ module Branch =
             else
                 fetch ()
 
+    /// Reads reference handler from ParseResult, local configuration, or Grace ids.
     let getReferenceHandler (parseResult: ParseResult) (maxCount: int) (query: GetReferenceQuery) =
         task {
             try
@@ -2500,6 +2614,7 @@ module Branch =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Builds the Spectre table that displays branch references and their metadata.
     let private createReferenceTable (parseResult: ParseResult) (references: ReferenceDto array) =
         let sortedResults =
             references
@@ -2568,11 +2683,13 @@ module Branch =
 
         table
 
+    /// Formats print reference table data for Spectre.Console output.
     let printReferenceTable (table: Table) (references: ReferenceDto array) branchName referenceName =
         AnsiConsole.MarkupLine($"[{Colors.Important}]{referenceName} in branch {branchName}:[/]")
         AnsiConsole.Write(table)
         AnsiConsole.MarkupLine($"[{Colors.Important}]Returned {references.Length} rows.[/]")
 
+    /// Renders references output results only when the selected output mode includes human-readable console text.
     let private renderReferencesOutput (parseResult: ParseResult) (label: string) (result: GraceResult<BranchDto * ReferenceDto array>) =
         match result with
         | Ok graceReturnValue ->
@@ -2586,13 +2703,16 @@ module Branch =
             rendered
         | Error _ -> result |> renderOutput parseResult
 
+    /// Executes the get references command by binding ParseResult values to the SDK request and CLI output contract.
     type GetReferences() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get references action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let maxCount = parseResult.GetValue(Options.maxCount)
+                    /// Delegates reference-query parameters to the SDK operation owned by this listing command.
                     let query (parameters: GetReferencesParameters) = Branch.GetReferences parameters
 
                     let! result = getReferenceHandler parseResult maxCount query
@@ -2603,13 +2723,16 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the get promotions command by binding ParseResult values to the SDK request and CLI output contract.
     type GetPromotions() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get promotions action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let maxCount = parseResult.GetValue(Options.maxCount)
+                    /// Delegates reference-query parameters to the SDK operation owned by this listing command.
                     let query (parameters: GetReferencesParameters) = task { return! Branch.GetPromotions(parameters) }
 
                     let! result = getReferenceHandler parseResult maxCount query
@@ -2620,13 +2743,16 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the get commits command by binding ParseResult values to the SDK request and CLI output contract.
     type GetCommits() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get commits action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let maxCount = parseResult.GetValue(Options.maxCount)
+                    /// Delegates reference-query parameters to the SDK operation owned by this listing command.
                     let query (parameters: GetReferencesParameters) = task { return! Branch.GetCommits(parameters) }
 
                     let! result = getReferenceHandler parseResult maxCount query
@@ -2637,14 +2763,17 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the get checkpoints command by binding ParseResult values to the SDK request and CLI output contract.
     type GetCheckpoints() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get checkpoints action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let maxCount = parseResult.GetValue(Options.maxCount)
 
+                    /// Delegates reference-query parameters to the SDK operation owned by this listing command.
                     let query (parameters: GetReferencesParameters) =
                         task {
                             let! checkpointsResult = Branch.GetCheckpoints(parameters)
@@ -2674,13 +2803,16 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the get saves command by binding ParseResult values to the SDK request and CLI output contract.
     type GetSaves() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get saves action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let maxCount = parseResult.GetValue(Options.maxCount)
+                    /// Delegates reference-query parameters to the SDK operation owned by this listing command.
                     let query (parameters: GetReferencesParameters) = task { return! Branch.GetSaves(parameters) }
 
                     let! result = getReferenceHandler parseResult maxCount query
@@ -2691,13 +2823,16 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the get tags command by binding ParseResult values to the SDK request and CLI output contract.
     type GetTags() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get tags action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let maxCount = parseResult.GetValue(Options.maxCount)
+                    /// Delegates reference-query parameters to the SDK operation owned by this listing command.
                     let query (parameters: GetReferencesParameters) = task { return! Branch.GetTags(parameters) }
 
                     let! result = getReferenceHandler parseResult maxCount query
@@ -2708,13 +2843,16 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the get externals command by binding ParseResult values to the SDK request and CLI output contract.
     type GetExternals() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous get externals action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
                     let maxCount = parseResult.GetValue(Options.maxCount)
+                    /// Delegates reference-query parameters to the SDK operation owned by this listing command.
                     let query (parameters: GetReferencesParameters) = task { return! Branch.GetExternals(parameters) }
 
                     let! result = getReferenceHandler parseResult maxCount query
@@ -2725,16 +2863,24 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Executes the switch parameters command by binding ParseResult values to the SDK request and CLI output contract.
     type SwitchParameters() =
+        /// Stores a parsed command value for handler execution.
         member val ToBranchId: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val ToBranchName: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val Sha256Hash: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val Blake3Hash: string = String.Empty with get, set
+        /// Stores a parsed command value for handler execution.
         member val ReferenceId: string = String.Empty with get, set
 
+    /// Executes the switch command by binding ParseResult values to the SDK request and CLI output contract.
     type Switch() =
         inherit AsynchronousCommandLineAction()
 
+        /// Routes the switch command from parsed options through validation, the SDK call, and result rendering.
         let switchHandler (parseResult: ParseResult) (switchParameters: SwitchParameters) =
             task {
                 try
@@ -2756,6 +2902,7 @@ module Branch =
                     if parseResult |> verbose then printParseResult parseResult
 
                     // Validate the incoming parameters.
+                    /// Validates incoming parameters from parsed options and returns a correlated GraceError when input is invalid.
                     let validateIncomingParameters (showOutput, parseResult: ParseResult, parameters: SwitchParameters) =
                         let ``Either ToBranchId or ToBranchName must be provided if no Sha256Hash or ReferenceId`` (parseResult: ParseResult) =
                             oneOfTheseOptionsMustBeProvided
@@ -2779,6 +2926,7 @@ module Branch =
                         | Error error -> Error error |> returnTask
 
                     // 0. Get the branchDto for the current branch.
+                    /// Reads current branch from ParseResult, local configuration, or Grace ids.
                     let getCurrentBranch (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: SwitchParameters) =
                         task {
                             t |> startProgressTask showOutput
@@ -2803,6 +2951,7 @@ module Branch =
                         }
 
                     // 1. Read the Grace status file.
+                    /// Reads grace status file data needed by the CLI workflow.
                     let readGraceStatusFile (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: SwitchParameters, currentBranch: BranchDto) =
                         task {
                             t |> startProgressTask showOutput
@@ -2814,6 +2963,7 @@ module Branch =
                         }
 
                     // 2. Scan the working directory for differences.
+                    /// Coordinates scan for differences behavior for this CLI command path.
                     let scanForDifferences (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: SwitchParameters, currentBranch: BranchDto) =
                         task {
                             t |> startProgressTask showOutput
@@ -3151,6 +3301,7 @@ module Branch =
                             | Error error -> return Error error
                         }
 
+                    /// Reads version to switch to from ParseResult, local configuration, or Grace ids.
                     let getVersionToSwitchTo (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: SwitchParameters, currentBranch: BranchDto) =
                         t |> startProgressTask showOutput
 
@@ -3183,6 +3334,7 @@ module Branch =
                                 )
                             )
 
+                    /// Reads missing directory versions with closure from ParseResult, local configuration, or Grace ids.
                     let getMissingDirectoryVersionsWithClosure (missingDirectoryIds: IEnumerable<DirectoryVersionId>) =
                         task {
                             let knownDirectoryIds = HashSet<DirectoryVersionId>(directoryIdsInNewGraceStatus)
@@ -3386,6 +3538,7 @@ module Branch =
                                 return Error(GraceError.Create $"{error}" (parseResult |> getCorrelationId))
                         }
 
+                    /// Writes new grace status data through the CLI output contract.
                     let writeNewGraceStatus (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: SwitchParameters, currentBranch: BranchDto) =
                         task {
                             t |> startProgressTask showOutput
@@ -3396,6 +3549,7 @@ module Branch =
                             return Ok(showOutput, parseResult, parameters, currentBranch)
                         }
 
+                    /// Coordinates generate result behavior for this CLI command path.
                     let generateResult (progressTasks: ProgressTask array) =
                         task {
                             let! result =
@@ -3499,6 +3653,7 @@ module Branch =
                     return -1
             }
 
+        /// Runs the asynchronous switch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName ()))
@@ -3537,6 +3692,7 @@ module Branch =
                         File.Delete(updateInProgressFileName ())
             }
 
+    /// Routes the rebase command from parsed options through validation, the SDK call, and result rendering.
     let rebaseHandler (graceIds: GraceIds) (graceStatus: GraceStatus) =
         task {
             // --------------------------------------------------------------------------------------------------------------------------------------
@@ -3706,6 +3862,7 @@ module Branch =
 
                                 let! d2 = DirectoryVersion.GetDirectoryVersionsRecursive(getLatestReferenceDirectoryParameters)
 
+                                /// Indexes directory-version file entries by repository-relative path for switch/rebase comparisons.
                                 let createFileVersionLookupDictionary (directoryVersionDtos: IEnumerable<DirectoryVersionDto>) =
                                     let lookup = Dictionary<RelativePath, LocalFileVersion>(StringComparer.OrdinalIgnoreCase)
 
@@ -3936,9 +4093,11 @@ module Branch =
                 return -1
         }
 
+    /// Executes the rebase command by binding ParseResult values to the SDK request and CLI output contract.
     type Rebase() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous rebase action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 Directory.CreateDirectory(Path.GetDirectoryName(updateInProgressFileName ()))
@@ -3959,11 +4118,13 @@ module Branch =
                         File.Delete(updateInProgressFileName ())
             }
 
+    /// Models parent branch references state values passed between the parser and branch handlers.
     type ParentBranchReferencesState =
         | NoParentBranch
         | References of ReferenceDto array
         | FetchError of GraceError
 
+    /// Reads parent branch references state from ParseResult, local configuration, or Grace ids.
     let private getParentBranchReferencesState (graceIds: GraceIds) (branchDto: BranchDto) =
         if branchDto.ParentBranchId
            <> Constants.DefaultParentBranchId then
@@ -3988,6 +4149,7 @@ module Branch =
         else
             Task.FromResult NoParentBranch
 
+    /// Renders branch status results only when the selected output mode includes human-readable console text.
     let private renderBranchStatus
         (parseResult: ParseResult)
         (branchDto: BranchDto)
@@ -4017,10 +4179,12 @@ module Branch =
             |> Seq.map (fun b -> (ago b.CreatedAt).Length)
             |> Seq.max
 
+        /// Coordinates aligned behavior for this CLI command path.
         let aligned (s: string) =
             let space = " "
             $"{String.replicate (longestAgoLength - s.Length) space}{s}"
 
+        /// Coordinates permissions behavior for this CLI command path.
         let permissions (branchDto: BranchDto) =
             let sb = stringBuilderPool.Get()
 
@@ -4146,6 +4310,7 @@ module Branch =
 
         0
 
+    /// Routes the status handler command from parsed options through validation, the SDK call, and result rendering.
     let private statusHandlerImpl (parseResult: ParseResult) =
         task {
             if parseResult |> verbose then printParseResult parseResult
@@ -4204,6 +4369,7 @@ module Branch =
                 return -1
         }
 
+    /// Routes the status command from parsed options through validation, the SDK call, and result rendering.
     let private statusHandler (parseResult: ParseResult) =
         task {
             try
@@ -4215,15 +4381,18 @@ module Branch =
                 return -1
         }
 
+    /// Executes the status command by binding ParseResult values to the SDK request and CLI output contract.
     type Status() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous status action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let graceIds = parseResult |> getNormalizedIdsAndNames
                 return! statusHandler parseResult
             }
 
+    /// Routes the delete handler command from parsed options through validation, the SDK call, and result rendering.
     let private deleteHandlerImpl (parseResult: ParseResult) =
         if parseResult |> verbose then printParseResult parseResult
 
@@ -4282,6 +4451,7 @@ module Branch =
                 else
                     Branch.Delete(deleteParameters)
 
+    /// Routes the delete command from parsed options through validation, the SDK call, and result rendering.
     let private deleteHandler (parseResult: ParseResult) =
         task {
             try
@@ -4290,9 +4460,11 @@ module Branch =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Executes the delete command by binding ParseResult values to the SDK request and CLI output contract.
     type Delete() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous delete action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -4306,6 +4478,7 @@ module Branch =
                     return renderOutput parseResult (GraceResult.Error graceError)
             }
 
+    /// Routes the update parent branch command from parsed options through validation, the SDK call, and result rendering.
     let private updateParentBranchHandler (parseResult: ParseResult) =
         task {
             try
@@ -4358,9 +4531,11 @@ module Branch =
             | ex -> return Error(GraceError.Create $"{ExceptionResponse.Create ex}" (parseResult |> getCorrelationId))
         }
 
+    /// Executes the update parent branch command by binding ParseResult values to the SDK request and CLI output contract.
     type UpdateParentBranch() =
         inherit AsynchronousCommandLineAction()
 
+        /// Runs the asynchronous update parent branch action when System.CommandLine dispatches the parsed command.
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 try
@@ -4407,6 +4582,7 @@ module Branch =
     //        })
 
     let Build =
+        /// Adds options or child commands to a command definition.
         let addCommonOptions (command: Command) =
             command
             |> addOption Options.ownerName

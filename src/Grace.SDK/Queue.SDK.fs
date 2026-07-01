@@ -5,7 +5,7 @@ open Grace.Shared.Parameters.Queue
 open Grace.Types.Queue
 open System.Threading.Tasks
 
-/// The Queue module provides a set of functions for interacting with promotion queues in the Grace API.
+/// SDK entry point for target-branch promotion queue status and queue actions.
 type Queue() =
     /// Gets the status of a promotion queue for a target branch.
     static member public Status(parameters: QueueStatusParameters) =

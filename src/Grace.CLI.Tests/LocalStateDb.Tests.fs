@@ -17,8 +17,10 @@ open System.Text
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Groups local state db coverage for the CLI test project.
 [<NonParallelizable>]
 module LocalStateDbTests =
+    /// Configures verbose logging for the test scenario.
     let private configureVerboseLogging () =
         let value = Environment.GetEnvironmentVariable("GRACE_LOCALSTATE_DB_VERBOSE")
 
@@ -30,6 +32,7 @@ module LocalStateDbTests =
 
             LocalStateDb.setVerbose enabled
 
+    /// Configures for root for the test scenario.
     let private configureForRoot (root: string) =
         let configuration = GraceConfiguration()
         configuration.OwnerId <- Guid.NewGuid()
@@ -46,6 +49,7 @@ module LocalStateDbTests =
         updateConfiguration configuration
         configuration
 
+    /// Builds ensure grace config test data used to exercise CLI local State Db behavior.
     let private ensureGraceConfig (root: string) =
         let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
         let configPath = Path.Combine(graceDir, Constants.GraceConfigFileName)
@@ -55,6 +59,7 @@ module LocalStateDbTests =
 
         if not (File.Exists(configPath)) then File.WriteAllText(configPath, "{}")
 
+    /// Runs the supplied action with temp dir applied.
     let private withTempDir (action: string -> GraceConfiguration -> Task<'T>) =
         task {
             let root = Path.Combine(Path.GetTempPath(), $"grace-tests-{Guid.NewGuid()}")
@@ -83,9 +88,11 @@ module LocalStateDbTests =
                     | _ -> ()
         }
 
+    /// Builds a deterministic file version for test scenarios fixture for the CLI local State Db assertions.
     let private createFileVersion relativePath sha256Hash isBinary size createdAt lastWriteTime =
         LocalFileVersion.Create relativePath sha256Hash isBinary size createdAt true lastWriteTime
 
+    /// Builds a deterministic file version with hashes for test scenarios fixture for the CLI local State Db assertions.
     let private createFileVersionWithHashes relativePath sha256Hash blake3Hash isBinary size createdAt lastWriteTime =
         LocalFileVersion.CreateWithHashes relativePath sha256Hash blake3Hash isBinary size createdAt true lastWriteTime
 
@@ -112,21 +119,25 @@ module LocalStateDbTests =
             sizeBytes
             lastWriteTimeUtc
 
+    /// Builds open raw connection test data used to exercise CLI local State Db behavior.
     let private openRawConnection (dbPath: string) =
         let connection = new SqliteConnection($"Data Source={dbPath}")
         connection.Open()
         connection
 
+    /// Builds execute scalar string test data used to exercise CLI local State Db behavior.
     let private executeScalarString (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         cmd.ExecuteScalar() :?> string
 
+    /// Builds execute scalar int test data used to exercise CLI local State Db behavior.
     let private executeScalarInt (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         cmd.ExecuteScalar() |> Convert.ToInt32
 
+    /// Builds execute scalar int with text parameter test data used to exercise CLI local State Db behavior.
     let private executeScalarIntWithTextParameter (connection: SqliteConnection) (sql: string) parameterName parameterValue =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
@@ -136,9 +147,11 @@ module LocalStateDbTests =
 
         cmd.ExecuteScalar() |> Convert.ToInt32
 
+    /// Counts status file rows for test assertions.
     let private countStatusFileRows connection relativePath =
         executeScalarIntWithTextParameter connection "SELECT COUNT(*) FROM status_files WHERE relative_path = $relative_path;" "$relative_path" relativePath
 
+    /// Counts status directory rows for test assertions.
     let private countStatusDirectoryRows connection relativePath =
         executeScalarIntWithTextParameter
             connection
@@ -146,16 +159,19 @@ module LocalStateDbTests =
             "$relative_path"
             relativePath
 
+    /// Builds execute scalar int64 test data used to exercise CLI local State Db behavior.
     let private executeScalarInt64 (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         cmd.ExecuteScalar() |> Convert.ToInt64
 
+    /// Builds execute non query test data used to exercise CLI local State Db behavior.
     let private executeNonQuery (connection: SqliteConnection) (sql: string) =
         use cmd = connection.CreateCommand()
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Gets corrupt backups needed by the test scenario.
     let private getCorruptBackups (dbPath: string) =
         let directoryPath = Path.GetDirectoryName(dbPath)
 
@@ -164,6 +180,7 @@ module LocalStateDbTests =
         else
             Directory.GetFiles(directoryPath, "grace-local.corrupt.*.db")
 
+    /// Builds snapshot file test data used to exercise CLI local State Db behavior.
     let private snapshotFile (path: string) =
         if File.Exists(path) then
             use stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
@@ -172,6 +189,7 @@ module LocalStateDbTests =
         else
             None
 
+    /// Builds seed schema version only test data used to exercise CLI local State Db behavior.
     let private seedSchemaVersionOnly (dbPath: string) (schemaVersion: string) =
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
         |> ignore
@@ -180,6 +198,7 @@ module LocalStateDbTests =
         executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
         executeNonQuery connection $"INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '{schemaVersion}');"
 
+    /// Builds seed current schema with status meta test data used to exercise CLI local State Db behavior.
     let private seedCurrentSchemaWithStatusMeta (dbPath: string) (rootId: Guid) rootSha256Hash rootBlake3Hash ticks =
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
         |> ignore
@@ -230,6 +249,7 @@ module LocalStateDbTests =
             connection
             $"INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, '{rootId}', '{rootSha256Hash}', '{rootBlake3Hash}', {ticks}, {ticks});"
 
+    /// Builds seed partial v4 without root blake3 column test data used to exercise CLI local State Db behavior.
     let private seedPartialV4WithoutRootBlake3Column (dbPath: string) (rootId: Guid) rootSha256Hash ticks =
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
         |> ignore
@@ -248,6 +268,7 @@ module LocalStateDbTests =
             connection
             $"INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, '{rootId}', '{rootSha256Hash}', {ticks}, {ticks});"
 
+    /// Builds a deterministic test status for test scenarios fixture for the CLI local State Db assertions.
     let private createTestStatus (rootId: Guid) (rootHash: string) (ticks: int64) =
         { GraceStatus.Default with
             RootDirectoryId = rootId
@@ -256,16 +277,21 @@ module LocalStateDbTests =
             LastSuccessfulDirectoryVersionUpload = Instant.FromUnixTimeTicks(ticks)
         }
 
+    /// Exercises private behavior.
     type private WorkerCommand = { FileName: string; ArgumentsPrefix: string }
 
+    /// Attempts get worker command for test assertions.
     let private tryGetWorkerCommand () =
         try
             let baseDir = AppContext.BaseDirectory
             let tfm = DirectoryInfo(baseDir).Name
             let config = DirectoryInfo(baseDir).Parent.Name
 
+            /// Tracks current changes so this scenario can assert the resulting side effect explicitly.
             let mutable current = DirectoryInfo(baseDir)
+            /// Tracks src Dir changes so this scenario can assert the resulting side effect explicitly.
             let mutable srcDir = Unchecked.defaultof<DirectoryInfo>
+            /// Tracks found changes so this scenario can assert the resulting side effect explicitly.
             let mutable found = false
 
             while (not found) && (not <| isNull current) do
@@ -292,6 +318,7 @@ module LocalStateDbTests =
         with
         | _ -> None
 
+    /// Verifies that initializes schema and status meta.
     [<Test>]
     let ``initializes schema and status meta`` () =
         withTempDir (fun _ configuration ->
@@ -311,6 +338,7 @@ module LocalStateDbTests =
                 statusMetaCount |> should equal 1
             })
 
+    /// Verifies that round trips status snapshot.
     [<Test>]
     let ``round trips status snapshot`` () =
         withTempDir (fun _ configuration ->
@@ -381,6 +409,7 @@ module LocalStateDbTests =
                 srcRead.Size |> should equal 34L
             })
 
+    /// Verifies that applies incremental updates.
     [<Test>]
     let ``applies incremental updates`` () =
         withTempDir (fun _ configuration ->
@@ -501,6 +530,7 @@ module LocalStateDbTests =
                 |> should equal false
             })
 
+    /// Verifies that upserts object cache entries.
     [<Test>]
     let ``upserts object cache entries`` () =
         withTempDir (fun _ configuration ->
@@ -528,6 +558,7 @@ module LocalStateDbTests =
                 |> should equal "cache-blake3"
             })
 
+    /// Verifies that concurrent writers do not corrupt database.
     [<Test>]
     let ``concurrent writers do not corrupt database`` () =
         withTempDir (fun _ configuration ->
@@ -558,6 +589,7 @@ module LocalStateDbTests =
                 |> should equal rootHash
             })
 
+    /// Verifies that ensure db initialized recreates db when schema version mismatches.
     [<Test>]
     let ``ensureDbInitialized recreates DB when schema_version mismatches`` () =
         withTempDir (fun _ configuration ->
@@ -581,6 +613,7 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that ensure db initialized recovers from a corrupt non sqlite file.
     [<Test>]
     let ``ensureDbInitialized recovers from a corrupt non-sqlite file`` () =
         withTempDir (fun _ configuration ->
@@ -608,6 +641,7 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that ensure db initialized recreation refreshes sidecar files.
     [<Test>]
     let ``ensureDbInitialized recreation refreshes sidecar files`` () =
         withTempDir (fun _ configuration ->
@@ -640,6 +674,7 @@ module LocalStateDbTests =
                     |> should be (greaterThan oldTime)
             })
 
+    /// Verifies that read only inspection reports valid database metadata.
     [<Test>]
     let ``read-only inspection reports valid database metadata`` () =
         withTempDir (fun _ configuration ->
@@ -672,6 +707,7 @@ module LocalStateDbTests =
                 inspection.ObjectCacheError |> should equal None
             })
 
+    /// Verifies that read only inspection opens checkpointed wal database without creating missing sidecars.
     [<Test>]
     let ``read-only inspection opens checkpointed wal database without creating missing sidecars`` () =
         withTempDir (fun _ configuration ->
@@ -711,6 +747,7 @@ module LocalStateDbTests =
                 File.Exists(shmPath) |> should equal false
             })
 
+    /// Verifies that read only inspection does not create missing parent or database.
     [<Test>]
     let ``read-only inspection does not create missing parent or database`` () =
         withTempDir (fun root _ ->
@@ -731,6 +768,7 @@ module LocalStateDbTests =
                 File.Exists(missingDbPath) |> should equal false
             })
 
+    /// Verifies that read only inspection preserves corrupt bytes sidecars and backups.
     [<Test>]
     let ``read-only inspection preserves corrupt bytes sidecars and backups`` () =
         withTempDir (fun _ configuration ->
@@ -777,6 +815,7 @@ module LocalStateDbTests =
                 backupsAfter |> should equal backupsBefore
             })
 
+    /// Verifies that read only inspection reports schema mismatch without corrupt backup.
     [<Test>]
     let ``read-only inspection reports schema mismatch without corrupt backup`` () =
         withTempDir (fun _ configuration ->
@@ -811,6 +850,7 @@ module LocalStateDbTests =
                 backupsAfter |> should equal backupsBefore
             })
 
+    /// Verifies that read only inspection reports foreign key inconsistency without repair.
     [<Test>]
     let ``read-only inspection reports foreign-key inconsistency without repair`` () =
         withTempDir (fun _ configuration ->
@@ -835,6 +875,7 @@ module LocalStateDbTests =
                 orphanCount |> should equal 1
             })
 
+    /// Verifies that ensure db initialized creates expected tables and indexes.
     [<Test>]
     let ``ensureDbInitialized creates expected tables and indexes`` () =
         withTempDir (fun _ configuration ->
@@ -875,6 +916,7 @@ module LocalStateDbTests =
                 |> Array.iter (fun name -> objects.Contains(name) |> should equal true)
             })
 
+    /// Verifies that ensure db initialized is idempotent and preserves created at.
     [<Test>]
     let ``ensureDbInitialized is idempotent and preserves created_at`` () =
         withTempDir (fun _ configuration ->
@@ -896,6 +938,7 @@ module LocalStateDbTests =
                 statusMetaCount2 |> should equal 1
             })
 
+    /// Verifies that ensure db initialized recreates legacy schema v2 database without blake3 columns.
     [<Test>]
     let ``ensureDbInitialized recreates legacy schema v2 database without blake3 columns`` () =
         withTempDir (fun _ configuration ->
@@ -946,6 +989,7 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that ensure db initialized preserves existing schema v4 current schema status meta row.
     [<Test>]
     let ``ensureDbInitialized preserves existing schema v4 current schema status_meta row`` () =
         withTempDir (fun _ configuration ->
@@ -997,6 +1041,7 @@ module LocalStateDbTests =
                 corruptAfter |> should equal corruptBefore
             })
 
+    /// Verifies that ensure db initialized recreates partial schema v4 database missing root blake3 column.
     [<Test>]
     let ``ensureDbInitialized recreates partial schema v4 database missing root blake3 column`` () =
         withTempDir (fun _ configuration ->
@@ -1032,6 +1077,7 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that ensure db initialized recreates current schema database with empty status blake3 rows.
     [<Test>]
     let ``ensureDbInitialized recreates current schema database with empty status blake3 rows`` () =
         withTempDir (fun _ configuration ->
@@ -1072,6 +1118,7 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that journal mode is wal after initialization.
     [<Test>]
     let ``journal mode is WAL after initialization`` () =
         withTempDir (fun _ configuration ->
@@ -1085,6 +1132,7 @@ module LocalStateDbTests =
                 |> should equal "wal"
             })
 
+    /// Verifies that non busy sqlite failures are not retried.
     [<Test>]
     let ``non-busy sqlite failures are not retried`` () =
         withTempDir (fun _ configuration ->
@@ -1114,6 +1162,7 @@ module LocalStateDbTests =
                 |> should be (lessThan 1500L)
             })
 
+    /// Verifies that replace status snapshot is atomic (rollback on failure).
     [<Test>]
     let ``replaceStatusSnapshot is atomic (rollback on failure)`` () =
         withTempDir (fun _ configuration ->
@@ -1173,6 +1222,7 @@ module LocalStateDbTests =
                 readBack.Index.Count |> should equal 1
             })
 
+    /// Verifies that apply status incremental is atomic (rollback on failure).
     [<Test>]
     let ``applyStatusIncremental is atomic (rollback on failure)`` () =
         withTempDir (fun _ configuration ->
@@ -1236,6 +1286,7 @@ module LocalStateDbTests =
                 |> should equal false
             })
 
+    /// Verifies that concurrent ensure db initialized calls do not deadlock or corrupt.
     [<Test>]
     let ``concurrent ensureDbInitialized calls do not deadlock or corrupt`` () =
         withTempDir (fun _ configuration ->
@@ -1255,6 +1306,7 @@ module LocalStateDbTests =
                 statusMetaCount |> should equal 1
             })
 
+    /// Verifies that ensure db initialized treats paths case insensitively on windows.
     [<Test>]
     let ``ensureDbInitialized treats paths case-insensitively on Windows`` () =
         withTempDir (fun _ configuration ->
@@ -1278,6 +1330,7 @@ module LocalStateDbTests =
                 schemaVersion |> should equal "4"
             })
 
+    /// Verifies that replace status snapshot fully clears old snapshot rows.
     [<Test>]
     let ``replaceStatusSnapshot fully clears old snapshot rows`` () =
         withTempDir (fun _ configuration ->
@@ -1342,6 +1395,7 @@ module LocalStateDbTests =
                 fileCount |> should equal 0
             })
 
+    /// Verifies that replace status snapshot writes correct parent path values.
     [<Test>]
     let ``replaceStatusSnapshot writes correct parent_path values`` () =
         withTempDir (fun _ configuration ->
@@ -1388,6 +1442,7 @@ module LocalStateDbTests =
                 utilParent |> should equal "src"
             })
 
+    /// Verifies that read status snapshot reconstructs child relationships.
     [<Test>]
     let ``readStatusSnapshot reconstructs child relationships`` () =
         withTempDir (fun _ configuration ->
@@ -1433,6 +1488,7 @@ module LocalStateDbTests =
                 |> should equal true
             })
 
+    /// Verifies that read status snapshot round trips last write ticks as utc.
     [<Test>]
     let ``readStatusSnapshot round-trips last write ticks as UTC`` () =
         withTempDir (fun _ configuration ->
@@ -1479,6 +1535,7 @@ module LocalStateDbTests =
                 |> should equal DateTimeKind.Utc
             })
 
+    /// Verifies that read status snapshot read only preserves persisted file blake3 hashes.
     [<Test>]
     let ``readStatusSnapshotReadOnly preserves persisted file blake3 hashes`` () =
         withTempDir (fun _ configuration ->
@@ -1527,6 +1584,7 @@ module LocalStateDbTests =
                 | Error error -> Assert.Fail($"Expected read-only snapshot to load, but got: {error}")
             })
 
+    /// Verifies that read status snapshot read only rejects legacy sha only schema with reset guidance.
     [<Test>]
     let ``readStatusSnapshotReadOnly rejects legacy sha-only schema with reset guidance`` () =
         withTempDir (fun _ configuration ->
@@ -1572,6 +1630,7 @@ module LocalStateDbTests =
                     |> should contain "reset the local state database"
             })
 
+    /// Verifies that read status snapshot read only rejects partial v4 object cache schema missing blake3 columns.
     [<Test>]
     let ``readStatusSnapshotReadOnly rejects partial v4 object-cache schema missing blake3 columns`` () =
         withTempDir (fun _ configuration ->
@@ -1628,6 +1687,7 @@ module LocalStateDbTests =
                     |> should contain "reset the local state database"
             })
 
+    /// Verifies that read status snapshot read only rejects empty persisted blake3 values with reset guidance.
     [<Test>]
     let ``readStatusSnapshotReadOnly rejects empty persisted blake3 values with reset guidance`` () =
         withTempDir (fun _ configuration ->
@@ -1671,6 +1731,7 @@ module LocalStateDbTests =
                     |> should contain "reset the local state database"
             })
 
+    /// Verifies that read status snapshot tolerates missing status meta row.
     [<Test>]
     let ``readStatusSnapshot tolerates missing status_meta row`` () =
         withTempDir (fun _ configuration ->
@@ -1709,6 +1770,7 @@ module LocalStateDbTests =
                 readBack.Index.Count |> should equal 1
             })
 
+    /// Verifies that status files enforces directory version id.
     [<Test>]
     let ``status_files enforces directory_version_id`` () =
         withTempDir (fun _ configuration ->
@@ -1733,6 +1795,7 @@ module LocalStateDbTests =
                 |> ignore
             })
 
+    /// Verifies that apply status incremental upserts add and change file values.
     [<Test>]
     let ``applyStatusIncremental upserts add and change file values`` () =
         withTempDir (fun _ configuration ->
@@ -1824,6 +1887,7 @@ module LocalStateDbTests =
                 |> should equal lastWrite2.Ticks
             })
 
+    /// Verifies that apply status incremental preserves root blake3 metadata for meta only status updates.
     [<Test>]
     let ``applyStatusIncremental preserves root blake3 metadata for meta-only status updates`` () =
         withTempDir (fun _ configuration ->
@@ -1866,6 +1930,7 @@ module LocalStateDbTests =
                 |> should equal metaOnlyStatus.LastSuccessfulFileUpload
             })
 
+    /// Verifies that apply status incremental does not preserve root blake3 metadata for different root identity.
     [<Test>]
     let ``applyStatusIncremental does not preserve root blake3 metadata for different root identity`` () =
         withTempDir (fun _ configuration ->
@@ -1916,6 +1981,7 @@ module LocalStateDbTests =
                 |> should equal (Blake3Hash String.Empty)
             })
 
+    /// Verifies that replace status snapshot writes empty root blake3 for default status.
     [<Test>]
     let ``replaceStatusSnapshot writes empty root blake3 for default status`` () =
         withTempDir (fun _ configuration ->
@@ -1950,6 +2016,7 @@ module LocalStateDbTests =
                 |> should equal (Blake3Hash String.Empty)
             })
 
+    /// Verifies that apply status incremental keeps unchanged files when directory version id changes.
     [<Test>]
     let ``applyStatusIncremental keeps unchanged files when directory version id changes`` () =
         withTempDir (fun _ configuration ->
@@ -2041,6 +2108,7 @@ module LocalStateDbTests =
                 |> should equal true
             })
 
+    /// Verifies that apply status incremental delete file removes only the matching status file row.
     [<Test>]
     let ``applyStatusIncremental delete file removes only the matching status file row`` () =
         withTempDir (fun _ configuration ->
@@ -2104,6 +2172,7 @@ module LocalStateDbTests =
                 |> should equal 1
             })
 
+    /// Verifies that apply status incremental delete directory removes only the matching status directory row.
     [<Test>]
     let ``applyStatusIncremental delete directory removes only the matching status directory row`` () =
         withTempDir (fun _ configuration ->
@@ -2158,6 +2227,7 @@ module LocalStateDbTests =
                 |> should equal 1
             })
 
+    /// Verifies that apply status incremental subtree delete differences remove descendant status rows and preserve prefix siblings.
     [<Test>]
     let ``applyStatusIncremental subtree delete differences remove descendant status rows and preserve prefix siblings`` () =
         withTempDir (fun _ configuration ->
@@ -2241,6 +2311,7 @@ module LocalStateDbTests =
                 |> should equal 1
             })
 
+    /// Verifies that upsert object cache enforces foreign keys.
     [<Test>]
     let ``upsertObjectCache enforces foreign keys`` () =
         withTempDir (fun _ configuration ->
@@ -2260,6 +2331,7 @@ module LocalStateDbTests =
                 exists |> should equal false
             })
 
+    /// Verifies that upsert object cache supports parent before child order.
     [<Test>]
     let ``upsertObjectCache supports parent before child order`` () =
         withTempDir (fun _ configuration ->
@@ -2298,6 +2370,7 @@ module LocalStateDbTests =
                 fileCount |> should equal 1
             })
 
+    /// Verifies that upsert object cache updates referenced child without fk violation.
     [<Test>]
     let ``upsertObjectCache updates referenced child without FK violation`` () =
         withTempDir (fun _ configuration ->
@@ -2339,6 +2412,7 @@ module LocalStateDbTests =
                 childFileCount |> should equal 1
             })
 
+    /// Verifies that remove object cache directory cascades to children and files.
     [<Test>]
     let ``removeObjectCacheDirectory cascades to children and files`` () =
         withTempDir (fun _ configuration ->
@@ -2386,6 +2460,7 @@ module LocalStateDbTests =
                 childExists |> should equal true
             })
 
+    /// Verifies that remove object cache directory respects restrict when child is referenced.
     [<Test>]
     let ``removeObjectCacheDirectory respects RESTRICT when child is referenced`` () =
         withTempDir (fun _ configuration ->
@@ -2410,6 +2485,7 @@ module LocalStateDbTests =
                 stillExists |> should equal true
             })
 
+    /// Verifies that multi process writers do not crash or corrupt database.
     [<Test>]
     let ``multi-process writers do not crash or corrupt database`` () =
         withTempDir (fun _ configuration ->
@@ -2444,6 +2520,7 @@ module LocalStateDbTests =
 
                             proc)
 
+                    /// Tracks failed changes so this scenario can assert the resulting side effect explicitly.
                     let mutable failed = false
                     let failures = List<string>()
 

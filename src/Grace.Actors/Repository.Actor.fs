@@ -37,8 +37,10 @@ open System.Threading.Tasks
 open System.Runtime.Serialization
 open Grace.Shared.Services
 
+/// Groups Orleans actor helpers for repository keys, proxies, state, or workflow transitions.
 module Repository =
 
+    /// Implements the Orleans grain for repository actor.
     type RepositoryActor([<PersistentState(StateName.Repository, Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryEvent>>) =
         inherit Grain()
 
@@ -47,6 +49,7 @@ module Repository =
         let log = loggerFactory.CreateLogger("Repository.Actor")
 
         let mutable repositoryDto = RepositoryDto.Default
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -64,6 +67,7 @@ module Repository =
 
             Task.CompletedTask
 
+        /// Applies one persisted Repository event to this activation's in-memory state.
         member private this.ApplyEvent repositoryEvent =
             task {
                 try
@@ -287,6 +291,7 @@ module Repository =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this Repository actor state.
             member this.GetRepositoryId correlationId = repositoryDto.RepositoryId |> returnTask
 
         interface IGraceReminderWithGuidKey with
@@ -342,6 +347,7 @@ module Repository =
                 }
 
         interface IExportable<RepositoryEvent> with
+            /// Coordinates export logic for the Repository actor.
             member this.Export() =
                 task {
                     try
@@ -353,6 +359,7 @@ module Repository =
                     | ex -> return Error(ExportError.Exception(ExceptionResponse.Create ex))
                 }
 
+            /// Coordinates import logic for the Repository actor.
             member this.Import(events: IReadOnlyList<RepositoryEvent>) =
                 task {
                     try
@@ -365,6 +372,7 @@ module Repository =
                 }
 
         interface IRevertable<RepositoryDto> with
+            /// Coordinates revert back logic for the Repository actor.
             member this.RevertBack (eventsToRevert: int) (persist: PersistAction) =
                 task {
                     try
@@ -394,6 +402,7 @@ module Repository =
                     | ex -> return Error(RevertError.Exception(ExceptionResponse.Create ex))
                 }
 
+            /// Coordinates revert to instant logic for the Repository actor.
             member this.RevertToInstant (whenToRevertTo: Instant) (persist: PersistAction) =
                 task {
                     try
@@ -426,30 +435,38 @@ module Repository =
                     | ex -> return Error(RevertError.Exception(ExceptionResponse.Create ex))
                 }
 
+            /// Coordinates event count logic for the Repository actor.
             member this.EventCount() = task { return state.State.Count }
 
         interface IRepositoryActor with
+            /// Returns the current Repository actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 repositoryDto |> returnTask
 
+            /// Returns object storage provider data from the Repository actor state or related storage.
             member this.GetObjectStorageProvider correlationId =
                 this.correlationId <- correlationId
                 repositoryDto.ObjectStorageProvider |> returnTask
 
+            /// Reports whether this Repository actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
                 repositoryDto.UpdatedAt.IsSome |> returnTask
 
+            /// Reports whether the repository has any persisted domain events.
             member this.IsEmpty correlationId =
                 this.correlationId <- correlationId
                 repositoryDto.InitializedAt.IsNone |> returnTask
 
+            /// Reports whether this Repository actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
                 repositoryDto.DeletedAt.IsSome |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid command (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
@@ -466,6 +483,7 @@ module Repository =
                                 | None -> return Error(GraceError.Create (getErrorMessage RepositoryError.RepositoryIdDoesNotExist) metadata.CorrelationId)
                     }
 
+                /// Runs Repository command decisions, applies emitted events, and persists the result.
                 let processCommand command (metadata: EventMetadata) =
                     task {
                         try

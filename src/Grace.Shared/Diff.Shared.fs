@@ -16,6 +16,7 @@ open System.Text
 open System.Threading.Tasks
 open System.IO.Compression
 
+/// Contains diff helpers.
 module Diff =
 
     let lineChunker = Chunkers.LineChunker()

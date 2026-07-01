@@ -7,9 +7,11 @@ open System.Collections.Generic
 open System.Text.Json
 open System.Text.Json.Serialization
 
+/// Represents branch dto converter.
 type BranchDtoConverter() =
     inherit JsonConverter<BranchDto>()
 
+    /// Reads a BranchDto JSON object while preserving unknown property names for converter diagnostics.
     override this.Read((reader: byref<Utf8JsonReader>), (typeToConvert: Type), (jsonSerializerOptions: JsonSerializerOptions)) : BranchDto =
         let dictionary = Dictionary<string, string>()
         let mutable branchDto = BranchDto.Default
@@ -44,4 +46,5 @@ type BranchDtoConverter() =
 
             branchDto
 
+    /// Writes BranchDto values through System.Text.Json; currently no custom fields are emitted.
     override this.Write((writer: Utf8JsonWriter), (value: BranchDto), (jsonSerializerOptions: JsonSerializerOptions)) = ()

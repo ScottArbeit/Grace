@@ -23,8 +23,10 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for promotion queue keys, proxies, state, or workflow transitions.
 module PromotionQueue =
 
+    /// Implements the Orleans grain for promotion queue actor.
     type PromotionQueueActor([<PersistentState(StateName.PromotionQueue, Constants.GraceActorStorage)>] state: IPersistentState<List<PromotionQueueEvent>>) =
         inherit Grain()
 
@@ -36,6 +38,7 @@ module PromotionQueue =
 
         let mutable promotionQueue = PromotionQueue.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -49,6 +52,7 @@ module PromotionQueue =
 
             Task.CompletedTask
 
+        /// Applies one persisted PromotionQueue event to this activation's in-memory state.
         member private this.ApplyEvent(queueEvent: PromotionQueueEvent) =
             task {
                 let correlationId = queueEvent.Metadata.CorrelationId
@@ -90,41 +94,53 @@ module PromotionQueue =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this PromotionQueue actor state.
             member this.GetRepositoryId correlationId = RepositoryId.Empty |> returnTask
 
         interface IPromotionQueueActor with
+            /// Reports whether this PromotionQueue actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
                 (promotionQueue.TargetBranchId <> BranchId.Empty)
                 |> returnTask
 
+            /// Returns the current PromotionQueue actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 promotionQueue |> returnTask
 
+            /// Returns for route data from the PromotionQueue actor state or related storage.
             member this.GetForRoute correlationId =
                 this.correlationId <- correlationId
                 serialize promotionQueue |> returnTask
 
+            /// Returns the persisted PromotionQueue event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 state.State :> IReadOnlyList<PromotionQueueEvent>
                 |> returnTask
 
+            /// Coordinates initialize for route logic for the PromotionQueue actor.
             member this.InitializeForRoute targetBranchId policySnapshotId metadata =
                 (this :> IPromotionQueueActor).Handle (PromotionQueueCommand.Initialize(targetBranchId, PolicySnapshotId policySnapshotId)) metadata
 
+            /// Adds enqueue for route data to the PromotionQueue actor workflow or state.
             member this.EnqueueForRoute promotionSetId metadata = (this :> IPromotionQueueActor).Handle (PromotionQueueCommand.Enqueue promotionSetId) metadata
 
+            /// Removes or invalidates dequeue for route data from the PromotionQueue actor state.
             member this.DequeueForRoute promotionSetId metadata = (this :> IPromotionQueueActor).Handle (PromotionQueueCommand.Dequeue promotionSetId) metadata
 
+            /// Coordinates pause for route logic for the PromotionQueue actor.
             member this.PauseForRoute metadata = (this :> IPromotionQueueActor).Handle PromotionQueueCommand.Pause metadata
 
+            /// Coordinates resume for route logic for the PromotionQueue actor.
             member this.ResumeForRoute metadata = (this :> IPromotionQueueActor).Handle PromotionQueueCommand.Resume metadata
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: PromotionQueueCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId) then
@@ -165,6 +181,7 @@ module PromotionQueue =
                             return result
                     }
 
+                /// Runs PromotionQueue command decisions, applies emitted events, and persists the result.
                 let processCommand (command: PromotionQueueCommand) (metadata: EventMetadata) =
                     task {
                         let! (queueEventType: PromotionQueueEventType) =

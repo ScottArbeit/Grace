@@ -15,8 +15,10 @@ open System
 open System.Collections.Generic
 open System.Text
 
+/// Covers work Item Server Unit behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemServerUnitTests() =
+    /// Constructs metadata fixtures used by the server unit work Item assertions.
     let metadata timestamp =
         {
             Timestamp = timestamp
@@ -26,17 +28,20 @@ type WorkItemServerUnitTests() =
             Properties = Dictionary<string, string>()
         }
 
+    /// Runs validation through the server unit work Item path exercised by these tests.
     let runValidation (validation: Threading.Tasks.ValueTask<Result<unit, WorkItemError>>) =
         validation.AsTask()
         |> Async.AwaitTask
         |> Async.RunSynchronously
 
+    /// Extracts validation Error from the scenario result so assertions stay focused on server unit work Item behavior.
     let getValidationError validations =
         validations
         |> getFirstError
         |> Async.AwaitTask
         |> Async.RunSynchronously
 
+    /// Applies case Pattern inputs to drive the server unit work Item state transition under test.
     let applyCasePattern (pattern: bool array) (value: string) =
         let toggles = if isNull pattern then [||] else pattern
 
@@ -54,12 +59,14 @@ type WorkItemServerUnitTests() =
         |> Seq.toArray
         |> String
 
+    /// Verifies that update Commands Empty When No Fields Provided.
     [<Test>]
     member _.UpdateCommandsEmptyWhenNoFieldsProvided() =
         let parameters = UpdateWorkItemParameters(WorkItemId = Guid.NewGuid().ToString())
         let commands = WorkItem.buildUpdateCommands parameters
         Assert.That(commands, Is.Empty)
 
+    /// Verifies that update Commands Ordered For Multiple Fields.
     [<Test>]
     member _.UpdateCommandsOrderedForMultipleFields() =
         let parameters =
@@ -90,6 +97,7 @@ type WorkItemServerUnitTests() =
         let matches = commands = expected
         Assert.That(matches, Is.True)
 
+    /// Verifies that link Reference Validation Rejects Invalid Reference Id.
     [<Test>]
     member _.LinkReferenceValidationRejectsInvalidReferenceId() =
         let parameters = LinkReferenceParameters(WorkItemId = Guid.NewGuid().ToString(), ReferenceId = "not-a-guid")
@@ -100,6 +108,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidReferenceId))
 
+    /// Verifies that link Reference Validation Accepts Valid Parameters.
     [<Test>]
     member _.LinkReferenceValidationAcceptsValidParameters() =
         let parameters = LinkReferenceParameters(WorkItemId = Guid.NewGuid().ToString(), ReferenceId = Guid.NewGuid().ToString())
@@ -110,6 +119,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
+    /// Verifies that work Item Identifier Validation Accepts Positive Number.
     [<Test>]
     member _.WorkItemIdentifierValidationAcceptsPositiveNumber() =
         let result =
@@ -118,6 +128,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
 
+    /// Verifies that work Item Identifier Validation Rejects Non Positive Number.
     [<Test>]
     member _.WorkItemIdentifierValidationRejectsNonPositiveNumber() =
         let result =
@@ -126,6 +137,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(result, Is.EqualTo(Error WorkItemError.InvalidWorkItemNumber: Result<unit, WorkItemError>))
 
+    /// Verifies that work Item Identifier Validation Accepts Guid.
     [<Test>]
     member _.WorkItemIdentifierValidationAcceptsGuid() =
         let workItemId = Guid.NewGuid().ToString()
@@ -136,6 +148,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
 
+    /// Verifies that work Item Identifier Validation Accepts Uppercase Guid.
     [<Test>]
     member _.WorkItemIdentifierValidationAcceptsUppercaseGuid() =
         let workItemId = Guid.NewGuid().ToString().ToUpperInvariant()
@@ -146,6 +159,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
 
+    /// Verifies that work Item Identifier Validation Accepts Very Large Positive Number.
     [<Test>]
     member _.WorkItemIdentifierValidationAcceptsVeryLargePositiveNumber() =
         let result =
@@ -155,6 +169,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(result, Is.EqualTo(Ok(): Result<unit, WorkItemError>))
 
+    /// Verifies that work Item Identifier Validation Rejects Invalid Identifier.
     [<Test>]
     member _.WorkItemIdentifierValidationRejectsInvalidIdentifier() =
         let result =
@@ -163,6 +178,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(result, Is.EqualTo(Error WorkItemError.InvalidWorkItemId: Result<unit, WorkItemError>))
 
+    /// Verifies that link Promotion Set Validation Rejects Invalid Promotion Set Id.
     [<Test>]
     member _.LinkPromotionSetValidationRejectsInvalidPromotionSetId() =
         let parameters = LinkPromotionSetParameters(WorkItemId = Guid.NewGuid().ToString(), PromotionSetId = "not-a-guid")
@@ -173,6 +189,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidPromotionSetId))
 
+    /// Verifies that link Promotion Set Validation Accepts Valid Parameters.
     [<Test>]
     member _.LinkPromotionSetValidationAcceptsValidParameters() =
         let parameters = LinkPromotionSetParameters(WorkItemId = Guid.NewGuid().ToString(), PromotionSetId = Guid.NewGuid().ToString())
@@ -183,6 +200,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
+    /// Verifies that link Artifact Validation Rejects Invalid Artifact Id.
     [<Test>]
     member _.LinkArtifactValidationRejectsInvalidArtifactId() =
         let parameters = LinkArtifactParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = "not-a-guid")
@@ -193,6 +211,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
 
+    /// Verifies that link Artifact Validation Accepts Valid Parameters.
     [<Test>]
     member _.LinkArtifactValidationAcceptsValidParameters() =
         let parameters = LinkArtifactParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = Guid.NewGuid().ToString())
@@ -203,6 +222,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
+    /// Verifies that add Summary Validation Accepts Guid Identifier.
     [<Test>]
     member _.AddSummaryValidationAcceptsGuidIdentifier() =
         let parameters = AddSummaryParameters(WorkItemId = Guid.NewGuid().ToString(), SummaryContent = "Summary content")
@@ -213,6 +233,7 @@ type WorkItemServerUnitTests() =
         | Ok _ -> Assert.Pass()
         | Error errorMessage -> Assert.Fail($"Expected validation to succeed, but received '{errorMessage}'.")
 
+    /// Verifies that add Summary Validation Accepts Numeric Identifier.
     [<Test>]
     member _.AddSummaryValidationAcceptsNumericIdentifier() =
         let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content")
@@ -223,6 +244,7 @@ type WorkItemServerUnitTests() =
         | Ok _ -> Assert.Pass()
         | Error errorMessage -> Assert.Fail($"Expected validation to succeed, but received '{errorMessage}'.")
 
+    /// Verifies that add Summary Validation Rejects Non Positive Numeric Identifier.
     [<Test>]
     member _.AddSummaryValidationRejectsNonPositiveNumericIdentifier() =
         let parameters = AddSummaryParameters(WorkItemId = "0", SummaryContent = "Summary content")
@@ -231,6 +253,7 @@ type WorkItemServerUnitTests() =
         | Ok _ -> Assert.Fail("Expected validation to reject non-positive WorkItemNumber.")
         | Error errorMessage -> Assert.That(errorMessage, Does.Contain(WorkItemError.getErrorMessage WorkItemError.InvalidWorkItemNumber))
 
+    /// Verifies that add Summary Validation Rejects Unsupported Artifact Reference Mode.
     [<Test>]
     member _.AddSummaryValidationRejectsUnsupportedArtifactReferenceMode() =
         let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content", SummaryArtifactId = Guid.NewGuid().ToString())
@@ -241,6 +264,7 @@ type WorkItemServerUnitTests() =
             Assert.That(errorMessage, Does.Contain("Caller-supplied artifact IDs are not supported"))
             Assert.That(errorMessage, Does.Contain(WorkItem.canonicalAddSummaryContractMessage))
 
+    /// Verifies that add Summary Validation Rejects Prompt Origin Without Prompt Content.
     [<Test>]
     member _.AddSummaryValidationRejectsPromptOriginWithoutPromptContent() =
         let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content", PromptOrigin = "agent://codex")
@@ -251,6 +275,7 @@ type WorkItemServerUnitTests() =
             Assert.That(errorMessage, Does.Contain("PromptOrigin can only be provided when PromptContent is provided"))
             Assert.That(errorMessage, Does.Contain(WorkItem.canonicalAddSummaryContractMessage))
 
+    /// Verifies that add Summary Validation Rejects Invalid Promotion Set Id.
     [<Test>]
     member _.AddSummaryValidationRejectsInvalidPromotionSetId() =
         let parameters = AddSummaryParameters(WorkItemId = "42", SummaryContent = "Summary content", PromotionSetId = "not-a-guid")
@@ -259,6 +284,7 @@ type WorkItemServerUnitTests() =
         | Ok _ -> Assert.Fail("Expected validation to reject invalid PromotionSetId.")
         | Error errorMessage -> Assert.That(errorMessage, Is.EqualTo("PromotionSetId must be a valid non-empty Guid."))
 
+    /// Verifies that add Summary Artifact Seed Normalizes Correlation Id.
     [<Test>]
     member _.AddSummaryArtifactSeedNormalizesCorrelationId() =
         let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
@@ -268,6 +294,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(lowerSeed, Is.EqualTo(mixedSeed))
 
+    /// Verifies that deterministic Add Summary Artifact Id Is Stable For Replay.
     [<Test>]
     member _.DeterministicAddSummaryArtifactIdIsStableForReplay() =
         let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
@@ -279,6 +306,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(firstId, Is.EqualTo(replayId))
 
+    /// Verifies that deterministic Add Summary Artifact Id Differs By Artifact Segment.
     [<Test>]
     member _.DeterministicAddSummaryArtifactIdDiffersByArtifactSegment() =
         let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
@@ -290,6 +318,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(summaryArtifactId, Is.Not.EqualTo(promptArtifactId))
 
+    /// Verifies that deterministic Add Summary Artifact Id Differs By Repository Work Item And Correlation Segment.
     [<Test>]
     member _.DeterministicAddSummaryArtifactIdDiffersByRepositoryWorkItemAndCorrelationSegment() =
         let repositoryId = Guid.Parse("89f08f88-0d98-4562-a5f7-bce8d4e4c2ec")
@@ -307,6 +336,7 @@ type WorkItemServerUnitTests() =
         Assert.That(otherWorkItemArtifactId, Is.Not.EqualTo(baselineId))
         Assert.That(otherCorrelationSegmentId, Is.Not.EqualTo(baselineId))
 
+    /// Verifies that deterministic Add Summary Blob Path Uses Artifact Identity Partition.
     [<Test>]
     member _.DeterministicAddSummaryBlobPathUsesArtifactIdentityPartition() =
         let artifactId = Guid.Parse("7d535f96-e634-4313-b5ff-d9293ee9db57")
@@ -314,6 +344,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(blobPath, Is.EqualTo("grace-artifacts/by-id/7d535f96-e634-4313-b5ff-d9293ee9db57"))
 
+    /// Verifies that deterministic Add Summary Blob Path Does Not Use Date Partitions.
     [<Test>]
     member _.DeterministicAddSummaryBlobPathDoesNotUseDatePartitions() =
         let artifactId = Guid.Parse("7d535f96-e634-4313-b5ff-d9293ee9db57")
@@ -322,6 +353,7 @@ type WorkItemServerUnitTests() =
         Assert.That(blobPath.Split('/'), Has.Length.EqualTo(3))
         Assert.That(blobPath, Does.Not.Match(@".*/\d{4}/\d{2}/\d{2}/.*"))
 
+    /// Verifies that add Summary Mime Type Defaults And Trims Whitespace.
     [<Test>]
     member _.AddSummaryMimeTypeDefaultsAndTrimsWhitespace() =
         Assert.That(WorkItem.normalizeAddSummaryMimeType null, Is.EqualTo("text/markdown"))
@@ -329,6 +361,7 @@ type WorkItemServerUnitTests() =
         Assert.That(WorkItem.normalizeAddSummaryMimeType "   ", Is.EqualTo("text/markdown"))
         Assert.That(WorkItem.normalizeAddSummaryMimeType "  application/json  ", Is.EqualTo("application/json"))
 
+    /// Verifies that add Summary Content Hash Uses Lowercase Sha256 Hex.
     [<Test>]
     member _.AddSummaryContentHashUsesLowercaseSha256Hex() =
         let contentBytes = Encoding.UTF8.GetBytes("Grace add-summary content")
@@ -338,6 +371,7 @@ type WorkItemServerUnitTests() =
         Assert.That(contentHash, Is.EqualTo("fe7b99b4ee981f8232f58cc18ac51e3999d3c52b01002d1070df8f751c92c423"))
         Assert.That(contentHash, Is.EqualTo(contentHash.ToLowerInvariant()))
 
+    /// Verifies that recoverable Artifact Create Errors Allow Replay Conditions.
     [<Test>]
     member _.RecoverableArtifactCreateErrorsAllowReplayConditions() =
         let duplicateCorrelationError = GraceError.Create "Duplicate correlation ID for Artifact command." "corr-add-summary"
@@ -348,6 +382,7 @@ type WorkItemServerUnitTests() =
         Assert.That(WorkItem.isRecoverableArtifactCreateError existingArtifactError, Is.True)
         Assert.That(WorkItem.isRecoverableArtifactCreateError fatalError, Is.False)
 
+    /// Verifies that remove Artifact Type Validation Rejects Missing Artifact Type.
     [<Test>]
     member _.RemoveArtifactTypeValidationRejectsMissingArtifactType() =
         let parameters = RemoveArtifactTypeLinksParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactType = String.Empty)
@@ -358,6 +393,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactType))
 
+    /// Verifies that show Attachment Validation Rejects Missing Attachment Type.
     [<Test>]
     member _.ShowAttachmentValidationRejectsMissingAttachmentType() =
         let parameters = ShowWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), AttachmentType = String.Empty)
@@ -368,6 +404,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactType))
 
+    /// Verifies that list Attachment Validation Accepts Valid Parameters.
     [<Test>]
     member _.ListAttachmentValidationAcceptsValidParameters() =
         let parameters = ListWorkItemAttachmentsParameters(WorkItemId = Guid.NewGuid().ToString())
@@ -378,6 +415,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
+    /// Verifies that show Attachment Validation Accepts Valid Parameters.
     [<Test>]
     member _.ShowAttachmentValidationAcceptsValidParameters() =
         let parameters = ShowWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), AttachmentType = "summary")
@@ -388,6 +426,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
+    /// Verifies that download Attachment Validation Accepts Valid Parameters.
     [<Test>]
     member _.DownloadAttachmentValidationAcceptsValidParameters() =
         let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = Guid.NewGuid().ToString())
@@ -398,6 +437,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(None: WorkItemError option))
 
+    /// Verifies that download Attachment Validation Rejects Missing Artifact Id.
     [<Test>]
     member _.DownloadAttachmentValidationRejectsMissingArtifactId() =
         let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = String.Empty)
@@ -408,6 +448,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
 
+    /// Verifies that download Attachment Validation Rejects Empty Guid Artifact Id.
     [<Test>]
     member _.DownloadAttachmentValidationRejectsEmptyGuidArtifactId() =
         let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = Guid.Empty.ToString())
@@ -418,6 +459,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
 
+    /// Verifies that download Attachment Validation Rejects Invalid Artifact Id.
     [<Test>]
     member _.DownloadAttachmentValidationRejectsInvalidArtifactId() =
         let parameters = DownloadWorkItemAttachmentParameters(WorkItemId = Guid.NewGuid().ToString(), ArtifactId = "not-a-guid")
@@ -428,6 +470,7 @@ type WorkItemServerUnitTests() =
 
         Assert.That(error, Is.EqualTo(Some WorkItemError.InvalidArtifactId))
 
+    /// Verifies that remove Artifact Type Validation Accepts Known Aliases.
     [<Test>]
     member _.RemoveArtifactTypeValidationAcceptsKnownAliases() =
         let aliases =
@@ -448,6 +491,7 @@ type WorkItemServerUnitTests() =
 
             Assert.That(error, Is.EqualTo(None: WorkItemError option), $"Expected artifact type alias '{alias}' to pass validation.")
 
+    /// Verifies that parse Removable Artifact Type Handles Aliases.
     [<Test>]
     member _.ParseRemovableArtifactTypeHandlesAliases() =
         let expectedMappings =
@@ -464,6 +508,7 @@ type WorkItemServerUnitTests() =
             | Ok artifactType -> Assert.That(artifactType, Is.EqualTo(expectedType))
             | Error error -> Assert.Fail($"Expected alias '{alias}' to parse, but received {error}.")
 
+    /// Verifies that work Item Identifier Validation Accepts Positive Number Strings.
     [<FsCheck.NUnit.Property(MaxTest = 100)>]
     member _.WorkItemIdentifierValidationAcceptsPositiveNumberStrings(positiveInt: PositiveInt) =
         let result =
@@ -474,6 +519,7 @@ type WorkItemServerUnitTests() =
 
         result = (Ok(): Result<unit, WorkItemError>)
 
+    /// Verifies that work Item Identifier Validation Rejects Non Positive Number Strings.
     [<FsCheck.NUnit.Property(MaxTest = 100)>]
     member _.WorkItemIdentifierValidationRejectsNonPositiveNumberStrings(value: int) =
         let nonPositiveValue = if value > 0 then -value else value
@@ -486,6 +532,7 @@ type WorkItemServerUnitTests() =
 
         result = (Error WorkItemError.InvalidWorkItemNumber: Result<unit, WorkItemError>)
 
+    /// Verifies that work Item Identifier Validation Accepts Non Empty Guid Strings.
     [<FsCheck.NUnit.Property(MaxTest = 100)>]
     member _.WorkItemIdentifierValidationAcceptsNonEmptyGuidStrings(guid: Guid) =
         let validGuid = if guid = Guid.Empty then Guid.NewGuid() else guid
@@ -497,6 +544,7 @@ type WorkItemServerUnitTests() =
 
         result = (Ok(): Result<unit, WorkItemError>)
 
+    /// Verifies that parse Removable Artifact Type Is Case Insensitive.
     [<FsCheck.NUnit.Property(MaxTest = 100)>]
     member _.ParseRemovableArtifactTypeIsCaseInsensitive(pattern: bool array) =
         let expectedMappings =
@@ -516,6 +564,7 @@ type WorkItemServerUnitTests() =
             | Ok artifactType -> artifactType = expectedType
             | Error _ -> false)
 
+    /// Verifies that duplicate Correlation Detection Finds Matches.
     [<Test>]
     member _.DuplicateCorrelationDetectionFindsMatches() =
         let timestamp = Instant.FromUtc(2025, 1, 1, 0, 0)

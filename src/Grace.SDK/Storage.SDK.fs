@@ -32,14 +32,17 @@ open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open Azure
 
+/// SDK storage helpers for Grace Server storage routes and direct object-storage transfers.
 module Storage =
 
     let internal blobAlreadyExistsErrorCode = "BlobAlreadyExists"
 
+    /// Identifies Azure conflicts that mean a ContentBlock payload already exists and can be reused.
     let internal isExistingContentBlockUploadConflict (ex: RequestFailedException) =
         ex.Status = int HttpStatusCode.Conflict
         && String.Equals(ex.ErrorCode, blobAlreadyExistsErrorCode, StringComparison.OrdinalIgnoreCase)
 
+    /// Extracts a named value from a URI fragment without treating query-string values as storage placement data.
     let private tryGetFragmentValue name (uri: Uri) =
         if isNull uri
            || String.IsNullOrWhiteSpace uri.Fragment then
@@ -62,6 +65,7 @@ module Storage =
                     else
                         None)
 
+    /// Derives storage account, container, object key, and ETag from a ContentBlock SAS URI.
     let internal contentBlockPlacementFromUriUsingConfiguredEndpoint (configuredBlobEndpoint: Uri) configuredAccountName (blobUriWithSasToken: Uri) etag =
         let pathSegments =
             blobUriWithSasToken
@@ -130,9 +134,11 @@ module Storage =
 
         { StorageAccountName = accountName; StorageContainerName = StorageContainerName containerName; ObjectKey = objectKey; ETag = etag }
 
+    /// Derives ContentBlock storage placement from a SAS URI using default endpoint inference.
     let internal contentBlockPlacementFromUri (blobUriWithSasToken: Uri) etag =
         contentBlockPlacementFromUriUsingConfiguredEndpoint null String.Empty blobUriWithSasToken etag
 
+    /// Builds the local object-cache file name, including Blake3 when the FileVersion carries one.
     let internal getLocalObjectCacheFileName (fileVersion: FileVersion) =
         if String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash) then
             fileVersion.GetObjectFileName
@@ -144,6 +150,7 @@ module Storage =
             else
                 $"{file.Name.Replace(file.Extension, String.Empty)}_{fileVersion.Sha256Hash}_{fileVersion.Blake3Hash}{file.Extension}"
 
+    /// Reads a string response and attaches SDK lifecycle diagnostics to either success or error results.
     let internal readStringResponseWithLifecycle (response: HttpResponseMessage) correlationId errorPrefix =
         task {
             let! responseText = response.Content.ReadAsStringAsync()
@@ -445,6 +452,7 @@ module Storage =
     let SaveFileToObjectStorage (repositoryId: RepositoryId) (fileVersion: FileVersion) (blobUriWithSasToken: Uri) correlationId =
         SaveFileToObjectStorageWithMetadata repositoryId fileVersion blobUriWithSasToken (Dictionary<string, string>()) correlationId
 
+    /// Uploads an encoded ContentBlock payload directly to object storage and returns its placement metadata.
     let SaveContentBlockToObjectStorage (contentBlockAddress: ContentBlockAddress) (payload: byte array) (blobUriWithSasToken: Uri) correlationId =
         task {
             try
@@ -472,6 +480,7 @@ module Storage =
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
+    /// Downloads a ContentBlock payload directly from object storage using the supplied SAS URI.
     let DownloadContentBlockFromObjectStorage (contentBlockAddress: ContentBlockAddress) (blobUriWithSasToken: Uri) correlationId =
         task {
             try
@@ -621,30 +630,36 @@ module Storage =
                 return Error(GraceError.Create (exceptionResponse.ToString()) correlationId)
         }
 
+    /// Starts a server-side manifest upload session for planned ContentBlock registration and finalization.
     let StartManifestUploadSession (parameters: StartManifestUploadSessionParameters) =
         Common.postServer<StartManifestUploadSessionParameters, UploadSessionDecision> (
             parameters |> Common.ensureCorrelationIdIsSet,
             "storage/startManifestUploadSession"
         )
 
+    /// Sends positive dedupe-candidate hints to the server for upload-session reuse decisions.
     let IssueDedupeDiscovery (parameters: IssueDedupeDiscoveryParameters) =
         Common.postServer<IssueDedupeDiscoveryParameters, UploadSessionDecision> (parameters |> Common.ensureCorrelationIdIsSet, "storage/issueDedupeDiscovery")
 
+    /// Claims the reusable ContentBlock ranges accepted for a manifest upload session.
     let ClaimReuseRanges (parameters: ClaimReuseRangesParameters) =
         Common.postServer<ClaimReuseRangesParameters, UploadSessionDecision> (parameters |> Common.ensureCorrelationIdIsSet, "storage/claimReuseRanges")
 
+    /// Registers a missing ContentBlock payload before the SDK uploads it to object storage.
     let RegisterContentBlockUpload (parameters: RegisterContentBlockUploadParameters) =
         Common.postServer<RegisterContentBlockUploadParameters, UploadSessionDecision> (
             parameters |> Common.ensureCorrelationIdIsSet,
             "storage/registerContentBlockUpload"
         )
 
+    /// Confirms the object-storage placement for a ContentBlock payload uploaded by the SDK.
     let ConfirmContentBlockUpload (parameters: ConfirmContentBlockUploadParameters) =
         Common.postServer<ConfirmContentBlockUploadParameters, UploadSessionDecision> (
             parameters |> Common.ensureCorrelationIdIsSet,
             "storage/confirmContentBlockUpload"
         )
 
+    /// Finalizes a manifest upload session after all reused and uploaded blocks are accounted for.
     let FinalizeManifestUpload (parameters: FinalizeManifestUploadParameters) =
         Common.postServer<FinalizeManifestUploadParameters, UploadSessionDecision> (
             parameters |> Common.ensureCorrelationIdIsSet,

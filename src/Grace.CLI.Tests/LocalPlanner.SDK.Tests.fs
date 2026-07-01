@@ -8,10 +8,12 @@ open System
 open System.IO
 open System.Text
 
+/// Exercises local planner sdk behavior.
 [<Parallelizable(ParallelScope.All)>]
 type LocalPlannerSdkTests() =
     static member private PseudoRandomBytes length =
         let bytes = Array.zeroCreate<byte> length
+        /// Tracks state changes so this scenario can assert the resulting side effect explicitly.
         let mutable state = 0x12345678u
 
         for index in 0 .. length - 1 do
@@ -24,6 +26,7 @@ type LocalPlannerSdkTests() =
 
     static member private BinaryPolicy thresholdBytes = { ManifestEligibilityPolicy.Default with ThresholdBytes = thresholdBytes; BinaryScanBytes = 16 }
 
+    /// Verifies that fallback plan always carries the original bytes.
     [<Test>]
     member _.FallbackPlanAlwaysCarriesTheOriginalBytes() =
         let payload = Encoding.UTF8.GetBytes("small source file")
@@ -39,6 +42,7 @@ type LocalPlannerSdkTests() =
         Assert.That(plan.Blocks, Is.Empty)
         Assert.That(plan.ContentBlockUploads, Is.Empty)
 
+    /// Verifies that empty payload falls back even when threshold would allow manifest.
     [<Test>]
     member _.EmptyPayloadFallsBackEvenWhenThresholdWouldAllowManifest() =
         let payload = Array.empty<byte>
@@ -54,6 +58,7 @@ type LocalPlannerSdkTests() =
         Assert.That(plan.Blocks, Is.Empty)
         Assert.That(plan.ContentBlockUploads, Is.Empty)
 
+    /// Verifies that manifest planning rejects unsupported chunking suite.
     [<Test>]
     member _.ManifestPlanningRejectsUnsupportedChunkingSuite() =
         let payload = LocalPlannerSdkTests.PseudoRandomBytes 160000
@@ -71,6 +76,7 @@ type LocalPlannerSdkTests() =
 
         Assert.That(ex.ParamName, Is.EqualTo("ChunkingSuiteId"))
 
+    /// Verifies that eligible binary payload plans deterministic chunks blocks and manifest.
     [<Test>]
     member _.EligibleBinaryPayloadPlansDeterministicChunksBlocksAndManifest() =
         let payload = LocalPlannerSdkTests.PseudoRandomBytes 220000
@@ -145,6 +151,7 @@ type LocalPlannerSdkTests() =
             Is.True
         )
 
+    /// Verifies that duplicate local chunks produce one upload plan and one key chunk.
     [<Test>]
     member _.DuplicateLocalChunksProduceOneUploadPlanAndOneKeyChunk() =
         let payload = Array.zeroCreate<byte> (RabinChunking.MaximumChunkSize * 2)
@@ -163,6 +170,7 @@ type LocalPlannerSdkTests() =
         Assert.That(plan.ContentBlockUploads[0].BlockAddress, Is.EqualTo(plan.Blocks[0].Address))
         Assert.That(plan.Blocks[0].Address, Is.EqualTo(plan.Blocks[1].Address))
 
+    /// Verifies that analyze file uses file bytes without server state.
     [<Test>]
     member _.AnalyzeFileUsesFileBytesWithoutServerState() =
         let tempPath = Path.Combine(Path.GetTempPath(), $"grace-local-planner-{Guid.NewGuid():N}.bin")

@@ -9,6 +9,7 @@ open System.Collections.Generic
 open Grace.Shared
 open Grace.Shared.Validation
 
+/// Groups Orleans actor helpers for memory cache keys, proxies, state, or workflow transitions.
 module MemoryCache =
     [<Literal>]
     let ownerIdPrefix = "OwI"
@@ -40,6 +41,7 @@ module MemoryCache =
     [<Literal>]
     let orleansContextPrefix = "Orl"
 
+    /// Wraps microsoft records exchanged by actor queries or projections.
     type Microsoft.Extensions.Caching.Memory.IMemoryCache with
 
         /// Get a value from MemoryCache, if it exists.

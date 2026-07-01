@@ -15,12 +15,16 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for content block metadata actor key keys, proxies, state, or workflow transitions.
 module ContentBlockMetadataActorKey =
 
+    /// Builds the stable Orleans grain key used to address a ContentBlockMetadata actor.
     let Create (storagePoolId: StoragePoolId) (contentBlockAddress: ContentBlockAddress) = $"{storagePoolId}|{contentBlockAddress}"
 
+/// Groups Orleans actor helpers for content block metadata keys, proxies, state, or workflow transitions.
 module ContentBlockMetadata =
 
+    /// Maps a ContentBlockMetadata command case to the operation name used in idempotency and diagnostics.
     let commandName command =
         match command with
         | ContentBlockMetadataCommand.ReplaceWholeRecord _ -> "ReplaceWholeRecord"
@@ -28,6 +32,7 @@ module ContentBlockMetadata =
         | ContentBlockMetadataCommand.CompactPhysicalRanges _ -> "CompactPhysicalRanges"
         | ContentBlockMetadataCommand.SetCompactionChurnState _ -> "SetCompactionChurnState"
 
+    /// Extracts the client operation id that lets command retries match previously emitted events.
     let operationId command =
         match command with
         | ContentBlockMetadataCommand.ReplaceWholeRecord replace -> replace.OperationId
@@ -37,6 +42,7 @@ module ContentBlockMetadata =
         | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState when isNull (box setChurnState) -> String.Empty
         | ContentBlockMetadataCommand.SetCompactionChurnState setChurnState -> setChurnState.OperationId
 
+    /// Coordinates event operation id logic for the ContentBlockMetadata actor.
     let private eventOperationId metadataEvent =
         match metadataEvent.Event with
         | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, _) -> operationId
@@ -44,16 +50,20 @@ module ContentBlockMetadata =
         | ContentBlockMetadataEventType.PhysicalRangesCompacted (operationId, _) -> operationId
         | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, _) -> operationId
 
+    /// Checks whether the operation id has already produced a persisted event.
     let private hasAppliedOperationId (events: seq<ContentBlockMetadataEvent>) operationId =
         events
         |> Seq.exists (fun metadataEvent -> eventOperationId metadataEvent = operationId)
 
+    /// Replays persisted ContentBlockMetadata events into an in-memory state snapshot.
     let applyEvents (events: ContentBlockMetadataEvent list) (current: ContentBlockMetadataDto) =
         events
         |> List.fold (fun dto event -> ContentBlockMetadataDto.UpdateDto event dto) current
 
+    /// Coordinates grace error logic for the ContentBlockMetadata actor.
     let private graceError correlationId message = GraceError.Create message correlationId
 
+    /// Validates range before the operation continues.
     let private validateRange correlationId (range: ContentBlockMetadataRange) =
         if range.OrdinalStart < 0 then
             Some(graceError correlationId "ContentBlockMetadataRange.OrdinalStart must be zero or greater.")
@@ -70,6 +80,7 @@ module ContentBlockMetadata =
         else
             None
 
+    /// Validates metadata before the operation continues.
     let private validateMetadata correlationId (metadata: ContentBlockMetadata) =
         if String.IsNullOrWhiteSpace metadata.StoragePoolId then
             Some(graceError correlationId "StoragePoolId is required.")
@@ -87,6 +98,7 @@ module ContentBlockMetadata =
             metadata.Ranges
             |> Array.tryPick (validateRange correlationId)
 
+    /// Validates storage placement before the operation continues.
     let private validateStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "StoragePlacement is required.")
@@ -99,6 +111,7 @@ module ContentBlockMetadata =
         else
             None
 
+    /// Validates existing storage placement before the operation continues.
     let private validateExistingStoragePlacement correlationId (placement: ContentBlockStoragePlacement) =
         if isNull (box placement) then
             Some(graceError correlationId "Existing StoragePlacement is required.")
@@ -111,6 +124,7 @@ module ContentBlockMetadata =
         else
             None
 
+    /// Validates merge physical ranges before the operation continues.
     let private validateMergePhysicalRanges correlationId (merge: MergeContentBlockPhysicalRanges) =
         if String.IsNullOrWhiteSpace merge.StoragePoolId then
             Some(graceError correlationId "StoragePoolId is required.")
@@ -134,6 +148,7 @@ module ContentBlockMetadata =
                     merge.ExpectedRanges
                     |> Array.tryPick (validateRange correlationId)
 
+    /// Validates compact physical ranges before the operation continues.
     let private validateCompactPhysicalRanges correlationId (compact: CompactContentBlockPhysicalRanges) =
         if isNull (box compact) then
             Some(graceError correlationId "CompactPhysicalRanges payload is required.")
@@ -152,14 +167,17 @@ module ContentBlockMetadata =
                     | None when range.ActiveManifestCount <= 0 -> Some(graceError correlationId "Compacted ContentBlockMetadataRange must be active.")
                     | None -> None)
 
+    /// Coordinates physical end logic for the ContentBlockMetadata actor.
     let private physicalEnd (range: ContentBlockMetadataRange) = range.PhysicalOffset + range.PhysicalLength
 
+    /// Coordinates total physical bytes logic for the ContentBlockMetadata actor.
     let private totalPhysicalBytes ranges =
         ranges
         |> Array.map physicalEnd
         |> Array.append [| 0L |]
         |> Array.max
 
+    /// Coordinates active physical bytes logic for the ContentBlockMetadata actor.
     let private activePhysicalBytes correlationId ranges =
         ranges
         |> Array.filter (fun range -> range.ActiveManifestCount > 0)
@@ -172,13 +190,16 @@ module ContentBlockMetadata =
                 | Ok current -> Ok(current + range.PhysicalLength))
             (Ok 0L)
 
+    /// Coordinates range key logic for the ContentBlockMetadata actor.
     let private rangeKey (range: ContentBlockMetadataRange) = $"{range.OrdinalStart}:{range.OrdinalCount}:{range.PhysicalOffset}:{range.PhysicalLength}"
 
+    /// Coordinates merge ranges logic for the ContentBlockMetadata actor.
     let private mergeRanges correlationId isFinalizeContribution existingRanges incomingRanges =
         let merged = Dictionary<string, ContentBlockMetadataRange>()
         let incoming = Dictionary<string, ContentBlockMetadataRange>()
         let mutable error = None
 
+        /// Combines active manifest counts when two metadata ranges describe the same bytes.
         let mergeActiveCount existing range =
             if range.ActiveManifestCount > Int32.MaxValue - existing.ActiveManifestCount then
                 error <- Some(graceError correlationId "ContentBlockMetadataRange.ActiveManifestCount cannot exceed Int32.MaxValue.")
@@ -190,6 +211,7 @@ module ContentBlockMetadata =
                         + range.ActiveManifestCount
                 }
 
+        /// Adds an existing metadata range to the merge map before incoming ranges are reconciled.
         let addExistingRange range =
             let key = rangeKey range
 
@@ -202,6 +224,7 @@ module ContentBlockMetadata =
             else
                 merged[key] <- range
 
+        /// Adds or combines an incoming metadata range during content-block metadata merge.
         let addIncomingRange range =
             let key = rangeKey range
 
@@ -213,19 +236,23 @@ module ContentBlockMetadata =
         existingRanges |> Array.iter addExistingRange
         incomingRanges |> Array.iter addIncomingRange
 
+        /// Checks whether an inactive range can be reactivated without duplicating metadata.
         let isExactReactivation (existing: ContentBlockMetadataRange) (range: ContentBlockMetadataRange) =
             existing.ActiveManifestCount = 0
             && range.ActiveManifestCount > 0
 
+        /// Folds a finalize contribution into an already covering metadata range when the bytes match.
         let tryMergeFinalizeContributionIntoCoveringRange (range: ContentBlockMetadataRange) =
             if not isFinalizeContribution
                || range.ActiveManifestCount <= 0 then
                 false
             else
+                /// Calculates the exclusive logical ordinal end for a metadata range.
                 let rangeEnd (metadataRange: ContentBlockMetadataRange) =
                     metadataRange.OrdinalStart
                     + metadataRange.OrdinalCount
 
+                /// Projects an incoming range across an existing covering range to preserve physical offsets.
                 let tryProject (existing: ContentBlockMetadataRange) =
                     if existing.ActiveManifestCount <= 0
                        || existing.OrdinalStart < 0
@@ -265,6 +292,7 @@ module ContentBlockMetadata =
                     let existingKey = rangeKey existing
                     merged.Remove existingKey |> ignore
 
+                    /// Adds a non-empty split metadata range produced while reconciling overlapping ranges.
                     let addSplitRange (splitRange: ContentBlockMetadataRange) = if splitRange.OrdinalCount > 0 then merged[rangeKey splitRange] <- splitRange
 
                     let beforeOrdinalCount = range.OrdinalStart - existing.OrdinalStart
@@ -320,14 +348,17 @@ module ContentBlockMetadata =
             |> Seq.toArray
             |> Ok
 
+    /// Coordinates active logical range key logic for the ContentBlockMetadata actor.
     let private activeLogicalRangeKey (range: ContentBlockMetadataRange) = range.OrdinalStart, range.OrdinalCount, range.ActiveManifestCount
 
+    /// Coordinates active logical ranges logic for the ContentBlockMetadata actor.
     let private activeLogicalRanges ranges =
         ranges
         |> Array.filter (fun range -> range.ActiveManifestCount > 0)
         |> Array.map activeLogicalRangeKey
         |> Array.sort
 
+    /// Coordinates compaction candidate context logic for the ContentBlockMetadata actor.
     let private compactionCandidateContext timestamp expectedMetadataVersion (churnState: ContentBlockCompactionChurnState) =
         {
             Now = timestamp
@@ -399,6 +430,7 @@ module ContentBlockMetadata =
                             $"Stale ContentBlockMetadata compaction rejected. Expected MetadataVersion {compact.ExpectedMetadataVersion}, current MetadataVersion {existing.MetadataVersion}."
                     )
 
+    /// Coordinates expected range exists logic for the ContentBlockMetadata actor.
     let private expectedRangeExists (existing: ContentBlockMetadata) (expectedRange: ContentBlockMetadataRange) =
         let expectedKey = rangeKey expectedRange
 
@@ -411,6 +443,7 @@ module ContentBlockMetadata =
         ranges
         |> Array.exists (fun existingRange -> rangeKey existingRange = expectedKey)
 
+    /// Validates merge preconditions before the operation continues.
     let private validateMergePreconditions correlationId (currentMetadata: ContentBlockMetadata option) (merge: MergeContentBlockPhysicalRanges) =
         match currentMetadata, merge.RequireMissingMetadata, merge.ExpectedMetadataVersion with
         | Some existing, true, _ ->
@@ -549,8 +582,10 @@ module ContentBlockMetadata =
 
                                 Ok metadata
 
+    /// Coordinates stamp metadata logic for the ContentBlockMetadata actor.
     let private stampMetadata (metadata: ContentBlockMetadata) nextVersion timestamp = { metadata with MetadataVersion = nextVersion; UpdatedAt = timestamp }
 
+    /// Coordinates ok decision logic for the ContentBlockMetadata actor.
     let private okDecision metadata operationId events wasReplay message =
         Ok { Metadata = metadata; OperationId = operationId; Events = events; WasIdempotentReplay = wasReplay; Message = message }
 
@@ -642,6 +677,7 @@ module ContentBlockMetadata =
 
                         okDecision metadata operationId events false "ContentBlockMetadata compaction churn state set."
 
+    /// Implements the Orleans grain for content block metadata actor.
     type ContentBlockMetadataActor
         (
             [<PersistentState(StateName.ContentBlockMetadata, Constants.GraceActorStorage)>] state: IPersistentState<List<ContentBlockMetadataEvent>>
@@ -650,6 +686,7 @@ module ContentBlockMetadata =
 
         let log = loggerFactory.CreateLogger("ContentBlockMetadata.Actor")
         let mutable metadataDto = ContentBlockMetadataDto.Empty
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -663,6 +700,7 @@ module ContentBlockMetadata =
 
             Task.CompletedTask
 
+        /// Replays persisted ContentBlockMetadata events into an in-memory state snapshot.
         member private this.ApplyEvents(events: ContentBlockMetadataEvent list) =
             task {
                 for metadataEvent in events do
@@ -673,6 +711,7 @@ module ContentBlockMetadata =
                 metadataDto <- applyEvents events metadataDto
             }
 
+        /// Runs ContentBlockMetadata command decisions, applies emitted events, and persists the result.
         member private this.HandleCommand (command: ContentBlockMetadataCommand) (eventMetadata: EventMetadata) =
             task {
                 this.correlationId <- eventMetadata.CorrelationId
@@ -707,22 +746,26 @@ module ContentBlockMetadata =
             }
 
         interface IContentBlockMetadataActor with
+            /// Reports whether this ContentBlockMetadata actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
                 metadataDto.Metadata.IsSome |> returnTask
 
+            /// Returns the current ContentBlockMetadata actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
 
                 metadataDto.Metadata |> returnTask
 
+            /// Returns the persisted ContentBlockMetadata event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<ContentBlockMetadataEvent>)
                 |> returnTask
 
+            /// Reports whether requested logical ranges are present in content-block metadata.
             member this.GetRangePresence query correlationId =
                 this.correlationId <- correlationId
 
@@ -731,6 +774,8 @@ module ContentBlockMetadata =
                 | None -> ContentBlockRangePresence.Absent
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command eventMetadata = this.HandleCommand command eventMetadata
 
+            /// Merges physical range metadata for uploaded or reused content-block bytes.
             member this.MergePhysicalRanges merge eventMetadata = this.HandleCommand (ContentBlockMetadataCommand.MergePhysicalRanges merge) eventMetadata

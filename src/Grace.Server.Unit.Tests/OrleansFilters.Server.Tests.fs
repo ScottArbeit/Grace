@@ -4,9 +4,11 @@ open NUnit.Framework
 open System
 open System.IO
 
+/// Covers orleans Partition Key Provider behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type OrleansPartitionKeyProviderTests() =
 
+    /// Builds try Resolve Source Path test data for the server unit orleans Filters scenarios in this file.
     let tryResolveSourcePath () =
         let mutable current = DirectoryInfo(Environment.CurrentDirectory)
         let mutable resolvedPath = String.Empty
@@ -25,6 +27,7 @@ type OrleansPartitionKeyProviderTests() =
         else
             resolvedPath
 
+    /// Verifies that work Item Number Counter Maps To Repository Partition Key.
     [<Test>]
     member _.WorkItemNumberCounterMapsToRepositoryPartitionKey() =
         let filePath = tryResolveSourcePath ()
@@ -32,6 +35,7 @@ type OrleansPartitionKeyProviderTests() =
 
         Assert.That(sourceText, Does.Contain("| StateName.WorkItemNumberCounter -> repositoryId ()"))
 
+    /// Verifies that content Block Metadata Maps To First Grain Key Segment.
     [<Test>]
     member _.ContentBlockMetadataMapsToFirstGrainKeySegment() =
         let filePath = tryResolveSourcePath ()
@@ -40,6 +44,7 @@ type OrleansPartitionKeyProviderTests() =
         Assert.That(sourceText, Does.Contain("let firstGrainKeySegment () = $\"{grainId.Key}\".Split('|')[0]"))
         Assert.That(sourceText, Does.Contain("| StateName.ContentBlockMetadata -> firstGrainKeySegment ()"))
 
+    /// Verifies that manifest Content Boundary Actors Map To Repository Segment.
     [<Test>]
     member _.ManifestContentBoundaryActorsMapToRepositorySegment() =
         let filePath = tryResolveSourcePath ()

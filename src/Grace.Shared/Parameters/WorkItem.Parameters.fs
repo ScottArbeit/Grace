@@ -4,6 +4,7 @@ open Grace.Shared.Parameters.Common
 open System
 open System.Collections.Generic
 
+/// Contains work item helpers.
 module WorkItem =
     /// Base parameters for WorkItem endpoints.
     type WorkItemParameters() =

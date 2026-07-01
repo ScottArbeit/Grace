@@ -11,8 +11,10 @@ open System.Net
 open System.Net.Http
 open System.Threading.Tasks
 
+/// Groups shared helpers for agent session test helpers.
 module private AgentSessionTestHelpers =
 
+    /// Restarts grace server to verify durability across process restarts.
     let restartGraceServerAsync () =
         let state =
             match App with
@@ -32,6 +34,7 @@ module private AgentSessionTestHelpers =
 
         AspireTestHost.restartGraceServerAsync state
 
+    /// Posts session to the running test server.
     let private postSessionAsync<'TResponse> (path: string) (parameters: obj) =
         task {
             let! response = Client.PostAsync(path, createJsonContent parameters)
@@ -40,6 +43,7 @@ module private AgentSessionTestHelpers =
             return deserialize<GraceReturnValue<'TResponse>> body
         }
 
+    /// Builds create base parameters for route calls.
     let private createBaseParameters<'T when 'T :> Parameters.Common.AgentSessionParameters and 'T: (new: unit -> 'T)> repositoryId agentId agentDisplayName =
         let parameters = new 'T()
         parameters.OwnerId <- ownerId
@@ -50,6 +54,7 @@ module private AgentSessionTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds start parameters for route calls.
     let startParameters repositoryId agentId workItemId operationId =
         let parameters = createBaseParameters<Parameters.Common.StartAgentSessionParameters> repositoryId agentId $"Agent {agentId}"
 
@@ -59,6 +64,7 @@ module private AgentSessionTestHelpers =
         parameters.OperationId <- operationId
         parameters
 
+    /// Builds stop parameters for route calls.
     let stopParameters repositoryId agentId sessionId workItemId operationId =
         let parameters = createBaseParameters<Parameters.Common.StopAgentSessionParameters> repositoryId agentId $"Agent {agentId}"
 
@@ -68,6 +74,7 @@ module private AgentSessionTestHelpers =
         parameters.OperationId <- operationId
         parameters
 
+    /// Builds status parameters for route calls.
     let statusParameters repositoryId agentId sessionId workItemId =
         let parameters = createBaseParameters<Parameters.Common.GetAgentSessionStatusParameters> repositoryId agentId $"Agent {agentId}"
 
@@ -75,22 +82,27 @@ module private AgentSessionTestHelpers =
         parameters.WorkItemIdOrNumber <- workItemId
         parameters
 
+    /// Builds active parameters for route calls.
     let activeParameters repositoryId agentId workItemId =
         let parameters = createBaseParameters<Parameters.Common.GetActiveAgentSessionParameters> repositoryId agentId $"Agent {agentId}"
 
         parameters.WorkItemIdOrNumber <- workItemId
         parameters
 
+    /// Builds list active parameters for route calls.
     let listActiveParameters repositoryId agentId maximumSessionCount =
         let parameters = createBaseParameters<Parameters.Common.ListActiveAgentSessionsParameters> repositoryId agentId $"Agent {agentId}"
 
         parameters.MaximumSessionCount <- maximumSessionCount
         parameters
 
+    /// Defines start behavior for the surrounding tests used by the server integration agent Session scenario.
     let startAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/start" parameters
 
+    /// Defines stop behavior for the surrounding tests used by the server integration agent Session scenario.
     let stopAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/stop" parameters
 
+    /// Tries to resolve stop without failing the caller.
     let tryStopAsync repositoryId agentId sessionId workItemId =
         task {
             if not <| String.IsNullOrWhiteSpace sessionId then
@@ -105,15 +117,20 @@ module private AgentSessionTestHelpers =
                 | ex -> TestContext.Error.WriteLine($"Agent session cleanup threw: {ex}")
         }
 
+    /// Defines status behavior for the surrounding tests used by the server integration agent Session scenario.
     let statusAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/status" parameters
 
+    /// Defines active behavior for the surrounding tests used by the server integration agent Session scenario.
     let activeAsync parameters = postSessionAsync<AgentSessionOperationResult> "/agent/session/active" parameters
 
+    /// Lists active from the running test server.
     let listActiveAsync parameters = postSessionAsync<AgentSessionListResult> "/agent/session/listActive" parameters
 
+/// Covers agent session server scenarios.
 [<NonParallelizable>]
 type AgentSessionServerTests() =
 
+    /// Verifies the agent session lifecycle preserves replay conflict wrong repository and stop idempotency scenario.
     [<Test>]
     member _.AgentSessionLifecyclePreservesReplayConflictWrongRepositoryAndStopIdempotency() =
         task {
@@ -250,6 +267,7 @@ type AgentSessionServerTests() =
                 return raise ex
         }
 
+    /// Verifies the active agent sessions are process local across restart scenario.
     [<Test>]
     [<NonParallelizable>]
     member _.ActiveAgentSessionsAreProcessLocalAcrossRestart() =

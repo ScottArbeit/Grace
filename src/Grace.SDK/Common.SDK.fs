@@ -25,6 +25,7 @@ open Microsoft.Extensions.Caching.Memory
 // Supresses the warning for using AllowNoEncryption in Debug builds.
 #nowarn "0044"
 
+/// Shared Grace Server HTTP helpers used by endpoint-specific SDK modules.
 module Common =
 
     /// <summary>

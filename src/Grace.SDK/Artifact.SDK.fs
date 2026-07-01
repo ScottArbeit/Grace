@@ -8,6 +8,7 @@ open System
 /// Client API for artifact endpoints.
 type Artifact() =
 
+    /// URL-encodes artifact and repository identifiers into the artifact download-URI route.
     static member internal BuildDownloadUriRoute(parameters: GetArtifactDownloadUriParameters) =
         let artifactId = Uri.EscapeDataString(parameters.ArtifactId.Trim())
         let ownerId = Uri.EscapeDataString(parameters.OwnerId.Trim())
@@ -17,7 +18,7 @@ type Artifact() =
 
         $"artifact/{artifactId}/download-uri?ownerId={ownerId}&organizationId={organizationId}&repositoryId={repositoryId}&correlationId={correlationId}"
 
-    /// Creates artifact metadata and returns an upload URI.
+    /// Registers artifact metadata with the server and returns the upload URI for the artifact payload.
     static member public Create(parameters: CreateArtifactParameters) =
         postServer<CreateArtifactParameters, ArtifactCreateResult> (parameters |> ensureCorrelationIdIsSet, "artifact/create")
 

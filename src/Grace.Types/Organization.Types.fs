@@ -26,6 +26,7 @@ module Organization =
         | DeletePhysical
         | Undelete
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OrganizationCommand>()
 
     /// Defines the events for the Organization actor.
@@ -40,6 +41,7 @@ module Organization =
         | PhysicalDeleted
         | Undeleted
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<OrganizationEventType>()
 
     /// Record that holds the event type and metadata for an Organization event.
@@ -51,6 +53,7 @@ module Organization =
             Metadata: EventMetadata
         }
 
+    /// Represents organization dto.
     type OrganizationDto =
         {
             Class: string
@@ -66,6 +69,7 @@ module Organization =
             DeleteReason: DeleteReason
         }
 
+        /// Represents the deterministic default instance used when callers need an initialized contract value.
         static member Default =
             {
                 Class = nameof OrganizationDto

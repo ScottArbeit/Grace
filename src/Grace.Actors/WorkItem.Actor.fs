@@ -22,13 +22,16 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for work item keys, proxies, state, or workflow transitions.
 module WorkItem =
 
+    /// Checks whether the request correlation id already appears in persisted events.
     let internal hasDuplicateCorrelationId (events: seq<WorkItemEvent>) (metadata: EventMetadata) =
         events
         |> Seq.exists (fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
 
 
+    /// Implements the Orleans grain for work item actor.
     type WorkItemActor([<PersistentState(StateName.WorkItem, Constants.GraceActorStorage)>] state: IPersistentState<List<WorkItemEvent>>) =
         inherit Grain()
 
@@ -40,6 +43,7 @@ module WorkItem =
 
         let mutable workItemDto = WorkItemDto.Default
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -53,6 +57,7 @@ module WorkItem =
 
             Task.CompletedTask
 
+        /// Applies one persisted WorkItem event to this activation's in-memory state.
         member private this.ApplyEvent(workItemEvent: WorkItemEvent) =
             task {
                 let correlationId = workItemEvent.Metadata.CorrelationId
@@ -93,9 +98,11 @@ module WorkItem =
             }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this WorkItem actor state.
             member this.GetRepositoryId correlationId = workItemDto.RepositoryId |> returnTask
 
         interface IWorkItemActor with
+            /// Reports whether this WorkItem actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -103,17 +110,21 @@ module WorkItem =
                 <| workItemDto.WorkItemId.Equals(WorkItemDto.Default.WorkItemId)
                 |> returnTask
 
+            /// Returns the current WorkItem actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 workItemDto |> returnTask
 
+            /// Returns the persisted WorkItem event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 state.State :> IReadOnlyList<WorkItemEvent>
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: WorkItemCommand) (metadata: EventMetadata) =
                     task {
                         if hasDuplicateCorrelationId state.State metadata then
@@ -132,6 +143,7 @@ module WorkItem =
                                     return Ok command
                     }
 
+                /// Runs WorkItem command decisions, applies emitted events, and persists the result.
                 let processCommand (command: WorkItemCommand) (metadata: EventMetadata) =
                     task {
                         let! workItemEventType =

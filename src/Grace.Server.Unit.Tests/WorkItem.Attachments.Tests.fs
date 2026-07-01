@@ -9,15 +9,18 @@ open NUnit.Framework
 open System
 open System.Collections.Generic
 
+/// Covers work Item Attachment Unit behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type WorkItemAttachmentUnitTests() =
     let artifactId (value: string) = Guid.Parse(value)
 
     let defaultArtifactId = artifactId "7d535f96-e634-4313-b5ff-d9293ee9db57"
 
+    /// Constructs metadata fixtures used by the server unit work Item Attachments assertions.
     let metadata artifactId artifactType mimeType size createdAt =
         { ArtifactMetadata.Default with ArtifactId = artifactId; ArtifactType = artifactType; MimeType = mimeType; Size = size; CreatedAt = createdAt }
 
+    /// Builds attachment test data for the server unit work Item Attachments scenarios in this file.
     let attachment artifactId artifactType createdAt =
         let metadata = metadata artifactId artifactType "text/markdown" 1024L createdAt
 
@@ -26,6 +29,7 @@ type WorkItemAttachmentUnitTests() =
 
         attachment
 
+    /// Verifies that reviewer Attachment Classification Maps Supported Artifact Types And Aliases.
     [<Test>]
     member _.ReviewerAttachmentClassificationMapsSupportedArtifactTypesAndAliases() =
         let cases =
@@ -56,6 +60,7 @@ type WorkItemAttachmentUnitTests() =
                 $"Expected {artifactType} display type to be {expectedAttachmentType}."
             )
 
+    /// Verifies that reviewer Attachment Classification Excludes Unsupported Other Artifact Types.
     [<Test>]
     member _.ReviewerAttachmentClassificationExcludesUnsupportedOtherArtifactTypes() =
         let unsupportedTypes =
@@ -80,6 +85,7 @@ type WorkItemAttachmentUnitTests() =
                 $"Expected {artifactType} display type to fall back to other."
             )
 
+    /// Verifies that text Mime Detection Accepts Text Json Xml Yaml Toml And Javascript.
     [<Test>]
     member _.TextMimeDetectionAcceptsTextJsonXmlYamlTomlAndJavascript() =
         let textMimeTypes =
@@ -101,6 +107,7 @@ type WorkItemAttachmentUnitTests() =
         for mimeType in textMimeTypes do
             Assert.That(WorkItemAttachments.isTextMimeType mimeType, Is.True, $"Expected '{mimeType}' to be text-readable.")
 
+    /// Verifies that text Mime Detection Rejects Binary And Blank Mime Values.
     [<Test>]
     member _.TextMimeDetectionRejectsBinaryAndBlankMimeValues() =
         let binaryMimeTypes =
@@ -118,6 +125,7 @@ type WorkItemAttachmentUnitTests() =
         for mimeType in binaryMimeTypes do
             Assert.That(WorkItemAttachments.isTextMimeType mimeType, Is.False, $"Expected '{mimeType}' to be non-text.")
 
+    /// Verifies that attachment Descriptor Preserves Identity Type Mime Size And Timestamp.
     [<Test>]
     member _.AttachmentDescriptorPreservesIdentityTypeMimeSizeAndTimestamp() =
         let createdAt = Instant.FromUtc(2026, 6, 3, 12, 34, 56)
@@ -137,12 +145,14 @@ type WorkItemAttachmentUnitTests() =
         Assert.That(descriptor.Size, Is.EqualTo(4096L))
         Assert.That(descriptor.CreatedAt, Is.EqualTo(createdAt.ToString()))
 
+    /// Verifies that attachment Selection Returns None When No Attachments Exist.
     [<Test>]
     member _.AttachmentSelectionReturnsNoneWhenNoAttachmentsExist() =
         let selected = WorkItemAttachments.selectAttachmentDeterministically [] false
 
         Assert.That(selected, Is.EqualTo(None))
 
+    /// Verifies that attachment Selection Returns Oldest And Latest By Timestamp.
     [<Test>]
     member _.AttachmentSelectionReturnsOldestAndLatestByTimestamp() =
         let olderId = artifactId "10000000-0000-0000-0000-000000000001"
@@ -166,6 +176,7 @@ type WorkItemAttachmentUnitTests() =
             Is.EqualTo(Some newerId)
         )
 
+    /// Verifies that attachment Selection Breaks Timestamp Ties By Artifact Id.
     [<Test>]
     member _.AttachmentSelectionBreaksTimestampTiesByArtifactId() =
         let lowerId = artifactId "10000000-0000-0000-0000-000000000001"
@@ -190,6 +201,7 @@ type WorkItemAttachmentUnitTests() =
             Is.EqualTo(Some upperId)
         )
 
+    /// Verifies that build Links Dto Groups Known Unknown And Missing Metadata While Preserving Artifact Ids.
     [<Test>]
     member _.BuildLinksDtoGroupsKnownUnknownAndMissingMetadataWhilePreservingArtifactIds() =
         let summaryId = artifactId "10000000-0000-0000-0000-000000000001"

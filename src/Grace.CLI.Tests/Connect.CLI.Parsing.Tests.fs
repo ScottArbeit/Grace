@@ -11,8 +11,10 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 
+/// Groups connect parsing coverage for the CLI test project.
 [<Parallelizable(ParallelScope.All)>]
 module ConnectParsingTests =
+    /// Verifies that connect retrieve default branch defaults to true.
     [<Test>]
     let ``connect retrieve default branch defaults to true`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
@@ -20,6 +22,7 @@ module ConnectParsingTests =
         parseResult.GetValue<bool>(OptionName.RetrieveDefaultBranch)
         |> should equal true
 
+    /// Verifies that connect retrieve default branch parses explicit false.
     [<Test>]
     let ``connect retrieve default branch parses explicit false`` () =
         let parseResult =
@@ -34,6 +37,7 @@ module ConnectParsingTests =
         parseResult.GetValue<bool>(OptionName.RetrieveDefaultBranch)
         |> should equal false
 
+    /// Verifies that connect directory version selection precedence uses directory version id.
     [<Test>]
     let ``connect directory version selection precedence uses directory version id`` () =
         let directoryVersionId = Guid.NewGuid()
@@ -56,6 +60,7 @@ module ConnectParsingTests =
         | Connect.UseDirectoryVersionId selected -> selected |> should equal directoryVersionId
         | other -> Assert.Fail($"Unexpected selection: {other}")
 
+    /// Verifies that connect default directory version falls back to based on.
     [<Test>]
     let ``connect default directory version falls back to based-on`` () =
         let basedOnId = Guid.NewGuid()
@@ -64,6 +69,7 @@ module ConnectParsingTests =
         Connect.resolveDefaultDirectoryVersionId branchDto
         |> should equal (Some basedOnId)
 
+    /// Verifies that connect repository shortcut populates owner organization repository.
     [<Test>]
     let ``connect repository shortcut populates owner organization repository`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "connect"; "owner/org/repo" |])
@@ -82,6 +88,7 @@ module ConnectParsingTests =
             updated.HasRepository |> should equal true
         | Error error -> Assert.Fail($"Unexpected error: {error.Error}")
 
+    /// Verifies that connect repository shortcut rejects missing segments.
     [<Test>]
     let ``connect repository shortcut rejects missing segments`` () =
         let parseResult = GraceCommand.rootCommand.Parse([| "connect"; "owner/repo" |])
@@ -93,6 +100,7 @@ module ConnectParsingTests =
             error.Error
             |> should contain "owner/organization/repository"
 
+    /// Verifies that connect repository shortcut conflicts with explicit options.
     [<Test>]
     let ``connect repository shortcut conflicts with explicit options`` () =
         let parseResult =

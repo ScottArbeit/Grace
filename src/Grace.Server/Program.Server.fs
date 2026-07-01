@@ -51,30 +51,37 @@ open System.Diagnostics
 open System.Globalization
 open Azure.Storage
 
+/// Contains Grace Server orleans fsharp fix behavior and supporting helpers.
 module OrleansFsharpFix =
     // Grace.Orleans.CodeGen is the name of the C# codegen project.
     [<assembly: Orleans.ApplicationPartAttribute("Grace.Orleans.CodeGen")>]
     do ()
 
+/// Contains Grace Server program behavior and supporting helpers.
 module Program =
 
     [<InternalsVisibleTo("Host")>]
     do ()
 
+    /// Represents file logger used by Grace Server APIs and background services.
     type FileLogger(name: string, minLevel: LogLevel, writer: StreamWriter, scopeProvider: unit -> IExternalScopeProvider) =
         let emptyScope =
             { new IDisposable with
+                /// Releases the no-op logger scope used before real logging is configured.
                 member _.Dispose() = ()
             }
 
         interface ILogger with
+            /// Keeps early startup logging disabled until the configured logger factory is available.
             member _.IsEnabled level = level >= minLevel
 
+            /// Returns a no-op logging scope for early startup logger calls.
             member _.BeginScope<'TState>(state: 'TState) : IDisposable =
                 match scopeProvider () with
                 | null -> emptyScope
                 | provider -> provider.Push(state)
 
+            /// Ignores early startup log entries before the configured logger factory is available.
             member _.Log<'TState>(level: LogLevel, eventId: EventId, state: 'TState, ex: exn, formatter: Func<'TState, exn, string>) =
                 if level >= minLevel && not (isNull formatter) then
                     let message = formatter.Invoke(state, ex)
@@ -98,6 +105,7 @@ module Program =
                         writer.WriteLine($"{DateTime.UtcNow:O} [{level}] {name}: {message}{scopes}{exceptionText}")
                         writer.Flush())
 
+    /// Represents file logger provider used by Grace Server APIs and background services.
     type FileLoggerProvider(filePath: string, minLevel: LogLevel) =
         let fileStream =
             try
@@ -111,23 +119,29 @@ module Program =
         do writer.AutoFlush <- true
 
         interface ILoggerProvider with
+            /// Creates deferred loggers that resolve their real logger after the factory is assigned.
             member _.CreateLogger(categoryName) = new FileLogger(categoryName, minLevel, writer, (fun () -> scopeProvider)) :> ILogger
+            /// Disposes the configured logger factory once the provider is torn down.
             member _.Dispose() = writer.Dispose()
 
         interface ISupportExternalScope with
+            /// Accepts the external scope provider required by the `ILoggerProvider` contract.
             member _.SetScopeProvider(provider) =
                 scopeProvider <-
                     match provider with
                     | null -> new LoggerExternalScopeProvider() :> IExternalScopeProvider
                     | _ -> provider
 
+    /// Represents system text json grain storage serializer used by Grace Server APIs and background services.
     type SystemTextJsonGrainStorageSerializer(options: JsonSerializerOptions) =
         interface IGrainStorageSerializer with
+            /// Serializes Orleans grain state through the configured JSON serializer.
             member _.Serialize(obj) =
                 let t = obj.GetType()
                 let bytes = JsonSerializer.SerializeToUtf8Bytes(obj, t, options)
                 BinaryData(bytes)
 
+            /// Deserializes Orleans grain state through the configured JSON serializer.
             member _.Deserialize<'T>(data: BinaryData) =
                 use stream = data.ToStream()
                 JsonSerializer.Deserialize<'T>(stream, options)
@@ -174,6 +188,7 @@ module Program =
         let orleansClusterId = configuration[getConfigKey EnvironmentVariables.OrleansClusterId]
         let orleansServiceId = configuration[getConfigKey EnvironmentVariables.OrleansServiceId]
 
+        /// Lowers Azure Table retry timeouts during local or Azure debug runs so Orleans startup fails quickly.
         let createTableClientOptions () =
             let options = TableClientOptions()
 
@@ -186,6 +201,7 @@ module Program =
 
             options
 
+        /// Implements wait for azure table ready for the server request pipeline.
         let waitForAzureTableReady (client: TableServiceClient) =
             match AzureEnvironment.debugEnvironment with
             | Some value when value.Equals("Local", StringComparison.OrdinalIgnoreCase) ->
@@ -193,6 +209,7 @@ module Program =
                 let timeout = TimeSpan.FromSeconds(60.0)
                 let delay = TimeSpan.FromSeconds(1.0)
 
+                /// Implements rec for the server request pipeline.
                 let rec poll attempt =
                     try
                         client.GetProperties() |> ignore
@@ -395,6 +412,7 @@ module Program =
                 |> ignore)
             .Build()
 
+    /// Starts the Grace Server host process.
     [<EntryPoint>]
     let main args =
         (task {

@@ -27,6 +27,7 @@ open System.Threading.Tasks
 open System.Text
 open System.Text.Json
 
+/// Contains Grace Server services behavior and supporting helpers.
 module Services =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Server.Services")
@@ -46,6 +47,7 @@ module Services =
         else
             GraceIds.Default
 
+    /// Gets try get header data needed by the server flow.
     let private tryGetHeader (context: HttpContext) headerName =
         match context.Request.Headers.TryGetValue headerName with
         | true, values when
@@ -55,11 +57,13 @@ module Services =
             Some(values[ 0 ].ToString())
         | _ -> None
 
+    /// Derives CLI client metadata from request headers so emitted Grace events can identify their caller.
     let private tryCreateClientType (context: HttpContext) =
         match tryGetHeader context Constants.ClientTypeHeaderKey, tryGetHeader context Constants.ClientVersionHeaderKey with
         | Some clientType, Some clientVersion when clientType.Equals("CLI", StringComparison.OrdinalIgnoreCase) -> Some(ClientType.CLI clientVersion)
         | _ -> None
 
+    /// Extracts the authenticated principal for event metadata, using `http` when no identity is attached.
     let private getPrincipalName (context: HttpContext) =
         if isNull context.User.Identity
            || String.IsNullOrWhiteSpace context.User.Identity.Name then
@@ -88,7 +92,7 @@ module Services =
 
         metadata
 
-    /// Parses the incoming request body into the specified type.
+    /// Binds and validates a JSON request body before handlers forward parameters to actors.
     let parse<'T when 'T :> CommonParameters> (context: HttpContext) =
         task {
             let! parameters = context.BindJsonAsync<'T>()

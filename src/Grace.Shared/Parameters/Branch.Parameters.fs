@@ -6,6 +6,7 @@ open Grace.Types.Common
 open System
 open System.Text.Json.Serialization
 
+/// Contains branch helpers.
 module Branch =
 
     /// Parameters for many endpoints in the /branch path.
@@ -99,6 +100,7 @@ module Branch =
         member val public FullSha = false with get, set
         member val public MaxCount = 50 with get, set
 
+    /// Represents get latest references by reference type parameters.
     type GetLatestReferencesByReferenceTypeParameters() =
         inherit BranchParameters()
 
@@ -133,9 +135,11 @@ module Branch =
         member val public MaxReferences = DefaultMaxReferences with get, set
         member val public IncludeLineText = false with get, set
 
+        /// Combines StartLine and EndLine into the validated annotation range requested by the command.
         [<JsonIgnore(Condition = JsonIgnoreCondition.Always)>]
         member this.LineRange = { StartLine = this.StartLine; EndLine = this.EndLine }
 
+        /// Validates annotation request fields before command execution builds line attribution.
         member this.Validate() =
             [
                 if isNull this.ReferenceTypes then "ReferenceTypes must not be null."
@@ -157,6 +161,7 @@ module Branch =
         inherit BranchQueryParameters()
         member val public IncludeDeleted = false with get, set
 
+    /// Represents list contents parameters.
     type ListContentsParameters() =
         inherit BranchHashQueryParameters()
         member val public Pattern = String.Empty with get, set

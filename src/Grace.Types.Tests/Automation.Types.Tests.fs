@@ -6,8 +6,10 @@ open Grace.Types.Automation
 open NUnit.Framework
 open System
 
+/// Contains tests covering automation types behavior.
 [<Parallelizable(ParallelScope.All)>]
 type AutomationTypesTests() =
+    /// Verifies that automation event type includes agent lifecycle cases.
     [<Test>]
     member _.AutomationEventTypeIncludesAgentLifecycleCases() =
         let eventTypes =
@@ -22,6 +24,7 @@ type AutomationTypesTests() =
                 Assert.That(eventTypes.Contains("AgentBootstrapped"), Is.True))
         )
 
+    /// Verifies that start agent session parameters default required fields are empty.
     [<Test>]
     member _.StartAgentSessionParametersDefaultRequiredFieldsAreEmpty() =
         let parameters = StartAgentSessionParameters()
@@ -34,6 +37,7 @@ type AutomationTypesTests() =
                 Assert.That(parameters.AgentId, Is.EqualTo(String.Empty)))
         )
 
+    /// Verifies that start agent session parameters round trips serialization.
     [<Test>]
     member _.StartAgentSessionParametersRoundTripsSerialization() =
         let parameters = StartAgentSessionParameters()

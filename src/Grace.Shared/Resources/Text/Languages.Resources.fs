@@ -4,6 +4,7 @@ open NodaTime
 open System
 open Microsoft.FSharp.Reflection
 
+/// Contains text helpers.
 module Text =
 
     /// This is intended to be the definitive list of locali[sz]ations that Grace supports.
@@ -11,6 +12,7 @@ module Text =
     /// I'm starting with en-US, because that's all I know, but trying to do it right from the start.
     type Language = | ``EN-US``
 
+    /// Represents string resource name.
     type StringResourceName =
         | AssignIsDisabled
         | Blake3HashIsRequired

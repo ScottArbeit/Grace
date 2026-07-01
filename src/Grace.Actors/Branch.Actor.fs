@@ -34,8 +34,10 @@ open System.Net.Http.Json
 open FSharpPlus.Data.MultiMap
 open System.Threading
 
+/// Groups Orleans actor helpers for branch keys, proxies, state, or workflow transitions.
 module Branch =
 
+    /// Implements the Orleans grain for branch actor.
     type BranchActor([<PersistentState(StateName.Branch, Constants.GraceActorStorage)>] state: IPersistentState<List<BranchEvent>>) =
         inherit Grain()
 
@@ -118,6 +120,7 @@ module Branch =
                 return { newBranchDto with ShouldRecomputeLatestReferences = false }
             }
 
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -131,6 +134,7 @@ module Branch =
 
             Task.CompletedTask
 
+        /// Applies one persisted Branch event to this activation's in-memory state.
         member private this.ApplyEvent branchEvent =
             task {
                 try
@@ -272,25 +276,31 @@ module Branch =
                 }
 
         interface IHasRepositoryId with
+            /// Returns the repository id recorded in this Branch actor state.
             member this.GetRepositoryId correlationId = branchDto.RepositoryId |> returnTask
 
         interface IBranchActor with
 
+            /// Returns the persisted Branch event stream for replay or audit.
             member this.GetEvents correlationId =
                 task {
                     this.correlationId <- correlationId
                     return state.State :> IReadOnlyList<BranchEvent>
                 }
 
+            /// Reports whether this Branch actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
                 branchDto.UpdatedAt.IsSome |> returnTask
 
+            /// Reports whether this Branch actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
                 branchDto.DeletedAt.IsSome |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
+                /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (command: BranchCommand) (metadata: EventMetadata) =
                     task {
                         if state.State.Exists(fun ev -> ev.Metadata.CorrelationId = metadata.CorrelationId)
@@ -308,6 +318,7 @@ module Branch =
                                 | None -> return Error(GraceError.Create (getErrorMessage BranchError.BranchDoesNotExist) metadata.CorrelationId)
                     }
 
+                /// Creates a reference DTO for branch promotion, commit, or save-boundary updates.
                 let addReference ownerId organizationId repositoryId branchId directoryId sha256Hash blake3Hash referenceText referenceType links =
                     task {
                         let referenceId: ReferenceId = ReferenceId.NewGuid()
@@ -334,6 +345,7 @@ module Branch =
 
                 let addReferenceToCurrentBranch = addReference branchDto.OwnerId branchDto.OrganizationId branchDto.RepositoryId branchDto.BranchId
 
+                /// Runs Branch command decisions, applies emitted events, and persists the result.
                 let processCommand (command: BranchCommand) (metadata: EventMetadata) =
                     task {
                         try
@@ -591,6 +603,7 @@ module Branch =
                                                     )
 
                                             // Now proceed with the deletion regardless of reassignment
+                                            /// Reads branch logical-delete retention days from event metadata when the caller supplied it.
                                             let tryGetLogicalDeleteDaysFromMetadata () =
                                                 match metadata.Properties.TryGetValue("RepositoryLogicalDeleteDays") with
                                                 | true, value ->
@@ -715,6 +728,7 @@ module Branch =
                     | Error error -> return Error error
                 }
 
+            /// Returns the current Branch actor state snapshot.
             member this.Get correlationId =
                 task {
                     this.correlationId <- correlationId
@@ -726,6 +740,7 @@ module Branch =
                     return branchDto
                 }
 
+            /// Returns the parent branch id recorded for this branch.
             member this.GetParentBranch correlationId =
                 task {
                     this.correlationId <- correlationId
@@ -734,14 +749,17 @@ module Branch =
                     return! branchActorProxy.Get correlationId
                 }
 
+            /// Returns the latest commit reference tracked by this branch.
             member this.GetLatestCommit correlationId =
                 this.correlationId <- correlationId
                 branchDto.LatestCommit |> returnTask
 
+            /// Returns the latest promotion reference tracked by this branch.
             member this.GetLatestPromotion correlationId =
                 this.correlationId <- correlationId
                 branchDto.LatestPromotion |> returnTask
 
+            /// Marks branch-derived state so background workers know it must be recomputed.
             member this.MarkForRecompute(correlationId: CorrelationId) : Task =
                 this.correlationId <- correlationId
                 branchDto <- { branchDto with ShouldRecomputeLatestReferences = true }

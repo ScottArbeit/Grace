@@ -16,10 +16,12 @@ open System.IO
 open System.Security.Cryptography
 open System.Threading.Tasks
 
+/// Exercises manifest download sdk behavior.
 [<NonParallelizable>]
 type ManifestDownloadSdkTests() =
     static member private PseudoRandomBytes length =
         let bytes = Array.zeroCreate<byte> length
+        /// Tracks state changes so this scenario can assert the resulting side effect explicitly.
         let mutable state = 0x7843ac21u
 
         for index in 0 .. length - 1 do
@@ -132,6 +134,7 @@ type ManifestDownloadSdkTests() =
                     | _ -> ()
         }
 
+    /// Verifies that manifest download resolves blocks and reconstructs original bytes.
     [<Test>]
     member _.ManifestDownloadResolvesBlocksAndReconstructsOriginalBytes() =
         task {
@@ -185,6 +188,7 @@ type ManifestDownloadSdkTests() =
                 Assert.That(downloadedBlocks.ToArray() = expectedBlocks, Is.True)
         }
 
+    /// Verifies that manifest download requests only manifest identity for each block uri.
     [<Test>]
     member _.ManifestDownloadRequestsOnlyManifestIdentityForEachBlockUri() =
         task {
@@ -196,6 +200,7 @@ type ManifestDownloadSdkTests() =
             let manifest = ManifestDownloadSdkTests.ManifestFor plan
             let blockPayloads = ManifestDownloadSdkTests.EncodeBlocks plan
             let fileVersion = ManifestDownloadSdkTests.CreateManifestFileVersion "identity-only-large.bin" payload manifest
+            /// Tracks request Count changes so this scenario can assert the resulting side effect explicitly.
             let mutable requestCount = 0
             let correlationId = "corr-sdk-manifest-download-identity-only"
             use outputStream = new MemoryStream()
@@ -229,6 +234,7 @@ type ManifestDownloadSdkTests() =
                 Assert.That(requestCount, Is.EqualTo(manifest.Blocks.Count))
         }
 
+    /// Verifies that whole file content download uses compatibility fallback without resolving blocks.
     [<Test>]
     member _.WholeFileContentDownloadUsesCompatibilityFallbackWithoutResolvingBlocks() =
         task {
@@ -258,6 +264,7 @@ type ManifestDownloadSdkTests() =
                 Assert.That(returnValue.ReturnValue.DownloadedBlockCount, Is.EqualTo(0))
         }
 
+    /// Verifies that cli object download preserves manifest reference before choosing download path.
     [<Test>]
     member _.CliObjectDownloadPreservesManifestReferenceBeforeChoosingDownloadPath() =
         ManifestDownloadSdkTests.WithTempConfiguration (fun _ ->
@@ -293,8 +300,10 @@ type ManifestDownloadSdkTests() =
                         CorrelationId = "corr-cli-manifest-download"
                     )
 
+                /// Tracks manifest Path Taken changes so this scenario can assert the resulting side effect explicitly.
                 let mutable manifestPathTaken = false
 
+                /// Builds manifest download test data used to exercise CLI manifest Download behavior.
                 let manifestDownload (request: ManifestDownload.ManifestDownloadRequest) =
                     manifestPathTaken <- true
                     Assert.That(request.OwnerId, Is.EqualTo(String.Empty))
@@ -318,6 +327,7 @@ type ManifestDownloadSdkTests() =
 
                     Task.FromResult(Ok(GraceReturnValue.Create result request.CorrelationId))
 
+                /// Builds whole file download test data used to exercise CLI manifest Download behavior.
                 let wholeFileDownload _ _ =
                     Assert.Fail("Manifest-backed CLI downloads must not use the WholeFileContent object-storage path.")
                     Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
@@ -340,6 +350,7 @@ type ManifestDownloadSdkTests() =
                     Assert.That(Array.forall2 (=) downloadedBytes payload, Is.True)
             })
 
+    /// Verifies that cli manifest download reports object cache write failures as grace errors.
     [<Test>]
     member _.CliManifestDownloadReportsObjectCacheWriteFailuresAsGraceErrors() =
         ManifestDownloadSdkTests.WithTempConfiguration (fun root ->
@@ -372,6 +383,7 @@ type ManifestDownloadSdkTests() =
                         CorrelationId = "corr-cli-manifest-cache-write"
                     )
 
+                /// Builds manifest download test data used to exercise CLI manifest Download behavior.
                 let manifestDownload (request: ManifestDownload.ManifestDownloadRequest) =
                     let result: ManifestDownload.ManifestDownloadResult =
                         {
@@ -384,6 +396,7 @@ type ManifestDownloadSdkTests() =
 
                     Task.FromResult(Ok(GraceReturnValue.Create result request.CorrelationId))
 
+                /// Builds whole file download test data used to exercise CLI manifest Download behavior.
                 let wholeFileDownload _ _ =
                     Assert.Fail("Manifest cache write failures must not fall back to WholeFileContent downloads.")
                     Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
@@ -403,6 +416,7 @@ type ManifestDownloadSdkTests() =
                     Assert.That(error, Does.Contain("Failed writing manifest-backed file to object cache"))
             })
 
+    /// Verifies that cli manifest download deletes partial object cache file on failure.
     [<Test>]
     member _.CliManifestDownloadDeletesPartialObjectCacheFileOnFailure() =
         ManifestDownloadSdkTests.WithTempConfiguration (fun _ ->
@@ -429,6 +443,7 @@ type ManifestDownloadSdkTests() =
                         CorrelationId = "corr-cli-manifest-partial-cache"
                     )
 
+                /// Builds manifest download test data used to exercise CLI manifest Download behavior.
                 let manifestDownload (request: ManifestDownload.ManifestDownloadRequest) =
                     match request.OutputStream with
                     | None -> Assert.Fail("Manifest-backed CLI downloads must provide an output stream.")
@@ -436,6 +451,7 @@ type ManifestDownloadSdkTests() =
 
                     Task.FromResult(Error(GraceError.Create "simulated manifest reconstruction failure" request.CorrelationId))
 
+                /// Builds whole file download test data used to exercise CLI manifest Download behavior.
                 let wholeFileDownload _ _ =
                     Assert.Fail("Manifest reconstruction failures must not fall back to WholeFileContent downloads.")
                     Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
@@ -455,6 +471,7 @@ type ManifestDownloadSdkTests() =
                     Assert.That(File.Exists localFileVersion.FullObjectPath, Is.False)
             })
 
+    /// Verifies that manifest download rejects out of order manifest ranges.
     [<Test>]
     member _.ManifestDownloadRejectsOutOfOrderManifestRanges() =
         task {
@@ -499,6 +516,7 @@ type ManifestDownloadSdkTests() =
             | Ok _ -> Assert.Fail("Expected out-of-order manifest ranges to be rejected.")
         }
 
+    /// Verifies that manifest download rejects corrupt content block payload.
     [<Test>]
     member _.ManifestDownloadRejectsCorruptContentBlockPayload() =
         task {

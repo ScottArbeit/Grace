@@ -13,7 +13,9 @@ open System.Net.Http
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups shared helpers for promotion set integration helpers.
 module private PromotionSetIntegrationHelpers =
+    /// Defines scoped behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let private scoped<'T when 'T :> PromotionSetParameters> (parameters: 'T) repositoryId promotionSetId : 'T =
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
@@ -22,12 +24,14 @@ module private PromotionSetIntegrationHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Posts Async to the running test server.
     let postAsync (route: string) (content: HttpContent) =
         let request = new HttpRequestMessage(HttpMethod.Post, route)
         request.Headers.Add(Constants.CorrelationIdHeaderKey, generateCorrelationId ())
         request.Content <- content
         Client.SendAsync(request)
 
+    /// Posts ok to the running test server.
     let postOkAsync route parameters =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -36,6 +40,7 @@ module private PromotionSetIntegrationHelpers =
             return body
         }
 
+    /// Posts bad request contains to the running test server.
     let postBadRequestContainsAsync route parameters expectedText =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -45,6 +50,7 @@ module private PromotionSetIntegrationHelpers =
             return body
         }
 
+    /// Posts status contains to the running test server.
     let postStatusContainsAsync route parameters (expectedStatus: HttpStatusCode) expectedText =
         task {
             let! response = postAsync route (createJsonContent parameters)
@@ -54,6 +60,7 @@ module private PromotionSetIntegrationHelpers =
             return body
         }
 
+    /// Requires property and fails the test when missing.
     let private requireProperty (name: string) (element: JsonElement) =
         let mutable property = Unchecked.defaultof<JsonElement>
 
@@ -65,6 +72,7 @@ module private PromotionSetIntegrationHelpers =
             Assert.Fail($"Expected JSON property '{name}' in {element.GetRawText()}.")
             Unchecked.defaultof<JsonElement>
 
+    /// Asserts event sequence for integration responses.
     let assertEventSequence (body: string) (promotionSetId: string) (expectedNames: string array) =
         use document = JsonDocument.Parse(body)
 
@@ -93,6 +101,7 @@ module private PromotionSetIntegrationHelpers =
         Assert.That(eventNames, Is.EqualTo<string array>(expectedNames))
         Assert.That(actorIds |> Array.forall ((=) promotionSetId), Is.True)
 
+    /// Gets promotion set from the running test server.
     let getPromotionSetAsync repositoryId promotionSetId =
         task {
             let parameters = scoped (GetPromotionSetParameters()) repositoryId promotionSetId
@@ -102,6 +111,7 @@ module private PromotionSetIntegrationHelpers =
             return body
         }
 
+    /// Gets events from the running test server.
     let getEventsAsync repositoryId promotionSetId =
         task {
             let parameters = scoped (GetPromotionSetEventsParameters()) repositoryId promotionSetId
@@ -111,6 +121,7 @@ module private PromotionSetIntegrationHelpers =
             return body
         }
 
+    /// Builds a deterministic async for integration setup fixture for the server integration promotion Set Integration assertions.
     let createAsync repositoryId targetBranchId =
         task {
             let promotionSetId = Guid.NewGuid().ToString()
@@ -120,6 +131,7 @@ module private PromotionSetIntegrationHelpers =
             return promotionSetId
         }
 
+    /// Defines update input promotions behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let updateInputPromotionsAsync repositoryId promotionSetId promotionPointers =
         task {
             let parameters = scoped (UpdatePromotionSetInputPromotionsParameters()) repositoryId promotionSetId
@@ -134,15 +146,18 @@ module private PromotionSetIntegrationHelpers =
             return ()
         }
 
+    /// Defines recompute behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let recomputeAsync repositoryId promotionSetId reason =
         let parameters = scoped (RecomputePromotionSetParameters()) repositoryId promotionSetId
         parameters.Reason <- reason
         postOkAsync "/promotion-set/recompute" parameters
 
+    /// Defines apply bad request behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let applyBadRequestAsync repositoryId promotionSetId expectedText =
         let parameters = scoped (ApplyPromotionSetParameters()) repositoryId promotionSetId
         postBadRequestContainsAsync "/promotion-set/apply" parameters expectedText
 
+    /// Defines resolve conflicts current failure behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let resolveConflictsCurrentFailureAsync repositoryId promotionSetId stepId =
         let parameters = scoped (ResolvePromotionSetConflictsParameters()) repositoryId promotionSetId
         parameters.StepId <- stepId
@@ -155,6 +170,7 @@ module private PromotionSetIntegrationHelpers =
 
         postStatusContainsAsync $"/promotion-set/{promotionSetId}/resolve-conflicts" parameters HttpStatusCode.InternalServerError "ValidateIdsMiddleware"
 
+    /// Defines delete behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let deleteAsync repositoryId promotionSetId =
         task {
             let parameters = scoped (DeletePromotionSetParameters()) repositoryId promotionSetId
@@ -164,9 +180,11 @@ module private PromotionSetIntegrationHelpers =
             return ()
         }
 
+/// Covers promotion set route scenarios.
 [<NonParallelizable>]
 type PromotionSetRouteIntegrationTests() =
 
+    /// Verifies the promotion set lifecycle preserves state events projection order and guarded mutations scenario.
     [<Test>]
     member _.PromotionSetLifecyclePreservesStateEventsProjectionOrderAndGuardedMutations() =
         task {

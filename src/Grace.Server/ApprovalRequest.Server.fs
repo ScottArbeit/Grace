@@ -16,17 +16,21 @@ open System.Collections.Generic
 open System.IO
 open System.Threading.Tasks
 
+/// Contains Grace Server approval request behavior and supporting helpers.
 module ApprovalRequest =
 
     open ApprovalCommon
 
+    /// Implements request seed enabled for the server request pipeline.
     let private requestSeedEnabled () =
+        /// Determines whether development.
         let isDevelopment value = String.Equals(value, "Development", StringComparison.OrdinalIgnoreCase)
 
         Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
         || isDevelopment (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
         || isDevelopment (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
 
+    /// Implements request id from context for the server request pipeline.
     let private requestIdFromContext<'T when 'T :> ApprovalRequestParameters> (context: HttpContext) =
         task {
             context.Request.EnableBuffering()
@@ -42,6 +46,7 @@ module ApprovalRequest =
                     ApprovalStore.tryGetRequestAsync approvalRequestId scope (Services.getCorrelationId context))
         }
 
+    /// Resolves resolve stored request for read data from request or repository state.
     let resolveStoredRequestForRead<'T when 'T :> ApprovalRequestParameters> (context: HttpContext) =
         task {
             let! requestTask = requestIdFromContext<'T> context
@@ -57,6 +62,7 @@ module ApprovalRequest =
                 | None -> Error(error context "Approval request was not found.")
         }
 
+    /// Resolves resolve stored request for respond data from request or repository state.
     let resolveStoredRequestForRespond<'T when 'T :> ApprovalRequestParameters> (context: HttpContext) =
         task {
             let! requestTask = requestIdFromContext<'T> context
@@ -72,11 +78,13 @@ module ApprovalRequest =
                 | None -> Error(error context "Approval request was not found.")
         }
 
+    /// Represents approval responder role selector used by Grace Server APIs and background services.
     type private ApprovalResponderRoleSelector =
         | LegacyApprovalResponder
         | RepositoryApprovalResponder
         | BranchApprovalResponder
 
+    /// Gets try get approval responder role selector data needed by the server flow.
     let private tryGetApprovalResponderRoleSelector (selector: string) =
         if selector.StartsWith("role:", StringComparison.OrdinalIgnoreCase) then
             let roleId = selector.Substring("role:".Length)
@@ -92,6 +100,7 @@ module ApprovalRequest =
         else
             None
 
+    /// Implements split responder role assignment for the server request pipeline.
     let private splitResponderRoleAssignment selector (scope: ApprovalScope) =
         match selector with
         | LegacyApprovalResponder -> None
@@ -102,6 +111,7 @@ module ApprovalRequest =
             else
                 Some(Scope.Branch(scope.OwnerId, scope.OrganizationId, scope.RepositoryId, scope.TargetBranchId), "BranchApprovalResponder")
 
+    /// Implements has split responder role for the server request pipeline.
     let private hasSplitResponderRole (principals: Principal list) scope roleId =
         let assignments =
             PermissionEvaluatorDefaults.getAssignmentsForScope (scope, generateCorrelationId ())
@@ -113,6 +123,7 @@ module ApprovalRequest =
             && assignment.Scope = scope
             && assignment.RoleId.Equals(roleId, StringComparison.OrdinalIgnoreCase))
 
+    /// Implements selector matches for the server request pipeline.
     let private selectorMatches (context: HttpContext) (request: ApprovalRequest) =
         let selector =
             if isNull request.RequiredResponder then
@@ -157,6 +168,7 @@ module ApprovalRequest =
                 | None -> false
             | None -> false
 
+    /// Handles the Grace Server respond request.
     let private respond decision approvalRequestId reason clientDecisionId fallbackScope : HttpHandler =
         fun _ context ->
             task {
@@ -204,6 +216,7 @@ module ApprovalRequest =
                         | Error failure -> return! context |> Services.result400BadRequest failure
             }
 
+    /// Handles the Grace Server list request.
     let List: HttpHandler =
         fun _ context ->
             task {
@@ -214,6 +227,7 @@ module ApprovalRequest =
                 return! context |> Services.result200Ok requests
             }
 
+    /// Handles the Grace Server seed generated request.
     let SeedGenerated: HttpHandler =
         fun _ context ->
             task {
@@ -266,6 +280,7 @@ module ApprovalRequest =
                         )
             }
 
+    /// Handles the Grace Server show request.
     let Show: HttpHandler =
         fun _ context ->
             task {
@@ -281,6 +296,7 @@ module ApprovalRequest =
                 | None -> return! Services.result404NotFound context
             }
 
+    /// Handles the Grace Server approve request.
     let Approve: HttpHandler =
         fun next context ->
             task {
@@ -289,6 +305,7 @@ module ApprovalRequest =
                 return! respond ApprovalDecision.Approve parameters.ApprovalRequestId parameters.Reason parameters.ClientDecisionId fallbackScope next context
             }
 
+    /// Handles the Grace Server reject request.
     let Reject: HttpHandler =
         fun next context ->
             task {
@@ -297,6 +314,7 @@ module ApprovalRequest =
                 return! respond ApprovalDecision.Reject parameters.ApprovalRequestId parameters.Reason parameters.ClientDecisionId fallbackScope next context
             }
 
+    /// Handles the Grace Server history request.
     let History: HttpHandler =
         fun _ context ->
             task {

@@ -11,15 +11,18 @@ open System.Net
 open System.Security.Cryptography
 open System.Text
 
+/// Contains Grace Server outbound url safety behavior and supporting helpers.
 module OutboundUrlSafety =
 
     [<Literal>]
     let UnsafeLocalDevelopmentConfigKey = "grace__webhooks__outbound_urls__allow_unsafe_local_development"
 
+    /// Represents redirect policy used by Grace Server APIs and background services.
     type RedirectPolicy =
         | RefuseRedirects
         | RevalidateEveryRedirect
 
+    /// Represents validation failure used by Grace Server APIs and background services.
     type ValidationFailure =
         | MissingUrl
         | InvalidUri
@@ -31,6 +34,7 @@ module OutboundUrlSafety =
         | LocalTargetRequiresDevelopmentAcknowledgement
         | UnsafeHostRejected of string
 
+    /// Represents validation request used by Grace Server APIs and background services.
     type ValidationRequest =
         {
             Url: string
@@ -40,12 +44,16 @@ module OutboundUrlSafety =
 
         static member PublicHttps url = { Url = url; RequestedSafety = OutboundUrlSafety.PublicHttps; AcknowledgeUnsafeLocalDevelopment = false }
 
+    /// Represents validated outbound url used by Grace Server APIs and background services.
     type ValidatedOutboundUrl = { Uri: Uri; ScopedUrl: ScopedOutboundUrl; RedirectPolicy: RedirectPolicy; ResolvedAddresses: IPAddress array }
 
+    /// Represents signing input used by Grace Server APIs and background services.
     type SigningInput = { RequestId: string; Timestamp: string; KeyId: string; PayloadSha256Hex: string; SignedMaterial: byte array }
 
+    /// Represents host address resolver used by Grace Server APIs and background services.
     type HostAddressResolver = string -> IPAddress array
 
+    /// Gets try get config value data needed by the server flow.
     let private tryGetConfigValue (configuration: IConfiguration) (name: string) =
         if isNull configuration then
             None
@@ -53,6 +61,7 @@ module OutboundUrlSafety =
             let value = configuration[getConfigKey name]
             if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
+    /// Determines whether unsafe local development enabled.
     let isUnsafeLocalDevelopmentEnabled (configuration: IConfiguration) =
         match tryGetConfigValue configuration UnsafeLocalDevelopmentConfigKey with
         | Some value ->
@@ -61,15 +70,19 @@ module OutboundUrlSafety =
             || String.Equals(value, "yes", StringComparison.OrdinalIgnoreCase)
         | None -> false
 
+    /// Determines whether development host environment.
     let isDevelopmentHostEnvironment (hostEnvironment: IHostEnvironment) = if isNull hostEnvironment then false else hostEnvironment.IsDevelopment()
 
+    /// Determines whether localhost name.
     let private isLocalhostName (host: string) = String.Equals(host, "localhost", StringComparison.OrdinalIgnoreCase)
 
+    /// Parses try parse ipaddress input into the server model.
     let private tryParseIPAddress (host: string) =
         let mutable address = Unchecked.defaultof<IPAddress>
 
         if IPAddress.TryParse(host, &address) then Some address else None
 
+    /// Determines whether ipv4 in range.
     let private isIPv4InRange (address: IPAddress) (prefix: byte array) (prefixLength: int) =
         let bytes = address.GetAddressBytes()
 
@@ -89,6 +102,7 @@ module OutboundUrlSafety =
 
             matches
 
+    /// Determines whether ipv6 in range.
     let private isIPv6InRange (address: IPAddress) (prefix: byte array) (prefixLength: int) =
         let bytes = address.GetAddressBytes()
 
@@ -108,6 +122,7 @@ module OutboundUrlSafety =
 
             matches
 
+    /// Determines whether unsafe ipv4 address.
     let private isUnsafeIPv4Address (address: IPAddress) =
         isIPv4InRange address [| 0uy; 0uy; 0uy; 0uy |] 8
         || isIPv4InRange address [| 10uy; 0uy; 0uy; 0uy |] 8
@@ -148,12 +163,15 @@ module OutboundUrlSafety =
         |]
         |> Array.map (fun (prefix, prefixLength, _) -> IPAddress.Parse(prefix).GetAddressBytes(), prefixLength)
 
+    /// Determines whether unsafe ipv6 address.
     let private isUnsafeIPv6Address (address: IPAddress) =
         unsafeIPv6SpecialPurposeRanges
         |> Array.exists (fun (prefix, prefixLength) -> isIPv6InRange address prefix prefixLength)
 
+    /// Normalizes normalize address data for stable server comparisons.
     let private normalizeAddress (address: IPAddress) = if address.IsIPv4MappedToIPv6 then address.MapToIPv4() else address
 
+    /// Determines whether unsafe address.
     let private isUnsafeAddress (address: IPAddress) =
         let normalizedAddress = normalizeAddress address
 
@@ -167,15 +185,18 @@ module OutboundUrlSafety =
         | Net.Sockets.AddressFamily.InterNetworkV6 -> isUnsafeIPv6Address normalizedAddress
         | _ -> true
 
+    /// Coordinates address for failure processing for Grace Server.
     let private addressForFailure (address: IPAddress) = (normalizeAddress address).ToString()
 
     let private resolveHostAddresses: HostAddressResolver = fun host -> Dns.GetHostAddresses(host)
 
+    /// Normalizes normalize addresses data for stable server comparisons.
     let private normalizeAddresses (addresses: IPAddress array) =
         addresses
         |> Array.map normalizeAddress
         |> Array.distinctBy (fun address -> address.ToString())
 
+    /// Validates validate resolved addresses inputs before server processing continues.
     let private validateResolvedAddresses host (addresses: IPAddress array) =
         if isNull addresses || addresses.Length = 0 then
             Error(UnsafeHostRejected host)
@@ -184,6 +205,7 @@ module OutboundUrlSafety =
             | Some address -> Error(UnsafeHostRejected(addressForFailure address))
             | None -> Ok(normalizeAddresses addresses)
 
+    /// Validates validate resolved host inputs before server processing continues.
     let private validateResolvedHost (resolver: HostAddressResolver) host =
         try
             resolver host |> validateResolvedAddresses host
@@ -191,17 +213,20 @@ module OutboundUrlSafety =
         | :? Net.Sockets.SocketException -> Error(UnsafeHostRejected host)
         | :? ArgumentException -> Error(UnsafeHostRejected host)
 
+    /// Determines whether exact permitted loopback address.
     let private isExactPermittedLoopbackAddress (address: IPAddress) =
         let normalizedAddress = normalizeAddress address
 
         normalizedAddress.Equals(IPAddress.Parse("127.0.0.1"))
         || normalizedAddress.Equals(IPAddress.IPv6Loopback)
 
+    /// Determines whether permitted unsafe local host.
     let private isPermittedUnsafeLocalHost (uri: Uri) =
         match tryParseIPAddress uri.Host with
         | Some address -> isExactPermittedLoopbackAddress address
         | None -> isLocalhostName uri.Host
 
+    /// Validates validate public target inputs before server processing continues.
     let private validatePublicTarget (resolver: HostAddressResolver) (uri: Uri) =
         if uri.Scheme <> Uri.UriSchemeHttps then
             Error HttpsRequired
@@ -213,6 +238,7 @@ module OutboundUrlSafety =
             | Some address -> Ok [| normalizeAddress address |]
             | None -> validateResolvedHost resolver uri.Host
 
+    /// Validates validate local development target inputs before server processing continues.
     let private validateLocalDevelopmentTarget (isDevelopmentHostEnvironment: bool) (configuration: IConfiguration) (request: ValidationRequest) (uri: Uri) =
         if
             not
@@ -235,6 +261,7 @@ module OutboundUrlSafety =
         else
             Error(UnsafeHostRejected uri.Host)
 
+    /// Validates validate with resolver inputs before server processing continues.
     let validateWithResolver (resolver: HostAddressResolver) (isDevelopmentHostEnvironment: bool) (configuration: IConfiguration) (request: ValidationRequest) =
         if String.IsNullOrWhiteSpace request.Url then
             Error MissingUrl
@@ -268,9 +295,11 @@ module OutboundUrlSafety =
                         ResolvedAddresses = resolvedAddresses
                     })
 
+    /// Validates validate inputs before server processing continues.
     let validate (hostEnvironment: IHostEnvironment) (configuration: IConfiguration) (request: ValidationRequest) =
         validateWithResolver resolveHostAddresses (isDevelopmentHostEnvironment hostEnvironment) configuration request
 
+    /// Validates validate redirect inputs before server processing continues.
     let validateRedirect (hostEnvironment: IHostEnvironment) (configuration: IConfiguration) (original: ValidatedOutboundUrl) (redirectUri: Uri) =
         if isNull redirectUri
            || not redirectUri.IsAbsoluteUri then
@@ -285,6 +314,7 @@ module OutboundUrlSafety =
                     AcknowledgeUnsafeLocalDevelopment = original.ScopedUrl.Safety = OutboundUrlSafety.LocalUnsafeDevOnly
                 }
 
+    /// Contains Grace Server redaction behavior and supporting helpers.
     module Redaction =
 
         let private sensitiveQueryNames =
@@ -348,6 +378,7 @@ module OutboundUrlSafety =
                 StringComparer.OrdinalIgnoreCase
             )
 
+        /// Computes redact query data used by Grace Server.
         let private redactQuery (query: string) =
             if String.IsNullOrEmpty query then
                 String.Empty
@@ -365,6 +396,7 @@ module OutboundUrlSafety =
                         part)
                 |> String.concat "&"
 
+        /// Computes redact uri data used by Grace Server.
         let redactUri (value: string) =
             if String.IsNullOrWhiteSpace value then
                 value
@@ -385,8 +417,10 @@ module OutboundUrlSafety =
                 else
                     "[invalid-uri-redacted]"
 
+    /// Contains Grace Server signing behavior and supporting helpers.
     module Signing =
 
+        /// Computes sha256 hex data used by Grace Server.
         let sha256Hex (payload: byte array) =
             let hash = SHA256.HashData payload
 
@@ -394,6 +428,7 @@ module OutboundUrlSafety =
             |> Array.map (fun value -> value.ToString("x2", CultureInfo.InvariantCulture))
             |> String.concat String.Empty
 
+        /// Validates outbound signing fields and hashes the payload into the canonical material covered by the HMAC.
         let createSigningInput (requestId: string) (timestamp: string) (keyId: string) (payload: byte array) =
             if String.IsNullOrWhiteSpace requestId then
                 invalidArg (nameof requestId) "A delivery or request id is required for outbound signing."

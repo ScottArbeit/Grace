@@ -7,6 +7,7 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Contains tests covering promotion set conflict model types behavior.
 [<TestFixture>]
 [<NonParallelizable>]
 type PromotionSetConflictModelTypesTests() =
@@ -14,6 +15,7 @@ type PromotionSetConflictModelTypesTests() =
     let sampleRequest: ConflictResolutionModelRequest =
         { FilePath = "src/app.fs"; BaseContent = Some "let value = 1"; OursContent = Some "let value = 2"; TheirsContent = Some "let value = 3" }
 
+    /// Verifies that create provider defaults to null provider when not configured.
     [<Test>]
     member _.CreateProviderDefaultsToNullProviderWhenNotConfigured() : Task =
         task {
@@ -29,6 +31,7 @@ type PromotionSetConflictModelTypesTests() =
             | Error errorText -> Assert.That(errorText, Does.Contain("not configured"))
         }
 
+    /// Verifies that open router provider returns deterministic error when api key missing.
     [<Test>]
     member _.OpenRouterProviderReturnsDeterministicErrorWhenApiKeyMissing() : Task =
         task {
@@ -68,6 +71,7 @@ type PromotionSetConflictModelTypesTests() =
                 Environment.SetEnvironmentVariable(apiKeyEnvVarName, previousApiKeyValue)
         }
 
+    /// Verifies that parse model response rejects missing confidence.
     [<Test>]
     member _.ParseModelResponseRejectsMissingConfidence() =
         let responseJson = """{"proposedContent":"let value = 2","shouldDelete":false,"explanation":"merge"}"""
@@ -76,6 +80,7 @@ type PromotionSetConflictModelTypesTests() =
         | Ok _ -> Assert.Fail("Expected parser to reject missing confidence.")
         | Error errorText -> Assert.That(errorText, Does.Contain("confidence"))
 
+    /// Verifies that parse model response rejects out of range confidence.
     [<Test>]
     member _.ParseModelResponseRejectsOutOfRangeConfidence() =
         let responseJson = """{"proposedContent":"let value = 2","shouldDelete":false,"confidence":1.5,"explanation":"merge"}"""
@@ -84,6 +89,7 @@ type PromotionSetConflictModelTypesTests() =
         | Ok _ -> Assert.Fail("Expected parser to reject out-of-range confidence.")
         | Error errorText -> Assert.That(errorText, Does.Contain("[0.0, 1.0]"))
 
+    /// Verifies that parse model response accepts delete without proposed content.
     [<Test>]
     member _.ParseModelResponseAcceptsDeleteWithoutProposedContent() =
         let responseJson = """{"proposedContent":null,"shouldDelete":true,"confidence":0.91,"explanation":"delete"}"""

@@ -9,8 +9,10 @@ open Orleans
 open System
 open System.Runtime.Serialization
 
+/// Contains content block metadata helpers.
 module ContentBlockMetadata =
 
+    /// Represents content block storage placement.
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockStoragePlacement =
         {
@@ -24,9 +26,11 @@ module ContentBlockMetadata =
             ETag: string option
         }
 
+        /// Represents the normalized empty instance used before persisted state or caller input contributes values.
         static member Empty =
             { StorageAccountName = String.Empty; StorageContainerName = StorageContainerName String.Empty; ObjectKey = String.Empty; ETag = None }
 
+    /// Represents content block metadata range.
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadataRange =
         {
@@ -42,6 +46,7 @@ module ContentBlockMetadata =
             PhysicalLength: int64
         }
 
+    /// Represents content block range query.
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockRangeQuery =
         {
@@ -51,14 +56,17 @@ module ContentBlockMetadata =
             OrdinalCount: int
         }
 
+    /// Represents content block range presence.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockRangePresence =
         | Active
         | Reclaimable
         | Absent
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockRangePresence>()
 
+    /// Represents content block range gc safety.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockRangeGcSafety =
         | RetainActiveRange
@@ -67,8 +75,10 @@ module ContentBlockMetadata =
         | Reclaimable
         | Absent
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockRangeGcSafety>()
 
+    /// Represents content block range gc safety context.
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockRangeGcSafetyContext =
         {
@@ -80,6 +90,7 @@ module ContentBlockMetadata =
             HasActiveReuseClaim: bool
         }
 
+    /// Represents content block compaction selection.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockCompactionSelection =
         | Selected
@@ -88,8 +99,10 @@ module ContentBlockMetadata =
         | RetainChurn
         | RetainStaleMetadata
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockCompactionSelection>()
 
+    /// Represents content block compaction candidate context.
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockCompactionCandidateContext =
         {
@@ -107,6 +120,7 @@ module ContentBlockMetadata =
             HasActiveCompaction: bool
         }
 
+    /// Represents content block compaction churn state.
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockCompactionChurnState =
         {
@@ -120,8 +134,10 @@ module ContentBlockMetadata =
             HasActiveCompaction: bool
         }
 
+        /// Represents a metadata summary with no compaction or range churn detected.
         static member NoChurn = { HasActiveUpload = false; HasActiveFinalization = false; HasActiveRangeClaim = false; HasActiveCompaction = false }
 
+    /// Represents content block metadata.
     [<CLIMutable; GenerateSerializer>]
     type ContentBlockMetadata =
         {
@@ -147,6 +163,7 @@ module ContentBlockMetadata =
             UpdatedAt: Instant
         }
 
+        /// Represents the normalized empty instance used before persisted state or caller input contributes values.
         static member Empty =
             {
                 Class = nameof ContentBlockMetadata
@@ -161,6 +178,7 @@ module ContentBlockMetadata =
                 UpdatedAt = DefaultTimestamp
             }
 
+    /// Represents replace content block metadata.
     [<GenerateSerializer>]
     type ReplaceContentBlockMetadata =
         {
@@ -172,6 +190,7 @@ module ContentBlockMetadata =
             Metadata: ContentBlockMetadata
         }
 
+    /// Represents merge content block physical ranges.
     [<GenerateSerializer>]
     type MergeContentBlockPhysicalRanges =
         {
@@ -197,6 +216,7 @@ module ContentBlockMetadata =
             IsFinalizeContribution: bool
         }
 
+    /// Represents compact content block physical ranges.
     [<GenerateSerializer>]
     type CompactContentBlockPhysicalRanges =
         {
@@ -212,6 +232,7 @@ module ContentBlockMetadata =
             CandidateContext: ContentBlockCompactionCandidateContext
         }
 
+    /// Represents set content block compaction churn state.
     [<GenerateSerializer>]
     type SetContentBlockCompactionChurnState =
         {
@@ -221,6 +242,7 @@ module ContentBlockMetadata =
             ChurnState: ContentBlockCompactionChurnState
         }
 
+    /// Represents content block metadata command.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataCommand =
         | [<Id(0u)>] ReplaceWholeRecord of replace: ReplaceContentBlockMetadata
@@ -228,8 +250,10 @@ module ContentBlockMetadata =
         | [<Id(2u)>] CompactPhysicalRanges of compact: CompactContentBlockPhysicalRanges
         | [<Id(3u)>] SetCompactionChurnState of setChurnState: SetContentBlockCompactionChurnState
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataCommand>()
 
+    /// Represents content block metadata event type.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ContentBlockMetadataEventType =
         | WholeRecordReplaced of operationId: string * metadata: ContentBlockMetadata
@@ -237,11 +261,14 @@ module ContentBlockMetadata =
         | PhysicalRangesCompacted of operationId: string * metadata: ContentBlockMetadata
         | CompactionChurnStateSet of operationId: string * churnState: ContentBlockCompactionChurnState
 
+        /// Returns known nested union types for serializers.
         static member GetKnownTypes() = GetKnownTypes<ContentBlockMetadataEventType>()
 
+    /// Represents the content block metadata event contract.
     [<GenerateSerializer>]
     type ContentBlockMetadataEvent = { Event: ContentBlockMetadataEventType; Metadata: EventMetadata }
 
+    /// Represents content block metadata dto.
     [<GenerateSerializer>]
     type ContentBlockMetadataDto =
         {
@@ -250,8 +277,10 @@ module ContentBlockMetadata =
             LastOperationId: string option
         }
 
+        /// Represents the normalized empty instance used before persisted state or caller input contributes values.
         static member Empty = { Metadata = None; CompactionChurnState = ContentBlockCompactionChurnState.NoChurn; LastOperationId = None }
 
+        /// Creates the DTO shape used to carry partial updates without mutating the persisted aggregate directly.
         static member UpdateDto event _current =
             match event.Event with
             | ContentBlockMetadataEventType.WholeRecordReplaced (operationId, metadata) ->
@@ -263,6 +292,7 @@ module ContentBlockMetadata =
             | ContentBlockMetadataEventType.CompactionChurnStateSet (operationId, churnState) ->
                 { _current with CompactionChurnState = churnState; LastOperationId = Some operationId }
 
+    /// Represents content block metadata decision.
     [<GenerateSerializer>]
     type ContentBlockMetadataDecision =
         {
@@ -273,6 +303,7 @@ module ContentBlockMetadata =
             Message: string
         }
 
+    /// Attempts to select contiguous range evidence.
     let private trySelectContiguousRangeEvidence (metadata: ContentBlockMetadata) query =
         if isNull (box metadata)
            || isNull metadata.Ranges
@@ -284,6 +315,7 @@ module ContentBlockMetadata =
         else
             let queryEnd = query.OrdinalStart + query.OrdinalCount
 
+            /// Computes the exclusive end of a range with overflow protection.
             let rangeEnd (range: ContentBlockMetadataRange) = range.OrdinalStart + range.OrdinalCount
 
             let candidates =
@@ -304,6 +336,7 @@ module ContentBlockMetadata =
                         None)
                 |> Array.sortBy (fun range -> range.OrdinalStart, range.PhysicalOffset, range.PhysicalLength)
 
+            /// Attempts to build chain.
             let rec tryBuildChain nextOrdinal nextPhysicalOffset selected =
                 if nextOrdinal = queryEnd then
                     Some(List.rev selected |> List.toArray)
@@ -352,6 +385,7 @@ module ContentBlockMetadata =
                 else
                     tryBuildChain candidateEnd candidatePhysicalEnd [ candidate ])
 
+    /// Attempts to synthesize contiguous range.
     let private trySynthesizeContiguousRange (metadata: ContentBlockMetadata) query =
         match trySelectContiguousRangeEvidence metadata query with
         | None -> None
@@ -372,6 +406,7 @@ module ContentBlockMetadata =
                         |> Seq.sumBy (fun range -> range.PhysicalLength)
                 }
 
+    /// Attempts to synthesize uniform covering range.
     let private trySynthesizeUniformCoveringRange (metadata: ContentBlockMetadata) query =
         if query.OrdinalStart < 0
            || query.OrdinalCount <= 1
@@ -380,6 +415,7 @@ module ContentBlockMetadata =
         else
             let queryEnd = query.OrdinalStart + query.OrdinalCount
 
+            /// Computes the exclusive end of a range with overflow protection.
             let rangeEnd (range: ContentBlockMetadataRange) =
                 if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
                     Int32.MaxValue
@@ -415,6 +451,7 @@ module ContentBlockMetadata =
                     PhysicalLength = int64 query.OrdinalCount * bytesPerOrdinal
                 })
 
+    /// Finds exact active metadata ranges for a query, synthesizing contiguous coverage when exact active ranges are absent.
     let findRanges (metadata: ContentBlockMetadata) query =
         if isNull (box metadata)
            || isNull metadata.Ranges
@@ -442,6 +479,7 @@ module ContentBlockMetadata =
                     | Some range -> [| range |]
                     | None -> if exactRanges.Length > 0 then exactRanges else Array.empty
 
+    /// Returns the metadata ranges that prove whether a queried ordinal range is active, reclaimable, or absent.
     let findRangeEvidence (metadata: ContentBlockMetadata) query =
         if isNull (box metadata)
            || isNull metadata.Ranges
@@ -453,6 +491,7 @@ module ContentBlockMetadata =
         else
             let queryEnd = query.OrdinalStart + query.OrdinalCount
 
+            /// Computes the exclusive end of a range with overflow protection.
             let rangeEnd (range: ContentBlockMetadataRange) =
                 if range.OrdinalCount > Int32.MaxValue - range.OrdinalStart then
                     Int32.MaxValue
@@ -493,11 +532,13 @@ module ContentBlockMetadata =
                     elif exactRanges.Length > 0 then exactRanges
                     else Array.empty
 
+    /// Attempts to find range.
     let tryFindRange metadata query =
         findRanges metadata query
         |> Array.sortByDescending (fun range -> range.ActiveManifestCount)
         |> Array.tryHead
 
+    /// Classifies a queried ordinal range as active, reclaimable, or absent from block metadata.
     let rangePresence metadata query =
         let ranges = findRanges metadata query
 
@@ -509,6 +550,7 @@ module ContentBlockMetadata =
         else
             ContentBlockRangePresence.Absent
 
+    /// Converts range presence and in-flight workflow state into the garbage-collection safety decision.
     let rangeGcSafety context =
         match context.Presence with
         | ContentBlockRangePresence.Absent -> ContentBlockRangeGcSafety.Absent
@@ -521,16 +563,19 @@ module ContentBlockMetadata =
 
     let private minimumCompactionAge = Duration.FromHours(24.0)
 
+    /// Adds physical byte counts while saturating at Int64.MaxValue instead of overflowing.
     let private addSaturatingPhysicalBytes total length =
         if length <= 0L then total
         elif total > Int64.MaxValue - length then Int64.MaxValue
         else total + length
 
+    /// Totals physical bytes from inactive ranges that compaction may reclaim.
     let private reclaimablePhysicalBytes (metadata: ContentBlockMetadata) =
         metadata.Ranges
         |> Array.filter (fun range -> range.ActiveManifestCount = 0)
         |> Array.fold (fun total range -> addSaturatingPhysicalBytes total range.PhysicalLength) 0L
 
+    /// Computes the reclaimable-byte threshold required before compaction is eligible.
     let private requiredReclaimableBytes (metadata: ContentBlockMetadata) =
         let tenPercent =
             metadata.TotalPhysicalBytes / 10L
@@ -538,12 +583,14 @@ module ContentBlockMetadata =
 
         max minimumCompactionReclaimableBytes tenPercent
 
+    /// Detects active upload, finalization, range-claim, or compaction work that should defer compaction.
     let private hasCompactionChurn (context: ContentBlockCompactionCandidateContext) =
         context.HasActiveUpload
         || context.HasActiveFinalization
         || context.HasActiveRangeClaim
         || context.HasActiveCompaction
 
+    /// Chooses the compaction eligibility result for a content block from metadata freshness, churn, age, and reclaimable bytes.
     let selectCompactionCandidate (context: ContentBlockCompactionCandidateContext) (metadata: ContentBlockMetadata) =
         if metadata.MetadataVersion
            <> context.ExpectedMetadataVersion then

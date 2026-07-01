@@ -8,26 +8,41 @@ open NUnit.Framework
 open System
 open System.Threading.Tasks
 
+/// Covers body With All Entity Properties behavior in no-Aspire server unit tests.
 type BodyWithAllEntityProperties() =
+    /// Stores the test owner Id value used by validation scenarios.
     member val OwnerId = "" with get, set
+    /// Stores the test owner Name value used by validation scenarios.
     member val OwnerName = "" with get, set
+    /// Stores the test organization Id value used by validation scenarios.
     member val OrganizationId = "" with get, set
+    /// Stores the test organization Name value used by validation scenarios.
     member val OrganizationName = "" with get, set
+    /// Stores the test repository Id value used by validation scenarios.
     member val RepositoryId = "" with get, set
+    /// Stores the test repository Name value used by validation scenarios.
     member val RepositoryName = "" with get, set
+    /// Stores the test branch Id value used by validation scenarios.
     member val BranchId = "" with get, set
+    /// Stores the test branch Name value used by validation scenarios.
     member val BranchName = "" with get, set
 
+/// Covers body With Missing Entity Properties behavior in no-Aspire server unit tests.
 type BodyWithMissingEntityProperties() =
+    /// Stores the test owner Id value used by validation scenarios.
     member val OwnerId = "" with get, set
+    /// Stores the test repository Name value used by validation scenarios.
     member val RepositoryName = "" with get, set
 
+/// Covers validate Ids Decisions behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ValidateIdsDecisionsTests() =
 
+    /// Builds endpoint With Metadata test data for the server unit validate Ids Decisions scenarios in this file.
     let endpointWithMetadata (metadata: obj array) =
         Endpoint(RequestDelegate(fun _ -> Task.CompletedTask), EndpointMetadataCollection(metadata), "test endpoint")
 
+    /// Verifies that ignored Paths Return No Body Type.
     [<Test>]
     member _.IgnoredPathsReturnNoBodyType() =
         let endpoint = endpointWithMetadata [| typeof<BodyWithAllEntityProperties> |]
@@ -42,6 +57,7 @@ type ValidateIdsDecisionsTests() =
 
             Assert.That(result, Is.EqualTo(None), $"Expected {path} to be ignored.")
 
+    /// Verifies that ignored Path Matching Is Case Insensitive And Prefix Aware.
     [<Test>]
     member _.IgnoredPathMatchingIsCaseInsensitiveAndPrefixAware() =
         let endpoint = endpointWithMetadata [| typeof<BodyWithAllEntityProperties> |]
@@ -56,6 +72,7 @@ type ValidateIdsDecisionsTests() =
 
             Assert.That(result, Is.EqualTo(None), $"Expected {path} to be ignored.")
 
+    /// Verifies that endpoint With No Metadata Returns No Body Type.
     [<Test>]
     member _.EndpointWithNoMetadataReturnsNoBodyType() =
         let endpoint = endpointWithMetadata [||]
@@ -63,6 +80,7 @@ type ValidateIdsDecisionsTests() =
 
         Assert.That(result, Is.EqualTo(None))
 
+    /// Verifies that endpoint With Non Type Metadata Returns No Body Type.
     [<Test>]
     member _.EndpointWithNonTypeMetadataReturnsNoBodyType() =
         let endpoint =
@@ -74,6 +92,7 @@ type ValidateIdsDecisionsTests() =
 
         Assert.That(result, Is.EqualTo(None))
 
+    /// Verifies that endpoint With Body Type Metadata Returns That Type.
     [<Test>]
     member _.EndpointWithBodyTypeMetadataReturnsThatType() =
         let endpoint =
@@ -84,6 +103,7 @@ type ValidateIdsDecisionsTests() =
 
         Assert.That(result, Is.EqualTo(Some(typeof<BodyWithAllEntityProperties>)))
 
+    /// Verifies that entity Property Discovery Finds Owner Organization Repository And Branch Properties.
     [<Test>]
     member _.EntityPropertyDiscoveryFindsOwnerOrganizationRepositoryAndBranchProperties() =
         let properties = ValidateIdsDecisions.discoverEntityProperties typeof<BodyWithAllEntityProperties>
@@ -97,6 +117,7 @@ type ValidateIdsDecisionsTests() =
         Assert.That(properties.BranchId.Value.Name, Is.EqualTo("BranchId"))
         Assert.That(properties.BranchName.Value.Name, Is.EqualTo("BranchName"))
 
+    /// Verifies that entity Property Discovery Leaves Missing Name Or Id Properties Absent.
     [<Test>]
     member _.EntityPropertyDiscoveryLeavesMissingNameOrIdPropertiesAbsent() =
         let properties = ValidateIdsDecisions.discoverEntityProperties typeof<BodyWithMissingEntityProperties>
@@ -110,6 +131,7 @@ type ValidateIdsDecisionsTests() =
         Assert.That(properties.BranchId.IsNone, Is.True)
         Assert.That(properties.BranchName.IsNone, Is.True)
 
+    /// Verifies that create Paths Choose Create Validation Mode.
     [<TestCase("/owner/create", ValidateIdsDecisions.EntityKind.Owner)>]
     [<TestCase("/organization/create", ValidateIdsDecisions.EntityKind.Organization)>]
     [<TestCase("/repository/create", ValidateIdsDecisions.EntityKind.Repository)>]
@@ -119,6 +141,7 @@ type ValidateIdsDecisionsTests() =
 
         Assert.That(result, Is.EqualTo(ValidateIdsDecisions.EntityValidationMode.Create))
 
+    /// Verifies that non Create Paths Choose Existing Validation Mode.
     [<TestCase("/Owner/Create", ValidateIdsDecisions.EntityKind.Owner)>]
     [<TestCase("/organization/list", ValidateIdsDecisions.EntityKind.Organization)>]
     [<TestCase("/repository/create/details", ValidateIdsDecisions.EntityKind.Repository)>]
@@ -131,6 +154,7 @@ type ValidateIdsDecisionsTests() =
         else
             Assert.That(result, Is.EqualTo(ValidateIdsDecisions.EntityValidationMode.Existing))
 
+    /// Verifies that entity Validation Stops When Earlier Scope Already Failed.
     [<Test>]
     member _.EntityValidationStopsWhenEarlierScopeAlreadyFailed() =
         let currentError = Some(GraceError.Create "Earlier failure" "correlation-id")
@@ -140,6 +164,7 @@ type ValidateIdsDecisionsTests() =
 
         Assert.That(result, Is.False)
 
+    /// Verifies that entity Validation Requires Id And Name Properties To Exist.
     [<Test>]
     member _.EntityValidationRequiresIdAndNamePropertiesToExist() =
         let properties = ValidateIdsDecisions.discoverEntityProperties typeof<BodyWithMissingEntityProperties>
@@ -150,6 +175,7 @@ type ValidateIdsDecisionsTests() =
         Assert.That(ownerResult, Is.False)
         Assert.That(repositoryResult, Is.False)
 
+    /// Verifies that create Validation Requires Ids.
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner, "OwnerIdIsRequired")>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Organization, "OrganizationIdIsRequired")>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Repository, "RepositoryIdIsRequired")>]
@@ -169,6 +195,7 @@ type ValidateIdsDecisionsTests() =
             Assert.That(error, Is.EqualTo(Some expected))
         }
 
+    /// Verifies that create Validation Requires Names.
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner, "OwnerNameIsRequired")>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Organization, "OrganizationNameIsRequired")>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Repository, "RepositoryNameIsRequired")>]
@@ -189,6 +216,7 @@ type ValidateIdsDecisionsTests() =
             Assert.That(error, Is.EqualTo(Some expected))
         }
 
+    /// Verifies that existing Validation Allows Only Id.
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Organization)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Repository)>]
@@ -205,6 +233,7 @@ type ValidateIdsDecisionsTests() =
             Assert.That(error, Is.EqualTo(None))
         }
 
+    /// Verifies that existing Validation Allows Only Name.
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Organization)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Repository)>]
@@ -216,6 +245,7 @@ type ValidateIdsDecisionsTests() =
             Assert.That(error, Is.EqualTo(None))
         }
 
+    /// Verifies that invalid Ids Fail Before Resolution.
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner, "InvalidOwnerId")>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Organization, "InvalidOrganizationId")>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Repository, "InvalidRepositoryId")>]
@@ -236,6 +266,7 @@ type ValidateIdsDecisionsTests() =
             Assert.That(error, Is.EqualTo(Some expected))
         }
 
+    /// Verifies that not Found Error Selection Preserves Id Versus Name Only Errors.
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner, true)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner, false)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Organization, true)>]
@@ -262,6 +293,7 @@ type ValidateIdsDecisionsTests() =
 
         Assert.That(result, Is.EqualTo(expected))
 
+    /// Verifies that resolved Ids Populate Expected Grace Ids Fields.
     [<TestCase(ValidateIdsDecisions.EntityKind.Owner)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Organization)>]
     [<TestCase(ValidateIdsDecisions.EntityKind.Repository)>]

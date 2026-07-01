@@ -10,7 +10,9 @@ open NUnit.Framework
 open System
 open System.Net
 
+/// Groups shared helpers for diff server test helpers.
 module DiffServerTestHelpers =
+    /// Builds get diff parameters for route calls.
     let getDiffParameters (repositoryId: string) (directoryVersionId1: DirectoryVersionId) (directoryVersionId2: DirectoryVersionId) =
         let parameters = Parameters.Diff.GetDiffParameters()
         parameters.OwnerId <- ownerId
@@ -21,6 +23,7 @@ module DiffServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds get diff by SHA256 hash parameters for route calls.
     let getDiffBySha256HashParameters (repositoryId: string) (sha256Hash1: Sha256Hash) (sha256Hash2: Sha256Hash) =
         let parameters = Parameters.Diff.GetDiffBySha256HashParameters()
         parameters.OwnerId <- ownerId
@@ -31,6 +34,7 @@ module DiffServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Builds get diff by BLAKE3 hash parameters for route calls.
     let getDiffByBlake3HashParameters (repositoryId: string) (blake3Hash1: Blake3Hash) (blake3Hash2: Blake3Hash) =
         let parameters = Parameters.Diff.GetDiffByBlake3HashParameters()
         parameters.OwnerId <- ownerId
@@ -41,8 +45,10 @@ module DiffServerTestHelpers =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Defines prefix behavior for the surrounding tests used by the server integration diff scenario.
     let private prefix (length: int) (hash: string) = hash.Substring(0, length)
 
+    /// Builds a deterministic same BLAKE3 prefix directory pair for integration setup fixture for the server integration diff assertions.
     let createSameBlake3PrefixDirectoryPair repositoryId pathPrefix =
         let candidates =
             [|
@@ -59,6 +65,7 @@ module DiffServerTestHelpers =
         | Some pair -> pair
         | None -> failwith "Could not generate same-prefix BLAKE3 directory versions for diff route tests."
 
+    /// Builds a deterministic same SHA256 prefix directory pair for integration setup fixture for the server integration diff assertions.
     let createSameSha256PrefixDirectoryPair repositoryId pathPrefix =
         let candidates =
             [|
@@ -75,9 +82,11 @@ module DiffServerTestHelpers =
         | Some pair -> pair
         | None -> failwith "Could not generate same-prefix SHA-256 directory versions for diff route tests."
 
+/// Covers diff server scenarios.
 [<NonParallelizable>]
 type DiffServer() =
 
+    /// Verifies the diff routes reject invalid directory IDs and SHA inputs before returning success envelopes scenario.
     [<Test>]
     member _.DiffRoutesRejectInvalidDirectoryIdsAndShaInputsBeforeReturningSuccessEnvelopes() =
         task {
@@ -102,6 +111,7 @@ type DiffServer() =
             Assert.That(invalidHashError.CorrelationId, Is.Not.Empty)
         }
 
+    /// Verifies the get diff by BLAKE3 hash full hash matches SHA256 diff scenario.
     [<Test>]
     member _.GetDiffByBlake3HashFullHashMatchesSha256Diff() =
         task {
@@ -140,12 +150,14 @@ type DiffServer() =
             Assert.That(blake3Diff.ReturnValue.DirectoryVersionId2, Is.EqualTo(shaDiff.ReturnValue.DirectoryVersionId2))
         }
 
+    /// Verifies the get diff by SHA256 hash rejects no match and ambiguous prefixes before using directory IDs scenario.
     [<Test>]
     member _.GetDiffBySha256HashRejectsNoMatchAndAmbiguousPrefixesBeforeUsingDirectoryIds() =
         task {
             let repositoryId = repositoryIds[1]
             let fallbackRoot = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId $"/fallback-{Guid.NewGuid():N}/" []
             let fallbackOther = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId $"/fallback-other-{Guid.NewGuid():N}/" []
+            /// Defines first behavior for the surrounding tests used by the server integration diff scenario.
             let first, second, sharedPrefix = DiffServerTestHelpers.createSameSha256PrefixDirectoryPair repositoryId $"ambiguous-sha-diff-{Guid.NewGuid():N}"
 
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync fallbackRoot
@@ -178,10 +190,12 @@ type DiffServer() =
             Assert.That((deserialize<GraceError> ambiguousBody).Error, Does.Contain("ambiguous"))
         }
 
+    /// Verifies the get diff by BLAKE3 hash rejects malformed zero and ambiguous inputs distinctly scenario.
     [<Test>]
     member _.GetDiffByBlake3HashRejectsMalformedZeroAndAmbiguousInputsDistinctly() =
         task {
             let repositoryId = repositoryIds[1]
+            /// Defines first behavior for the surrounding tests used by the server integration diff scenario.
             let first, second, sharedPrefix = DiffServerTestHelpers.createSameBlake3PrefixDirectoryPair repositoryId $"ambiguous-diff-{Guid.NewGuid():N}"
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync first
             do! DirectoryVersionServerTestHelpers.createDirectoryVersionAsync second
@@ -211,6 +225,7 @@ type DiffServer() =
             Assert.That((deserialize<GraceError> ambiguousBody).Error, Does.Contain("ambiguous"))
         }
 
+    /// Verifies the get diff by BLAKE3 hash handles identical roots and repository scope scenario.
     [<Test>]
     member _.GetDiffByBlake3HashHandlesIdenticalRootsAndRepositoryScope() =
         task {

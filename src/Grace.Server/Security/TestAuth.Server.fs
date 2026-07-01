@@ -8,6 +8,7 @@ open System.Security.Claims
 open System.Text.Encodings.Web
 open System.Threading.Tasks
 
+/// Contains Grace Server test auth behavior and supporting helpers.
 module TestAuth =
 
     [<Literal>]
@@ -22,12 +23,15 @@ module TestAuth =
     [<Literal>]
     let GroupsHeader = "x-grace-groups"
 
+    /// Represents grace test auth handler used by Grace Server APIs and background services.
     type GraceTestAuthHandler(options: IOptionsMonitor<AuthenticationSchemeOptions>, loggerFactory: ILoggerFactory, encoder: UrlEncoder) =
         inherit AuthenticationHandler<AuthenticationSchemeOptions>(options, loggerFactory, encoder)
 
+        /// Authenticates test requests from Grace test headers and produces the configured claims identity.
         override this.HandleAuthenticateAsync() =
             let request = this.Request
 
+            /// Gets try get header data needed by the server flow.
             let tryGetHeader (name: string) =
                 let values = request.Headers[name]
                 if values.Count = 0 then None else Some(values.ToString())

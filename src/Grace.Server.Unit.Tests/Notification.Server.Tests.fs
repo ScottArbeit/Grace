@@ -4,9 +4,11 @@ open Grace.Server.Notification
 open Grace.Types.Common
 open NUnit.Framework
 
+/// Covers notification Server behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type NotificationServerTests() =
 
+    /// Verifies that branch Name Glob Matching Is Case Insensitive And Supports Wildcard.
     [<TestCase("main", "main", true)>]
     [<TestCase("MAIN", "main", true)>]
     [<TestCase("release/2026.02", "release/*", true)>]

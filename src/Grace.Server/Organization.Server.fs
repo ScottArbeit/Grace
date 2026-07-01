@@ -24,14 +24,17 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
 
+/// Contains Grace Server organization behavior and supporting helpers.
 module Organization =
 
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> OrganizationParameters> = 'T -> ValueTask<Result<unit, OrganizationError>> array
 
     let activitySource = new ActivitySource("Organization")
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Organization.Server")
 
+    /// Coordinates process command with post success processing for Grace Server.
     let processCommandWithPostSuccess<'T when 'T :> OrganizationParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -53,6 +56,7 @@ module Organization =
                 parameters.OwnerId <- graceIds.OwnerIdString
                 parameters.OrganizationId <- graceIds.OrganizationIdString
 
+                /// Coordinates handle command processing for Grace Server.
                 let handleCommand (organizationId: string) cmd =
                     task {
                         let organizationGuid = Guid.Parse(organizationId)
@@ -157,6 +161,7 @@ module Organization =
                 return! context |> result500ServerError graceError
         }
 
+    /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> OrganizationParameters>
         (context: HttpContext)
         (validations: Validations<'T>)
@@ -226,6 +231,7 @@ module Organization =
     let Create: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: CreateOrganizationParameters) =
                     [|
                         Organization.organizationDoesNotExist
@@ -244,6 +250,7 @@ module Organization =
                             OrganizationNameAlreadyExists
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: CreateOrganizationParameters) =
                     task {
                         let ownerIdGuid = Guid.Parse(parameters.OwnerId)
@@ -252,6 +259,7 @@ module Organization =
                     }
                     |> ValueTask<OrganizationCommand>
 
+                /// Ensures creator admin before the handler returns success.
                 let ensureCreatorAdmin () =
                     task {
                         let graceIds = getGraceIds context
@@ -274,6 +282,7 @@ module Organization =
     let SetName: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOrganizationNameParameters) =
                     [|
                         String.isNotEmpty parameters.NewName OrganizationError.OrganizationNameIsRequired
@@ -281,6 +290,7 @@ module Organization =
                         Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOrganizationNameParameters) =
                     SetName(OrganizationName parameters.NewName)
                     |> returnValueTask
@@ -293,12 +303,14 @@ module Organization =
     let SetType: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOrganizationTypeParameters) =
                     [|
                         DiscriminatedUnion.isMemberOf<OrganizationType, OrganizationError> parameters.OrganizationType OrganizationError.InvalidOrganizationType
                         Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOrganizationTypeParameters) =
                     SetType(
                         discriminatedUnionFromString<OrganizationType>(
@@ -316,6 +328,7 @@ module Organization =
     let SetSearchVisibility: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOrganizationSearchVisibilityParameters) =
                     [|
                         String.isNotEmpty parameters.SearchVisibility SearchVisibilityIsRequired
@@ -323,6 +336,7 @@ module Organization =
                         Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOrganizationSearchVisibilityParameters) =
                     SetSearchVisibility(
                         discriminatedUnionFromString<SearchVisibility>(
@@ -340,6 +354,7 @@ module Organization =
     let SetDescription: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: SetOrganizationDescriptionParameters) =
                     [|
                         String.isNotEmpty parameters.Description OrganizationError.DescriptionIsRequired
@@ -347,6 +362,7 @@ module Organization =
                         Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: SetOrganizationDescriptionParameters) =
                     SetDescription(parameters.Description)
                     |> returnValueTask
@@ -360,11 +376,13 @@ module Organization =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: ListRepositoriesParameters) =
                         [|
                             Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
                         task {
                             let! repositories = actorProxy.ListRepositories(getCorrelationId context)
@@ -384,12 +402,14 @@ module Organization =
     let Delete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: DeleteOrganizationParameters) =
                     [|
                         String.isNotEmpty parameters.DeleteReason OrganizationError.DeleteReasonIsRequired
                         Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationError.OrganizationIsDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: DeleteOrganizationParameters) =
                     DeleteLogical(parameters.Force, parameters.DeleteReason)
                     |> returnValueTask
@@ -402,11 +422,13 @@ module Organization =
     let Undelete: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
+                /// Implements validations for the server request pipeline.
                 let validations (parameters: OrganizationParameters) =
                     [|
                         Organization.organizationIsDeleted context parameters.CorrelationId OrganizationIsNotDeleted
                     |]
 
+                /// Implements command for the server request pipeline.
                 let command (parameters: OrganizationParameters) = Undelete |> returnValueTask
 
                 context.Items.Add("Command", nameof Undelete)
@@ -421,11 +443,13 @@ module Organization =
                 let graceIds = getGraceIds context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetOrganizationParameters) =
                         [|
                             Organization.organizationIsNotDeleted context parameters.CorrelationId OrganizationIsDeleted
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IOrganizationActor) =
                         task { return! actorProxy.Get(getCorrelationId context) }
 

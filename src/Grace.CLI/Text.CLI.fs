@@ -3,8 +3,10 @@ namespace Grace.CLI
 open Grace.Shared.Resources.Utilities
 open Grace.Shared.Resources.Text
 
+/// Groups the text command parser, handlers, and output helpers.
 module Text =
 
+    /// Groups the text command parser, handlers, and output helpers.
     module OptionName =
         [<Literal>]
         let AllowsLargeFiles = "--allows-large-files"
@@ -325,6 +327,7 @@ module Text =
         | UploadingFiles
         | WritingGraceStatusFile
 
+        /// Gets the localized text for the requested UI string.
         static member getString(uiString: UIString) : string =
             match uiString with
             | CreatingNewDirectoryVersions -> getLocalizedString StringResourceName.CreatingNewDirectoryVersions

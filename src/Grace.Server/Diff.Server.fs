@@ -25,12 +25,13 @@ open System.Diagnostics
 open System.Threading.Tasks
 open System.Text.Json
 
+/// Contains Grace Server diff behavior and supporting helpers.
 module Diff =
+    /// Represents validations used by Grace Server APIs and background services.
     type Validations<'T when 'T :> DiffParameters> = 'T -> ValueTask<Result<unit, DiffError>> array
 
     let activitySource = new ActivitySource("Diff")
 
-    ///let processCommand<'T when 'T :> DiffParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> Task<DiffCommand>) =
     //    task {
     //        try
     //            use activity = activitySource.StartActivity("processCommand", ActivityKind.Server)
@@ -72,6 +73,7 @@ module Diff =
     //            return! context |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
     //    }
 
+    /// Coordinates process query processing for Grace Server.
     let processQuery<'T, 'U when 'T :> DiffParameters>
         (context: HttpContext)
         (parameters: 'T)
@@ -135,6 +137,7 @@ module Diff =
                     let graceIds = getGraceIds context
                     let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: PopulateParameters) =
                         [|
                             Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
@@ -151,6 +154,7 @@ module Diff =
                                 DiffError.DirectoryDoesNotExist
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
                             let! populated = actorProxy.Compute(getCorrelationId context)
@@ -174,6 +178,7 @@ module Diff =
                     let graceIds = getGraceIds context
                     let repositoryId = Guid.Parse(graceIds.RepositoryIdString)
 
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetDiffParameters) =
                         [|
                             Guid.isNotEmpty parameters.DirectoryVersionId1 DiffError.InvalidDirectoryVersionId
@@ -190,6 +195,7 @@ module Diff =
                                 DiffError.DirectoryDoesNotExist
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
                             logToConsole $"About to call DiffActor.GetDiff()."
@@ -208,6 +214,7 @@ module Diff =
                         |> result500ServerError (GraceError.Create $"{Utilities.ExceptionResponse.Create ex}" (getCorrelationId context))
             }
 
+    /// Implements diff hash error for the server request pipeline.
     let private diffHashError (context: HttpContext) message =
         let graceError = GraceError.Create message (getCorrelationId context)
         graceError.Properties.Add("Path", context.Request.Path.Value)
@@ -220,6 +227,7 @@ module Diff =
                 let correlationId = getCorrelationId context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetDiffBySha256HashParameters) =
                         [|
                             String.isNotEmpty parameters.Sha256Hash1 DiffError.Sha256HashIsRequired
@@ -228,6 +236,7 @@ module Diff =
                             String.isValidSha256HashPrefix parameters.Sha256Hash2 DiffError.InvalidSha256Hash
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
                             let! diff = actorProxy.GetDiff(getCorrelationId context)
@@ -295,6 +304,7 @@ module Diff =
                 let correlationId = getCorrelationId context
 
                 try
+                    /// Implements validations for the server request pipeline.
                     let validations (parameters: GetDiffByBlake3HashParameters) =
                         [|
                             String.isNotEmpty parameters.Blake3Hash1 DiffError.Blake3HashIsRequired
@@ -303,6 +313,7 @@ module Diff =
                             String.isValidBlake3HashPrefix parameters.Blake3Hash2 DiffError.InvalidBlake3Hash
                         |]
 
+                    /// Implements query for the server request pipeline.
                     let query (context: HttpContext) _ (actorProxy: IDiffActor) =
                         task {
                             let! diff = actorProxy.GetDiff(getCorrelationId context)

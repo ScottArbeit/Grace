@@ -19,9 +19,12 @@ open System.Collections.Concurrent
 open System.Collections.Generic
 open System.IO
 
+/// Contains Grace Server webhook store behavior and supporting helpers.
 module WebhookStore =
 
+    /// Represents webhook rule dto used by Grace Server APIs and background services.
     type WebhookRuleDto = Grace.Types.Webhooks.WebhookRule
+    /// Represents webhook delivery dto used by Grace Server APIs and background services.
     type WebhookDeliveryDto = Grace.Types.Webhooks.WebhookDelivery
 
     let private rules = ConcurrentDictionary<WebhookRuleId, WebhookRuleDto>()
@@ -30,14 +33,17 @@ module WebhookStore =
     let private deliveryPayloads = ConcurrentDictionary<WebhookDeliveryId, string>()
     let private deliveryRuleSnapshots = ConcurrentDictionary<WebhookDeliveryId, WebhookRuleDto>()
 
+    /// Coordinates delivery dedupe key processing for Grace Server.
     let private deliveryDedupeKey webhookRuleId dedupeKey = $"{webhookRuleId:N}:{dedupeKey}"
 
+    /// Computes scope matches data used by Grace Server.
     let private scopeMatches (expected: WebhookScope) (actual: WebhookScope) =
         actual.OwnerId = expected.OwnerId
         && actual.OrganizationId = expected.OrganizationId
         && actual.RepositoryId = expected.RepositoryId
         && actual.TargetBranchId = expected.TargetBranchId
 
+    /// Coordinates clear for tests processing for Grace Server.
     let clearForTests () =
         rules.Clear()
         deliveries.Clear()
@@ -45,15 +51,18 @@ module WebhookStore =
         deliveryPayloads.Clear()
         deliveryRuleSnapshots.Clear()
 
+    /// Coordinates upsert rule processing for Grace Server.
     let upsertRule (rule: WebhookRuleDto) =
         rules[rule.WebhookRuleId] <- rule
         rule
 
+    /// Gets try get rule data needed by the server flow.
     let tryGetRule webhookRuleId =
         match rules.TryGetValue webhookRuleId with
         | true, rule -> Some rule
         | _ -> None
 
+    /// Lists list rules data for the server response.
     let listRules scope includeDeleted =
         rules.Values
         |> Seq.filter (fun rule ->
@@ -63,11 +72,13 @@ module WebhookStore =
         |> Seq.toArray
         :> IReadOnlyList<WebhookRuleDto>
 
+    /// Coordinates add delivery processing for Grace Server.
     let addDelivery (delivery: WebhookDeliveryDto) =
         deliveries[delivery.WebhookDeliveryId] <- delivery
         deliveryDedupeIndex[deliveryDedupeKey delivery.WebhookRuleId delivery.DedupeKey] <- delivery.WebhookDeliveryId
         delivery
 
+    /// Attempts to claim delivery by rule and dedupe and returns an option or result instead of throwing.
     let tryClaimDeliveryByRuleAndDedupe (delivery: WebhookDeliveryDto) =
         if deliveryDedupeIndex.TryAdd(deliveryDedupeKey delivery.WebhookRuleId delivery.DedupeKey, delivery.WebhookDeliveryId) then
             deliveries[delivery.WebhookDeliveryId] <- delivery
@@ -75,33 +86,40 @@ module WebhookStore =
         else
             false
 
+    /// Coordinates add delivery payload processing for Grace Server.
     let addDeliveryPayload webhookDeliveryId payloadJson =
         deliveryPayloads[webhookDeliveryId] <- payloadJson
         payloadJson
 
+    /// Gets try get delivery payload data needed by the server flow.
     let tryGetDeliveryPayload webhookDeliveryId =
         match deliveryPayloads.TryGetValue webhookDeliveryId with
         | true, payloadJson -> Some payloadJson
         | _ -> None
 
+    /// Coordinates add delivery rule snapshot processing for Grace Server.
     let addDeliveryRuleSnapshot webhookDeliveryId (rule: WebhookRuleDto) =
         deliveryRuleSnapshots[webhookDeliveryId] <- rule
         rule
 
+    /// Gets try get delivery rule snapshot data needed by the server flow.
     let tryGetDeliveryRuleSnapshot webhookDeliveryId =
         match deliveryRuleSnapshots.TryGetValue webhookDeliveryId with
         | true, rule -> Some rule
         | _ -> None
 
+    /// Coordinates upsert delivery processing for Grace Server.
     let upsertDelivery (delivery: WebhookDeliveryDto) =
         deliveries[delivery.WebhookDeliveryId] <- delivery
         delivery
 
+    /// Gets try get delivery data needed by the server flow.
     let tryGetDelivery webhookDeliveryId =
         match deliveries.TryGetValue webhookDeliveryId with
         | true, delivery -> Some delivery
         | _ -> None
 
+    /// Gets try get delivery by rule and dedupe data needed by the server flow.
     let tryGetDeliveryByRuleAndDedupe webhookRuleId dedupeKey =
         match deliveryDedupeIndex.TryGetValue(deliveryDedupeKey webhookRuleId dedupeKey) with
         | true, webhookDeliveryId -> tryGetDelivery webhookDeliveryId
@@ -111,6 +129,7 @@ module WebhookStore =
                 delivery.WebhookRuleId = webhookRuleId
                 && delivery.DedupeKey = dedupeKey)
 
+    /// Lists list enabled rules for event data for the server response.
     let listEnabledRulesForEvent (scope: WebhookScope) eventName eventVersion =
         rules.Values
         |> Seq.filter (fun rule ->
@@ -125,6 +144,7 @@ module WebhookStore =
         |> Seq.toArray
         :> IReadOnlyList<WebhookRuleDto>
 
+    /// Lists list deliveries data for the server response.
     let listDeliveries scope webhookRuleId includeTerminal =
         deliveries.Values
         |> Seq.filter (fun delivery ->
@@ -140,6 +160,7 @@ module WebhookStore =
         |> Seq.toArray
         :> IReadOnlyList<WebhookDeliveryDto>
 
+    /// Lists list scheduled retries data for the server response.
     let listScheduledRetries dueAt maxCount =
         deliveries.Values
         |> Seq.filter (fun delivery ->
@@ -152,8 +173,10 @@ module WebhookStore =
         |> Seq.toArray
         :> IReadOnlyList<WebhookDeliveryDto>
 
+/// Contains Grace Server webhook common behavior and supporting helpers.
 module WebhookCommon =
 
+    /// Parses try parse guid input into the server model.
     let tryParseGuid value =
         let mutable parsed = Guid.Empty
 
@@ -164,6 +187,7 @@ module WebhookCommon =
         else
             None
 
+    /// Computes scope from rule parameters data used by Grace Server.
     let scopeFromRuleParameters (parameters: WebhookRuleParameters) =
         let ownerId =
             tryParseGuid parameters.OwnerId
@@ -181,6 +205,7 @@ module WebhookCommon =
 
         { WebhookScope.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetBranchId = targetBranchId }
 
+    /// Computes scope from delivery parameters data used by Grace Server.
     let scopeFromDeliveryParameters (parameters: WebhookDeliveryParameters) =
         let ownerId =
             tryParseGuid parameters.OwnerId
@@ -198,28 +223,34 @@ module WebhookCommon =
 
         { WebhookScope.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; TargetBranchId = targetBranchId }
 
+    /// Computes resource from webhook scope data used by Grace Server.
     let resourceFromWebhookScope (scope: WebhookScope) =
         match scope.TargetBranchId with
         | Some branchId -> Resource.Branch(scope.OwnerId, scope.OrganizationId, scope.RepositoryId, branchId)
         | None -> Resource.Repository(scope.OwnerId, scope.OrganizationId, scope.RepositoryId)
 
+    /// Computes scope equals data used by Grace Server.
     let scopeEquals (left: WebhookScope) (right: WebhookScope) =
         left.OwnerId = right.OwnerId
         && left.OrganizationId = right.OrganizationId
         && left.RepositoryId = right.RepositoryId
         && left.TargetBranchId = right.TargetBranchId
 
+    /// Implements current user id for the server request pipeline.
     let currentUserId (context: HttpContext) =
         PrincipalMapper.tryGetUserId context.User
         |> Option.defaultValue "unknown"
         |> UserId
 
+    /// Computes error data used by Grace Server.
     let error context message = GraceError.Create message (Services.getCorrelationId context)
 
+/// Contains Grace Server webhook rule behavior and supporting helpers.
 module WebhookRule =
 
     open WebhookCommon
 
+    /// Validates validate url inputs before server processing continues.
     let private validateUrl (context: HttpContext) (parameters: CreateWebhookRuleParameters) =
         let configuration = context.RequestServices.GetRequiredService<IConfiguration>()
         let hostEnvironment = context.RequestServices.GetService<IHostEnvironment>()
@@ -231,6 +262,7 @@ module WebhookRule =
         | Ok validated -> Ok validated.ScopedUrl
         | Error failure -> Error $"Url is not allowed: {failure}."
 
+    /// Validates validate event inputs before server processing continues.
     let private validateEvent (parameters: CreateWebhookRuleParameters) =
         match ExternalWebhookEventRegistry.parse parameters.EventName with
         | Error message -> Error message
@@ -238,6 +270,7 @@ module WebhookRule =
             Error $"Webhook event '{parameters.EventName}' version {parameters.EventVersion} is not registered."
         | Ok _ -> Ok()
 
+    /// Implements retry policy from parameters for the server request pipeline.
     let private retryPolicyFromParameters (parameters: CreateWebhookRuleParameters) =
         if parameters.MaxAttempts < 1 then
             Error "MaxAttempts must be at least 1."
@@ -248,6 +281,7 @@ module WebhookRule =
         else
             Ok { MaxAttempts = parameters.MaxAttempts; InitialDelaySeconds = parameters.InitialDelaySeconds; MaxDelaySeconds = parameters.MaxDelaySeconds }
 
+    /// Validates event, retry, and URL settings before materializing the webhook rule sent to the actor.
     let private buildRule context webhookRuleId status createdBy createdAt (parameters: CreateWebhookRuleParameters) =
         task {
             match validateEvent parameters, retryPolicyFromParameters parameters, validateUrl context parameters with
@@ -272,6 +306,7 @@ module WebhookRule =
                         }
         }
 
+    /// Implements rule from context for the server request pipeline.
     let private ruleFromContext<'T when 'T :> WebhookRuleParameters> (context: HttpContext) =
         task {
             context.Request.EnableBuffering()
@@ -285,6 +320,7 @@ module WebhookRule =
                 |> Option.bind WebhookStore.tryGetRule
         }
 
+    /// Resolves resolve stored rule for manage data from request or repository state.
     let resolveStoredRuleForManage<'T when 'T :> WebhookRuleParameters> (context: HttpContext) =
         task {
             let! rule = ruleFromContext<'T> context
@@ -295,6 +331,7 @@ module WebhookRule =
                 | None -> Error(error context "Webhook rule was not found.")
         }
 
+    /// Handles the Grace Server create request.
     let Create: HttpHandler =
         fun _ context ->
             task {
@@ -314,6 +351,7 @@ module WebhookRule =
                         |> Services.result200Ok (WebhookStore.upsertRule rule)
             }
 
+    /// Handles the Grace Server list request.
     let List: HttpHandler =
         fun _ context ->
             task {
@@ -325,6 +363,7 @@ module WebhookRule =
                     |> Services.result200Ok (WebhookStore.listRules scope parameters.IncludeDeleted)
             }
 
+    /// Handles the Grace Server show request.
     let Show: HttpHandler =
         fun _ context ->
             task {
@@ -337,6 +376,7 @@ module WebhookRule =
                 | None -> return! Services.result404NotFound context
             }
 
+    /// Handles the Grace Server update request.
     let Update: HttpHandler =
         fun _ context ->
             task {
@@ -365,6 +405,7 @@ module WebhookRule =
                                 |> Services.result200Ok (WebhookStore.upsertRule { rule with UpdatedAt = Some(getCurrentInstant ()) })
             }
 
+    /// Handles the Grace Server set status request.
     let private setStatus status : HttpHandler =
         fun _ context ->
             task {
@@ -380,12 +421,16 @@ module WebhookRule =
                         |> Services.result200Ok (WebhookStore.upsertRule { rule with Status = status; UpdatedAt = Some(getCurrentInstant ()) })
             }
 
+    /// Handles the Grace Server enable request.
     let Enable: HttpHandler = setStatus WebhookRuleStatus.Enabled
 
+    /// Handles the Grace Server disable request.
     let Disable: HttpHandler = setStatus WebhookRuleStatus.Disabled
 
+    /// Handles the Grace Server delete request.
     let Delete: HttpHandler = setStatus WebhookRuleStatus.Deleted
 
+    /// Handles the Grace Server test request.
     let Test: HttpHandler =
         fun _ context ->
             task {
@@ -416,10 +461,12 @@ module WebhookRule =
                         |> Services.result200Ok (WebhookStore.addDelivery delivery)
             }
 
+/// Contains Grace Server webhook delivery behavior and supporting helpers.
 module WebhookDelivery =
 
     open WebhookCommon
 
+    /// Coordinates delivery from context processing for Grace Server.
     let private deliveryFromContext<'T when 'T :> WebhookDeliveryParameters> (context: HttpContext) =
         task {
             context.Request.EnableBuffering()
@@ -433,6 +480,7 @@ module WebhookDelivery =
                 |> Option.bind WebhookStore.tryGetDelivery
         }
 
+    /// Resolves resolve stored delivery for read data from request or repository state.
     let resolveStoredDeliveryForRead<'T when 'T :> WebhookDeliveryParameters> (context: HttpContext) =
         task {
             let! delivery = deliveryFromContext<'T> context
@@ -446,6 +494,7 @@ module WebhookDelivery =
                 | None -> Error(error context "Webhook delivery was not found.")
         }
 
+    /// Handles the Grace Server list request.
     let List: HttpHandler =
         fun _ context ->
             task {
@@ -461,6 +510,7 @@ module WebhookDelivery =
                     |> Services.result200Ok (WebhookStore.listDeliveries scope webhookRuleId parameters.IncludeTerminal)
             }
 
+    /// Handles the Grace Server show request.
     let Show: HttpHandler =
         fun _ context ->
             task {

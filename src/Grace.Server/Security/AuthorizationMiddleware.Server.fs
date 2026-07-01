@@ -12,12 +12,14 @@ open Microsoft.Extensions.Logging
 open System
 open System.Threading.Tasks
 
+/// Contains Grace Server authorization middleware behavior and supporting helpers.
 module AuthorizationMiddleware =
 
     let private log = loggerFactory.CreateLogger("AuthorizationMiddleware.Server")
 
     let private includeReason = Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
 
+    /// Handles the Grace Server forbidden request.
     let private forbidden (reason: string) : HttpHandler =
         let message =
             if
@@ -31,6 +33,7 @@ module AuthorizationMiddleware =
         setStatusCode StatusCodes.Status403Forbidden
         >=> text message
 
+    /// Formats resource for structured logs or responses.
     let private formatResource (resource: Resource) =
         match resource with
         | Resource.System -> "System"
@@ -40,6 +43,7 @@ module AuthorizationMiddleware =
         | Resource.Branch (ownerId, organizationId, repositoryId, branchId) -> $"Branch:{ownerId}/{organizationId}/{repositoryId}/{branchId}"
         | Resource.Path (ownerId, organizationId, repositoryId, relativePath) -> $"Path:{ownerId}/{organizationId}/{repositoryId}:{relativePath}"
 
+    /// Formats resource summary for structured logs or responses.
     let private formatResourceSummary (resources: Resource list) =
         match resources with
         | [] -> "None"
@@ -47,8 +51,10 @@ module AuthorizationMiddleware =
             let headText = formatResource head
             if tail.IsEmpty then headText else $"{headText} (+{tail.Length} more)"
 
+    /// Formats principal for structured logs or responses.
     let private formatPrincipal (principal: Principal) = $"{principal.PrincipalType}:{principal.PrincipalId}"
 
+    /// Formats principals for structured logs or responses.
     let private formatPrincipals (principals: Principal list) =
         match principals with
         | [] -> "None"
@@ -57,6 +63,7 @@ module AuthorizationMiddleware =
             |> List.map formatPrincipal
             |> String.concat ", "
 
+    /// Formats operation summary for structured logs or responses.
     let private formatOperationSummary (operations: Operation list) =
         match operations with
         | [] -> "None"
@@ -66,6 +73,7 @@ module AuthorizationMiddleware =
             |> List.map (fun operation -> $"{operation}")
             |> String.concat " OR "
 
+    /// Gets try get identity name data needed by the server flow.
     let private tryGetIdentityName (context: HttpContext) =
         let identity = context.User.Identity
 
@@ -75,6 +83,7 @@ module AuthorizationMiddleware =
         else
             Some identity.Name
 
+    /// Formats principal summary for structured logs or responses.
     let private formatPrincipalSummary (context: HttpContext) (principals: Principal list) =
         if principals.IsEmpty then
             match tryGetIdentityName context with
@@ -83,6 +92,7 @@ module AuthorizationMiddleware =
         else
             formatPrincipals principals
 
+    /// Logs missing authentication with request and authorization context.
     let private logMissingAuthentication (context: HttpContext) (operation: Operation) (principalSummary: string) =
         if log.IsEnabled(LogLevel.Warning) then
             log.LogWarning(
@@ -95,6 +105,7 @@ module AuthorizationMiddleware =
                 context.Request.Path.ToString()
             )
 
+    /// Logs denied with request and authorization context.
     let private logDenied (context: HttpContext) (operation: Operation) (principalSummary: string) (resourceSummary: string) (reason: string) =
         if log.IsEnabled(LogLevel.Warning) then
             log.LogWarning(
@@ -109,6 +120,7 @@ module AuthorizationMiddleware =
                 context.Request.Path.ToString()
             )
 
+    /// Handles the Grace Server requires permission request.
     let requiresPermission (operation: Operation) (resourceFromContext: HttpContext -> Task<Resource>) : HttpHandler =
         fun next context ->
             task {
@@ -135,6 +147,7 @@ module AuthorizationMiddleware =
                         return! forbidden reason next context
             }
 
+    /// Handles the Grace Server requires any permission request.
     let requiresAnyPermission (operations: Operation list) (resourceFromContext: HttpContext -> Task<Resource>) : HttpHandler =
         if operations.IsEmpty then
             invalidArg (nameof operations) "At least one authorization operation is required."
@@ -185,6 +198,7 @@ module AuthorizationMiddleware =
                         return! forbidden reason next context
             }
 
+    /// Handles the Grace Server requires permissions request.
     let requiresPermissions (operation: Operation) (resourcesFromContext: HttpContext -> Task<Resource list>) : HttpHandler =
         fun next context ->
             task {
@@ -220,6 +234,7 @@ module AuthorizationMiddleware =
                         return! forbidden reason next context
             }
 
+    /// Handles the Grace Server requires permission resolved request.
     let requiresPermissionResolved (resolve: HttpContext -> Task<Result<Operation * Resource, GraceError>>) : HttpHandler =
         fun next context ->
             task {
@@ -250,6 +265,7 @@ module AuthorizationMiddleware =
                             return! forbidden reason next context
             }
 
+    /// Handles the Grace Server requires permission resolved optional request.
     let requiresPermissionResolvedOptional (resolve: HttpContext -> Task<Result<(Operation * Resource) option, GraceError>>) : HttpHandler =
         fun next context ->
             task {

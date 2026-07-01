@@ -15,44 +15,54 @@ open System
 open System.Collections.Generic
 open System.Threading.Tasks
 
+/// Groups Orleans actor helpers for repository content counter keys, proxies, state, or workflow transitions.
 module RepositoryContentCounter =
 
+    /// Coordinates primary key logic for the RepositoryContentCounter actor.
     let primaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
 
+    /// Maps a RepositoryContentCounter command case to the operation name used in idempotency and diagnostics.
     let commandName command =
         match command with
         | RepositoryContentCounterCommand.AddReference _ -> "AddReference"
         | RepositoryContentCounterCommand.RemoveReference _ -> "RemoveReference"
 
+    /// Extracts the client operation id that lets command retries match previously emitted events.
     let operationId command =
         match command with
         | RepositoryContentCounterCommand.AddReference (operationId, _, _, _) -> operationId
         | RepositoryContentCounterCommand.RemoveReference (operationId, _, _, _) -> operationId
 
+    /// Coordinates command target logic for the RepositoryContentCounter actor.
     let private commandTarget command =
         match command with
         | RepositoryContentCounterCommand.AddReference (_, repositoryId, storagePoolId, manifestAddress)
         | RepositoryContentCounterCommand.RemoveReference (_, repositoryId, storagePoolId, manifestAddress) -> repositoryId, storagePoolId, manifestAddress
 
+    /// Coordinates event operation id logic for the RepositoryContentCounter actor.
     let private eventOperationId counterEvent =
         match counterEvent.Event with
         | RepositoryContentCounterEventType.ReferenceAdded (operationId, _, _, _) -> operationId
         | RepositoryContentCounterEventType.ReferenceRemoved operationId -> operationId
 
+    /// Coordinates event command name logic for the RepositoryContentCounter actor.
     let private eventCommandName counterEvent =
         match counterEvent.Event with
         | RepositoryContentCounterEventType.ReferenceAdded _ -> "AddReference"
         | RepositoryContentCounterEventType.ReferenceRemoved _ -> "RemoveReference"
 
+    /// Attempts to find applied operation and returns no value when the required invariant is not met.
     let private tryFindAppliedOperation (events: seq<RepositoryContentCounterEvent>) operationId =
         events
         |> Seq.tryFind (fun counterEvent -> eventOperationId counterEvent = operationId)
 
+    /// Applies events changes to the RepositoryContentCounter actor state.
     let private applyEvents (events: RepositoryContentCounterEvent list) (counter: RepositoryContentCounterDto) =
         events
         |> List.fold (fun current event -> RepositoryContentCounterDto.UpdateDto event current) counter
 
+    /// Coordinates ok decision logic for the RepositoryContentCounter actor.
     let private okDecision counter operationId events intents wasReplay message =
         Ok
             {
@@ -64,8 +74,10 @@ module RepositoryContentCounter =
                 Message = message
             }
 
+    /// Coordinates grace error logic for the RepositoryContentCounter actor.
     let private graceError correlationId message = GraceError.Create message correlationId
 
+    /// Coordinates target mismatch logic for the RepositoryContentCounter actor.
     let private targetMismatch (counter: RepositoryContentCounterDto) repositoryId storagePoolId manifestAddress =
         (counter.RepositoryId <> RepositoryId.Empty
          && counter.RepositoryId <> repositoryId)
@@ -74,6 +86,7 @@ module RepositoryContentCounter =
         || (not (String.IsNullOrWhiteSpace counter.ManifestAddress)
             && counter.ManifestAddress <> manifestAddress)
 
+    /// Coordinates expected primary key mismatch logic for the RepositoryContentCounter actor.
     let private expectedPrimaryKeyMismatch expectedPrimaryKey repositoryId storagePoolId manifestAddress =
         match expectedPrimaryKey with
         | Some expectedPrimaryKey -> not (String.Equals(expectedPrimaryKey, primaryKey repositoryId storagePoolId manifestAddress, StringComparison.Ordinal))
@@ -88,6 +101,7 @@ module RepositoryContentCounter =
         : Result<RepositoryContentCounterDecision, GraceError>
         =
         let operationId = operationId command
+        /// Coordinates repository id logic for the RepositoryContentCounter actor.
         let repositoryId, storagePoolId, manifestAddress = commandTarget command
 
         if String.IsNullOrWhiteSpace operationId then
@@ -144,8 +158,10 @@ module RepositoryContentCounter =
 
                         okDecision counter operationId [ counterEvent ] intents false "Repository content reference removed."
 
+    /// Validates a RepositoryContentCounter command and derives the events needed for a state transition.
     let decideCommand events counter command metadata = decideCommandForKey None events counter command metadata
 
+    /// Implements the Orleans grain for repository content counter actor.
     type RepositoryContentCounterActor
         (
             [<PersistentState(StateName.RepositoryContentCounter, Grace.Shared.Constants.GraceActorStorage)>] state: IPersistentState<List<RepositoryContentCounterEvent>>
@@ -154,6 +170,7 @@ module RepositoryContentCounter =
 
         let log = loggerFactory.CreateLogger("RepositoryContentCounter.Actor")
         let mutable counter = RepositoryContentCounterDto.Default
+        /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
         override this.OnActivateAsync(ct) =
@@ -166,6 +183,7 @@ module RepositoryContentCounter =
 
             Task.CompletedTask
 
+        /// Replays persisted RepositoryContentCounter events into an in-memory state snapshot.
         member private this.ApplyEvents(events: RepositoryContentCounterEvent list) =
             task {
                 state.State.AddRange(events)
@@ -174,6 +192,7 @@ module RepositoryContentCounter =
             }
 
         interface IRepositoryContentCounterActor with
+            /// Reports whether this RepositoryContentCounter actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
 
@@ -182,16 +201,19 @@ module RepositoryContentCounter =
                  && not (String.IsNullOrWhiteSpace counter.ManifestAddress))
                 |> returnTask
 
+            /// Returns the current RepositoryContentCounter actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
                 counter |> returnTask
 
+            /// Returns the persisted RepositoryContentCounter event stream for replay or audit.
             member this.GetEvents correlationId =
                 this.correlationId <- correlationId
 
                 (state.State :> IReadOnlyList<RepositoryContentCounterEvent>)
                 |> returnTask
 
+            /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 task {
                     this.correlationId <- metadata.CorrelationId

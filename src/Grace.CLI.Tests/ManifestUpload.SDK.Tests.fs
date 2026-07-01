@@ -18,10 +18,12 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Exercises manifest upload sdk behavior.
 [<NonParallelizable>]
 type ManifestUploadSdkTests() =
     static member private PseudoRandomBytes length =
         let bytes = Array.zeroCreate<byte> length
+        /// Tracks state changes so this scenario can assert the resulting side effect explicitly.
         let mutable state = 0x4567abcdu
 
         for index in 0 .. length - 1 do
@@ -129,6 +131,7 @@ type ManifestUploadSdkTests() =
             PlannerOptions = { LocalPlanner.Options.Default with EligibilityPolicy = ManifestUploadSdkTests.BinaryPolicy 1024L }
         }
 
+    /// Verifies that content block upload conflict detection only accepts azure blob already exists conflict.
     [<Test>]
     member _.ContentBlockUploadConflictDetectionOnlyAcceptsAzureBlobAlreadyExistsConflict() =
         let existingBlob = RequestFailedException(409, "The specified blob already exists.", "BlobAlreadyExists", null)
@@ -139,6 +142,7 @@ type ManifestUploadSdkTests() =
         Assert.That(Storage.isExistingContentBlockUploadConflict leaseConflict, Is.False)
         Assert.That(Storage.isExistingContentBlockUploadConflict forbidden, Is.False)
 
+    /// Verifies that whole file local object cache name includes blake3.
     [<Test>]
     member _.WholeFileLocalObjectCacheNameIncludesBlake3() =
         let fileVersion =
@@ -153,6 +157,7 @@ type ManifestUploadSdkTests() =
         Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("whole-file_sha256-value.txt"))
         Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("whole-file_sha256-value_blake3-value.txt"))
 
+    /// Verifies that whole file local object cache name includes blake3 for extensionless files.
     [<Test>]
     member _.WholeFileLocalObjectCacheNameIncludesBlake3ForExtensionlessFiles() =
         let fileVersion =
@@ -161,12 +166,14 @@ type ManifestUploadSdkTests() =
         Assert.That(fileVersion.GetObjectFileName, Is.EqualTo("Dockerfile_sha256-value"))
         Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo("Dockerfile_sha256-value_blake3-value"))
 
+    /// Verifies that whole file local object cache name keeps legacy sha only name without blake3.
     [<Test>]
     member _.WholeFileLocalObjectCacheNameKeepsLegacyShaOnlyNameWithoutBlake3() =
         let fileVersion = FileVersion.Create (RelativePath "src/cache/legacy-file.txt") (Sha256Hash "sha256-value") String.Empty false 10L
 
         Assert.That(Storage.getLocalObjectCacheFileName fileVersion, Is.EqualTo(fileVersion.GetObjectFileName))
 
+    /// Verifies that upload metadata matching includes blake3 when path and sha collide.
     [<Test>]
     member _.UploadMetadataMatchingIncludesBlake3WhenPathAndShaCollide() =
         let firstFileVersion =
@@ -194,6 +201,7 @@ type ManifestUploadSdkTests() =
 
         Assert.That(matchedFileVersion, Is.EqualTo(secondFileVersion))
 
+    /// Verifies that upload metadata identity includes path sha256 and blake3 for whole file lookup.
     [<Test>]
     member _.UploadMetadataIdentityIncludesPathSha256AndBlake3ForWholeFileLookup() =
         let localFileVersion =
@@ -218,6 +226,7 @@ type ManifestUploadSdkTests() =
 
         Assert.That(Services.localFileVersionIdentity localFileVersion, Is.EqualTo(Services.uploadMetadataIdentity uploadMetadata))
 
+    /// Verifies that manifest upload flow starts uploads confirms and finalizes new blocks only.
     [<Test>]
     member _.ManifestUploadFlowStartsUploadsConfirmsAndFinalizesNewBlocksOnly() =
         task {
@@ -231,6 +240,7 @@ type ManifestUploadSdkTests() =
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
             let confirmedBlocks = Dictionary<ContentBlockAddress, byte array>()
             let confirmedPlacements = Dictionary<ContentBlockAddress, ContentBlockStoragePlacement>()
+            /// Tracks finalized Manifest changes so this scenario can assert the resulting side effect explicitly.
             let mutable finalizedManifest = None
 
             try
@@ -330,6 +340,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that small source file uses whole file content without starting manifest session.
     [<Test>]
     member _.SmallSourceFileUsesWholeFileContentWithoutStartingManifestSession() =
         task {
@@ -370,6 +381,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that large compressed text uses manifest upload by default policy.
     [<Test>]
     member _.LargeCompressedTextUsesManifestUploadByDefaultPolicy() =
         task {
@@ -421,6 +433,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that upload files to object storage falls back only for non manifest results.
     [<Test>]
     member _.UploadFilesToObjectStorageFallsBackOnlyForNonManifestResults() =
         task {
@@ -430,6 +443,7 @@ type ManifestUploadSdkTests() =
             let manifestAttempts = ResizeArray<string>()
             let wholeFileFallbacks = ResizeArray<FileVersion array>()
 
+            /// Builds manifest upload test data used to exercise CLI manifest Upload behavior.
             let manifestUpload (fileVersion: FileVersion) : Task<GraceResult<ManifestUpload.ManifestUploadResult>> =
                 task {
                     manifestAttempts.Add(fileVersion.RelativePath)
@@ -446,6 +460,7 @@ type ManifestUploadSdkTests() =
                     return Ok(GraceReturnValue.Create result correlationId)
                 }
 
+            /// Builds whole file upload test data used to exercise CLI manifest Upload behavior.
             let wholeFileUpload (parameters: GetUploadMetadataForFilesParameters) =
                 task {
                     wholeFileFallbacks.Add(parameters.FileVersions)
@@ -476,6 +491,7 @@ type ManifestUploadSdkTests() =
                 Assert.That(wholeFileFallbacks[0][0], Is.EqualTo(ineligibleFile))
         }
 
+    /// Verifies that manifest upload claims valid discovery candidate and skips uploading claimed block.
     [<Test>]
     member _.ManifestUploadClaimsValidDiscoveryCandidateAndSkipsUploadingClaimedBlock() =
         task {
@@ -592,6 +608,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload claims whole one chunk candidate when discovery policy allows it.
     [<Test>]
     member _.ManifestUploadClaimsWholeOneChunkCandidateWhenDiscoveryPolicyAllowsIt() =
         task {
@@ -602,6 +619,7 @@ type ManifestUploadSdkTests() =
 
             let correlationId = "corr-sdk-manifest-upload-one-chunk-reuse"
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            /// Tracks issued Minimum Reuse Run Length changes so this scenario can assert the resulting side effect explicitly.
             let mutable issuedMinimumReuseRunLength = 0
             let claimedHints = ResizeArray<ContentBlockReuseRangeHint>()
 
@@ -708,6 +726,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload uploads block when reuse claim covers only partial window.
     [<Test>]
     member _.ManifestUploadUploadsBlockWhenReuseClaimCoversOnlyPartialWindow() =
         task {
@@ -718,6 +737,7 @@ type ManifestUploadSdkTests() =
             let correlationId = "corr-sdk-manifest-upload-partial-reuse"
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
             let confirmedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            /// Tracks attempted Claim changes so this scenario can assert the resulting side effect explicitly.
             let mutable attemptedClaim = false
 
             try
@@ -813,6 +833,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload treats discovery failure as non authoritative and uploads blocks.
     [<Test>]
     member _.ManifestUploadTreatsDiscoveryFailureAsNonAuthoritativeAndUploadsBlocks() =
         task {
@@ -822,7 +843,9 @@ type ManifestUploadSdkTests() =
             let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-discovery-failure-{Guid.NewGuid():N}.bin")
             let correlationId = "corr-sdk-manifest-upload-discovery-failure"
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            /// Tracks issued Discovery changes so this scenario can assert the resulting side effect explicitly.
             let mutable issuedDiscovery = false
+            /// Tracks claimed Reuse changes so this scenario can assert the resulting side effect explicitly.
             let mutable claimedReuse = false
 
             try
@@ -871,6 +894,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload duplicates discovery candidates below minimum reuse run length.
     [<Test>]
     member _.ManifestUploadDuplicatesDiscoveryCandidatesBelowMinimumReuseRunLength() =
         task {
@@ -880,7 +904,9 @@ type ManifestUploadSdkTests() =
             let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-short-reuse-{Guid.NewGuid():N}.bin")
             let correlationId = "corr-sdk-manifest-upload-short-reuse"
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            /// Tracks issued Discovery changes so this scenario can assert the resulting side effect explicitly.
             let mutable issuedDiscovery = false
+            /// Tracks claimed Reuse changes so this scenario can assert the resulting side effect explicitly.
             let mutable claimedReuse = false
 
             try
@@ -960,6 +986,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload issues discovery proof with bounded key chunks.
     [<Test>]
     member _.ManifestUploadIssuesDiscoveryProofWithBoundedKeyChunks() =
         task {
@@ -973,8 +1000,11 @@ type ManifestUploadSdkTests() =
 
             let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-bounded-proof-{Guid.NewGuid():N}.bin")
             let correlationId = "corr-sdk-manifest-upload-bounded-proof"
+            /// Tracks discovered Key Chunk Count changes so this scenario can assert the resulting side effect explicitly.
             let mutable discoveredKeyChunkCount = 0
+            /// Tracks issued Key Chunk Count changes so this scenario can assert the resulting side effect explicitly.
             let mutable issuedKeyChunkCount = 0
+            /// Tracks claimed Reuse changes so this scenario can assert the resulting side effect explicitly.
             let mutable claimedReuse = false
 
             try
@@ -1054,6 +1084,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload falls back to uploading blocks when reuse claim is stale.
     [<Test>]
     member _.ManifestUploadFallsBackToUploadingBlocksWhenReuseClaimIsStale() =
         task {
@@ -1063,7 +1094,9 @@ type ManifestUploadSdkTests() =
             let tempPath = Path.Combine(Path.GetTempPath(), $"grace-manifest-upload-stale-reuse-{Guid.NewGuid():N}.bin")
             let correlationId = "corr-sdk-manifest-upload-stale-reuse"
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            /// Tracks issued Discovery changes so this scenario can assert the resulting side effect explicitly.
             let mutable issuedDiscovery = false
+            /// Tracks attempted Claim changes so this scenario can assert the resulting side effect explicitly.
             let mutable attemptedClaim = false
 
             try
@@ -1142,6 +1175,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload can confirm existing content block placement without new etag.
     [<Test>]
     member _.ManifestUploadCanConfirmExistingContentBlockPlacementWithoutNewEtag() =
         task {
@@ -1152,6 +1186,7 @@ type ManifestUploadSdkTests() =
             let correlationId = "corr-sdk-manifest-upload-existing-block"
             let existingPlacements = ResizeArray<ContentBlockStoragePlacement>()
             let confirmedBlocks = Dictionary<ContentBlockAddress, ContentBlockStoragePlacement>()
+            /// Tracks manifest Block Count changes so this scenario can assert the resulting side effect explicitly.
             let mutable manifestBlockCount = 0
 
             try
@@ -1207,6 +1242,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest upload registers every duplicate block occurrence but uploads payload once.
     [<Test>]
     member _.ManifestUploadRegistersEveryDuplicateBlockOccurrenceButUploadsPayloadOnce() =
         task {
@@ -1216,6 +1252,7 @@ type ManifestUploadSdkTests() =
             let registeredRanges = ResizeArray<ContentBlockAddress * int64 * int64>()
             let uploadedBlocks = Dictionary<ContentBlockAddress, byte array>()
             let confirmedBlocks = Dictionary<ContentBlockAddress, byte array>()
+            /// Tracks manifest Block Count changes so this scenario can assert the resulting side effect explicitly.
             let mutable manifestBlockCount = 0
 
             try
@@ -1284,6 +1321,7 @@ type ManifestUploadSdkTests() =
                 if File.Exists(tempPath) then File.Delete(tempPath)
         }
 
+    /// Verifies that manifest uploads are enabled by default after manifest download reconstruction.
     [<Test>]
     member _.ManifestUploadsAreEnabledByDefaultAfterManifestDownloadReconstruction() =
         let previous = Environment.GetEnvironmentVariable(ManifestUpload.OptInEnvironmentVariable)

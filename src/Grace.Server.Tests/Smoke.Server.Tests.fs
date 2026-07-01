@@ -3,9 +3,11 @@ namespace Grace.Server.Tests
 open NUnit.Framework
 open System.Net
 
+/// Covers smoke scenarios.
 [<TestFixture>]
 [<NonParallelizable>]
 type Smoke() =
+    /// Verifies the healthz returns success scenario.
     [<Test; Category("Smoke")>]
     member _.HealthzReturnsSuccess() =
         task {

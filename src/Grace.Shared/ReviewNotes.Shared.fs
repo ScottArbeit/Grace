@@ -9,21 +9,26 @@ open System
 open System.Security.Cryptography
 open System.Text
 
+/// Contains review notes helpers.
 module ReviewNotes =
+    /// Normalizes path.
     let private normalizePath (relativePath: RelativePath) = relativePath.Replace('\\', '/')
 
+    /// Gets chapter key.
     let private getChapterKey (relativePath: RelativePath) =
         let normalized = normalizePath relativePath
         let segments = normalized.Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
 
         if segments.Length = 0 then normalized else segments[0]
 
+    /// Computes the stable chapter id that groups review notes by promotion set, policy snapshot, and sequence.
     let private computeChapterId (paths: RelativePath list) =
         let signature = paths |> List.sort |> String.concat "|"
         let bytes = Encoding.UTF8.GetBytes(signature)
         let hashBytes = SHA256.HashData(bytes)
         Sha256Hash(byteArrayToString hashBytes)
 
+    /// Builds chapters.
     let buildChapters (paths: RelativePath list) (evidence: EvidenceSliceSummary list) =
         paths
         |> List.groupBy getChapterKey

@@ -20,6 +20,7 @@ open System.Net.Http.Headers
 open System.Threading
 open System.Threading.Tasks
 
+/// Groups the doctor command parser, handlers, and output helpers.
 module Doctor =
 
     [<Literal>]
@@ -106,6 +107,7 @@ module Doctor =
     [<Literal>]
     let private DoctorServerProbeTimeoutMilliseconds = 1500
 
+    /// Defines the options parsed by the doctor command handlers.
     module private Options =
         let full =
             new Option<bool>(
@@ -373,6 +375,7 @@ module Doctor =
             }
         |]
 
+    /// Converts command data into the required shape.
     let private tokenizeChecks (values: string array) =
         if isNull values then
             Array.empty
@@ -387,14 +390,17 @@ module Doctor =
             |> Array.filter (String.IsNullOrWhiteSpace >> not)
             |> Array.distinctBy (fun value -> value.ToUpperInvariant())
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private SelectionError = Unknown of string array
 
+    /// Coordinates category matches token behavior for this CLI command path.
     let private categoryMatchesToken (category: string) (token: string) =
         category.Equals(token, StringComparison.OrdinalIgnoreCase)
         || category
             .Replace(" ", "-", StringComparison.OrdinalIgnoreCase)
             .Equals(token, StringComparison.OrdinalIgnoreCase)
 
+    /// Coordinates selected catalog entries behavior for this CLI command path.
     let private selectedCatalogEntries full offline listOnly requestedTokens =
         let profileEntries =
             catalog
@@ -427,6 +433,7 @@ module Doctor =
             else
                 Ok(selected |> Seq.toArray)
 
+    /// Validates checks from parsed options and returns a correlated GraceError when input is invalid.
     let private validateChecks parseResult full offline listOnly requestedTokens =
         match selectedCatalogEntries full offline listOnly requestedTokens with
         | Ok checks -> Ok checks
@@ -434,15 +441,18 @@ module Doctor =
             let tokens = String.Join(", ", unknown)
             Error(GraceError.Create $"Unknown doctor check token: {tokens}." (getCorrelationId parseResult))
 
+    /// Formats should render human report data for Spectre.Console output.
     let private shouldRenderHumanReport parseResult =
         not (parseResult |> json)
         && (parseResult |> hasOutput)
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private ConfigurationInspectionState =
         | ConfigurationLoaded of Configuration.GraceConfigurationInspection
         | ConfigurationMissing of string
         | ConfigurationMalformed of path: string * message: string
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DoctorInspectionContext =
         {
             Full: bool
@@ -477,10 +487,13 @@ module Doctor =
         | ServerProbeConnectionFailed of string
         | ServerProbeFailed of string
 
+    /// Normalizes Grace ids for optional text by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeOptionalText value = if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim())
 
+    /// Defines structured data exchanged by CLI helpers.
     type ServerProbeRequest = { BaseUri: Uri; RelativePath: string; BearerToken: string option; Timeout: TimeSpan }
 
+    /// Normalizes Grace ids for bearer token by keeping explicit scope values and clearing implicit child scopes.
     let private normalizeBearerToken (token: string) =
         let trimmed = token.Trim()
 
@@ -489,6 +502,7 @@ module Doctor =
         else
             trimmed
 
+    /// Builds command objects or parameters for execution.
     let private buildProbeUri (baseUri: Uri) (relativePath: string) =
         if not baseUri.IsAbsoluteUri then
             Error "Effective server URI is not absolute."
@@ -502,6 +516,7 @@ module Doctor =
             let pathText = relativePath.TrimStart('/')
             Ok(Uri($"{baseText}/{pathText}"))
 
+    /// Coordinates default server probe behavior for this CLI command path.
     let private defaultServerProbe (request: ServerProbeRequest) =
         task {
             match buildProbeUri request.BaseUri request.RelativePath with
@@ -550,11 +565,15 @@ module Doctor =
 
     let mutable private serverProbeFactory: ServerProbeRequest -> Task<ServerProbeInspection> = defaultServerProbe
 
+    /// Coordinates set server probe factory for tests behavior for this CLI command path.
     let setServerProbeFactoryForTests factory = serverProbeFactory <- factory
 
+    /// Coordinates reset server probe factory for tests behavior for this CLI command path.
     let resetServerProbeFactoryForTests () = serverProbeFactory <- defaultServerProbe
 
+    /// Resolves effective server uri from command options, configuration, or local state.
     let private resolveEffectiveServerUri (configurationState: ConfigurationInspectionState) environmentServerUri =
+        /// Tries to map resolve and returns a GraceError instead of throwing on unsupported input.
         let tryResolve source value =
             match Uri.TryCreate(value, UriKind.Absolute) with
             | true, uri when
@@ -577,6 +596,7 @@ module Doctor =
                 EffectiveServerUriUnavailable
                     $"No effective server URI was available because {ConfigFileParseCheckId} failed and {Constants.EnvironmentVariables.GraceServerUri} is not set."
 
+    /// Coordinates valid environment pat behavior for this CLI command path.
     let private validEnvironmentPat (authInspection: Auth.AuthInspection) =
         if authInspection.GraceTokenValid then
             Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.GraceToken)
@@ -585,6 +605,7 @@ module Doctor =
         else
             None
 
+    /// Coordinates probe server behavior for this CLI command path.
     let private probeServer relativePath bearerToken effectiveServerUri =
         match effectiveServerUri with
         | EffectiveServerUriUnavailable message -> Task.FromResult(ServerProbeInvalidUri message)
@@ -597,6 +618,7 @@ module Doctor =
             }
             |> serverProbeFactory
 
+    /// Builds the doctor inspection context from CLI options, environment, and local Grace configuration.
     let private createInspectionContext full offline requestedTokens =
         let configurationState =
             match Configuration.tryInspectCurrentDirectoryConfiguration () with
@@ -634,25 +656,32 @@ module Doctor =
                          |> fun task -> task.GetAwaiter().GetResult())
         }
 
+    /// Coordinates check result behavior for this CLI command path.
     let private checkResult checkId category title status severity summary : LocalOutputDto.DoctorCheckResultDto =
         { Id = checkId; Category = category; Title = title; Status = status; Severity = severity; Summary = summary }
 
+    /// Coordinates skipped behavior for this CLI command path.
     let private skipped (check: LocalOutputDto.DoctorCheckDto) summary = checkResult check.Id check.Category check.Title "Skipped" "Info" summary
 
+    /// Checks whether missing required fields is true for the parsed command input.
     let private missingRequiredFields (fields: Auth.AuthEnvironmentFieldStatus array) =
         fields
         |> Array.filter (fun field -> field.Required && not field.IsSet)
         |> Array.map (fun field -> field.Name)
 
+    /// Coordinates present field names behavior for this CLI command path.
     let private presentFieldNames (fields: Auth.AuthEnvironmentFieldStatus array) =
         fields
         |> Array.filter (fun field -> field.IsSet)
         |> Array.map (fun field -> field.Name)
 
+    /// Formats field names values into the text shown in Spectre.Console tables or command output.
     let private formatFieldNames (names: string array) = if Array.isEmpty names then "none" else String.Join(", ", names)
 
+    /// Formats list or none values into the text shown in Spectre.Console tables or command output.
     let private formatListOrNone (values: string array) = if Array.isEmpty values then "none" else String.Join(", ", values)
 
+    /// Coordinates lifecycle summary behavior for this CLI command path.
     let private lifecycleSummary (diagnostics: ClientIdentity.LifecycleDiagnostics) =
         let details = ResizeArray<string>()
 
@@ -680,25 +709,30 @@ module Doctor =
 
         String.Join("; ", details)
 
+    /// Coordinates lifecycle status needs user action behavior for this CLI command path.
     let private lifecycleStatusNeedsUserAction (diagnostics: ClientIdentity.LifecycleDiagnostics) =
         match diagnostics.Status with
         | Some status when status.Equals("deprecated", StringComparison.OrdinalIgnoreCase) -> true
         | Some status when status.Equals("unsupported", StringComparison.OrdinalIgnoreCase) -> true
         | _ -> false
 
+    /// Checks whether lifecycle has warning is true for the parsed command input.
     let private lifecycleHasWarning (diagnostics: ClientIdentity.LifecycleDiagnostics) =
         lifecycleStatusNeedsUserAction diagnostics
         || diagnostics.UnsupportedAfterIsMalformed
         || diagnostics.UpdateUrlIsHttps = Some false
 
+    /// Coordinates healthz lifecycle rejection summary behavior for this CLI command path.
     let private healthzLifecycleRejectionSummary (response: ServerProbeResponse) =
         response.LifecycleDiagnostics
         |> Option.filter lifecycleStatusNeedsUserAction
         |> Option.map (fun diagnostics ->
             $"Reached /healthz with HTTP {(int response.StatusCode)} {response.ReasonPhrase}, and Grace SDK lifecycle headers reported client status requiring action: {lifecycleSummary diagnostics}. Update the Grace CLI/SDK or otherwise address the lifecycle status before retrying.")
 
+    /// Evaluates is successful http status against parsed options and command state.
     let private isSuccessfulHttpStatus (statusCode: HttpStatusCode) = int statusCode >= 200 && int statusCode <= 299
 
+    /// Coordinates probe failure summary behavior for this CLI command path.
     let private probeFailureSummary inspection =
         match inspection with
         | ServerProbeSkipped message -> message
@@ -709,6 +743,7 @@ module Doctor =
         | ServerProbeFailed message -> message
         | ServerProbeSucceeded response -> $"Server returned HTTP {(int response.StatusCode)} {response.ReasonPhrase}."
 
+    /// Coordinates local state unavailable summary behavior for this CLI command path.
     let private localStateUnavailableSummary checkId (inspection: LocalStateDb.ReadOnlyLocalStateInspection) =
         if not inspection.ParentDirectoryExists then
             $"Skipped because {StateDbFilePresentCheckId} did not find the local .grace directory for {inspection.DbPath}; doctor did not create it."
@@ -721,12 +756,14 @@ module Doctor =
             | Some message -> $"Skipped because {StateDbReadOnlyOpenCheckId} could not open the database read-only: {message}"
             | None -> $"Skipped because {checkId} requires a read-only local state database inspection."
 
+    /// Sends or polls the working tree scan explicitly requested OIDC/auth request used by interactive CLI authentication.
     let private workingTreeScanExplicitlyRequested (context: DoctorInspectionContext) =
         context.RequestedTokens
         |> Array.exists (fun token ->
             token.Equals(WorkingTreeScanCheckId, StringComparison.OrdinalIgnoreCase)
             || categoryMatchesToken "Working tree" token)
 
+    /// Coordinates count differences behavior for this CLI command path.
     let private countDifferences differenceType (differences: List<FileSystemDifference>) =
         differences
         |> Seq.filter (fun difference -> difference.DifferenceType = differenceType)
@@ -735,6 +772,7 @@ module Doctor =
     let private workingTreeScanRemediation =
         "Run `grace maintenance scan` to inspect details or `grace maintenance update-index` when you intentionally want local state to match the current working tree."
 
+    /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private WorkingTreeScanSummaryResult =
         | WorkingTreeScanPrerequisiteSkipped of string
         | WorkingTreeScanFailed of string
@@ -742,10 +780,13 @@ module Doctor =
 
     let mutable private workingTreeScanner = Services.scanWorkingTreeForDifferencesReadOnly
 
+    /// Coordinates set working tree scanner for tests behavior for this CLI command path.
     let setWorkingTreeScannerForTests scanner = workingTreeScanner <- scanner
 
+    /// Coordinates reset working tree scanner for tests behavior for this CLI command path.
     let resetWorkingTreeScannerForTests () = workingTreeScanner <- Services.scanWorkingTreeForDifferencesReadOnly
 
+    /// Coordinates working tree scan summary behavior for this CLI command path.
     let private workingTreeScanSummary (context: DoctorInspectionContext) =
         match context.ConfigurationState with
         | ConfigurationMissing _ ->
@@ -814,6 +855,7 @@ module Doctor =
                             WorkingTreeScanSummary
                                 $"Working tree differs from the read-only local-state snapshot: {differences.Count} total, {added} added, {changed} changed, {deleted} deleted. {workingTreeScanRemediation}"
 
+    /// Coordinates oidc summary behavior for this CLI command path.
     let private oidcSummary (auth: Auth.AuthInspection) =
         let m2mMissing = missingRequiredFields auth.M2mFields
         let cliMissing = missingRequiredFields auth.CliFields
@@ -831,9 +873,13 @@ module Doctor =
         else
             "No OIDC environment configuration was detected. Set the OIDC M2M or CLI environment keys, or provide GRACE_TOKEN."
 
+    /// Coordinates result for check behavior for this CLI command path.
     let private resultForCheck (context: DoctorInspectionContext) (check: LocalOutputDto.DoctorCheckDto) : LocalOutputDto.DoctorCheckResultDto =
+        /// Coordinates ok behavior for this CLI command path.
         let ok summary = checkResult check.Id check.Category check.Title "Ok" "Info" summary
+        /// Coordinates warning behavior for this CLI command path.
         let warning summary = checkResult check.Id check.Category check.Title "Warning" "Warning" summary
+        /// Coordinates failed behavior for this CLI command path.
         let failed summary = checkResult check.Id check.Category check.Title "Failed" "Error" summary
 
         match check.Id with
@@ -1158,6 +1204,7 @@ module Doctor =
             | ConfigurationMalformed _ -> skipped check $"Skipped because {ConfigFileParseCheckId} failed."
         | _ -> skipped check "No diagnostic implementation is registered for this check."
 
+    /// Lists only result for check data through the CLI service call and output pipeline.
     let private listOnlyResultForCheck (check: LocalOutputDto.DoctorCheckDto) : LocalOutputDto.DoctorCheckResultDto =
         {
             Id = check.Id
@@ -1168,7 +1215,9 @@ module Doctor =
             Summary = "Catalog discovery only; diagnostic probes were not run."
         }
 
+    /// Coordinates summarize behavior for this CLI command path.
     let private summarize (checks: LocalOutputDto.DoctorCheckResultDto array) =
+        /// Coordinates count behavior for this CLI command path.
         let count status =
             checks
             |> Array.filter (fun check -> check.Status.Equals(status, StringComparison.OrdinalIgnoreCase))
@@ -1182,11 +1231,13 @@ module Doctor =
             LocalOutputDto.DoctorSummaryDto.Skipped = count "Skipped"
         }
 
+    /// Coordinates report status behavior for this CLI command path.
     let private reportStatus (summary: LocalOutputDto.DoctorSummaryDto) =
         if summary.Failed > 0 then "Failed"
         elif summary.Warning > 0 then "Warning"
         else "Ok"
 
+    /// Coordinates diagnostic exit code behavior for this CLI command path.
     let diagnosticExitCode strict (report: LocalOutputDto.DoctorReportDto) =
         if report.Status.Equals("Failed", StringComparison.OrdinalIgnoreCase) then
             1
@@ -1198,6 +1249,7 @@ module Doctor =
         else
             0
 
+    /// Builds a doctor report that includes token inspection results alongside environment checks.
     let private createReportForChecksWithTokens full offline listOnly requestedTokens (checks: LocalOutputDto.DoctorCheckDto array) =
         let results =
             if listOnly then
@@ -1226,9 +1278,11 @@ module Doctor =
 
         { report with ExitCode = diagnosticExitCode false report }
 
+    /// Builds a doctor report from the collected environment and configuration checks.
     let createReportForChecks full offline listOnly (checks: LocalOutputDto.DoctorCheckDto array) =
         createReportForChecksWithTokens full offline listOnly Array.empty checks
 
+    /// Coordinates with status behavior for this CLI command path.
     let withStatus status (report: LocalOutputDto.DoctorReportDto) =
         let checks =
             if report.Checks.Length = 0 then
@@ -1242,6 +1296,7 @@ module Doctor =
         let updated = { report with Status = normalizedStatus; Checks = checks; Summary = summary }
         { updated with ExitCode = diagnosticExitCode updated.Strict updated }
 
+    /// Builds the final doctor report shown to the user or emitted as machine-readable output.
     let private createReport full offline strict listOnly requestedTokens checks =
         let report = createReportForChecksWithTokens full offline listOnly requestedTokens checks
 
@@ -1249,6 +1304,7 @@ module Doctor =
 
         { report with ExitCode = diagnosticExitCode strict report }
 
+    /// Renders human report results only when the selected output mode includes human-readable console text.
     let private renderHumanReport (report: LocalOutputDto.DoctorReportDto) =
         AnsiConsole.MarkupLine("[bold]Grace doctor[/]")
         AnsiConsole.MarkupLine($"Status: {report.Status}; checks: {report.Summary.Total}; exit code: {report.ExitCode}")
@@ -1265,9 +1321,11 @@ module Doctor =
 
         AnsiConsole.Write(table)
 
+    /// Executes the invoke command by binding ParseResult values to the SDK request and CLI output contract.
     type Invoke() =
         inherit SynchronousCommandLineAction()
 
+        /// Runs the asynchronous invoke action when System.CommandLine dispatches the parsed command.
         override _.Invoke(parseResult: ParseResult) : int =
             if
                 (parseResult |> verbose)

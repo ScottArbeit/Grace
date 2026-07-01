@@ -17,6 +17,7 @@ type FakeMiddleware(next: RequestDelegate) =
     let stringBuilderPool = ObjectPool.Create<StringBuilder>(pooledObjectPolicy)
     let log = ApplicationContext.loggerFactory.CreateLogger(nameof FakeMiddleware)
 
+    /// Passes requests through unchanged for middleware-ordering tests and local placeholders.
     member this.Invoke(context: HttpContext) =
 
         // -----------------------------------------------------------------------------------------------------

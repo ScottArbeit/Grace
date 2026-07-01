@@ -11,9 +11,12 @@ open System.Linq
 open System.Text
 open System.Text.RegularExpressions
 
+/// Contains evidence helpers.
 module Evidence =
+    /// Estimates evidence size for scoring without invoking a tokenizer dependency.
     let private estimateTokens (byteCount: int) = if byteCount <= 0 then 0 else max 1 (byteCount / 4)
 
+    /// Redacts sensitive evidence text before it is stored or returned.
     let private redact (patterns: string list) (content: string) =
         let redacted =
             (content, patterns)
@@ -25,6 +28,7 @@ module Evidence =
 
         redacted, not (String.Equals(content, redacted, StringComparison.Ordinal))
 
+    /// Gets line bounds.
     let private getLineBounds (lines: DiffPiece array) =
         let positions =
             lines
@@ -37,6 +41,7 @@ module Evidence =
             1, lineCount
         | _ -> positions |> List.min, positions |> List.max
 
+    /// Scores evidence reasons by relevance, recency, and token budget.
     let private scoreReasons (riskProfile: DeterministicRiskProfile option) (relativePath: RelativePath) (lines: DiffPiece array) =
         let changedLineCount =
             lines
@@ -66,6 +71,7 @@ module Evidence =
         let score = reasons |> Seq.sumBy (fun reason -> reason.Score)
         score, reasons |> Seq.toList
 
+    /// Converts top reasons.
     let private topReasons (sliceSummaries: EvidenceSliceSummary list) =
         sliceSummaries
         |> Seq.collect (fun summary -> summary.Reasons)

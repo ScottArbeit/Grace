@@ -4,6 +4,7 @@ open FSharp.Control
 open System.Threading.Tasks
 open System
 
+/// Contains utilities helpers.
 module Utilities =
 
     /// Returns the first validation that matches the predicate, or None if none match.

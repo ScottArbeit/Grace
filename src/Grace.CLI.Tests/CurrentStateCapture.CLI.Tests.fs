@@ -18,6 +18,7 @@ open System.Security.Cryptography
 open System.Text
 open System.Threading.Tasks
 
+/// Groups current state capture cli coverage for the CLI test project.
 [<NonParallelizable>]
 module CurrentStateCaptureCliTests =
     let private correlationId = "current-state-capture-tests"
@@ -28,6 +29,7 @@ module CurrentStateCaptureCliTests =
     let private rootBlake3 = Blake3Hash "current-root-blake3"
     let private savedReferenceId = Guid.NewGuid()
 
+    /// Builds root directory version with hashes test data used to exercise CLI current State Capture behavior.
     let private rootDirectoryVersionWithHashes directoryVersionId sha256Hash blake3Hash =
         LocalDirectoryVersion.CreateWithHashes
             directoryVersionId
@@ -42,8 +44,10 @@ module CurrentStateCaptureCliTests =
             0L
             DateTime.UtcNow
 
+    /// Builds root directory version test data used to exercise CLI current State Capture behavior.
     let private rootDirectoryVersion directoryVersionId sha256Hash = rootDirectoryVersionWithHashes directoryVersionId sha256Hash rootBlake3
 
+    /// Builds grace status with root blake3 test data used to exercise CLI current State Capture behavior.
     let private graceStatusWithRootBlake3 directoryVersionId sha256Hash blake3Hash =
         let root = rootDirectoryVersionWithHashes directoryVersionId sha256Hash blake3Hash
         let index = GraceIndex()
@@ -56,13 +60,16 @@ module CurrentStateCaptureCliTests =
             RootDirectoryBlake3Hash = root.Blake3Hash
         }
 
+    /// Builds grace status test data used to exercise CLI current State Capture behavior.
     let private graceStatus directoryVersionId sha256Hash = graceStatusWithRootBlake3 directoryVersionId sha256Hash rootBlake3
 
+    /// Builds sha256 hash test data used to exercise CLI current State Capture behavior.
     let private sha256Hash (bytes: byte array) =
         SHA256.HashData(bytes)
         |> Convert.ToHexString
         |> fun value -> Sha256Hash(value.ToLowerInvariant())
 
+    /// Builds directory version test data used to exercise CLI current State Capture behavior.
     let private directoryVersion
         (configuration: GraceConfiguration)
         (directoryVersionId: DirectoryVersionId)
@@ -83,6 +90,7 @@ module CurrentStateCaptureCliTests =
             (files |> Seq.sumBy (fun file -> int64 file.Size))
             DateTime.UtcNow
 
+    /// Builds file version test data used to exercise CLI current State Capture behavior.
     let private fileVersion (relativePath: RelativePath) (contents: string) =
         let bytes = Encoding.UTF8.GetBytes(contents)
 
@@ -96,6 +104,7 @@ module CurrentStateCaptureCliTests =
             true
             DateTime.UtcNow
 
+    /// Builds grace status from directories test data used to exercise CLI current State Capture behavior.
     let private graceStatusFromDirectories (root: LocalDirectoryVersion) (directories: LocalDirectoryVersion seq) =
         let index = GraceIndex()
 
@@ -110,6 +119,7 @@ module CurrentStateCaptureCliTests =
             RootDirectoryBlake3Hash = root.Blake3Hash
         }
 
+    /// Builds reference dto test data used to exercise CLI current State Capture behavior.
     let private referenceDto referenceId directoryVersionId sha256Hash =
         { ReferenceDto.Default with
             ReferenceId = referenceId
@@ -120,9 +130,11 @@ module CurrentStateCaptureCliTests =
             Blake3Hash = rootBlake3
         }
 
+    /// Builds branch test data used to exercise CLI current State Capture behavior.
     let private branch saveEnabled latestReference =
         { BranchDto.Default with BranchId = currentBranchId; SaveEnabled = saveEnabled; LatestReference = latestReference; LatestSave = latestReference }
 
+    /// Builds manifest reference for test data used to exercise CLI current State Capture behavior.
     let private manifestReferenceFor bytes =
         let blockAddress = ContentBlockAddress(ContentAddress.computeBlake3Hex bytes)
 
@@ -139,6 +151,7 @@ module CurrentStateCaptureCliTests =
 
         FileContentReference.FileManifest { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
 
+    /// Configures for root for the test scenario.
     let private configureForRoot (root: string) =
         let configuration = GraceConfiguration()
         configuration.OwnerId <- Guid.NewGuid()
@@ -155,6 +168,7 @@ module CurrentStateCaptureCliTests =
         updateConfiguration configuration
         configuration
 
+    /// Runs the supplied action with temp repo applied.
     let private withTempRepo (action: string -> GraceConfiguration -> unit) =
         let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-{Guid.NewGuid():N}")
         let previousDirectory = Environment.CurrentDirectory
@@ -177,6 +191,7 @@ module CurrentStateCaptureCliTests =
 
             if Directory.Exists(root) then Directory.Delete(root, true)
 
+    /// Verifies that directory delete removes subtree reference from nearest surviving parent.
     [<Test>]
     let ``directory delete removes subtree reference from nearest surviving parent`` () =
         withTempRepo (fun root configuration ->
@@ -212,6 +227,7 @@ module CurrentStateCaptureCliTests =
                     |]
                 )
 
+            /// Builds updated status test data used to exercise CLI current State Capture behavior.
             let updatedStatus, newDirectoryVersions =
                 (getNewGraceStatusAndDirectoryVersions previousStatus differences)
                     .Result
@@ -254,6 +270,7 @@ module CurrentStateCaptureCliTests =
                     Constants.RootDirectoryPath
                 ])
 
+    /// Verifies that directory delete preserves sibling that differs only by case.
     [<Test>]
     let ``directory delete preserves sibling that differs only by case`` () =
         withTempRepo (fun root configuration ->
@@ -290,6 +307,7 @@ module CurrentStateCaptureCliTests =
                     |]
                 )
 
+            /// Builds updated status test data used to exercise CLI current State Capture behavior.
             let updatedStatus, newDirectoryVersions =
                 (getNewGraceStatusAndDirectoryVersions previousStatus differences)
                     .Result
@@ -326,6 +344,7 @@ module CurrentStateCaptureCliTests =
                     Constants.RootDirectoryPath
                 ])
 
+    /// Verifies that directory delete for unknown path is ignored without changing root.
     [<Test>]
     let ``directory delete for unknown path is ignored without changing root`` () =
         withTempRepo (fun _ configuration ->
@@ -340,6 +359,7 @@ module CurrentStateCaptureCliTests =
                     |]
                 )
 
+            /// Builds updated status test data used to exercise CLI current State Capture behavior.
             let updatedStatus, newDirectoryVersions =
                 (getNewGraceStatusAndDirectoryVersions previousStatus differences)
                     .Result
@@ -358,6 +378,7 @@ module CurrentStateCaptureCliTests =
 
             newDirectoryVersions.Count |> should equal 0)
 
+    /// Verifies that file delete still removes file reference and rebuilds root.
     [<Test>]
     let ``file delete still removes file reference and rebuilds root`` () =
         withTempRepo (fun _ configuration ->
@@ -373,6 +394,7 @@ module CurrentStateCaptureCliTests =
                     |]
                 )
 
+            /// Builds updated status test data used to exercise CLI current State Capture behavior.
             let updatedStatus, newDirectoryVersions =
                 (getNewGraceStatusAndDirectoryVersions previousStatus differences)
                     .Result
@@ -388,6 +410,7 @@ module CurrentStateCaptureCliTests =
             newDirectoryVersions[0].RelativePath
             |> should equal Constants.RootDirectoryPath)
 
+    /// Verifies that empty directory delete removes child reference from root.
     [<Test>]
     let ``empty directory delete removes child reference from root`` () =
         withTempRepo (fun _ configuration ->
@@ -404,6 +427,7 @@ module CurrentStateCaptureCliTests =
                     |]
                 )
 
+            /// Builds updated status test data used to exercise CLI current State Capture behavior.
             let updatedStatus, newDirectoryVersions =
                 (getNewGraceStatusAndDirectoryVersions previousStatus differences)
                     .Result
@@ -423,6 +447,7 @@ module CurrentStateCaptureCliTests =
             newDirectoryVersions[0].RelativePath
             |> should equal Constants.RootDirectoryPath)
 
+    /// Builds default operations test data used to exercise CLI current State Capture behavior.
     let private defaultOperations branchDto =
         {
             GetBranch = fun () -> Task.FromResult(Ok(GraceReturnValue.Create branchDto correlationId))
@@ -438,9 +463,11 @@ module CurrentStateCaptureCliTests =
             CreateSaveReference = fun _ _ -> Task.FromResult(Ok(Guid.NewGuid()))
         }
 
+    /// Verifies that explicit reference bypasses local state capture.
     [<Test>]
     let ``explicit reference bypasses local state capture`` () =
         let explicitReferenceId = Guid.NewGuid()
+        /// Tracks get Branch Called changes so this scenario can assert the resulting side effect explicitly.
         let mutable getBranchCalled = false
 
         let operations =
@@ -465,6 +492,7 @@ module CurrentStateCaptureCliTests =
             getBranchCalled |> should equal false
         | Error error -> Assert.Fail($"Expected explicit reference success, got: {error.Error}")
 
+    /// Verifies that grace watch state uses matching existing branch reference.
     [<Test>]
     let ``GraceWatch state uses matching existing branch reference`` () =
         let latest = referenceDto savedReferenceId rootDirectoryId rootSha
@@ -481,6 +509,7 @@ module CurrentStateCaptureCliTests =
                 DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
             }
 
+        /// Tracks read Status Called changes so this scenario can assert the resulting side effect explicitly.
         let mutable readStatusCalled = false
 
         let operations =
@@ -511,10 +540,12 @@ module CurrentStateCaptureCliTests =
             readStatusCalled |> should equal false
         | Error error -> Assert.Fail($"Expected GraceWatch success, got: {error.Error}")
 
+    /// Verifies that unchanged local state reuses same root reference when local blake3 is unknown.
     [<Test>]
     let ``unchanged local state reuses same root reference when local BLAKE3 is unknown`` () =
         let latest = referenceDto savedReferenceId rootDirectoryId rootSha
         let unknownRootBlake3 = Blake3Hash String.Empty
+        /// Tracks create Save Called changes so this scenario can assert the resulting side effect explicitly.
         let mutable createSaveCalled = false
 
         let operations =
@@ -548,12 +579,14 @@ module CurrentStateCaptureCliTests =
             createSaveCalled |> should equal false
         | Error error -> Assert.Fail($"Expected unknown local BLAKE3 to reuse existing reference, got: {error.Error}")
 
+    /// Verifies that unchanged local state does not reuse same sha 256 reference with different blake3.
     [<Test>]
     let ``unchanged local state does not reuse same SHA-256 reference with different BLAKE3`` () =
         let staleReferenceId = Guid.NewGuid()
         let createdSaveId = Guid.NewGuid()
         let differentBlake3 = Blake3Hash "different-root-blake3"
         let staleReference = { referenceDto staleReferenceId rootDirectoryId rootSha with Blake3Hash = differentBlake3 }
+        /// Tracks created Save Root changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
 
         let operations =
@@ -593,10 +626,12 @@ module CurrentStateCaptureCliTests =
             |> should equal rootBlake3
         | Error error -> Assert.Fail($"Expected mismatched BLAKE3 reference to create a new save, got: {error.Error}")
 
+    /// Verifies that unchanged child branch does not use parent based on reference.
     [<Test>]
     let ``unchanged child branch does not use parent BasedOn reference`` () =
         let parentReferenceId = Guid.NewGuid()
         let createdSaveId = Guid.NewGuid()
+        /// Tracks created Save changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSave = false
 
         let parentBasedOn = { referenceDto parentReferenceId rootDirectoryId rootSha with BranchId = parentBranchId }
@@ -634,14 +669,19 @@ module CurrentStateCaptureCliTests =
             createdSave |> should equal true
         | Error error -> Assert.Fail($"Expected implicit Save success, got: {error.Error}")
 
+    /// Verifies that local changes auto create save with annotate message.
     [<Test>]
     let ``local changes auto-create save with annotate message`` () =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-sha"
         let createdSaveId = Guid.NewGuid()
+        /// Tracks uploaded Directories changes so this scenario can assert the resulting side effect explicitly.
         let mutable uploadedDirectories = false
+        /// Tracks applied Status changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedStatus = false
+        /// Tracks save Message changes so this scenario can assert the resulting side effect explicitly.
         let mutable saveMessage = String.Empty
+        /// Tracks created Save Root changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
 
         let differences =
@@ -703,6 +743,7 @@ module CurrentStateCaptureCliTests =
             appliedStatus |> should equal true
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
+    /// Verifies that delete only file changes create save after directory upload and then apply local status.
     [<Test>]
     let ``delete-only file changes create save after directory upload and then apply local status`` () =
         let updatedRootId = Guid.NewGuid()
@@ -710,12 +751,19 @@ module CurrentStateCaptureCliTests =
         let createdSaveId = Guid.NewGuid()
         let saveMessage = "Delete deleted.txt"
         let operationOrder = ResizeArray<string>()
+        /// Tracks uploaded File Versions changes so this scenario can assert the resulting side effect explicitly.
         let mutable uploadedFileVersions = Seq.empty<LocalFileVersion>
+        /// Tracks saved Directory Versions changes so this scenario can assert the resulting side effect explicitly.
         let mutable savedDirectoryVersions = List<DirectoryVersion>()
+        /// Tracks created Save Root changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
+        /// Tracks created Save Message changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSaveMessage = String.Empty
+        /// Tracks applied Status changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedStatus = GraceStatus.Default
+        /// Tracks applied Directory Versions changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedDirectoryVersions = Seq.empty<LocalDirectoryVersion>
+        /// Tracks applied Differences changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedDifferences = Seq.empty<FileSystemDifference>
 
         let differences =
@@ -811,14 +859,18 @@ module CurrentStateCaptureCliTests =
                 |]
         | Error error -> Assert.Fail($"Expected delete-only auto-save success, got: {error.Error}")
 
+    /// Verifies that directory only deletes still create save with updated root directory version.
     [<Test>]
     let ``directory-only deletes still create save with updated root directory version`` () =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-directory-delete-sha"
         let createdSaveId = Guid.NewGuid()
         let operationOrder = ResizeArray<string>()
+        /// Tracks created Save Root changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
+        /// Tracks created Save Message changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSaveMessage = "not-empty"
+        /// Tracks applied Status changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedStatus = GraceStatus.Default
 
         let differences =
@@ -894,6 +946,7 @@ module CurrentStateCaptureCliTests =
                 |]
         | Error error -> Assert.Fail($"Expected directory-only delete auto-save success, got: {error.Error}")
 
+    /// Verifies that changed file upload selection comes from updated directory versions.
     [<Test>]
     let ``changed file upload selection comes from updated directory versions`` () =
         let changedPath = RelativePath "src/cached-large.bin"
@@ -947,6 +1000,7 @@ module CurrentStateCaptureCliTests =
 
         selected |> should equal [ changedFile ]
 
+    /// Verifies that local changes upload changed file versions already present in object cache.
     [<Test>]
     let ``local changes upload changed file versions already present in object cache`` () =
         let updatedRootId = Guid.NewGuid()
@@ -965,6 +1019,7 @@ module CurrentStateCaptureCliTests =
                 true
                 DateTime.UtcNow
 
+        /// Tracks uploaded Files changes so this scenario can assert the resulting side effect explicitly.
         let mutable uploadedFiles = List<LocalFileVersion>()
 
         let differences =
@@ -1027,6 +1082,7 @@ module CurrentStateCaptureCliTests =
             |> should equal changedFile.Sha256Hash
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
+    /// Verifies that local changes save directory versions with enriched uploaded file versions.
     [<Test>]
     let ``local changes save directory versions with enriched uploaded file versions`` () =
         let updatedRootId = Guid.NewGuid()
@@ -1050,6 +1106,7 @@ module CurrentStateCaptureCliTests =
         uploadedFile.Blake3Hash <- Blake3Hash(ContentAddress.computeBlake3Hex payload)
         uploadedFile.ContentReference <- manifestReferenceFor payload
 
+        /// Tracks saved Directory Files changes so this scenario can assert the resulting side effect explicitly.
         let mutable savedDirectoryFiles = List<FileVersion>()
 
         let differences =
@@ -1107,6 +1164,7 @@ module CurrentStateCaptureCliTests =
             |> should equal FileContentReferenceType.FileManifest
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
+    /// Verifies that local changes preserve saved manifest references for unchanged sibling files.
     [<Test>]
     let ``local changes preserve saved manifest references for unchanged sibling files`` () =
         let updatedRootId = Guid.NewGuid()
@@ -1156,6 +1214,7 @@ module CurrentStateCaptureCliTests =
                 (List<FileVersion>([| savedManifestFile |]))
                 unchangedFile.Size
 
+        /// Tracks saved Directory Files changes so this scenario can assert the resulting side effect explicitly.
         let mutable savedDirectoryFiles = List<FileVersion>()
 
         let differences =
@@ -1213,6 +1272,7 @@ module CurrentStateCaptureCliTests =
             |> should equal FileContentReferenceType.FileManifest
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
+    /// Verifies that local changes preserve trusted manifest reference when unchanged sibling blake3 is unknown.
     [<Test>]
     let ``local changes preserve trusted manifest reference when unchanged sibling BLAKE3 is unknown`` () =
         let updatedRootId = Guid.NewGuid()
@@ -1273,6 +1333,7 @@ module CurrentStateCaptureCliTests =
                 (List<FileVersion>([| savedManifestFile |]))
                 trustedUnchangedFile.Size
 
+        /// Tracks saved Directory Files changes so this scenario can assert the resulting side effect explicitly.
         let mutable savedDirectoryFiles = List<FileVersion>()
 
         let differences =
@@ -1331,6 +1392,7 @@ module CurrentStateCaptureCliTests =
             |> should equal FileContentReferenceType.FileManifest
         | Error error -> Assert.Fail($"Expected unknown local BLAKE3 manifest preservation success, got: {error.Error}")
 
+    /// Verifies that local changes do not preserve trusted manifest reference when populated blake3 conflicts.
     [<Test>]
     let ``local changes do not preserve trusted manifest reference when populated BLAKE3 conflicts`` () =
         let updatedRootId = Guid.NewGuid()
@@ -1391,6 +1453,7 @@ module CurrentStateCaptureCliTests =
                 (List<FileVersion>([| savedManifestFile |]))
                 trustedUnchangedFile.Size
 
+        /// Tracks saved Directory Files changes so this scenario can assert the resulting side effect explicitly.
         let mutable savedDirectoryFiles = List<FileVersion>()
 
         let differences =
@@ -1449,6 +1512,7 @@ module CurrentStateCaptureCliTests =
             |> should equal FileContentReferenceType.WholeFileContent
         | Error error -> Assert.Fail($"Expected conflicting local BLAKE3 to avoid manifest preservation, got: {error.Error}")
 
+    /// Verifies that local changes preserve saved manifest references and dual hash save identity.
     [<Test>]
     let ``local changes preserve saved manifest references and dual-hash save identity`` () =
         let updatedRootId = Guid.NewGuid()
@@ -1497,9 +1561,13 @@ module CurrentStateCaptureCliTests =
                 (List<FileVersion>([| savedManifestFile |]))
                 unchangedFile.Size
 
+        /// Tracks saved Directory Versions changes so this scenario can assert the resulting side effect explicitly.
         let mutable savedDirectoryVersions = List<DirectoryVersion>()
+        /// Tracks created Save Root changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSaveRoot = Unchecked.defaultof<LocalDirectoryVersion>
+        /// Tracks applied Status changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedStatus = GraceStatus.Default
+        /// Tracks applied Directory Versions changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedDirectoryVersions = List<LocalDirectoryVersion>()
 
         let differences =
@@ -1598,10 +1666,12 @@ module CurrentStateCaptureCliTests =
             |> should equal savedDirectoryVersion.Blake3Hash
         | Error error -> Assert.Fail($"Expected auto-save success, got: {error.Error}")
 
+    /// Verifies that local changes do not apply local status when save reference creation fails.
     [<Test>]
     let ``local changes do not apply local status when save reference creation fails`` () =
         let updatedRootId = Guid.NewGuid()
         let updatedRootSha = Sha256Hash "updated-root-sha"
+        /// Tracks applied Status changes so this scenario can assert the resulting side effect explicitly.
         let mutable appliedStatus = false
 
         let differences =
@@ -1637,6 +1707,7 @@ module CurrentStateCaptureCliTests =
 
             appliedStatus |> should equal false
 
+    /// Verifies that read only current state scan detects changed blake3 when sha 256 still matches.
     [<Test>]
     let ``read-only current-state scan detects changed BLAKE3 when SHA-256 still matches`` () =
         let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-scan-{Guid.NewGuid():N}")
@@ -1708,6 +1779,7 @@ module CurrentStateCaptureCliTests =
         finally
             if Directory.Exists(root) then Directory.Delete(root, true)
 
+    /// Verifies that update working directory replaces same sha file when blake3 changes.
     [<Test>]
     let ``updateWorkingDirectory replaces same-sha file when blake3 changes`` () =
         withTempRepo (fun root configuration ->
@@ -1796,6 +1868,7 @@ module CurrentStateCaptureCliTests =
             File.ReadAllBytes(workingFilePath)
             |> should equal updatedBytes)
 
+    /// Verifies that read only current state scan treats missing stored blake3 as unknown when sha 256 still matches.
     [<Test>]
     let ``read-only current-state scan treats missing stored BLAKE3 as unknown when SHA-256 still matches`` () =
         let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-scan-{Guid.NewGuid():N}")
@@ -1860,6 +1933,7 @@ module CurrentStateCaptureCliTests =
         finally
             if Directory.Exists(root) then Directory.Delete(root, true)
 
+    /// Verifies that created save reference id is parsed from response properties.
     [<Test>]
     let ``created save reference id is parsed from response properties`` () =
         let createdSaveId = Guid.NewGuid()
@@ -1871,9 +1945,12 @@ module CurrentStateCaptureCliTests =
         | Ok referenceId -> referenceId |> should equal createdSaveId
         | Error error -> Assert.Fail($"Expected ReferenceId property parse success, got: {error.Error}")
 
+    /// Verifies that save disabled fails before uploading local changes.
     [<Test>]
     let ``save disabled fails before uploading local changes`` () =
+        /// Tracks uploaded Files changes so this scenario can assert the resulting side effect explicitly.
         let mutable uploadedFiles = false
+        /// Tracks created Save changes so this scenario can assert the resulting side effect explicitly.
         let mutable createdSave = false
 
         let differences =
@@ -1909,6 +1986,7 @@ module CurrentStateCaptureCliTests =
             uploadedFiles |> should equal false
             createdSave |> should equal false
 
+    /// Verifies that helper does not write diagnostics to stdout.
     [<Test>]
     let ``helper does not write diagnostics to stdout`` () =
         let explicitReferenceId = Guid.NewGuid()

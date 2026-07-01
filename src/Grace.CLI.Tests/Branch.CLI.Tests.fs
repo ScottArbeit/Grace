@@ -18,6 +18,7 @@ open System.IO
 open System.Text.Json
 open System.Threading.Tasks
 
+/// Groups branch command coverage for the CLI test project.
 [<NonParallelizable>]
 module BranchCommandTests =
     let private ownerId = Guid.NewGuid()
@@ -27,6 +28,7 @@ module BranchCommandTests =
     let private targetReferenceId = Guid.NewGuid()
     let private correlationId = "branch-annotate-tests"
 
+    /// Runs the supplied action with ids applied.
     let private withIds (args: string array) =
         Array.append
             args
@@ -43,13 +45,16 @@ module BranchCommandTests =
                 correlationId
             |]
 
+    /// Parses representative arguments through the production CLI parser for CLI branch assertions.
     let private parse args = GraceCommand.rootCommand.Parse(withIds args)
 
+    /// Sets ansi console output needed by the test scenario.
     let private setAnsiConsoleOutput (writer: TextWriter) =
         let settings = AnsiConsoleSettings()
         settings.Out <- AnsiConsoleOutput(writer)
         AnsiConsole.Console <- AnsiConsole.Create(settings)
 
+    /// Captures output produced by the action.
     let private captureOutput (action: unit -> int) =
         use writer = new StringWriter()
         let originalOut = Console.Out
@@ -137,6 +142,7 @@ module BranchCommandTests =
 
     let private fileBlake3Hash = Blake3Hash "bbbbccccddddeeeeffff0000111122223333444455556666777788889999aaaa"
 
+    /// Builds branch directory with file test data used to exercise CLI branch behavior.
     let private branchDirectoryWithFile () =
         let file = FileVersion.CreateWithHashes "src/App.fs" fileSha256Hash fileBlake3Hash String.Empty false 123L
 
@@ -155,6 +161,7 @@ module BranchCommandTests =
             files
             123L
 
+    /// Verifies that list contents formatter uses short blake3 hashes by default.
     [<Test>]
     let ``list contents formatter uses short BLAKE3 hashes by default`` () =
         let parseResult = parse [| "branch"; "list-contents" |]
@@ -163,6 +170,7 @@ module BranchCommandTests =
         Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
         |> should equal "99998888"
 
+        /// Defines a test helper for used by the CLI branch scenario.
         let _, output =
             captureOutput (fun () ->
                 Branch.printContents parseResult [| branchDirectoryWithFile () |]
@@ -178,6 +186,7 @@ module BranchCommandTests =
         output
         |> should not' (contain $"{fileSha256Hash}")
 
+    /// Verifies that list contents formatter honors full hash display options.
     [<Test>]
     let ``list contents formatter honors full hash display options`` () =
         let parseResult =
@@ -190,6 +199,7 @@ module BranchCommandTests =
         Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
         |> should equal $"{directoryBlake3Hash}"
 
+        /// Defines a test helper for used by the CLI branch scenario.
         let _, output =
             captureOutput (fun () ->
                 Branch.printContents parseResult [| branchDirectoryWithFile () |]
@@ -198,6 +208,7 @@ module BranchCommandTests =
         output |> should contain $"{directoryBlake3Hash}"
         output |> should contain $"{fileBlake3Hash}"
 
+    /// Verifies that list contents formatter adds sha 256 when requested.
     [<Test>]
     let ``list contents formatter adds SHA-256 when requested`` () =
         let parseResult =
@@ -210,6 +221,7 @@ module BranchCommandTests =
         Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
         |> should equal "99998888 (SHA-256 11112222)"
 
+    /// Verifies that list contents formatter honors deprecated full sha display option.
     [<Test>]
     let ``list contents formatter honors deprecated full sha display option`` () =
         let parseResult =
@@ -222,6 +234,7 @@ module BranchCommandTests =
         Branch.formatListContentsVersionHash displayMode directoryBlake3Hash directorySha256Hash
         |> should equal $"{directoryBlake3Hash} (SHA-256 {directorySha256Hash})"
 
+    /// Verifies that list contents formatter shows unavailable for missing blake3.
     [<Test>]
     let ``list contents formatter shows unavailable for missing BLAKE3`` () =
         let parseResult = parse [| "branch"; "list-contents" |]
@@ -230,10 +243,13 @@ module BranchCommandTests =
         Branch.formatListContentsVersionHash displayMode (Blake3Hash String.Empty) directorySha256Hash
         |> should equal Common.HashOptions.MissingVersionHashText
 
+    /// Verifies that annotate handler maps options to parameters.
     [<Test>]
     let ``annotate handler maps options to parameters`` () =
         let explicitReferenceId = Guid.NewGuid()
+        /// Tracks captured changes so this scenario can assert the resulting side effect explicitly.
         let mutable captured = Unchecked.defaultof<AnnotateParameters>
+        /// Tracks resolver Reference Id changes so this scenario can assert the resulting side effect explicitly.
         let mutable resolverReferenceId = None
 
         let parseResult =
@@ -252,10 +268,12 @@ module BranchCommandTests =
                      "--max-references"
                      "250" |]
 
+        /// Applies annotation command options so branch command assertions can inspect the resulting request.
         let annotate (parameters: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
             captured <- parameters
             Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
 
+        /// Resolves the branch target reference supplied by the CLI scenario under test.
         let resolveTargetReference (referenceId: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
             resolverReferenceId <- referenceId
             Task.FromResult(Ok targetReferenceResult)
@@ -291,6 +309,7 @@ module BranchCommandTests =
             |> should equal (Some explicitReferenceId)
         | Error error -> Assert.Fail($"Expected annotate handler success, got: {error.Error}")
 
+    /// Verifies that annotate handler rejects invalid repository relative paths.
     [<TestCase("C:\\repo\\src\\App.fs", "--path must be repository-relative")>]
     [<TestCase("D:/repo/src/App.fs", "--path must be repository-relative")>]
     [<TestCase("../src/App.fs", "--path must not contain traversal")>]
@@ -302,9 +321,11 @@ module BranchCommandTests =
                      "--path"
                      path |]
 
+        /// Applies annotation command options so branch command assertions can inspect the resulting request.
         let annotate (_: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
             Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
 
+        /// Resolves the branch target reference supplied by the CLI scenario under test.
         let resolveTargetReference (_: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
             Task.FromResult(Ok targetReferenceResult)
 
@@ -316,6 +337,7 @@ module BranchCommandTests =
         | Ok _ -> Assert.Fail("Expected invalid path failure.")
         | Error error -> error.Error |> should contain expectedError
 
+    /// Verifies that annotate handler rejects invalid line range.
     [<Test>]
     let ``annotate handler rejects invalid line range`` () =
         let parseResult =
@@ -326,9 +348,11 @@ module BranchCommandTests =
                      "-L"
                      "9,7" |]
 
+        /// Applies annotation command options so branch command assertions can inspect the resulting request.
         let annotate (_: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
             Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
 
+        /// Resolves the branch target reference supplied by the CLI scenario under test.
         let resolveTargetReference (_: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
             Task.FromResult(Ok targetReferenceResult)
 
@@ -342,6 +366,7 @@ module BranchCommandTests =
             error.Error
             |> should contain "Invalid annotation line range"
 
+    /// Verifies that annotate handler rejects explicit zero end line.
     [<Test>]
     let ``annotate handler rejects explicit zero end line`` () =
         let parseResult =
@@ -354,9 +379,11 @@ module BranchCommandTests =
                      "--end-line"
                      "0" |]
 
+        /// Applies annotation command options so branch command assertions can inspect the resulting request.
         let annotate (_: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
             Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
 
+        /// Resolves the branch target reference supplied by the CLI scenario under test.
         let resolveTargetReference (_: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
             Task.FromResult(Ok targetReferenceResult)
 
@@ -370,8 +397,10 @@ module BranchCommandTests =
             error.Error
             |> should contain "Invalid annotation line range"
 
+    /// Verifies that annotate handler defaults omitted end line to start line.
     [<Test>]
     let ``annotate handler defaults omitted end line to start line`` () =
+        /// Tracks captured changes so this scenario can assert the resulting side effect explicitly.
         let mutable captured = Unchecked.defaultof<AnnotateParameters>
 
         let parseResult =
@@ -382,10 +411,12 @@ module BranchCommandTests =
                      "--start-line"
                      "5" |]
 
+        /// Applies annotation command options so branch command assertions can inspect the resulting request.
         let annotate (parameters: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
             captured <- parameters
             Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
 
+        /// Resolves the branch target reference supplied by the CLI scenario under test.
         let resolveTargetReference (_: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
             Task.FromResult(Ok targetReferenceResult)
 
@@ -399,6 +430,7 @@ module BranchCommandTests =
             captured.EndLine |> should equal 5
         | Error error -> Assert.Fail($"Expected omitted end line success, got: {error.Error}")
 
+    /// Verifies that annotate handler rejects reference type typo.
     [<Test>]
     let ``annotate handler rejects reference type typo`` () =
         let parseResult =
@@ -409,9 +441,11 @@ module BranchCommandTests =
                      "--reference-types"
                      "Commit,Typo" |]
 
+        /// Applies annotation command options so branch command assertions can inspect the resulting request.
         let annotate (_: AnnotateParameters) : Task<GraceResult<BranchAnnotationDto>> =
             Task.FromResult(Ok(GraceReturnValue.Create sampleAnnotation correlationId))
 
+        /// Resolves the branch target reference supplied by the CLI scenario under test.
         let resolveTargetReference (_: ReferenceId option) (_: CorrelationId) : Task<Result<CliCurrentStateCaptureResult, GraceError>> =
             Task.FromResult(Ok targetReferenceResult)
 
@@ -425,6 +459,7 @@ module BranchCommandTests =
             error.Error
             |> should contain "Unknown Reference type"
 
+    /// Verifies that human output is span grouped with requested line numbers and text.
     [<Test>]
     let ``human output is span grouped with requested line numbers and text`` () =
         let parseResult =
@@ -435,6 +470,7 @@ module BranchCommandTests =
                      "--show"
                      "both" |]
 
+        /// Defines a test helper for used by the CLI branch scenario.
         let _, output =
             captureOutput (fun () ->
                 Branch.renderBranchAnnotationHumanOutput parseResult Branch.Both sampleAnnotation
@@ -450,6 +486,7 @@ module BranchCommandTests =
         output |> should contain "9"
         output |> should contain "let three = 3"
 
+    /// Verifies that show introduced suppresses last changed human label.
     [<Test>]
     let ``show introduced suppresses last changed human label`` () =
         let parseResult =
@@ -460,6 +497,7 @@ module BranchCommandTests =
                      "--show"
                      "introduced" |]
 
+        /// Defines a test helper for used by the CLI branch scenario.
         let _, output =
             captureOutput (fun () ->
                 Branch.renderBranchAnnotationHumanOutput parseResult Branch.Introduced sampleAnnotation
@@ -470,6 +508,7 @@ module BranchCommandTests =
         output
         |> should not' (contain "Last changed Reference")
 
+    /// Verifies that json output remains a single grace result document and skips human spans.
     [<Test>]
     let ``json output remains a single Grace result document and skips human spans`` () =
         let parseResult =
@@ -482,6 +521,7 @@ module BranchCommandTests =
                      "--show"
                      "introduced" |]
 
+        /// Verifies that the CLI branch scenario exits with the expected process status.
         let exitCode, output =
             captureOutput (fun () ->
                 let result = Ok(GraceReturnValue.Create sampleAnnotation correlationId)
@@ -506,11 +546,14 @@ module BranchCommandTests =
             .GetString()
         |> should equal "src/App.fs"
 
+    /// Verifies that list contents json includes full dual hashes regardless of human display flags.
     [<Test>]
     let ``list contents json includes full dual hashes regardless of human display flags`` () =
+        /// Asserts that json contains full dual hashes matches the expected contract.
         let assertJsonContainsFullDualHashes (parseResult: System.CommandLine.ParseResult) =
             parseResult.Errors.Count |> should equal 0
 
+            /// Verifies that the CLI branch scenario exits with the expected process status.
             let exitCode, output =
                 captureOutput (fun () ->
                     let result = Ok(GraceReturnValue.Create [| branchDirectoryWithFile () |] correlationId)
@@ -554,6 +597,7 @@ module BranchCommandTests =
 
         assertJsonContainsFullDualHashes deprecatedFullShaParseResult
 
+    /// Verifies that select output remains one machine readable document and skips human spans.
     [<Test>]
     let ``select output remains one machine readable document and skips human spans`` () =
         let parseResult =
@@ -566,6 +610,7 @@ module BranchCommandTests =
                      "--select"
                      "Path" |]
 
+        /// Verifies that the CLI branch scenario exits with the expected process status.
         let exitCode, output =
             captureOutput (fun () ->
                 let result = Ok(GraceReturnValue.Create sampleAnnotation correlationId)

@@ -8,8 +8,10 @@ open System.Collections.Generic
 open System.Text.RegularExpressions
 open System.Threading.Tasks
 
+/// Contains common helpers.
 module Common =
 
+    /// Contains guid helpers.
     module Guid =
 
         /// Validates that a string is a valid Guid, and is not Guid.Empty.
@@ -31,6 +33,7 @@ module Common =
             else
                 Ok() |> returnValueTask
 
+    /// Contains number helpers.
     module Number =
 
         /// Validates that the given number is positive.
@@ -44,6 +47,7 @@ module Common =
             else
                 Error error |> returnValueTask
 
+    /// Contains string helpers.
     module String =
 
         /// Checks that the provided string is a valid Grace name (i.e. it matches GraceNameRegex).
@@ -140,6 +144,7 @@ module Common =
             else
                 Ok() |> returnValueTask
 
+    /// Contains discriminated union helpers.
     module DiscriminatedUnion =
 
         /// Validates that a string is a member of the supplied discriminated union type.
@@ -148,6 +153,7 @@ module Common =
             | Some _ -> Ok() |> returnValueTask
             | None -> Error error |> returnValueTask
 
+    /// Contains input helpers.
     module Input =
 
         /// Validates that we have a value for either the supplied id, or the supplied name.
