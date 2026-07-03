@@ -361,20 +361,34 @@ module Watch =
         status.Index.Values
         |> Seq.tryFind (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, watchPathComparison))
 
-    /// Uses the tracked parent directory casing before status application performs exact path lookups.
-    let private preserveTrackedParentCasingForFileAdd (status: GraceStatus) (relativePath: RelativePath) =
+    /// Uses the longest tracked ancestor casing before status application performs exact path lookups.
+    let private canonicalizeTrackedAncestorCasing (status: GraceStatus) (relativePath: RelativePath) =
         let normalizedRelativePath = normalizeRelativePath relativePath
         let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+        let mutable canonicalRelativePath = relativePath
+        let mutable foundTrackedAncestor = false
 
-        if segments.Length <= 1 then
-            relativePath
-        else
-            let parentRelativePath = RelativePath(String.Join("/", segments[0 .. segments.Length - 2]))
-            let fileName = segments[segments.Length - 1]
+        if segments.Length > 0 then
+            for prefixLength in segments.Length .. -1 .. 1 do
+                if not foundTrackedAncestor then
+                    let ancestorRelativePath = RelativePath(String.Join("/", segments[0 .. prefixLength - 1]))
 
-            match tryFindTrackedDirectory status parentRelativePath with
-            | Some trackedParentDirectory -> RelativePath($"{trackedParentDirectory.RelativePath}/{fileName}")
-            | None -> relativePath
+                    match tryFindTrackedDirectory status ancestorRelativePath with
+                    | Some trackedAncestorDirectory ->
+                        let trackedAncestorPath = normalizeRelativePath trackedAncestorDirectory.RelativePath
+
+                        let canonicalPath =
+                            if prefixLength = segments.Length then
+                                trackedAncestorPath
+                            else
+                                let suffixPath = String.Join("/", segments[prefixLength..])
+                                $"{trackedAncestorPath}/{suffixPath}"
+
+                        canonicalRelativePath <- RelativePath canonicalPath
+                        foundTrackedAncestor <- true
+                    | None -> ()
+
+        canonicalRelativePath
 
     /// Checks whether the uploaded file identity would change the tracked GraceStatus file content.
     let private uploadedFileContentChanged (trackedFile: LocalFileVersion) (uploadedFile: FileVersion) =
@@ -432,6 +446,7 @@ module Watch =
         if segments.Length > 1 then
             for index in 0 .. segments.Length - 2 do
                 let parentRelativePath = RelativePath(String.Join("/", segments[0..index]))
+                let parentDifferenceRelativePath = canonicalizeTrackedAncestorCasing status parentRelativePath
                 let parentFullPath = Path.Combine(Current().RootDirectory, $"{parentRelativePath}")
 
                 let alreadyAdded =
@@ -439,14 +454,14 @@ module Watch =
                     |> Seq.exists (fun difference ->
                         difference.FileSystemEntryType = FileSystemEntryType.Directory
                         && difference.DifferenceType = Add
-                        && String.Equals(normalizeRelativePath difference.RelativePath, normalizeRelativePath parentRelativePath, watchPathComparison))
+                        && String.Equals(normalizeRelativePath difference.RelativePath, normalizeRelativePath parentDifferenceRelativePath, watchPathComparison))
 
                 if
                     not alreadyAdded
-                    && not (isTrackedDirectory status parentRelativePath)
+                    && not (isTrackedDirectory status parentDifferenceRelativePath)
                     && Directory.Exists(parentFullPath)
                 then
-                    differences.Add(FileSystemDifference.Create Add FileSystemEntryType.Directory parentRelativePath)
+                    differences.Add(FileSystemDifference.Create Add FileSystemEntryType.Directory parentDifferenceRelativePath)
 
         differences
 
@@ -466,7 +481,7 @@ module Watch =
                     | Some _ -> ()
                     | None ->
                         differences.AddRange(deriveParentDirectoryAddDifferences status uploadedFileVersion.RelativePath)
-                        let addRelativePath = preserveTrackedParentCasingForFileAdd status uploadedFileVersion.RelativePath
+                        let addRelativePath = canonicalizeTrackedAncestorCasing status uploadedFileVersion.RelativePath
                         differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File addRelativePath)
                 | None -> ()
 
@@ -504,6 +519,13 @@ module Watch =
             || difference.DifferenceType = Change)
         && finalPathKind difference.RelativePath
            <> FinalPathFile
+
+    /// Checks whether a pending parent directory add no longer exists in final path state.
+    let private isStaleParentDirectoryAddDifference (difference: FileSystemDifference) =
+        difference.FileSystemEntryType = FileSystemEntryType.Directory
+        && difference.DifferenceType = Add
+        && finalPathKind difference.RelativePath
+           <> FinalPathDirectory
 
     /// Checks whether a status-only trigger covers the same path as a pending file difference.
     let private hasMatchingStatusTrigger (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (difference: FileSystemDifference) =
@@ -556,6 +578,8 @@ module Watch =
                 resolved.Add(difference)
             elif isStaleUploadedFileDifference difference
                  && hasMatchingStatusTrigger statusTriggerSnapshot difference then
+                resolved.Add(difference)
+            elif isStaleParentDirectoryAddDifference difference then
                 resolved.Add(difference)
             else
                 applicable.Add(difference)
@@ -651,9 +675,9 @@ module Watch =
         else
             false
 
-    /// Requeues a same-path upload when a stale delete had canceled upload work for a tracked file that exists again.
+    /// Requeues a same-path upload when a stale delete had canceled upload work for a final file that exists again.
     let private reenqueueCanceledUploadsForResolvedFileDeletes
-        (status: GraceStatus)
+        (_status: GraceStatus)
         (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
         (canceledRelativePaths: List<RelativePath>)
         =
@@ -667,12 +691,10 @@ module Watch =
                 |> Seq.exists (fun canceledPath -> String.Equals(normalizeRelativePath canceledPath, normalizeRelativePath relativePath, watchPathComparison))
 
             if uploadWasCanceled then
-                match tryFindTrackedFile status relativePath with
-                | Some _ when finalPathMatchesEntryType FileSystemEntryType.File relativePath ->
+                if finalPathMatchesEntryType FileSystemEntryType.File relativePath then
                     let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
-                    enqueueFileUpload fullPath |> ignore
-                    requeuedRelativePaths.Add(relativePath)
-                | _ -> ()
+
+                    if enqueueFileUpload fullPath then requeuedRelativePaths.Add(relativePath)
 
         clearCanceledFileUploadDeleteRelativePaths requeuedRelativePaths
         requeuedRelativePaths
@@ -831,7 +853,15 @@ module Watch =
                     |> Seq.exists (statusDifferenceMatches startupDifference)
                 )
 
-            if not isSupersededUploadedFileDifference then
+            let isSupersededParentDirectoryAdd =
+                isStaleParentDirectoryAddDifference startupDifference
+                && not (
+                    rescannedDifferences
+                    |> Seq.exists (statusDifferenceMatches startupDifference)
+                )
+
+            if not isSupersededUploadedFileDifference
+               && not isSupersededParentDirectoryAdd then
                 retainedStartupDifferences.Add(startupDifference)
 
         mergeStatusDifferences retainedStartupDifferences rescannedDifferences
