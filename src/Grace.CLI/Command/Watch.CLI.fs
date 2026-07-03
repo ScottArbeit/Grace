@@ -436,7 +436,7 @@ module Watch =
                 | Some uploadedFileVersion ->
                     match tryFindTrackedFile status uploadedFileVersion.RelativePath with
                     | Some trackedFile when uploadedFileContentChanged trackedFile uploadedFileVersion ->
-                        differences.Add(FileSystemDifference.Create Change FileSystemEntryType.File uploadedFileVersion.RelativePath)
+                        differences.Add(FileSystemDifference.Create Change FileSystemEntryType.File trackedFile.RelativePath)
                     | Some _ -> ()
                     | None ->
                         differences.AddRange(deriveParentDirectoryAddDifferences status uploadedFileVersion.RelativePath)
@@ -695,6 +695,55 @@ module Watch =
             addIfMissing difference
 
         merged
+
+    /// Checks whether two status differences represent the same repository path observation.
+    let private statusDifferenceMatches (left: FileSystemDifference) (right: FileSystemDifference) =
+        left.DifferenceType = right.DifferenceType
+        && left.FileSystemEntryType = right.FileSystemEntryType
+        && String.Equals(normalizeRelativePath left.RelativePath, normalizeRelativePath right.RelativePath, watchPathComparison)
+
+    /// Checks whether a difference came from uploaded file work that a successful rescan can supersede.
+    let private isUploadedFileAddOrChangeDifference (difference: FileSystemDifference) =
+        difference.FileSystemEntryType = FileSystemEntryType.File
+        && (difference.DifferenceType = DifferenceType.Add
+            || difference.DifferenceType = DifferenceType.Change)
+
+    /// Checks whether uploaded identity data exists for a repository-relative path.
+    let private hasUploadedFileVersionForPath (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        uploadedFileVersions.Values
+        |> Seq.exists (fun uploadedFileVersion ->
+            String.Equals(normalizeRelativePath uploadedFileVersion.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Revalidates pending uploaded file differences against a successful rescan before retrying status application.
+    let private mergeRescannedStartupDifferences
+        (processedFilePaths: RelativePath seq)
+        (startupDifferences: List<FileSystemDifference>)
+        (rescannedDifferences: List<FileSystemDifference>)
+        =
+        let retainedStartupDifferences = List<FileSystemDifference>()
+
+        let processedUploadedPaths =
+            processedFilePaths
+            |> Seq.map normalizeRelativePath
+            |> Seq.toArray
+
+        for startupDifference in startupDifferences do
+            let isSupersededUploadedFileDifference =
+                isUploadedFileAddOrChangeDifference startupDifference
+                && hasUploadedFileVersionForPath startupDifference.RelativePath
+                && processedUploadedPaths
+                   |> Array.exists (fun processedPath -> String.Equals(normalizeRelativePath startupDifference.RelativePath, processedPath, watchPathComparison))
+                && not (
+                    rescannedDifferences
+                    |> Seq.exists (statusDifferenceMatches startupDifference)
+                )
+
+            if not isSupersededUploadedFileDifference then
+                retainedStartupDifferences.Add(startupDifference)
+
+        mergeStatusDifferences retainedStartupDifferences rescannedDifferences
 
     /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
@@ -1339,7 +1388,8 @@ module Watch =
                             if pendingDifferencesNeedRescan then
                                 task {
                                     let! rescannedDifferences = scanForDifferencesClient graceStatus
-                                    return mergeStatusDifferences startupPendingDifferences rescannedDifferences
+
+                                    return mergeRescannedStartupDifferences processedFileRelativePathsForStatus startupPendingDifferences rescannedDifferences
                                 }
                             else
                                 Task.FromResult(startupPendingDifferences)
