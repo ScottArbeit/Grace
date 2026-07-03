@@ -67,6 +67,19 @@ module Services =
         else
             false
 
+    /// Names the compact runtime state advertised by the Grace Watch IPC status file.
+    type GraceWatchRuntimeMode =
+        /// Grace Watch has claimed startup ownership but has not published a usable status snapshot yet.
+        | StartingUp = 0
+        /// Grace Watch has a usable root snapshot and can serve incremental status shortcuts.
+        | HealthyIncremental = 1
+        /// Grace Watch is rebuilding trusted state before incremental shortcuts can be used.
+        | Resynchronizing = 2
+        /// Grace Watch has stopped accepting incremental shortcuts until an explicit resume or resync occurs.
+        | Suspended = 3
+        /// Grace Watch is shutting down and should not be treated as a live incremental source.
+        | Stopping = 4
+
     /// GraceWatchStatus defines the schema for the inter-process communication (IPC) file that lets Grace know if `grace watch` is already running.
     ///
     /// It's written by `grace watch`. It holds everything required to allow other instances of Grace to skip checking current status.
@@ -83,6 +96,47 @@ module Services =
             DirectoryIds: HashSet<DirectoryVersionId>
         }
 
+        /// Reports whether this status has the root identity fields required for trusted incremental consumers.
+        member private this.HasUsableRootSnapshot =
+            this.RootDirectoryId <> Guid.Empty
+            && not (String.IsNullOrWhiteSpace($"{this.RootDirectorySha256Hash}"))
+            && not (String.IsNullOrWhiteSpace($"{this.RootDirectoryBlake3Hash}"))
+
+        /// Reports whether this status has at least one directory identity for current-state comparisons.
+        member private this.HasDirectoryIndexSnapshot =
+            not (isNull this.DirectoryIds)
+            && this.DirectoryIds.Count > 0
+
+        /// Identifies the current Grace Watch runtime mode without introducing a larger state hierarchy.
+        member this.Mode =
+            if this.IsStartupClaim then
+                GraceWatchRuntimeMode.StartingUp
+            elif this.HasUsableRootSnapshot
+                 && this.HasDirectoryIndexSnapshot then
+                GraceWatchRuntimeMode.HealthyIncremental
+            else
+                GraceWatchRuntimeMode.Resynchronizing
+
+        /// Lists compact safety facts that command and agent consumers can inspect before trusting the status snapshot.
+        member this.SafetyFlags =
+            let isStartupClaim = this.IsStartupClaim
+            let hasUsableRootSnapshot = this.HasUsableRootSnapshot
+            let hasDirectoryIndexSnapshot = this.HasDirectoryIndexSnapshot
+            let mode = this.Mode
+
+            [|
+                if isStartupClaim then "startupClaim"
+
+                if hasUsableRootSnapshot then "usableRoot" else "missingRoot"
+
+                if hasDirectoryIndexSnapshot then "directoryIndex" else "missingDirectoryIndex"
+
+                if mode = GraceWatchRuntimeMode.HealthyIncremental then
+                    "incrementalSafe"
+                else
+                    "requiresExplicitResync"
+            |]
+
         /// Defines the empty Grace Watch status used before a live status snapshot is available.
         static member Default =
             {
@@ -95,6 +149,36 @@ module Services =
                 LastDirectoryVersionInstant = Instant.MinValue
                 DirectoryIds = HashSet<DirectoryVersionId>()
             }
+
+    /// Mirrors GraceWatchStatus for IPC writes while adding compact runtime fields that older readers can ignore.
+    type private GraceWatchStatusContract =
+        {
+            UpdatedAt: Instant
+            IsStartupClaim: bool
+            RootDirectoryId: DirectoryVersionId
+            RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
+            LastFileUploadInstant: Instant
+            LastDirectoryVersionInstant: Instant
+            DirectoryIds: HashSet<DirectoryVersionId>
+            Mode: GraceWatchRuntimeMode
+            SafetyFlags: string array
+        }
+
+    /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
+    let private toGraceWatchStatusContract (status: GraceWatchStatus) =
+        {
+            UpdatedAt = status.UpdatedAt
+            IsStartupClaim = status.IsStartupClaim
+            RootDirectoryId = status.RootDirectoryId
+            RootDirectorySha256Hash = status.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+            LastFileUploadInstant = status.LastFileUploadInstant
+            LastDirectoryVersionInstant = status.LastDirectoryVersionInstant
+            DirectoryIds = status.DirectoryIds
+            Mode = status.Mode
+            SafetyFlags = status.SafetyFlags
+        }
 
     let mutable graceWatchStatusUpdateTime = Instant.MinValue
     let mutable parseResult: ParseResult = null
@@ -2017,11 +2101,7 @@ module Services =
     let private isGraceWatchStatusUsable (graceWatchStatus: GraceWatchStatus) =
         isGraceWatchStatusFresh graceWatchStatus
         && not graceWatchStatus.IsStartupClaim
-        && graceWatchStatus.RootDirectoryId <> Guid.Empty
-        && not (String.IsNullOrWhiteSpace($"{graceWatchStatus.RootDirectorySha256Hash}"))
-        && not (String.IsNullOrWhiteSpace($"{graceWatchStatus.RootDirectoryBlake3Hash}"))
-        && not (isNull graceWatchStatus.DirectoryIds)
-        && graceWatchStatus.DirectoryIds.Count > 0
+        && graceWatchStatus.Mode = GraceWatchRuntimeMode.HealthyIncremental
 
     /// Writes grace watch status data through the CLI output contract.
     let private writeGraceWatchStatus fileMode graceWatchStatus =
@@ -2031,7 +2111,7 @@ module Services =
 
             use fileStream = new FileStream(IpcFileName(), fileMode, FileAccess.Write, FileShare.None)
 
-            do! serializeAsync fileStream graceWatchStatus
+            do! serializeAsync fileStream (toGraceWatchStatusContract graceWatchStatus)
             graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
         }
 
