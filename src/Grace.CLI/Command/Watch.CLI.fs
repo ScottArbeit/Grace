@@ -157,6 +157,10 @@ module Watch =
 
     let private statusUpdateTriggers = ConcurrentDictionary<string, int64>()
 
+    let private pendingStatusDifferencesLock = obj ()
+
+    let private pendingStatusDifferences = List<FileSystemDifference>()
+
     /// Defines structured data exchanged by CLI helpers.
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
 
@@ -413,11 +417,31 @@ module Watch =
 
             if removeQueuedFile then removePendingFileUpload queuedFile
 
+    /// Records an already-derived filesystem difference so status application can run without rescanning.
+    let private addPendingStatusDifference difference = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Add(difference))
+
+    /// Captures the already-derived differences waiting for the shared status-application path.
+    let private pendingStatusDifferencesSnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.ToList())
+
+    /// Checks whether any pre-derived filesystem differences still need status application.
+    let private hasPendingStatusDifferences () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Count > 0)
+
+    /// Clears only the differences that a successful status update already applied.
+    let private clearPendingStatusDifferences (differences: List<FileSystemDifference>) =
+        lock pendingStatusDifferencesLock (fun () ->
+            for difference in differences do
+                pendingStatusDifferences.Remove(difference)
+                |> ignore)
+
+    /// Clears pre-derived differences when tests reset watch module state.
+    let private clearPendingStatusDifferencesForTests () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Clear())
+
     /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
         filesToProcess.Clear()
         directoriesToProcess.Clear()
         statusUpdateTriggers.Clear()
+        clearPendingStatusDifferencesForTests ()
 
         Interlocked.Exchange(&statusUpdateTriggerGeneration, 0L)
         |> ignore
@@ -446,6 +470,7 @@ module Watch =
             filesToProcess.IsEmpty
             && directoriesToProcess.IsEmpty
             && statusUpdateTriggers.IsEmpty
+            && not (hasPendingStatusDifferences ())
         )
 
     /// Coordinates status only trigger snapshot behavior for this CLI command path.
@@ -476,6 +501,44 @@ module Watch =
             (statusUpdateTriggers :> ICollection<KeyValuePair<string, int64>>)
                 .Remove(pair)
             |> ignore
+
+    /// Drains the watch work proven by either a scan-derived update or the matched pre-derived differences.
+    let private drainAppliedStatusWork
+        (directorySnapshot: string array)
+        (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
+        (appliedDifferences: List<FileSystemDifference>)
+        =
+        if appliedDifferences.Count = 0 then
+            drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+        else
+            let directoryPathsToDrain =
+                appliedDifferences
+                |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.Directory)
+                |> Seq.map (fun difference -> string difference.RelativePath)
+                |> HashSet
+
+            let statusTriggerPathsToDrain =
+                appliedDifferences
+                |> Seq.filter (fun difference ->
+                    difference.FileSystemEntryType = FileSystemEntryType.File
+                    && difference.DifferenceType = DifferenceType.Delete)
+                |> Seq.map (fun difference -> string difference.RelativePath)
+                |> HashSet
+
+            let mutable unitValue = ()
+
+            for directory in directorySnapshot do
+                if directoryPathsToDrain.Contains(directory) then
+                    directoriesToProcess.TryRemove(directory, &unitValue)
+                    |> ignore
+
+            for statusTrigger in statusTriggerSnapshot do
+                if statusTriggerPathsToDrain.Contains(statusTrigger.RelativePath) then
+                    let pair = KeyValuePair(statusTrigger.RelativePath, statusTrigger.Generation)
+
+                    (statusUpdateTriggers :> ICollection<KeyValuePair<string, int64>>)
+                        .Remove(pair)
+                    |> ignore
 
     /// Resolves signal raccess token result from command options, configuration, or local state.
     let resolveSignalRAccessTokenResult (tokenResult: Result<string option, string>) =
@@ -679,11 +742,9 @@ module Watch =
     /// Update the Grace Object Cache file with the new DirectoryVersions.
     let updateObjectCacheFile (newDirectoryVersions: List<LocalDirectoryVersion>) = task { do! upsertObjectCache newDirectoryVersions }
 
-    /// Updates the Grace Status file's Index with updates detected from the file system.
-    let updateGraceStatus graceStatus correlationId =
+    /// Applies already-derived filesystem differences to Grace Status, object cache, and save history.
+    let updateGraceStatusFromDifferences graceStatus (differences: List<FileSystemDifference>) correlationId =
         task {
-            // Get the list of differences between what's in the working directory, and what Grace Index knows about.
-            let! differences = scanForDifferences graceStatus
             printDifferences differences
 
             // Get an updated Grace Index, and any new DirectoryVersions that were needed to build it.
@@ -826,6 +887,14 @@ module Watch =
                         return None
         }
 
+    /// Updates the Grace Status file's Index with updates detected from the file system.
+    let updateGraceStatus graceStatus correlationId =
+        task {
+            // Get the list of differences between what's in the working directory, and what Grace Index knows about.
+            let! differences = scanForDifferences graceStatus
+            return! updateGraceStatusFromDifferences graceStatus differences correlationId
+        }
+
     /// Reads cached file version for upload skip from ParseResult, local configuration, or Grace ids.
     let private getCachedFileVersionForUploadSkip (fullPath: FilePath) =
         task {
@@ -935,6 +1004,7 @@ module Watch =
         readGraceStatusFileClient
         copyFileToObjectDirectoryAndUploadToStorageClient
         updateGraceStatusClient
+        updateGraceStatusFromDifferencesClient
         applyGraceStatusIncrementalClient
         updateGraceWatchInterprocessFileClient
         =
@@ -991,14 +1061,26 @@ module Watch =
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
                         resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+                        let pendingDifferences = pendingStatusDifferencesSnapshot ()
 
-                        match! (updateGraceStatusClient graceStatus correlationId) with
+                        let! statusUpdateResult =
+                            if pendingDifferences.Count > 0 then
+                                updateGraceStatusFromDifferencesClient graceStatus pendingDifferences correlationId
+                            else
+                                updateGraceStatusClient graceStatus correlationId
+
+                        match statusUpdateResult with
                         | Some newGraceStatus ->
-                            if wasLastScanForDifferencesSuccessful ()
-                               && filesToProcess.IsEmpty
-                               && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate then
+                            let statusUpdateCanCommit =
+                                filesToProcess.IsEmpty
+                                && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
+                                && (pendingDifferences.Count > 0
+                                    || wasLastScanForDifferencesSuccessful ())
+
+                            if statusUpdateCanCommit then
                                 graceStatus <- newGraceStatus
-                                drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
+                                drainAppliedStatusWork directorySnapshot statusTriggerSnapshot pendingDifferences
+                                clearPendingStatusDifferences pendingDifferences
                             else
                                 logToAnsiConsole
                                     Colors.Important
@@ -1035,11 +1117,14 @@ module Watch =
             readGraceStatusFile
             copyFileToObjectDirectoryAndUploadToStorage
             updateGraceStatus
+            updateGraceStatusFromDifferences
             applyGraceStatusIncremental
             updateGraceWatchInterprocessFile
 
     /// Coordinates queue startup difference for watch behavior for this CLI command path.
     let internal queueStartupDifferenceForWatch difference =
+        addPendingStatusDifference difference
+
         match difference.FileSystemEntryType, difference.DifferenceType with
         | Directory, _ ->
             directoriesToProcess.TryAdd(difference.RelativePath, ())
