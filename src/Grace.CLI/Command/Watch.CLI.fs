@@ -1689,8 +1689,7 @@ module Watch =
                         let! uploadedFileDifferences, unresolvedUploadedFilePaths =
                             deriveUploadedFileDifferences graceStatus processedFileRelativePathsForStatus
 
-                        reenqueueUnresolvedUploadedFinalFileVersions unresolvedUploadedFilePaths
-                        |> ignore
+                        let requeuedUnresolvedUploadedFilePaths = reenqueueUnresolvedUploadedFinalFileVersions unresolvedUploadedFilePaths
 
                         let deleteDifferences = deriveDeleteDifferences graceStatus statusTriggerSnapshot
                         let eventDerivedDifferences = mergeStatusDifferences uploadedFileDifferences deleteDifferences
@@ -1714,6 +1713,12 @@ module Watch =
                                 logToAnsiConsole
                                     Colors.Important
                                     $"Grace Status pending startup differences need a successful rescan before status application; status-only triggers will retry."
+
+                                Task.FromResult(None)
+                            elif requeuedUnresolvedUploadedFilePaths.Count > 0 then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Status uploaded file differences include unresolved final content; requeued uploads will finish before status application."
 
                                 Task.FromResult(None)
                             elif statusDifferencesForApply.Applicable.Count > 0 then

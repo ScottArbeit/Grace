@@ -1698,6 +1698,105 @@ module WatchTests =
             appliedSnapshot.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that mixed uploaded adds wait for rewritten uploads before applying status.
+    [<Test>]
+    let ``mixed uploaded adds defer status while rewritten upload requeues`` () =
+        withTempRepo (fun root ->
+            let readyRelativePath = "ready-add.txt"
+            let rewrittenRelativePath = "retry-rewritten-add.txt"
+            let readyFilePath = Path.Combine(root, readyRelativePath)
+            let rewrittenFilePath = Path.Combine(root, rewrittenRelativePath)
+            /// Tracks upload Calls changes so this scenario can detect redundant ready-file retries.
+            let mutable uploadCalls = 0
+            /// Tracks apply-from-differences Calls so partial status application is rejected.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply path once every upload has final content.
+            let mutable observedDifferences = List<FileSystemDifference>()
+            /// Tracks whether the rewritten file already changed after its first uploaded identity was recorded.
+            let mutable rewrittenAfterFirstUpload = false
+
+            File.WriteAllText(readyFilePath, "ready content")
+            File.WriteAllText(rewrittenFilePath, "content captured by the first upload")
+            Watch.OnCreated(changedEvent readyFilePath)
+            Watch.OnCreated(changedEvent rewrittenFilePath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                let fullPath = $"{pendingFilePath}"
+                recordUploadedFileVersion fullPath
+
+                if
+                    not rewrittenAfterFirstUpload
+                    && String.Equals(Path.GetFileName(fullPath), rewrittenRelativePath, StringComparison.Ordinal)
+                then
+                    rewrittenAfterFirstUpload <- true
+                    File.WriteAllText(fullPath, "rewritten content with no newer watcher event")
+
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            /// Runs one watch processing pass with the mixed uploaded-file test clients.
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForNoDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 2
+            applyFromDifferencesCalls |> should equal 0
+
+            let retrySnapshot = Watch.pendingWatchWorkSnapshotForTests ()
+
+            retrySnapshot.FilesToProcess
+            |> should equal [| rewrittenFilePath |]
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 3
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.sortBy (fun (_, _, relativePath) -> relativePath)
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Add, FileSystemEntryType.File, readyRelativePath
+                    DifferenceType.Add, FileSystemEntryType.File, rewrittenRelativePath
+                |]
+
+            let appliedSnapshot = Watch.pendingWatchWorkSnapshotForTests ()
+
+            appliedSnapshot.FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Verifies that case-sensitive watch comparison does not collapse distinct tracked and uploaded file paths.
     [<Test>]
     let ``case-sensitive tracked file matching preserves distinct uploaded path`` () =
