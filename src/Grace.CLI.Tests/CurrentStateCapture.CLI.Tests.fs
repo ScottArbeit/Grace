@@ -505,6 +505,105 @@ module CurrentStateCaptureCliTests =
             |> Seq.isEmpty
             |> should equal true)
 
+    /// Verifies that a directory rename modeled as delete plus add preserves empty children in the added subtree.
+    [<Test>]
+    let ``directory rename delete plus add preserves empty child directories in added subtree`` () =
+        withTempRepo (fun root configuration ->
+            let oldRootRelativePath = RelativePath "old-assets"
+            let oldContentRelativePath = RelativePath "old-assets/content"
+            let oldEmptyChildRelativePath = RelativePath "old-assets/empty-child"
+            let oldFileRelativePath = RelativePath "old-assets/content/asset.txt"
+            let newRootRelativePath = RelativePath "new-assets"
+            let newContentRelativePath = RelativePath "new-assets/content"
+            let newEmptyChildRelativePath = RelativePath "new-assets/empty-child"
+
+            Directory.CreateDirectory(Path.Combine(root, string newContentRelativePath))
+            |> ignore
+
+            Directory.CreateDirectory(Path.Combine(root, string newEmptyChildRelativePath))
+            |> ignore
+
+            let rootId = Guid.NewGuid()
+            let oldRootId = Guid.NewGuid()
+            let oldContentId = Guid.NewGuid()
+            let oldEmptyChildId = Guid.NewGuid()
+            let oldFile = fileVersion oldFileRelativePath "old subtree content"
+            let oldContent = directoryVersion configuration oldContentId oldContentRelativePath Seq.empty [| oldFile |]
+            let oldEmptyChild = directoryVersion configuration oldEmptyChildId oldEmptyChildRelativePath Seq.empty Seq.empty
+            let oldRoot = directoryVersion configuration oldRootId oldRootRelativePath [| oldContentId; oldEmptyChildId |] Seq.empty
+            let previousRoot = directoryVersion configuration rootId Constants.RootDirectoryPath [| oldRootId |] Seq.empty
+
+            let previousStatus =
+                graceStatusFromDirectories
+                    previousRoot
+                    [|
+                        previousRoot
+                        oldRoot
+                        oldContent
+                        oldEmptyChild
+                    |]
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory oldRootRelativePath
+                        FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory newRootRelativePath
+                        FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory newContentRelativePath
+                        FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory newEmptyChildRelativePath
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            updatedStatus.Index.Values
+            |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = oldRootRelativePath)
+            |> should equal false
+
+            updatedStatus.Index.Values
+            |> Seq.exists (fun directoryVersion -> directoryVersion.RelativePath = oldEmptyChildRelativePath)
+            |> should equal false
+
+            let newRoot =
+                updatedStatus.Index.Values
+                |> Seq.find (fun directoryVersion -> directoryVersion.RelativePath = newRootRelativePath)
+
+            let newEmptyChild =
+                updatedStatus.Index.Values
+                |> Seq.find (fun directoryVersion -> directoryVersion.RelativePath = newEmptyChildRelativePath)
+
+            newEmptyChild.Directories.Count |> should equal 0
+            newEmptyChild.Files.Count |> should equal 0
+            newEmptyChild.Size |> should equal 0L
+
+            newRoot.Directories
+            |> Seq.map (fun directoryId -> updatedStatus.Index[directoryId].RelativePath)
+            |> should
+                equivalent
+                [|
+                    newContentRelativePath
+                    newEmptyChildRelativePath
+                |]
+
+            let newContent =
+                updatedStatus.Index.Values
+                |> Seq.find (fun directoryVersion -> directoryVersion.RelativePath = newContentRelativePath)
+
+            newContent.Directories.Count |> should equal 0
+            newContent.Files.Count |> should equal 0
+
+            newDirectoryVersions
+            |> Seq.map (fun directoryVersion -> directoryVersion.RelativePath)
+            |> should
+                equivalent
+                [|
+                    newRootRelativePath
+                    newContentRelativePath
+                    newEmptyChildRelativePath
+                    Constants.RootDirectoryPath
+                |])
+
     /// Verifies that empty LocalDirectoryVersion rows survive local status and object-cache persistence.
     [<Test>]
     let ``empty directory version persists to status and object cache without child rows`` () =
