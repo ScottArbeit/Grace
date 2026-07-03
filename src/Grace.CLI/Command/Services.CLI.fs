@@ -202,8 +202,8 @@ module Services =
     let isGraceWatchObservationCaptureLegal mode =
         match mode with
         | GraceWatchRuntimeMode.StartingUp
-        | GraceWatchRuntimeMode.HealthyIncremental -> true
-        | GraceWatchRuntimeMode.Resynchronizing
+        | GraceWatchRuntimeMode.HealthyIncremental
+        | GraceWatchRuntimeMode.Resynchronizing -> true
         | GraceWatchRuntimeMode.Suspended
         | GraceWatchRuntimeMode.Stopping
         | _ -> false

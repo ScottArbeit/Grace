@@ -58,6 +58,9 @@ module Watch =
     /// Sets Grace Watch runtime mode for tests that exercise state-gated observation behavior.
     let internal setGraceWatchRuntimeModeForWatchTests mode = setGraceWatchRuntimeMode mode
 
+    /// Reads Grace Watch runtime mode for tests that exercise confidence-loss transitions.
+    let internal currentGraceWatchRuntimeModeForWatchTests () = currentGraceWatchRuntimeMode ()
+
     /// Checks whether the current runtime mode can record filesystem observations.
     let private canCaptureFilesystemObservation () = isGraceWatchObservationCaptureLegal (currentGraceWatchRuntimeMode ())
 
@@ -217,6 +220,10 @@ module Watch =
     let private pendingStatusDifferencesLock = obj ()
 
     let private pendingStatusDifferences = List<FileSystemDifference>()
+
+    let mutable private quarantinedWatchObservationCount = 0
+
+    let mutable private graceWatchResyncPending = 0
 
     /// Defines structured data exchanged by CLI helpers.
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
@@ -1234,6 +1241,88 @@ module Watch =
     /// Clears pre-derived differences when tests reset watch module state.
     let private clearPendingStatusDifferencesForTests () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Clear())
 
+    /// Records one pending observation as quarantined so confidence recovery never replays it implicitly.
+    let private quarantineWatchObservation reason observationKind path =
+        Interlocked.Increment(&quarantinedWatchObservationCount)
+        |> ignore
+
+        logToAnsiConsole Colors.Verbose $"Grace Watch quarantined {observationKind} observation for {path}: {reason}."
+
+    /// Moves currently queued watch observations out of the trusted incremental path after confidence is lost.
+    let private quarantinePendingWatchWork reason =
+        let mutable quarantinedCount = 0
+        let mutable fileGeneration = 0L
+        let mutable triggerGeneration = 0L
+        let mutable unitValue = ()
+
+        for pendingFile in filesToProcess.ToArray() do
+            if filesToProcess.TryRemove(pendingFile.Key, &fileGeneration) then
+                quarantineWatchObservation reason "file" pendingFile.Key
+                quarantinedCount <- quarantinedCount + 1
+
+        for pendingDirectory in directoriesToProcess.ToArray() do
+            if directoriesToProcess.TryRemove(pendingDirectory.Key, &unitValue) then
+                quarantineWatchObservation reason "directory" pendingDirectory.Key
+                quarantinedCount <- quarantinedCount + 1
+
+        for pendingTrigger in statusUpdateTriggers.ToArray() do
+            if statusUpdateTriggers.TryRemove(pendingTrigger.Key, &triggerGeneration) then
+                quarantineWatchObservation reason "status-trigger" pendingTrigger.Key
+                quarantinedCount <- quarantinedCount + 1
+
+        let pendingDifferences =
+            lock pendingStatusDifferencesLock (fun () ->
+                let snapshot = pendingStatusDifferences.ToArray()
+                pendingStatusDifferences.Clear()
+                snapshot)
+
+        for pendingDifference in pendingDifferences do
+            quarantineWatchObservation reason "status-difference" $"{pendingDifference.RelativePath}"
+            quarantinedCount <- quarantinedCount + 1
+
+        uploadedFileVersions.Clear()
+        lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
+        lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
+
+        if quarantinedCount > 0 then
+            logToAnsiConsole Colors.Important $"Grace Watch quarantined {quarantinedCount} pending observations after confidence loss: {reason}."
+
+    /// Reports whether an explicit resync scan must run before incremental observation application resumes.
+    let private isGraceWatchResyncPending () = Volatile.Read(&graceWatchResyncPending) <> 0
+
+    /// Clears the pending resync request once scan-derived status has reached the durable boundary.
+    let private clearGraceWatchResyncPending () = Volatile.Write(&graceWatchResyncPending, 0)
+
+    /// Suspends incremental Watch processing after recovery fails so Grace does not silently continue.
+    let private suspendGraceWatchAfterFailedRecovery reason =
+        quarantinePendingWatchWork reason
+        clearGraceWatchResyncPending ()
+        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+        logToAnsiConsole Colors.Error $"Grace Watch suspended incremental processing: {reason}."
+
+    /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
+    let private publishGraceWatchResyncRequired () =
+        try
+            (updateGraceWatchInterprocessFile GraceStatus.Default (Some(HashSet<DirectoryVersionId>())))
+                .GetAwaiter()
+                .GetResult()
+        with
+        | ex -> logToAnsiConsole Colors.Error $"Grace Watch could not publish resync-required status: {Markup.Escape(ex.Message)}."
+
+    /// Requests a scan-derived resync and quarantines observations captured under the previous root confidence.
+    let private requestGraceWatchExplicitResync reason =
+        quarantinePendingWatchWork reason
+        Volatile.Write(&graceWatchResyncPending, 1)
+        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+        publishGraceWatchResyncRequired ()
+        logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
+
+    /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
+    let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
+
+    /// Counts quarantined observations for tests that verify confidence loss does not replay stale work.
+    let internal quarantinedWatchObservationCountForWatchTests () = Volatile.Read(&quarantinedWatchObservationCount)
+
     /// Combines status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
         let merged = List<FileSystemDifference>()
@@ -1312,6 +1401,10 @@ module Watch =
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
         lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
         clearPendingStatusDifferencesForTests ()
+        clearGraceWatchResyncPending ()
+
+        Interlocked.Exchange(&quarantinedWatchObservationCount, 0)
+        |> ignore
 
         Interlocked.Exchange(&statusUpdateTriggerGeneration, 0L)
         |> ignore
@@ -1351,7 +1444,8 @@ module Watch =
 
     /// Evaluates has pending watch work against parsed options and command state.
     let private hasPendingWatchWork () =
-        not (
+        isGraceWatchResyncPending ()
+        || not (
             filesToProcess.IsEmpty
             && directoriesToProcess.IsEmpty
             && statusUpdateTriggers.IsEmpty
@@ -1621,8 +1715,13 @@ module Watch =
     /// Coordinates on error behavior for this CLI command path.
     let OnError (args: ErrorEventArgs) =
         let correlationId = generateCorrelationId ()
+        let message = args.GetException().Message
 
-        logToAnsiConsole Colors.Error $"I saw that the FileSystemWatcher threw an exception: {args.GetException().Message}. grace watch should be restarted."
+        requestGraceWatchExplicitResync $"FileSystemWatcher error {correlationId}: {message}"
+
+        logToAnsiConsole
+            Colors.Error
+            $"I saw that the FileSystemWatcher threw an exception: {message}. grace watch is resynchronizing before incremental work resumes."
 
     /// Coordinates on grace update in progress created behavior for this CLI command path.
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
@@ -1935,8 +2034,8 @@ module Watch =
         readGraceStatusFileClient
         copyFileToObjectDirectoryAndUploadToStorageClient
         _updateGraceStatusClient
-        _scanForDifferencesClient
-        updateGraceStatusFromDifferencesClient
+        (_scanForDifferencesClient: GraceStatus -> Task<List<FileSystemDifference>>)
+        (updateGraceStatusFromDifferencesClient: GraceStatus -> List<FileSystemDifference> -> CorrelationId -> Task<GraceStatus option>)
         applyGraceStatusIncrementalClient
         updateGraceWatchInterprocessFileClient
         =
@@ -1944,7 +2043,43 @@ module Watch =
             configureWatchPathComparisonForCurrentRepository ()
 
             // First, check if there's anything to process.
-            if hasPendingWatchWork () then
+            if isGraceWatchResyncPending () then
+                try
+                    let correlationId = generateCorrelationId ()
+                    let! graceStatusSnapshot = readGraceStatusFileClient ()
+                    graceStatus <- graceStatusSnapshot
+
+                    let! scanDerivedDifferences = _scanForDifferencesClient graceStatus
+
+                    let! statusUpdateResult =
+                        if scanDerivedDifferences.Count > 0 then
+                            updateGraceStatusFromDifferencesClient graceStatus scanDerivedDifferences correlationId
+                        else
+                            Task.FromResult(Some graceStatus)
+
+                    match statusUpdateResult with
+                    | Some newGraceStatus ->
+                        graceStatus <- newGraceStatus
+                        updateGraceStatusDirectoryIds graceStatus
+                        clearGraceWatchResyncPending ()
+                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
+                        do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                    | None -> suspendGraceWatchAfterFailedRecovery "scan-derived status update returned no durable status"
+
+                    graceStatus <- GraceStatus.Default
+                    GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
+                with
+                | ex ->
+                    suspendGraceWatchAfterFailedRecovery $"resync failed before the durable status boundary: {ex.Message}"
+
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Error in processChangedFiles resync: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+            elif hasPendingWatchWork () then
                 try
                     let runtimeMode = currentGraceWatchRuntimeMode ()
                     let correlationId = generateCorrelationId ()
