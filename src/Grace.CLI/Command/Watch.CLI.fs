@@ -436,6 +436,26 @@ module Watch =
     /// Clears pre-derived differences when tests reset watch module state.
     let private clearPendingStatusDifferencesForTests () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Clear())
 
+    /// Combines pre-derived and freshly scanned status differences without applying the same filesystem observation twice.
+    let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
+        let merged = List<FileSystemDifference>()
+
+        let addIfMissing (difference: FileSystemDifference) =
+            if not
+               <| merged.Exists (fun existing ->
+                   existing.RelativePath = difference.RelativePath
+                   && existing.DifferenceType = difference.DifferenceType
+                   && existing.FileSystemEntryType = difference.FileSystemEntryType) then
+                merged.Add(difference)
+
+        for difference in first do
+            addIfMissing difference
+
+        for difference in second do
+            addIfMissing difference
+
+        merged
+
     /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
         filesToProcess.Clear()
@@ -1004,6 +1024,7 @@ module Watch =
         readGraceStatusFileClient
         copyFileToObjectDirectoryAndUploadToStorageClient
         updateGraceStatusClient
+        scanForDifferencesClient
         updateGraceStatusFromDifferencesClient
         applyGraceStatusIncrementalClient
         updateGraceWatchInterprocessFileClient
@@ -1063,9 +1084,18 @@ module Watch =
                         resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
                         let pendingDifferences = pendingStatusDifferencesSnapshot ()
 
+                        let! differencesToApply =
+                            if pendingDifferences.Count > 0 && processedAnyFile then
+                                task {
+                                    let! rescannedDifferences = scanForDifferencesClient graceStatus
+                                    return mergeStatusDifferences pendingDifferences rescannedDifferences
+                                }
+                            else
+                                Task.FromResult(pendingDifferences)
+
                         let! statusUpdateResult =
-                            if pendingDifferences.Count > 0 then
-                                updateGraceStatusFromDifferencesClient graceStatus pendingDifferences correlationId
+                            if differencesToApply.Count > 0 then
+                                updateGraceStatusFromDifferencesClient graceStatus differencesToApply correlationId
                             else
                                 updateGraceStatusClient graceStatus correlationId
 
@@ -1075,6 +1105,7 @@ module Watch =
                                 filesToProcess.IsEmpty
                                 && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
                                 && (pendingDifferences.Count > 0
+                                    && not processedAnyFile
                                     || wasLastScanForDifferencesSuccessful ())
 
                             if statusUpdateCanCommit then
@@ -1082,6 +1113,8 @@ module Watch =
                                 drainAppliedStatusWork directorySnapshot statusTriggerSnapshot pendingDifferences
                                 clearPendingStatusDifferences pendingDifferences
                             else
+                                clearPendingStatusDifferences pendingDifferences
+
                                 logToAnsiConsole
                                     Colors.Important
                                     $"Grace Status file update completed while file upload work or a failed scan was pending; status-only triggers will retry."
@@ -1117,6 +1150,7 @@ module Watch =
             readGraceStatusFile
             copyFileToObjectDirectoryAndUploadToStorage
             updateGraceStatus
+            scanForDifferences
             updateGraceStatusFromDifferences
             applyGraceStatusIncremental
             updateGraceWatchInterprocessFile
