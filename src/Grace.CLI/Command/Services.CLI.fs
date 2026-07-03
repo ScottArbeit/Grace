@@ -179,6 +179,12 @@ module Services =
         status.SafetyFlags
         |> Array.filter (fun safetyFlag -> not (String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)))
 
+    /// Selects only durable compact modes for persisted IPC JSON so liveness must be derived from the raw status data.
+    let private modeForGraceWatchStatusContract (status: GraceWatchStatus) =
+        match status.Mode with
+        | GraceWatchRuntimeMode.HealthyIncremental -> None
+        | mode -> Some mode
+
     /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
     let private toGraceWatchStatusContract (status: GraceWatchStatus) =
         {
@@ -190,7 +196,7 @@ module Services =
             LastFileUploadInstant = status.LastFileUploadInstant
             LastDirectoryVersionInstant = status.LastDirectoryVersionInstant
             DirectoryIds = status.DirectoryIds
-            Mode = Some status.Mode
+            Mode = modeForGraceWatchStatusContract status
             SafetyFlags = safetyFlagsForGraceWatchStatusContract status
         }
 

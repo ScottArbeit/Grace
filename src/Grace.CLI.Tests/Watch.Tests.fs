@@ -179,6 +179,15 @@ module WatchTests =
             Assert.Fail($"Expected Watch IPC JSON property '{propertyName}'. JSON:{Environment.NewLine}{json}")
             String.Empty
 
+    /// Reads an optional scalar property from the persisted Watch IPC JSON contract.
+    let private tryReadWatchStatusJsonStringProperty (propertyName: string) =
+        let json = File.ReadAllText(Services.IpcFileName())
+        use document = JsonDocument.Parse(json)
+
+        match document.RootElement.TryGetProperty(propertyName) with
+        | true, property -> Some(property.GetString())
+        | false, _ -> None
+
     /// Reads the persisted Watch IPC safety flags into a deterministic set for assertions.
     let private readWatchStatusJsonSafetyFlags () =
         let json = File.ReadAllText(Services.IpcFileName())
@@ -5549,9 +5558,9 @@ module WatchTests =
             |> Set.contains "requiresExplicitResync"
             |> should equal true)
 
-    /// Verifies that watch status serializes compact runtime mode and safety flags.
+    /// Verifies that watch status serializes compact safety flags without durable liveness-sensitive mode.
     [<Test>]
-    let ``watch status serializes compact runtime mode and safety flags`` () =
+    let ``watch status serializes compact safety flags without healthy runtime mode`` () =
         withTempRepo (fun _ ->
             let rootDirectoryId = Guid.NewGuid()
 
@@ -5573,8 +5582,11 @@ module WatchTests =
             use document = JsonDocument.Parse(json)
             let root = document.RootElement
 
-            root.GetProperty("Mode").GetString()
-            |> should equal "healthyIncremental"
+            match root.TryGetProperty("Mode") with
+            | true, mode ->
+                mode.GetString()
+                |> should not' (equal "healthyIncremental")
+            | false, _ -> ()
 
             let safetyFlags =
                 root.GetProperty("SafetyFlags").EnumerateArray()
@@ -5625,6 +5637,9 @@ module WatchTests =
             |> Set.contains "incrementalSafe"
             |> should equal false
 
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should not' (equal (Some "healthyIncremental"))
+
             getCurrentInstant()
                 .Minus(Duration.FromMinutes(6.0))
             |> updatePersistedWatchStatusUpdatedAt
@@ -5635,6 +5650,9 @@ module WatchTests =
             readWatchStatusJsonSafetyFlags ()
             |> Set.contains "incrementalSafe"
             |> should equal false
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should not' (equal (Some "healthyIncremental"))
 
             let agedStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
             let derivedSafetyFlags = safetyFlagSet agedStatus
