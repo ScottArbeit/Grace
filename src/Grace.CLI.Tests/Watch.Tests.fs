@@ -16,6 +16,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.IO
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Threading.Tasks
 
 /// Groups watch coverage for the CLI test project.
@@ -144,21 +145,95 @@ module WatchTests =
 
         JsonDocument.Parse(output)
 
+    /// Builds a healthy live Watch status snapshot for IPC compatibility tests.
+    let private liveWatchStatus rootDirectoryId : Services.GraceWatchStatus =
+        {
+            UpdatedAt = getCurrentInstant ()
+            IsStartupClaim = false
+            RootDirectoryId = rootDirectoryId
+            RootDirectorySha256Hash = Sha256Hash "live-watch-root"
+            RootDirectoryBlake3Hash = Blake3Hash "live-watch-root-blake3"
+            LastFileUploadInstant = Instant.MinValue
+            LastDirectoryVersionInstant = Instant.MinValue
+            DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
+        }
+
+    /// Removes the compact runtime surface so tests can simulate pre-WS3.1 IPC files.
+    let private removeCompactWatchRuntimeSurface (json: string) =
+        let statusNode = JsonNode.Parse(json).AsObject()
+        statusNode.Remove("Mode") |> ignore
+        statusNode.Remove("SafetyFlags") |> ignore
+        statusNode.ToJsonString(Constants.JsonSerializerOptions)
+
+    /// Reads safety flags into a deterministic set for assertions.
+    let private safetyFlagSet (status: Services.GraceWatchStatus) = status.SafetyFlags |> Set.ofArray
+
+    /// Reads a scalar property from the persisted Watch IPC JSON contract.
+    let private readWatchStatusJsonStringProperty (propertyName: string) =
+        let json = File.ReadAllText(Services.IpcFileName())
+        use document = JsonDocument.Parse(json)
+
+        match document.RootElement.TryGetProperty(propertyName) with
+        | true, property -> property.GetString()
+        | false, _ ->
+            Assert.Fail($"Expected Watch IPC JSON property '{propertyName}'. JSON:{Environment.NewLine}{json}")
+            String.Empty
+
+    /// Reads an optional scalar property from the persisted Watch IPC JSON contract.
+    let private tryReadWatchStatusJsonStringProperty (propertyName: string) =
+        let json = File.ReadAllText(Services.IpcFileName())
+        use document = JsonDocument.Parse(json)
+
+        match document.RootElement.TryGetProperty(propertyName) with
+        | true, property when property.ValueKind <> JsonValueKind.Null -> Some(property.GetString())
+        | false, _ -> None
+        | true, _ -> None
+
+    /// Reads the persisted Watch IPC safety flags into a deterministic set for assertions.
+    let private readWatchStatusJsonSafetyFlags () =
+        let json = File.ReadAllText(Services.IpcFileName())
+        use document = JsonDocument.Parse(json)
+
+        match document.RootElement.TryGetProperty("SafetyFlags") with
+        | true, property ->
+            property.EnumerateArray()
+            |> Seq.map (fun flag -> flag.GetString())
+            |> Set.ofSeq
+        | false, _ ->
+            Assert.Fail($"Expected Watch IPC JSON property 'SafetyFlags'. JSON:{Environment.NewLine}{json}")
+            Set.empty
+
+    /// Writes a Watch IPC JSON snapshot with compact runtime fields for deterministic stale-status tests.
+    let private writeWatchStatusJsonWithRuntimeSurface (status: Services.GraceWatchStatus) =
+        let statusNode = JsonNode.Parse(serialize status).AsObject()
+        statusNode["Mode"] <- JsonSerializer.SerializeToNode(status.Mode, Constants.JsonSerializerOptions)
+        statusNode["SafetyFlags"] <- JsonSerializer.SerializeToNode(status.SafetyFlags, Constants.JsonSerializerOptions)
+
+        let ipcFileName = Services.IpcFileName()
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+        |> ignore
+
+        File.WriteAllText(ipcFileName, statusNode.ToJsonString(Constants.JsonSerializerOptions))
+        ipcFileName
+
+    /// Rewrites only the Watch IPC heartbeat timestamp so tests can model a healthy writer that later dies.
+    let private updatePersistedWatchStatusUpdatedAt updatedAt =
+        let ipcFileName = Services.IpcFileName()
+
+        let statusNode =
+            JsonNode
+                .Parse(File.ReadAllText(ipcFileName))
+                .AsObject()
+
+        statusNode["UpdatedAt"] <- JsonSerializer.SerializeToNode(updatedAt, Constants.JsonSerializerOptions)
+        File.WriteAllText(ipcFileName, statusNode.ToJsonString(Constants.JsonSerializerOptions))
+
     /// Writes live watch status file needed by the test scenario.
     let private writeLiveWatchStatusFile () =
         let rootDirectoryId = Guid.NewGuid()
 
-        let status: Services.GraceWatchStatus =
-            {
-                UpdatedAt = getCurrentInstant ()
-                IsStartupClaim = false
-                RootDirectoryId = rootDirectoryId
-                RootDirectorySha256Hash = Sha256Hash "live-watch-root"
-                RootDirectoryBlake3Hash = Blake3Hash "live-watch-root-blake3"
-                LastFileUploadInstant = Instant.MinValue
-                LastDirectoryVersionInstant = Instant.MinValue
-                DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
-            }
+        let status = liveWatchStatus rootDirectoryId
 
         let ipcFileName = Services.IpcFileName()
 
@@ -5381,6 +5456,24 @@ module WatchTests =
                 let status = Services.getGraceWatchStatus().Result
                 status |> should equal None
 
+                let claimStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+
+                tryReadWatchStatusJsonStringProperty "Mode"
+                |> should equal None
+
+                claimStatus.Mode
+                |> should equal Services.GraceWatchRuntimeMode.StartingUp
+
+                let safetyFlags = safetyFlagSet claimStatus
+
+                safetyFlags
+                |> Set.contains "startupClaim"
+                |> should equal true
+
+                safetyFlags
+                |> Set.contains "requiresExplicitResync"
+                |> should equal true
+
                 /// Verifies that the CLI watch scenario exits with the expected process status.
                 let exitCode, output = runWithCapturedOutput [| "watch" |]
 
@@ -5411,7 +5504,352 @@ module WatchTests =
             claimed |> should equal true
 
             let status = Services.getGraceWatchStatus().Result
-            status |> should equal None)
+            status |> should equal None
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "startupClaim"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
+
+    /// Verifies that watch startup claim reclaims stale ipc files through the compact runtime contract.
+    [<Test>]
+    let ``watch startup claim replaces stale ipc file through runtime contract`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let staleStatus =
+                { liveWatchStatus rootDirectoryId with
+                    UpdatedAt =
+                        getCurrentInstant()
+                            .Minus(Duration.FromMinutes(6.0))
+                }
+
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, serialize staleStatus)
+
+            let claimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            claimed |> should equal true
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "startupClaim"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
+
+    /// Verifies that a dead startup claim cannot keep advertising a live startup mode in raw compact IPC JSON.
+    [<Test>]
+    let ``watch compact startup claim does not expose starting mode after heartbeat ages`` () =
+        withTempRepo (fun _ ->
+            let claimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            claimed |> should equal true
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            getCurrentInstant()
+                .Minus(Duration.FromMinutes(6.0))
+            |> updatePersistedWatchStatusUpdatedAt
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let agedStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+
+            agedStatus.Mode
+            |> should equal Services.GraceWatchRuntimeMode.StartingUp
+
+            let derivedSafetyFlags = safetyFlagSet agedStatus
+
+            derivedSafetyFlags
+            |> Set.contains "startupClaim"
+            |> should equal true
+
+            derivedSafetyFlags
+            |> Set.contains "staleStatus"
+            |> should equal true
+
+            derivedSafetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
+
+    /// Verifies that watch status serializes compact safety flags without durable liveness-sensitive mode.
+    [<Test>]
+    let ``watch status serializes compact safety flags without healthy runtime mode`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { GraceStatus.Default with
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = Sha256Hash "live-watch-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "live-watch-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let json = File.ReadAllText(Services.IpcFileName())
+
+            use document = JsonDocument.Parse(json)
+            let root = document.RootElement
+
+            let safetyFlags =
+                root.GetProperty("SafetyFlags").EnumerateArray()
+                |> Seq.map (fun flag -> flag.GetString())
+                |> Set.ofSeq
+
+            safetyFlags
+            |> Set.contains "usableRoot"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "directoryIndex"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            let roundTripped: Services.GraceWatchStatus = deserialize json
+
+            roundTripped.Mode
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            safetyFlagSet roundTripped
+            |> Set.contains "incrementalSafe"
+            |> should equal true)
+
+    /// Verifies that incomplete Watch IPC snapshots derive resync state instead of persisting it as a live raw mode.
+    [<Test>]
+    let ``watch status serializes compact safety flags without resync runtime mode`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { GraceStatus.Default with
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = Sha256Hash "resync-watch-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "resync-watch-root-blake3"
+                }
+
+            (Services.updateGraceWatchInterprocessFile status (Some(HashSet<DirectoryVersionId>())))
+                .GetAwaiter()
+                .GetResult()
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "missingDirectoryIndex"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            let roundTripped: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+
+            roundTripped.Mode
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
+
+    /// Verifies that raw compact IPC readers cannot inherit incremental safety after a healthy writer dies.
+    [<Test>]
+    let ``watch compact status does not expose incremental safety after healthy snapshot ages`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { GraceStatus.Default with
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = Sha256Hash "aging-watch-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "aging-watch-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonSafetyFlags ()
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            getCurrentInstant()
+                .Minus(Duration.FromMinutes(6.0))
+            |> updatePersistedWatchStatusUpdatedAt
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            readWatchStatusJsonSafetyFlags ()
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let agedStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+            let derivedSafetyFlags = safetyFlagSet agedStatus
+
+            derivedSafetyFlags
+            |> Set.contains "staleStatus"
+            |> should equal true
+
+            derivedSafetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            derivedSafetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false)
+
+    /// Verifies that stale watch status json does not advertise incremental safety.
+    [<Test>]
+    let ``watch status safety flags require resync when snapshot is stale`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let staleStatus =
+                { liveWatchStatus rootDirectoryId with
+                    UpdatedAt =
+                        getCurrentInstant()
+                            .Minus(Duration.FromMinutes(6.0))
+                }
+
+            writeWatchStatusJsonWithRuntimeSurface staleStatus
+            |> ignore
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "staleStatus"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false)
+
+    /// Verifies that legacy watch status json without compact runtime fields remains readable.
+    [<Test>]
+    let ``watch status reads legacy json without runtime mode fields`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let legacyJson =
+                rootDirectoryId
+                |> liveWatchStatus
+                |> serialize
+                |> removeCompactWatchRuntimeSurface
+
+            legacyJson |> should not' (contain "Mode")
+
+            legacyJson |> should not' (contain "SafetyFlags")
+
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, legacyJson)
+
+            match Services.getGraceWatchStatus().Result with
+            | Some status ->
+                status.RootDirectoryId
+                |> should equal rootDirectoryId
+
+                status.Mode
+                |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+                safetyFlagSet status
+                |> Set.contains "incrementalSafe"
+                |> should equal true
+            | None -> Assert.Fail("Expected legacy watch status JSON to remain usable."))
+
+    /// Verifies that incomplete watch status requests explicit resync instead of advertising incremental safety.
+    [<Test>]
+    let ``watch status without directory index requires explicit resync`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status = { liveWatchStatus rootDirectoryId with DirectoryIds = HashSet<DirectoryVersionId>() }
+
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, serialize status)
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            let persistedStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(ipcFileName))
+
+            persistedStatus.Mode
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            let safetyFlags = safetyFlagSet persistedStatus
+
+            safetyFlags
+            |> Set.contains "missingDirectoryIndex"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
 
     /// Verifies that watch status preserves root blake3 from grace status index.
     [<Test>]
