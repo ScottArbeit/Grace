@@ -382,8 +382,53 @@ module Watch =
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
-    let mutable private enumerateDirectoriesForDirectoryStatusAdd =
-        fun directoryPath -> Directory.EnumerateDirectories(directoryPath, "*", SearchOption.AllDirectories)
+    /// Checks whether a directory and each repository-relative ancestor remains eligible for watch indexing.
+    let private directoryAndAncestorsShouldNotBeIgnored (directoryPath: string) =
+        let rootDirectory =
+            Current().RootDirectory
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        let rootDirectoryWithSeparator = rootDirectory + string Path.DirectorySeparatorChar
+
+        let normalizedDirectoryPath =
+            directoryPath
+            |> Path.GetFullPath
+            |> Path.TrimEndingDirectorySeparator
+
+        let isInsideRepository =
+            normalizedDirectoryPath.Equals(rootDirectory, watchPathComparison)
+            || normalizedDirectoryPath.StartsWith(rootDirectoryWithSeparator, watchPathComparison)
+
+        let mutable eligible = isInsideRepository
+        let mutable currentDirectory = DirectoryInfo(normalizedDirectoryPath)
+
+        while eligible
+              && not (isNull currentDirectory)
+              && not (currentDirectory.FullName.Equals(rootDirectory, watchPathComparison)) do
+            if shouldNotIgnoreDirectory currentDirectory.FullName then
+                currentDirectory <- currentDirectory.Parent
+            else
+                eligible <- false
+
+        eligible
+
+    /// Enumerates directory-add candidates under an affected subtree while pruning ignored directory branches.
+    let private enumerateDirectoriesForDirectoryStatusAddWithPruning directoryPath =
+        seq {
+            let pendingDirectories = Stack<string>()
+            pendingDirectories.Push(directoryPath)
+
+            while pendingDirectories.Count > 0 do
+                let parentDirectory = pendingDirectories.Pop()
+
+                for childDirectory in Directory.EnumerateDirectories(parentDirectory) do
+                    if directoryAndAncestorsShouldNotBeIgnored childDirectory then
+                        yield childDirectory
+                        pendingDirectories.Push(childDirectory)
+        }
+
+    let mutable private enumerateDirectoriesForDirectoryStatusAdd = enumerateDirectoriesForDirectoryStatusAddWithPruning
 
     /// Records an uploaded watch path until the status update pass drains every file upload batch.
     let private addProcessedFileRelativePathPendingStatus (relativePath: RelativePath) =
@@ -658,6 +703,8 @@ module Watch =
                 let directoryAddDifferences = deriveDirectoryAddDifferencesThroughSegment status canonicalRelativePath (segmentCount - 1)
 
                 for directoryAddDifference in directoryAddDifferences do
+                    let directoryDifferenceFullPath = Path.Combine(Current().RootDirectory, normalizeRelativePath directoryAddDifference.RelativePath)
+
                     let alreadyAdded =
                         differences
                         |> Seq.exists (fun difference ->
@@ -669,12 +716,14 @@ module Watch =
                                 watchPathComparison
                             ))
 
-                    if not alreadyAdded then differences.Add(directoryAddDifference)
+                    if not alreadyAdded
+                       && directoryAndAncestorsShouldNotBeIgnored directoryDifferenceFullPath then
+                        differences.Add(directoryAddDifference)
             | None -> ()
 
         if
             Directory.Exists(directoryPath)
-            && shouldNotIgnoreDirectory directoryPath
+            && directoryAndAncestorsShouldNotBeIgnored directoryPath
         then
             try
                 addDirectoryDifference directoryPath
@@ -1254,7 +1303,7 @@ module Watch =
         graceStatusHasChanged <- false
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
-        enumerateDirectoriesForDirectoryStatusAdd <- fun directoryPath -> Directory.EnumerateDirectories(directoryPath, "*", SearchOption.AllDirectories)
+        enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None

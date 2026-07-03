@@ -4141,6 +4141,87 @@ module WatchTests =
             |> Seq.exists (fun difference -> $"{difference.RelativePath}" = unrelatedRelativePath)
             |> should equal false)
 
+    /// Verifies that ignored directories under a renamed subtree are pruned before directory adds are derived.
+    [<Test>]
+    let ``renamed subtree prunes ignored directory descendants before status adds`` () =
+        withTempRepo (fun root ->
+            writeGraceIgnore root [| "ignored/" |]
+
+            let oldRelativePath = "old-assets"
+            let newRelativePath = "new-assets"
+            let ignoredRelativePath = $"{newRelativePath}/ignored"
+            let ignoredChildRelativePath = $"{ignoredRelativePath}/empty"
+            let oldPath = Path.Combine(root, oldRelativePath)
+            let newPath = Path.Combine(root, newRelativePath)
+            let status = graceStatusTracking Array.empty<string> [| oldRelativePath |]
+            /// Tracks upload Calls changes so ignored empty directory descendants cannot be file-derived.
+            let mutable uploadCalls = 0
+            /// Tracks apply-from-differences Calls changes so status work stays event-derived.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply seam so ignored ancestors cannot be reintroduced.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Directory.CreateDirectory(Path.Combine(root, ignoredChildRelativePath))
+            |> ignore
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equivalent
+                [|
+                    DifferenceType.Delete, FileSystemEntryType.Directory, oldRelativePath
+                    DifferenceType.Add, FileSystemEntryType.Directory, newRelativePath
+                |]
+
+            observedDifferences
+            |> Seq.exists (fun difference ->
+                let relativePath = $"{difference.RelativePath}"
+
+                relativePath = ignoredRelativePath
+                || relativePath = ignoredChildRelativePath)
+            |> should equal false)
+
     /// Verifies that a stale parent delete does not drop a final non-ignored empty child directory add.
     [<Test>]
     let ``stale parent delete preserves recreated empty child directory add without scan`` () =
