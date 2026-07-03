@@ -527,6 +527,16 @@ module Watch =
         | FileSystemEntryType.Directory, FinalPathDirectory -> true
         | _ -> false
 
+    /// Checks whether a repository-relative path is inside a directory trigger.
+    let private isPathUnderDirectoryTrigger (directoryRelativePath: RelativePath) (candidateRelativePath: RelativePath) =
+        let normalizedDirectoryPath =
+            normalizeRelativePath directoryRelativePath
+            |> fun path -> path.TrimEnd('/')
+
+        let normalizedCandidatePath = normalizeRelativePath candidateRelativePath
+
+        normalizedCandidatePath.StartsWith(normalizedDirectoryPath + "/", watchPathComparison)
+
     /// Checks directory existence using the active watch path comparison so case-insensitive event paths still match disk.
     let private directoryExistsUsingWatchPathComparison (relativePath: RelativePath) =
         let normalizedRelativePath = normalizeRelativePath relativePath
@@ -663,8 +673,16 @@ module Watch =
                     if not (finalPathMatchesEntryType FileSystemEntryType.File relativePath) then
                         differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File relativePath)
             | DeletedDirectory ->
-                if not (finalPathMatchesEntryType FileSystemEntryType.Directory relativePath) then
-                    differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.Directory relativePath)
+                let trackedDirectoryRelativePath =
+                    match tryFindTrackedDirectoryWithComparison StringComparison.Ordinal status relativePath with
+                    | Some exactTrackedDirectory -> exactTrackedDirectory.RelativePath
+                    | None ->
+                        match tryFindTrackedDirectoryWithComparison deletedPathComparison status relativePath with
+                        | Some trackedDirectory -> trackedDirectory.RelativePath
+                        | None -> relativePath
+
+                if not (finalPathMatchesEntryType FileSystemEntryType.Directory trackedDirectoryRelativePath) then
+                    differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.Directory trackedDirectoryRelativePath)
             | DeletedPathKindUnknown
             | DeletedPathStatusUnavailable -> ()
 
@@ -692,6 +710,11 @@ module Watch =
         statusTriggerSnapshot
         |> Array.exists (fun statusTrigger ->
             String.Equals(normalizeRelativePath statusTrigger.RelativePath, normalizeRelativePath difference.RelativePath, watchPathComparison))
+
+    /// Checks whether a status-only directory trigger covers a pending file difference.
+    let private hasContainingStatusTrigger (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (difference: FileSystemDifference) =
+        statusTriggerSnapshot
+        |> Array.exists (fun statusTrigger -> isPathUnderDirectoryTrigger (RelativePath statusTrigger.RelativePath) difference.RelativePath)
 
     /// Checks whether a completed file upload already waits for status application on this path.
     let private hasProcessedFileRelativePath (processedRelativePaths: List<RelativePath>) (relativePath: RelativePath) =
@@ -773,7 +796,8 @@ module Watch =
                && finalPathMatchesEntryType difference.FileSystemEntryType difference.RelativePath then
                 resolved.Add(difference)
             elif isStaleUploadedFileDifference difference
-                 && hasMatchingStatusTrigger statusTriggerSnapshot difference then
+                 && (hasMatchingStatusTrigger statusTriggerSnapshot difference
+                     || hasContainingStatusTrigger statusTriggerSnapshot difference) then
                 resolved.Add(difference)
             elif isStaleParentDirectoryAddDifference difference then
                 resolved.Add(difference)
@@ -871,6 +895,36 @@ module Watch =
         else
             false
 
+    /// Records a directory whose contents must be enumerated before related status triggers can apply.
+    let private enqueueDirectoryUploadRetry directoryPath =
+        if
+            Directory.Exists(directoryPath)
+            && shouldNotIgnoreDirectory directoryPath
+        then
+            directoriesToProcess.TryAdd(directoryPath, ())
+            |> ignore
+
+    /// Queues every non-ignored file under a directory and reports whether enumeration reached a durable answer.
+    let private tryEnqueueDirectoryContentsForUpload directoryPath =
+        if
+            Directory.Exists(directoryPath)
+            && shouldNotIgnoreDirectory directoryPath
+        then
+            try
+                for filePath in enumerateFilesForDirectoryUpload directoryPath do
+                    enqueueFileUpload filePath |> ignore
+
+                true
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Error
+                    $"Unable to enumerate renamed directory {directoryPath}; status update will retry after file uploads can be queued. {Markup.Escape(ex.Message)}"
+
+                false
+        else
+            true
+
     /// Requeues uploaded paths whose final content could not be matched to a completed upload identity.
     let private reenqueueUnresolvedUploadedFinalFileVersions (relativePaths: seq<RelativePath>) =
         let requeuedRelativePaths = List<RelativePath>()
@@ -888,8 +942,8 @@ module Watch =
 
         requeuedRelativePaths
 
-    /// Requeues a same-path upload when a stale delete resolves to changed final file content.
-    let private reenqueueUploadsForResolvedFileDeletes
+    /// Requeues uploads when stale delete triggers resolve to live final file or directory content.
+    let private reenqueueUploadsForResolvedDeletes
         (status: GraceStatus)
         (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
         (canceledRelativePaths: List<RelativePath>)
@@ -922,6 +976,15 @@ module Watch =
                         let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
                         if enqueueFileUpload fullPath then requeuedRelativePaths.Add(relativePath)
+                    elif uploadWasCanceled
+                         && finalPathMatchesEntryType FileSystemEntryType.Directory relativePath then
+                        let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+                        if tryEnqueueDirectoryContentsForUpload fullPath then
+                            requeuedRelativePaths.Add(relativePath)
+                        else
+                            enqueueDirectoryUploadRetry fullPath
+                            requeuedRelativePaths.Add(relativePath)
 
                 index <- index + 1
 
@@ -935,12 +998,12 @@ module Watch =
 
         filesToProcess.TryRemove(filePath, &generation)
 
-    /// Reads cancel pending uploads for deleted path data needed by the command workflow without changing remote state.
+    /// Cancels pending upload work covered by a delete or rename-old path before status observes the disappearance.
     let private cancelPendingUploadsForDeletedPath fullPath =
-        let mutable canceledExactFileUpload = removePendingFileUpload fullPath
+        let mutable canceledFileUpload = removePendingFileUpload fullPath
 
         match repositoryRelativePath fullPath with
-        | Some relativePath -> if removePendingFileUpload relativePath then canceledExactFileUpload <- true
+        | Some relativePath -> if removePendingFileUpload relativePath then canceledFileUpload <- true
         | None -> ()
 
         let normalizedFullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(fullPath))
@@ -969,17 +1032,9 @@ module Watch =
                     | None -> false)
 
             if removeQueuedFile then
-                let queuedExactPathMatched =
-                    normalizedQueuedFile.Equals(normalizedFullPath, watchPathComparison)
-                    || (match repositoryRelativePath fullPath with
-                        | Some relativePath -> String.Equals(normalizeRelativePath queuedFile, normalizeRelativePath relativePath, watchPathComparison)
-                        | None -> false)
+                if removePendingFileUpload queuedFile then canceledFileUpload <- true
 
-                if removePendingFileUpload queuedFile
-                   && queuedExactPathMatched then
-                    canceledExactFileUpload <- true
-
-        canceledExactFileUpload
+        canceledFileUpload
 
     /// Records an already-derived filesystem difference so status application can retry without duplicating work.
     let private addPendingStatusDifference (difference: FileSystemDifference) =
@@ -1195,7 +1250,6 @@ module Watch =
 
             let statusTriggerPathsToDrain =
                 appliedDifferences
-                |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
                 |> Seq.map (fun difference -> string difference.RelativePath)
                 |> HashSet
 
@@ -1207,7 +1261,16 @@ module Watch =
                     |> ignore
 
             for statusTrigger in statusTriggerSnapshot do
-                if statusTriggerPathsToDrain.Contains(statusTrigger.RelativePath) then
+                let statusTriggerRelativePath = RelativePath statusTrigger.RelativePath
+
+                let statusTriggerResolvedByChild =
+                    appliedDifferences
+                    |> Seq.exists (fun difference -> isPathUnderDirectoryTrigger statusTriggerRelativePath difference.RelativePath)
+
+                if
+                    statusTriggerPathsToDrain.Contains(statusTrigger.RelativePath)
+                    || statusTriggerResolvedByChild
+                then
                     let pair = KeyValuePair(statusTrigger.RelativePath, statusTrigger.Generation)
 
                     (statusUpdateTriggers :> ICollection<KeyValuePair<string, int64>>)
@@ -1317,25 +1380,16 @@ module Watch =
                 logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
-    let private enqueueDirectoryContentsForUpload directoryPath =
-        if
-            Directory.Exists(directoryPath)
-            && shouldNotIgnoreDirectory directoryPath
-        then
-            try
-                for filePath in enumerateFilesForDirectoryUpload directoryPath do
-                    enqueueFileUpload filePath |> ignore
+    let private enqueueDirectoryContentsForUpload directoryPath = tryEnqueueDirectoryContentsForUpload directoryPath
 
-                true
-            with
-            | ex ->
-                logToAnsiConsole
-                    Colors.Error
-                    $"Unable to enumerate renamed directory {directoryPath}; status update will retry after file uploads can be queued. {Markup.Escape(ex.Message)}"
+    /// Retries directory content enumeration before status application consumes directory rename-old triggers.
+    let private retryPendingDirectoryUploads () =
+        let mutable unitValue = ()
 
-                false
-        else
-            true
+        for directoryPath in directoriesToProcess.Keys.ToArray() do
+            if enqueueDirectoryContentsForUpload directoryPath then
+                directoriesToProcess.TryRemove(directoryPath, &unitValue)
+                |> ignore
 
     /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
@@ -1372,8 +1426,8 @@ module Watch =
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
             if newPathIsDirectory then
-                enqueueDirectoryContentsForUpload args.FullPath
-                |> ignore
+                if not (enqueueDirectoryContentsForUpload args.FullPath) then
+                    enqueueDirectoryUploadRetry args.FullPath
             elif enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
@@ -1706,6 +1760,8 @@ module Watch =
                     let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
                     let mutable processedAnyFile = false
 
+                    retryPendingDirectoryUploads ()
+
                     // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
                     //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
                     //   and clear the queue quickly without overwhelming the system.
@@ -1746,7 +1802,8 @@ module Watch =
 
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
-                    if filesToProcess.IsEmpty then
+                    if filesToProcess.IsEmpty
+                       && directoriesToProcess.IsEmpty then
                         let directorySnapshot, statusTriggerSnapshot = statusOnlyTriggerSnapshot ()
                         let fileWorkGenerationBeforeStatusUpdate = Volatile.Read(&fileUploadWorkGeneration)
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
@@ -1756,7 +1813,7 @@ module Watch =
                         let startupPendingDifferences = pendingStatusDifferencesSnapshot ()
 
                         let! requeuedResolvedFileDeletePaths =
-                            reenqueueUploadsForResolvedFileDeletes
+                            reenqueueUploadsForResolvedDeletes
                                 graceStatus
                                 statusTriggerSnapshot
                                 canceledFileUploadDeleteRelativePathsForStatus
@@ -1787,7 +1844,7 @@ module Watch =
                         let requeuedUnresolvedUploadedFilePaths = reenqueueUnresolvedUploadedFinalFileVersions unresolvedUploadedFilePaths
 
                         let deleteDifferences = deriveDeleteDifferences graceStatus statusTriggerSnapshot
-                        let eventDerivedDifferences = mergeStatusDifferences uploadedFileDifferences deleteDifferences
+                        let eventDerivedDifferences = mergeStatusDifferences deleteDifferences uploadedFileDifferences
 
                         for eventDerivedDifference in (eventDerivedDifferences :> seq<FileSystemDifference>) do
                             addPendingStatusDifference eventDerivedDifference
@@ -1813,7 +1870,7 @@ module Watch =
                             elif requeuedResolvedFileDeletePaths.Count > 0 then
                                 logToAnsiConsole
                                     Colors.Important
-                                    $"Grace Status stale file-delete differences requeued changed final content; requeued uploads will finish before status application."
+                                    $"Grace Status stale delete differences requeued live final content; requeued uploads will finish before status application."
 
                                 Task.FromResult(None)
                             elif requeuedUnresolvedUploadedFilePaths.Count > 0 then

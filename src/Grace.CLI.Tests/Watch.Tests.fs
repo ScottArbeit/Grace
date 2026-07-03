@@ -3308,6 +3308,543 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that a renamed directory enumeration failure blocks the old-path status trigger from applying.
+    [<Test>]
+    let ``renamed directory enumeration failure keeps old path trigger during processing`` () =
+        withTempRepo (fun root ->
+            let oldPath = Path.Combine(root, "old-enumeration-processing-name")
+            let newPath = Path.Combine(root, "new-enumeration-processing-name")
+            let status = graceStatusTracking Array.empty<string> [| "old-enumeration-processing-name" |]
+            /// Tracks scan Calls changes so failed enumeration does not fall back to a healthy scan.
+            let mutable scanCalls = 0
+            /// Tracks event-derived status apply calls so the old path cannot be deleted before new contents upload.
+            let mutable applyFromDifferencesCalls = 0
+
+            Directory.CreateDirectory(newPath) |> ignore
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.setEnumerateFilesForDirectoryUploadForWatchTests (fun _ -> raise (UnauthorizedAccessException("blocked enumeration")))
+
+            Watch.OnRenamed(renamedEvent oldPath newPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 0
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "old-enumeration-processing-name" |]
+
+            pending.DirectoriesToProcess
+            |> should equal [| newPath |])
+
+    /// Verifies that directory deletes derive structural delete differences without a whole-root scan.
+    [<Test>]
+    let ``deleted tracked directory derives directory delete without scan`` () =
+        withTempRepo (fun root ->
+            let relativePath = "tracked-assets"
+            let directoryPath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking Array.empty<string> [| relativePath |]
+            /// Tracks scan Calls changes so this scenario proves healthy directory delete avoids a scan.
+            let mutable scanCalls = 0
+            /// Tracks event-derived status application so the directory delete is explicit.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply seam so this scenario fails on missing directory delete work.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Delete, FileSystemEntryType.Directory, relativePath
+                |])
+
+    /// Verifies that unknown directory delete observations do not create Saves.
+    [<Test>]
+    let ``unknown deleted directory derives no save without scan`` () =
+        withTempRepo (fun root ->
+            let directoryPath = Path.Combine(root, "unknown-assets")
+            /// Tracks scan Calls changes so this scenario proves no healthy fallback scan is used.
+            let mutable scanCalls = 0
+            /// Tracks event-derived status application so unknown deletes cannot create Saves.
+            let mutable applyFromDifferencesCalls = 0
+
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 0)
+
+    /// Verifies that a recreated directory invalidates a stale directory delete before status apply.
+    [<Test>]
+    let ``recreated directory suppresses stale directory delete without scan`` () =
+        withTempRepo (fun root ->
+            let relativePath = "recreated-assets"
+            let directoryPath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking Array.empty<string> [| relativePath |]
+            /// Tracks scan Calls changes so final-state invalidation stays event-derived.
+            let mutable scanCalls = 0
+            /// Tracks event-derived status application so stale directory deletes do not apply.
+            let mutable applyFromDifferencesCalls = 0
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 0)
+
+    /// Verifies that a directory replaced by a file emits the directory delete before the file add.
+    [<Test>]
+    let ``tracked directory replaced by file derives delete before add without scan`` () =
+        withTempRepo (fun root ->
+            let relativePath = "kind-replaced"
+            let replacementFilePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking Array.empty<string> [| relativePath |]
+            /// Tracks scan Calls changes so replacement-by-kind stays event-derived.
+            let mutable scanCalls = 0
+            /// Tracks the Differences passed to the apply seam so ordering is proven.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.setGraceStatusForWatchTests status
+            File.WriteAllText(replacementFilePath, "file replacing a tracked directory")
+            Watch.OnDeleted(deletedEvent replacementFilePath)
+            Watch.OnCreated(changedEvent replacementFilePath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ filePath =
+                recordUploadedFileVersion $"{filePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanCalls |> should equal 0
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Delete, FileSystemEntryType.Directory, relativePath
+                    DifferenceType.Add, FileSystemEntryType.File, relativePath
+                |])
+
+    /// Verifies that case-insensitive directory delete emits the tracked directory casing.
+    [<Test>]
+    let ``case-insensitive deleted directory preserves tracked path casing`` () =
+        withTempRepo (fun root ->
+            Watch.setWatchPathComparisonForWatchTests StringComparison.OrdinalIgnoreCase
+
+            let deletedPath = Path.Combine(root, "src")
+            let status = graceStatusTracking Array.empty<string> [| "Src" |]
+            /// Tracks the Differences passed to the apply seam so tracked directory casing is proven.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.OnDeleted(deletedEvent deletedPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Delete, FileSystemEntryType.Directory, "Src"
+                |])
+
+    /// Verifies that a stale directory delete requeues surviving child files after canceling their uploads.
+    [<Test>]
+    let ``stale directory delete requeues canceled child uploads without scan`` () =
+        withTempRepo (fun root ->
+            let directoryRelativePath = "assets"
+            let childRelativePath = "assets/child.txt"
+            let directoryPath = Path.Combine(root, directoryRelativePath)
+            let childPath = Path.Combine(directoryPath, "child.txt")
+
+            let status =
+                graceStatusTracking [| childRelativePath |] [|
+                    directoryRelativePath
+                |]
+
+            /// Tracks upload Calls changes so the canceled child upload retry is proven.
+            let mutable uploadCalls = 0
+            /// Tracks scan Calls changes so this stale directory path stays event-derived.
+            let mutable scanCalls = 0
+            /// Tracks apply-from-differences Calls changes so status waits for requeued upload content.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply seam so the surviving child reaches status.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            File.WriteAllText(childPath, "surviving changed child")
+            Watch.setGraceStatusForWatchTests status
+            Watch.OnChanged(changedEvent childPath)
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 0
+
+            let afterRequeue = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterRequeue.FilesToProcess
+            |> should equal [| childPath |]
+
+            afterRequeue.StatusUpdateTriggers
+            |> should equal [| directoryRelativePath |]
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 1
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Change, FileSystemEntryType.File, childRelativePath
+                |])
+
+    /// Verifies that parent directory delete resolves stale child file work when the child is gone.
+    [<Test>]
+    let ``parent directory delete resolves stale child add without requeueing missing upload`` () =
+        withTempRepo (fun root ->
+            let directoryRelativePath = "transient-parent"
+            let childRelativePath = "transient-parent/child.txt"
+            let directoryPath = Path.Combine(root, directoryRelativePath)
+            let childPath = Path.Combine(directoryPath, "child.txt")
+            /// Tracks scan Calls changes so stale child resolution does not use a healthy scan.
+            let mutable scanCalls = 0
+            /// Tracks apply-from-differences Calls changes so the stale child add is applied only on the failed pass.
+            let mutable applyFromDifferencesCalls = 0
+
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            File.WriteAllText(childPath, "transient child content")
+            Watch.OnChanged(changedEvent childPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ pendingFilePath =
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(None)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            applyFromDifferencesCalls |> should equal 1
+
+            File.Delete(childPath)
+            Directory.Delete(directoryPath)
+            Watch.OnDeleted(deletedEvent directoryPath)
+
+            processPendingWork ()
+
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Verifies that file event during status only update keeps trigger pending for upload first retry.
     [<Test>]
     let ``file event during status-only update keeps trigger pending for upload-first retry`` () =
