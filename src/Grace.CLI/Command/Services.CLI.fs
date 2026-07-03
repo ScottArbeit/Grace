@@ -182,7 +182,10 @@ module Services =
     /// Selects only durable compact modes for persisted IPC JSON so liveness must be derived from the raw status data.
     let private modeForGraceWatchStatusContract (status: GraceWatchStatus) =
         match status.Mode with
-        | GraceWatchRuntimeMode.HealthyIncremental -> None
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.HealthyIncremental
+        | GraceWatchRuntimeMode.Resynchronizing
+        | GraceWatchRuntimeMode.Stopping -> None
         | mode -> Some mode
 
     /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.

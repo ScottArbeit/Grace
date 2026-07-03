@@ -185,8 +185,9 @@ module WatchTests =
         use document = JsonDocument.Parse(json)
 
         match document.RootElement.TryGetProperty(propertyName) with
-        | true, property -> Some(property.GetString())
+        | true, property when property.ValueKind <> JsonValueKind.Null -> Some(property.GetString())
         | false, _ -> None
+        | true, _ -> None
 
     /// Reads the persisted Watch IPC safety flags into a deterministic set for assertions.
     let private readWatchStatusJsonSafetyFlags () =
@@ -5457,8 +5458,8 @@ module WatchTests =
 
                 let claimStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
 
-                readWatchStatusJsonStringProperty "Mode"
-                |> should equal "startingUp"
+                tryReadWatchStatusJsonStringProperty "Mode"
+                |> should equal None
 
                 claimStatus.Mode
                 |> should equal Services.GraceWatchRuntimeMode.StartingUp
@@ -5505,8 +5506,8 @@ module WatchTests =
             let status = Services.getGraceWatchStatus().Result
             status |> should equal None
 
-            readWatchStatusJsonStringProperty "Mode"
-            |> should equal "startingUp"
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
 
             let safetyFlags = readWatchStatusJsonSafetyFlags ()
 
@@ -5545,8 +5546,8 @@ module WatchTests =
 
             claimed |> should equal true
 
-            readWatchStatusJsonStringProperty "Mode"
-            |> should equal "startingUp"
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
 
             let safetyFlags = readWatchStatusJsonSafetyFlags ()
 
@@ -5555,6 +5556,49 @@ module WatchTests =
             |> should equal true
 
             safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
+
+    /// Verifies that a dead startup claim cannot keep advertising a live startup mode in raw compact IPC JSON.
+    [<Test>]
+    let ``watch compact startup claim does not expose starting mode after heartbeat ages`` () =
+        withTempRepo (fun _ ->
+            let claimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            claimed |> should equal true
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            getCurrentInstant()
+                .Minus(Duration.FromMinutes(6.0))
+            |> updatePersistedWatchStatusUpdatedAt
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let agedStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+
+            agedStatus.Mode
+            |> should equal Services.GraceWatchRuntimeMode.StartingUp
+
+            let derivedSafetyFlags = safetyFlagSet agedStatus
+
+            derivedSafetyFlags
+            |> Set.contains "startupClaim"
+            |> should equal true
+
+            derivedSafetyFlags
+            |> Set.contains "staleStatus"
+            |> should equal true
+
+            derivedSafetyFlags
             |> Set.contains "requiresExplicitResync"
             |> should equal true)
 
@@ -5577,16 +5621,13 @@ module WatchTests =
                 .GetAwaiter()
                 .GetResult()
 
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
             let json = File.ReadAllText(Services.IpcFileName())
 
             use document = JsonDocument.Parse(json)
             let root = document.RootElement
-
-            match root.TryGetProperty("Mode") with
-            | true, mode ->
-                mode.GetString()
-                |> should not' (equal "healthyIncremental")
-            | false, _ -> ()
 
             let safetyFlags =
                 root.GetProperty("SafetyFlags").EnumerateArray()
@@ -5614,6 +5655,45 @@ module WatchTests =
             |> Set.contains "incrementalSafe"
             |> should equal true)
 
+    /// Verifies that incomplete Watch IPC snapshots derive resync state instead of persisting it as a live raw mode.
+    [<Test>]
+    let ``watch status serializes compact safety flags without resync runtime mode`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { GraceStatus.Default with
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = Sha256Hash "resync-watch-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "resync-watch-root-blake3"
+                }
+
+            (Services.updateGraceWatchInterprocessFile status (Some(HashSet<DirectoryVersionId>())))
+                .GetAwaiter()
+                .GetResult()
+
+            tryReadWatchStatusJsonStringProperty "Mode"
+            |> should equal None
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "missingDirectoryIndex"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            let roundTripped: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+
+            roundTripped.Mode
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
+
     /// Verifies that raw compact IPC readers cannot inherit incremental safety after a healthy writer dies.
     [<Test>]
     let ``watch compact status does not expose incremental safety after healthy snapshot ages`` () =
@@ -5638,7 +5718,7 @@ module WatchTests =
             |> should equal false
 
             tryReadWatchStatusJsonStringProperty "Mode"
-            |> should not' (equal (Some "healthyIncremental"))
+            |> should equal None
 
             getCurrentInstant()
                 .Minus(Duration.FromMinutes(6.0))
@@ -5652,7 +5732,7 @@ module WatchTests =
             |> should equal false
 
             tryReadWatchStatusJsonStringProperty "Mode"
-            |> should not' (equal (Some "healthyIncremental"))
+            |> should equal None
 
             let agedStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
             let derivedSafetyFlags = safetyFlagSet agedStatus
