@@ -3645,6 +3645,114 @@ module WatchTests =
             afterProcessing.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that a leaf-only nested empty directory event queues every missing parent before the child add.
+    [<Test>]
+    let ``nested empty directory leaf event derives missing parent adds without scan`` () =
+        withTempRepo (fun root ->
+            let parentRelativePath = "new-parent"
+            let childRelativePath = "new-parent/empty-child"
+            let childPath = Path.Combine(root, childRelativePath)
+            /// Tracks upload Calls changes so the empty directory tree is not file-derived.
+            let mutable uploadCalls = 0
+            /// Tracks scan Calls changes so healthy running mode stays event-derived for leaf-only directory events.
+            let mutable scanCalls = 0
+            /// Tracks apply-from-differences Calls changes so the nested directory adds create status work.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply seam so missing parents are explicit.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Directory.CreateDirectory(childPath) |> ignore
+            Watch.OnCreated(createdEvent childPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 0
+            scanCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Add, FileSystemEntryType.Directory, parentRelativePath
+                    DifferenceType.Add, FileSystemEntryType.Directory, childRelativePath
+                |]
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>)
+
+    /// Verifies that directory-create classification reuses one refreshed GraceStatus snapshot across a burst.
+    [<Test>]
+    let ``directory create classification caches refreshed status for burst`` () =
+        withTempRepo (fun root ->
+            let firstDirectoryPath = Path.Combine(root, "bulk-empty-one")
+            let secondDirectoryPath = Path.Combine(root, "bulk-empty-two")
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            /// Tracks status reload Calls so burst directory-create callbacks do not reopen the local status DB per event.
+            let mutable readStatusCalls = 0
+
+            Watch.setGraceStatusForWatchTests GraceStatus.Default
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () ->
+                readStatusCalls <- readStatusCalls + 1
+                Task.FromResult(status))
+
+            Directory.CreateDirectory(firstDirectoryPath)
+            |> ignore
+
+            Watch.OnCreated(createdEvent firstDirectoryPath)
+
+            Directory.CreateDirectory(secondDirectoryPath)
+            |> ignore
+
+            Watch.OnCreated(createdEvent secondDirectoryPath)
+
+            readStatusCalls |> should equal 1)
+
     /// Verifies that a refreshed status snapshot suppresses a queued directory add that is already tracked.
     [<Test>]
     let ``already tracked empty directory add derives no save after status refresh`` () =

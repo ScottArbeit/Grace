@@ -596,14 +596,14 @@ module Watch =
     /// Installs the local file-version reader used by watch status derivation tests.
     let internal setCreateLocalFileVersionForWatchTests createLocalFileVersionClient = createLocalFileVersionForWatchStatus <- createLocalFileVersionClient
 
-    /// Lists missing parent directories that must be added before a new uploaded file can link into GraceStatus.
-    let private deriveParentDirectoryAddDifferences (status: GraceStatus) (relativePath: RelativePath) =
+    /// Lists untracked directory add differences through the selected repository-relative path segment.
+    let private deriveDirectoryAddDifferencesThroughSegment (status: GraceStatus) (relativePath: RelativePath) lastSegmentIndex =
         let differences = List<FileSystemDifference>()
         let normalizedRelativePath = normalizeRelativePath relativePath
         let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
 
-        if segments.Length > 1 then
-            for index in 0 .. segments.Length - 2 do
+        if segments.Length > 0 && lastSegmentIndex >= 0 then
+            for index in 0 .. min lastSegmentIndex (segments.Length - 1) do
                 let parentRelativePath = RelativePath(String.Join("/", segments[0..index]))
                 let parentDifferenceRelativePath = canonicalizeTrackedAncestorCasing status parentRelativePath
 
@@ -620,6 +620,17 @@ module Watch =
                     differences.Add(FileSystemDifference.Create Add FileSystemEntryType.Directory parentDifferenceRelativePath)
 
         differences
+
+    /// Lists missing parent directories that must be added before a new uploaded file can link into GraceStatus.
+    let private deriveParentDirectoryAddDifferences (status: GraceStatus) (relativePath: RelativePath) =
+        let segmentCount =
+            (normalizeRelativePath relativePath).Split(
+                '/',
+                StringSplitOptions.RemoveEmptyEntries
+            )
+                .Length
+
+        deriveDirectoryAddDifferencesThroughSegment status relativePath (segmentCount - 2)
 
     /// Derives add and change differences from uploads already completed by the watch loop.
     let private deriveUploadedFileDifferences (status: GraceStatus) (processedFilePaths: seq<RelativePath>) =
@@ -1054,9 +1065,13 @@ module Watch =
             graceStatus
         else
             try
-                (readGraceStatusFileForDeletedPathClassification ())
-                    .GetAwaiter()
-                    .GetResult()
+                let refreshedStatus =
+                    (readGraceStatusFileForDeletedPathClassification ())
+                        .GetAwaiter()
+                        .GetResult()
+
+                graceStatus <- refreshedStatus
+                refreshedStatus
             with
             | _ -> GraceStatus.Default
 
@@ -1074,7 +1089,20 @@ module Watch =
                 let canonicalRelativePath = canonicalizeTrackedAncestorCasing status relativePath
 
                 if not (isTrackedDirectory status canonicalRelativePath) then
-                    addPendingStatusDifference (FileSystemDifference.Create Add FileSystemEntryType.Directory canonicalRelativePath)
+                    let directoryAddDifferences =
+                        let segmentCount =
+                            (normalizeRelativePath canonicalRelativePath)
+                                .Split(
+                                '/',
+                                StringSplitOptions.RemoveEmptyEntries
+                            )
+                                .Length
+
+                        deriveDirectoryAddDifferencesThroughSegment status canonicalRelativePath (segmentCount - 1)
+
+                    for difference in directoryAddDifferences do
+                        addPendingStatusDifference difference
+
                     true
                 else
                     false
