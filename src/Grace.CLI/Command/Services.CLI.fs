@@ -107,6 +107,11 @@ module Services =
             not (isNull this.DirectoryIds)
             && this.DirectoryIds.Count > 0
 
+        /// Reports whether this status is recent enough to represent a live Watch process.
+        member private this.IsFreshSnapshot =
+            this.UpdatedAt > getCurrentInstant()
+                .Minus(Duration.FromMinutes(5.0))
+
         /// Identifies the current Grace Watch runtime mode without introducing a larger state hierarchy.
         member this.Mode =
             if this.IsStartupClaim then
@@ -122,16 +127,20 @@ module Services =
             let isStartupClaim = this.IsStartupClaim
             let hasUsableRootSnapshot = this.HasUsableRootSnapshot
             let hasDirectoryIndexSnapshot = this.HasDirectoryIndexSnapshot
+            let isFreshSnapshot = this.IsFreshSnapshot
             let mode = this.Mode
 
             [|
                 if isStartupClaim then "startupClaim"
 
+                if not isFreshSnapshot then "staleStatus"
+
                 if hasUsableRootSnapshot then "usableRoot" else "missingRoot"
 
                 if hasDirectoryIndexSnapshot then "directoryIndex" else "missingDirectoryIndex"
 
-                if mode = GraceWatchRuntimeMode.HealthyIncremental then
+                if mode = GraceWatchRuntimeMode.HealthyIncremental
+                   && isFreshSnapshot then
                     "incrementalSafe"
                 else
                     "requiresExplicitResync"
@@ -161,7 +170,7 @@ module Services =
             LastFileUploadInstant: Instant
             LastDirectoryVersionInstant: Instant
             DirectoryIds: HashSet<DirectoryVersionId>
-            Mode: GraceWatchRuntimeMode
+            Mode: GraceWatchRuntimeMode option
             SafetyFlags: string array
         }
 
@@ -176,9 +185,12 @@ module Services =
             LastFileUploadInstant = status.LastFileUploadInstant
             LastDirectoryVersionInstant = status.LastDirectoryVersionInstant
             DirectoryIds = status.DirectoryIds
-            Mode = status.Mode
+            Mode = Some status.Mode
             SafetyFlags = status.SafetyFlags
         }
+
+    /// Writes the compact Watch IPC JSON contract to the already-open status stream.
+    let private writeGraceWatchStatusContractToStream fileStream graceWatchStatus = serializeAsync fileStream (toGraceWatchStatusContract graceWatchStatus)
 
     let mutable graceWatchStatusUpdateTime = Instant.MinValue
     let mutable parseResult: ParseResult = null
@@ -2111,7 +2123,7 @@ module Services =
 
             use fileStream = new FileStream(IpcFileName(), fileMode, FileAccess.Write, FileShare.None)
 
-            do! serializeAsync fileStream (toGraceWatchStatusContract graceWatchStatus)
+            do! writeGraceWatchStatusContractToStream fileStream graceWatchStatus
             graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
         }
 
@@ -2174,7 +2186,7 @@ module Services =
                 task {
                     fileStream.SetLength(0L)
                     fileStream.Position <- 0L
-                    do! serializeAsync fileStream claimStatus
+                    do! writeGraceWatchStatusContractToStream fileStream claimStatus
                     graceWatchStatusUpdateTime <- claimStatus.UpdatedAt
                 }
 

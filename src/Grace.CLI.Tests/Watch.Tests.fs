@@ -168,6 +168,45 @@ module WatchTests =
     /// Reads safety flags into a deterministic set for assertions.
     let private safetyFlagSet (status: Services.GraceWatchStatus) = status.SafetyFlags |> Set.ofArray
 
+    /// Reads a scalar property from the persisted Watch IPC JSON contract.
+    let private readWatchStatusJsonStringProperty (propertyName: string) =
+        let json = File.ReadAllText(Services.IpcFileName())
+        use document = JsonDocument.Parse(json)
+
+        match document.RootElement.TryGetProperty(propertyName) with
+        | true, property -> property.GetString()
+        | false, _ ->
+            Assert.Fail($"Expected Watch IPC JSON property '{propertyName}'. JSON:{Environment.NewLine}{json}")
+            String.Empty
+
+    /// Reads the persisted Watch IPC safety flags into a deterministic set for assertions.
+    let private readWatchStatusJsonSafetyFlags () =
+        let json = File.ReadAllText(Services.IpcFileName())
+        use document = JsonDocument.Parse(json)
+
+        match document.RootElement.TryGetProperty("SafetyFlags") with
+        | true, property ->
+            property.EnumerateArray()
+            |> Seq.map (fun flag -> flag.GetString())
+            |> Set.ofSeq
+        | false, _ ->
+            Assert.Fail($"Expected Watch IPC JSON property 'SafetyFlags'. JSON:{Environment.NewLine}{json}")
+            Set.empty
+
+    /// Writes a Watch IPC JSON snapshot with compact runtime fields for deterministic stale-status tests.
+    let private writeWatchStatusJsonWithRuntimeSurface (status: Services.GraceWatchStatus) =
+        let statusNode = JsonNode.Parse(serialize status).AsObject()
+        statusNode["Mode"] <- JsonSerializer.SerializeToNode(status.Mode, Constants.JsonSerializerOptions)
+        statusNode["SafetyFlags"] <- JsonSerializer.SerializeToNode(status.SafetyFlags, Constants.JsonSerializerOptions)
+
+        let ipcFileName = Services.IpcFileName()
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+        |> ignore
+
+        File.WriteAllText(ipcFileName, statusNode.ToJsonString(Constants.JsonSerializerOptions))
+        ipcFileName
+
     /// Writes live watch status file needed by the test scenario.
     let private writeLiveWatchStatusFile () =
         let rootDirectoryId = Guid.NewGuid()
@@ -5397,6 +5436,9 @@ module WatchTests =
 
                 let claimStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
 
+                readWatchStatusJsonStringProperty "Mode"
+                |> should equal "startingUp"
+
                 claimStatus.Mode
                 |> should equal Services.GraceWatchRuntimeMode.StartingUp
 
@@ -5440,7 +5482,60 @@ module WatchTests =
             claimed |> should equal true
 
             let status = Services.getGraceWatchStatus().Result
-            status |> should equal None)
+            status |> should equal None
+
+            readWatchStatusJsonStringProperty "Mode"
+            |> should equal "startingUp"
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "startupClaim"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
+
+    /// Verifies that watch startup claim reclaims stale ipc files through the compact runtime contract.
+    [<Test>]
+    let ``watch startup claim replaces stale ipc file through runtime contract`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let staleStatus =
+                { liveWatchStatus rootDirectoryId with
+                    UpdatedAt =
+                        getCurrentInstant()
+                            .Minus(Duration.FromMinutes(6.0))
+                }
+
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, serialize staleStatus)
+
+            let claimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            claimed |> should equal true
+
+            readWatchStatusJsonStringProperty "Mode"
+            |> should equal "startingUp"
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "startupClaim"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
 
     /// Verifies that watch status serializes compact runtime mode and safety flags.
     [<Test>]
@@ -5494,6 +5589,39 @@ module WatchTests =
             safetyFlagSet roundTripped
             |> Set.contains "incrementalSafe"
             |> should equal true)
+
+    /// Verifies that stale watch status json does not advertise incremental safety.
+    [<Test>]
+    let ``watch status safety flags require resync when snapshot is stale`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let staleStatus =
+                { liveWatchStatus rootDirectoryId with
+                    UpdatedAt =
+                        getCurrentInstant()
+                            .Minus(Duration.FromMinutes(6.0))
+                }
+
+            writeWatchStatusJsonWithRuntimeSurface staleStatus
+            |> ignore
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "staleStatus"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false)
 
     /// Verifies that legacy watch status json without compact runtime fields remains readable.
     [<Test>]
