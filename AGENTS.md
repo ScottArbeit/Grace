@@ -165,6 +165,11 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   even if GitHub still maps the thread onto the current diff. Do not assign workers, make code changes, or post fix
   evidence for stale findings; close them only as stale when the maintainer directs that disposition, and say that no
   code change addressed them.
+- For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
+  assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
+  reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
+  and do not broaden the current PR to absorb that future scope. Update the future sibling issue's detail gate before
+  assigning it when the finding reveals missing acceptance criteria, adversarial cases, or risk-surface traps.
 - Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
   fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
   review surface. After a fix worker pushes, reply to and resolve only the fresh findings it addressed, update

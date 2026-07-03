@@ -602,6 +602,12 @@ the latest head commit, then classify findings before assigning any fix worker.
 - Do not assign a worker, edit code, or post fix evidence for stale findings. When the maintainer directs stale
   findings to be closed, reply with a stale disposition, say that no code change addressed the thread, resolve it, and
   keep the current action set limited to fresh latest-review findings.
+- For epic-branch pull requests, also classify each fresh latest-review finding against the current leaf issue's scope.
+  If a finding is valid but explicitly belongs to a named future leaf issue in the same epic, the orchestrator may
+  reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
+  and avoid assigning a fix worker for that item. Do not broaden the current pull request to absorb future-leaf scope.
+  If the finding exposes missing acceptance criteria, adversarial cases, or risk-surface traps, update the future
+  sibling issue's detail gate before assigning that future work.
 - If the bot has acknowledged the current head with 👀 but has not yet submitted its completed review or no-issues
   result, continue waiting. Do not infer the action set from early inline threads.
 
