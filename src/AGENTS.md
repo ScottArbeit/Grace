@@ -27,6 +27,10 @@ update the issue before editing the new paths.
   Relationships, and include a DAG in the parent issue that shows dependencies and parallelization opportunities. As
   each sub-issue completes, update the epic checklist. Use the concrete `addSubIssue` GraphQL workflow in
   `docs/Development process.md` when creating the native parent/child relationships.
+- For non-trivial epics, identify an early tracer-bullet vertical slice before broad parallelization. It should prove
+  one narrow user-visible behavior through the closest stable public boundary, crossing the main contract, runtime,
+  persistence, validation, and documentation surfaces that later slices are likely to reuse. Use the result to refine
+  child issues, owned paths, validation profiles, and parallelization boundaries.
 - When implementing an epic, always use an explicit epic integration branch. Create
   `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
   sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR

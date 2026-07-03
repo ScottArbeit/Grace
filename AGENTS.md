@@ -70,6 +70,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - When planning features or epics, include why the work benefits Grace and its users before decomposing implementation
   steps. Carry that purpose into parent issues, child issues, and PR bodies so implementation agents understand the
   goal behind the requested change, not only the files and tests to touch.
+- For non-trivial epics, identify an early tracer-bullet vertical slice before broad parallelization. The
+  tracer-bullet slice should prove one narrow user-visible behavior through the closest stable public boundary, crossing
+  the main contract, runtime, persistence, validation, and documentation surfaces that the rest of the epic is likely to
+  reuse. Use what it reveals to refine child issues, owned paths, validation profiles, and parallelization boundaries.
 - For epic plus child issue creation, prefer separate temporary Markdown body files and `gh issue create --body-file`
   over a giant inline PowerShell script containing all issue bodies. After the child issue numbers exist, patch the epic
   body with those real numbers, then use GraphQL `addSubIssue` for the native parent relationships.

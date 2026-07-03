@@ -51,6 +51,8 @@ Use these sibling skills when the task needs a specialized workflow:
   webhooks, approval policies, approval requests, UploadSessions, FileManifests, ContentBlocks, and
   ManifestContributionWorkflows.
 - Keep changes vertically sliced through the nearest public boundary whenever possible.
+- For non-trivial epic plans, identify an early tracer-bullet vertical slice before broad parallelization, then use its
+  evidence to refine child issues, owned paths, validation profiles, and parallelization boundaries.
 - For tracked coding issues, write existing issue-detail fields as review-prevention guidance and require worker
   handoffs to include bot-prevention self-review evidence before the pull request review loop.
 - When implementing an epic, always use the `epic/<parent-issue>-<slug>` integration branch mode described in

@@ -61,6 +61,12 @@ risk, better product fit, or another task-specific outcome. Carry that purpose i
 pull request bodies. This context lets implementation agents choose better local tradeoffs when the plan leaves a gap
 or an acceptance criterion is ambiguous.
 
+For non-trivial epics, identify an early tracer-bullet vertical slice before broad parallelization. The tracer-bullet
+slice should prove one narrow user-visible behavior through the closest stable public boundary, crossing the main
+contract, runtime, persistence, validation, and documentation surfaces that the rest of the epic is likely to reuse. Use
+what it reveals to refine child issues, owned paths, validation profiles, and parallelization boundaries before fanning
+out into parallel implementation work.
+
 Create the parent epic issue and child issues with `gh issue create --body-file`, using issue bodies written as separate
 Markdown files in a temporary directory. Prefer one small `Set-Content` or equivalent file-write command per issue body
 over one giant inline PowerShell script or command that embeds every Markdown body. This avoids Windows command-line

@@ -19,6 +19,10 @@ Re-read these files during the current session before relying on older memory or
   parent relationships, a DAG in the parent issue, and an epic checklist that is updated as sub-issues complete. Use the
   concrete `addSubIssue` GraphQL workflow in `docs/Development process.md` when creating the native parent/child
   relationships.
+- For non-trivial epics, identify an early tracer-bullet vertical slice before broad parallelization. The slice should
+  prove one narrow user-visible behavior through the closest stable public boundary, crossing the main contract,
+  runtime, persistence, validation, and documentation surfaces that later slices are likely to reuse. Use the result to
+  refine child issues, owned paths, validation profiles, and parallelization boundaries.
 - When creating an epic plus child issues from PowerShell, write each issue body to a separate temporary Markdown file
   with `Set-Content` or equivalent small commands, then call `gh issue create --body-file` for each issue. Do not build
   one huge inline script containing all issue bodies. After the child issue numbers exist, patch the epic body with the
