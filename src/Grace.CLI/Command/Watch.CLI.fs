@@ -54,6 +54,10 @@ module Watch =
 
     let private processedFileRelativePathsPendingStatus = List<RelativePath>()
 
+    let private canceledFileUploadDeleteRelativePathsLock = obj ()
+
+    let private canceledFileUploadDeleteRelativePaths = List<RelativePath>()
+
     /// Removes uploaded identities after their matching watch work is either applied or proven content-equivalent.
     let private removeUploadedFileVersionsForPaths (relativePaths: seq<RelativePath>) =
         let normalizedPaths =
@@ -350,6 +354,28 @@ module Watch =
         status.Index.Values
         |> Seq.exists (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, watchPathComparison))
 
+    /// Finds the tracked directory entry that owns a repository-relative path in GraceStatus.
+    let private tryFindTrackedDirectory (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        status.Index.Values
+        |> Seq.tryFind (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Uses the tracked parent directory casing before status application performs exact path lookups.
+    let private preserveTrackedParentCasingForFileAdd (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+        let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+
+        if segments.Length <= 1 then
+            relativePath
+        else
+            let parentRelativePath = RelativePath(String.Join("/", segments[0 .. segments.Length - 2]))
+            let fileName = segments[segments.Length - 1]
+
+            match tryFindTrackedDirectory status parentRelativePath with
+            | Some trackedParentDirectory -> RelativePath($"{trackedParentDirectory.RelativePath}/{fileName}")
+            | None -> relativePath
+
     /// Checks whether the uploaded file identity would change the tracked GraceStatus file content.
     let private uploadedFileContentChanged (trackedFile: LocalFileVersion) (uploadedFile: FileVersion) =
         uploadedFile.Sha256Hash <> trackedFile.Sha256Hash
@@ -440,7 +466,8 @@ module Watch =
                     | Some _ -> ()
                     | None ->
                         differences.AddRange(deriveParentDirectoryAddDifferences status uploadedFileVersion.RelativePath)
-                        differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File uploadedFileVersion.RelativePath)
+                        let addRelativePath = preserveTrackedParentCasingForFileAdd status uploadedFileVersion.RelativePath
+                        differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File addRelativePath)
                 | None -> ()
 
             return differences
@@ -456,7 +483,9 @@ module Watch =
             match trackedDeletedPathKind status statusTrigger.RelativePath with
             | DeletedFile ->
                 if not (finalPathMatchesEntryType FileSystemEntryType.File relativePath) then
-                    differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File relativePath)
+                    match tryFindTrackedFile status relativePath with
+                    | Some trackedFile -> differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
+                    | None -> differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File relativePath)
             | DeletedDirectory ->
                 if not (finalPathMatchesEntryType FileSystemEntryType.Directory relativePath) then
                     differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.Directory relativePath)
@@ -481,6 +510,32 @@ module Watch =
         statusTriggerSnapshot
         |> Array.exists (fun statusTrigger ->
             String.Equals(normalizeRelativePath statusTrigger.RelativePath, normalizeRelativePath difference.RelativePath, watchPathComparison))
+
+    /// Records a delete-triggered cancellation that may need the final file re-uploaded if the delete proves stale.
+    let private addCanceledFileUploadDeleteRelativePath (relativePath: RelativePath) =
+        lock canceledFileUploadDeleteRelativePathsLock (fun () ->
+            let normalizedRelativePath = normalizeRelativePath relativePath
+
+            let alreadyRecorded =
+                canceledFileUploadDeleteRelativePaths
+                |> Seq.exists (fun existing -> String.Equals(normalizeRelativePath existing, normalizedRelativePath, watchPathComparison))
+
+            if not alreadyRecorded then
+                canceledFileUploadDeleteRelativePaths.Add(relativePath))
+
+    /// Captures delete-triggered upload cancellations waiting for final path resolution.
+    let private canceledFileUploadDeleteRelativePathsSnapshot () =
+        lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.ToList())
+
+    /// Clears delete-triggered upload cancellations after they are requeued or their status trigger drains.
+    let private clearCanceledFileUploadDeleteRelativePaths (relativePaths: seq<RelativePath>) =
+        lock canceledFileUploadDeleteRelativePathsLock (fun () ->
+            for relativePath in relativePaths do
+                let normalizedRelativePath = normalizeRelativePath relativePath
+
+                canceledFileUploadDeleteRelativePaths.RemoveAll (fun existing ->
+                    String.Equals(normalizeRelativePath existing, normalizedRelativePath, watchPathComparison))
+                |> ignore)
 
     /// Checks whether pending uploaded file work needs a final-state rescan before applying status differences.
     let private staleUploadedFileDifferencesNeedRescan (differences: List<FileSystemDifference>) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
@@ -596,19 +651,44 @@ module Watch =
         else
             false
 
+    /// Requeues a same-path upload when a stale delete had canceled upload work for a tracked file that exists again.
+    let private reenqueueCanceledUploadsForResolvedFileDeletes
+        (status: GraceStatus)
+        (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
+        (canceledRelativePaths: List<RelativePath>)
+        =
+        let requeuedRelativePaths = List<RelativePath>()
+
+        for statusTrigger in statusTriggerSnapshot do
+            let relativePath = RelativePath statusTrigger.RelativePath
+
+            let uploadWasCanceled =
+                canceledRelativePaths
+                |> Seq.exists (fun canceledPath -> String.Equals(normalizeRelativePath canceledPath, normalizeRelativePath relativePath, watchPathComparison))
+
+            if uploadWasCanceled then
+                match tryFindTrackedFile status relativePath with
+                | Some _ when finalPathMatchesEntryType FileSystemEntryType.File relativePath ->
+                    let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+                    enqueueFileUpload fullPath |> ignore
+                    requeuedRelativePaths.Add(relativePath)
+                | _ -> ()
+
+        clearCanceledFileUploadDeleteRelativePaths requeuedRelativePaths
+        requeuedRelativePaths
+
     /// Reads remove pending file upload data needed by the command workflow without changing remote state.
     let private removePendingFileUpload filePath =
         let mutable generation = 0L
 
         filesToProcess.TryRemove(filePath, &generation)
-        |> ignore
 
     /// Reads cancel pending uploads for deleted path data needed by the command workflow without changing remote state.
     let private cancelPendingUploadsForDeletedPath fullPath =
-        removePendingFileUpload fullPath
+        let mutable canceledExactFileUpload = removePendingFileUpload fullPath
 
         match repositoryRelativePath fullPath with
-        | Some relativePath -> removePendingFileUpload relativePath
+        | Some relativePath -> if removePendingFileUpload relativePath then canceledExactFileUpload <- true
         | None -> ()
 
         let normalizedFullPath = Path.TrimEndingDirectorySeparator(Path.GetFullPath(fullPath))
@@ -623,20 +703,31 @@ module Watch =
             | None -> None
 
         for queuedFile in filesToProcess.Keys.ToArray() do
-            let removeQueuedFile =
-                let normalizedQueuedFile =
-                    try
-                        Path.GetFullPath(queuedFile)
-                    with
-                    | _ -> queuedFile
+            let normalizedQueuedFile =
+                try
+                    Path.GetFullPath(queuedFile)
+                with
+                | _ -> queuedFile
 
+            let removeQueuedFile =
                 normalizedQueuedFile.Equals(normalizedFullPath, watchPathComparison)
                 || normalizedQueuedFile.StartsWith(fullPathPrefix, watchPathComparison)
                 || (match relativePathPrefix with
                     | Some prefix -> queuedFile.StartsWith(prefix, watchPathComparison)
                     | None -> false)
 
-            if removeQueuedFile then removePendingFileUpload queuedFile
+            if removeQueuedFile then
+                let queuedExactPathMatched =
+                    normalizedQueuedFile.Equals(normalizedFullPath, watchPathComparison)
+                    || (match repositoryRelativePath fullPath with
+                        | Some relativePath -> String.Equals(normalizeRelativePath queuedFile, normalizeRelativePath relativePath, watchPathComparison)
+                        | None -> false)
+
+                if removePendingFileUpload queuedFile
+                   && queuedExactPathMatched then
+                    canceledExactFileUpload <- true
+
+        canceledExactFileUpload
 
     /// Records an already-derived filesystem difference so status application can retry without duplicating work.
     let private addPendingStatusDifference (difference: FileSystemDifference) =
@@ -752,6 +843,7 @@ module Watch =
         statusUpdateTriggers.Clear()
         uploadedFileVersions.Clear()
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
+        lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
         clearPendingStatusDifferencesForTests ()
 
         Interlocked.Exchange(&statusUpdateTriggerGeneration, 0L)
@@ -975,9 +1067,14 @@ module Watch =
     /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
         if updateNotInProgress () then
-            cancelPendingUploadsForDeletedPath args.FullPath
+            let canceledFileUpload = cancelPendingUploadsForDeletedPath args.FullPath
 
             if enqueueStatusUpdateTrigger args.FullPath then
+                if canceledFileUpload then
+                    match repositoryRelativePath args.FullPath with
+                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
+                    | None -> ()
+
                 logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
 
             if (isGraceStatusArtifact args.FullPath)
@@ -989,11 +1086,16 @@ module Watch =
         if updateNotInProgress () then
             let newPathIsDirectory = Directory.Exists(args.FullPath)
 
-            cancelPendingUploadsForDeletedPath args.OldFullPath
+            let canceledFileUpload = cancelPendingUploadsForDeletedPath args.OldFullPath
 
             let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
 
             if oldPathStatusQueued then
+                if canceledFileUpload then
+                    match repositoryRelativePath args.OldFullPath with
+                    | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
+                    | None -> ()
+
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
             if newPathIsDirectory then
@@ -1374,6 +1476,11 @@ module Watch =
                         let fileWorkGenerationBeforeStatusUpdate = Volatile.Read(&fileUploadWorkGeneration)
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
+                        let canceledFileUploadDeleteRelativePathsForStatus = canceledFileUploadDeleteRelativePathsSnapshot ()
+
+                        reenqueueCanceledUploadsForResolvedFileDeletes graceStatus statusTriggerSnapshot canceledFileUploadDeleteRelativePathsForStatus
+                        |> ignore
+
                         resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
                         let startupPendingDifferences = pendingStatusDifferencesSnapshot ()
                         let processedFileRelativePathsForStatus = processedFileRelativePathsPendingStatusSnapshot ()
@@ -1439,6 +1546,17 @@ module Watch =
                                     drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
                                 else
                                     drainAppliedStatusWork directorySnapshot statusTriggerSnapshot statusDifferencesForApply.Resolved
+
+                                let canceledFileUploadDeletePathsToClear =
+                                    if startupPendingDifferences.Count = 0 then
+                                        statusTriggerSnapshot
+                                        |> Seq.map (fun statusTrigger -> RelativePath statusTrigger.RelativePath)
+                                    else
+                                        statusDifferencesForApply.Resolved
+                                        |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
+                                        |> Seq.map (fun difference -> difference.RelativePath)
+
+                                clearCanceledFileUploadDeleteRelativePaths canceledFileUploadDeletePathsToClear
 
                                 clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
