@@ -604,8 +604,8 @@ module Watch =
                         differences.AddRange(deriveParentDirectoryAddDifferences status uploadedFileVersion.RelativePath)
                         let addRelativePath = canonicalizeTrackedAncestorCasing status uploadedFileVersion.RelativePath
                         differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File addRelativePath)
-                | UploadedFinalFileVersionUnavailable -> unresolvedFilePaths.Add(relativePath)
-                | UploadedFinalFileVersionUnmatched -> ()
+                | UploadedFinalFileVersionUnavailable
+                | UploadedFinalFileVersionUnmatched -> unresolvedFilePaths.Add(relativePath)
                 | UploadedFinalFileVersionMissing -> ()
 
             return differences, unresolvedFilePaths
@@ -805,7 +805,7 @@ module Watch =
         else
             false
 
-    /// Requeues uploaded paths whose final content could not be hashed during status derivation.
+    /// Requeues uploaded paths whose final content could not be matched to a completed upload identity.
     let private reenqueueUnresolvedUploadedFinalFileVersions (relativePaths: seq<RelativePath>) =
         let requeuedRelativePaths = List<RelativePath>()
 
