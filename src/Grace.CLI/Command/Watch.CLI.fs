@@ -198,8 +198,6 @@ module Watch =
 
     let private pendingStatusDifferences = List<FileSystemDifference>()
 
-    let mutable private pendingStatusDifferencesRequireRescanRetry = false
-
     /// Defines structured data exchanged by CLI helpers.
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
 
@@ -778,14 +776,6 @@ module Watch =
                     String.Equals(normalizeRelativePath existing, normalizedRelativePath, watchPathComparison))
                 |> ignore)
 
-    /// Checks whether pending uploaded file work needs a final-state rescan before applying status differences.
-    let private staleUploadedFileDifferencesNeedRescan (differences: List<FileSystemDifference>) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
-        statusTriggerSnapshot.Length > 0
-        && differences
-           |> Seq.exists (fun difference ->
-               isStaleUploadedFileDifference difference
-               && hasMatchingStatusTrigger statusTriggerSnapshot difference)
-
     /// Removes stale differences when final path state proves newer same-path work superseded them.
     let private splitApplicableStatusDifferences (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (differences: List<FileSystemDifference>) =
         let applicable = List<FileSystemDifference>()
@@ -925,8 +915,8 @@ module Watch =
         else
             true
 
-    /// Requeues uploaded paths whose final content could not be matched to a completed upload identity.
-    let private reenqueueUnresolvedUploadedFinalFileVersions (relativePaths: seq<RelativePath>) =
+    /// Requeues uploaded paths whose final content could not be matched and is not superseded by delete-triggered work.
+    let private reenqueueUnresolvedUploadedFinalFileVersions (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (relativePaths: seq<RelativePath>) =
         let requeuedRelativePaths = List<RelativePath>()
 
         for relativePath in
@@ -934,10 +924,18 @@ module Watch =
             |> Seq.distinctBy normalizeRelativePath do
             let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
-            if
-                File.Exists(fullPath)
-                && enqueueFileUpload fullPath
-            then
+            let statusTriggerOwnsPath =
+                statusTriggerSnapshot
+                |> Array.exists (fun statusTrigger ->
+                    let statusTriggerRelativePath = RelativePath statusTrigger.RelativePath
+
+                    String.Equals(normalizeRelativePath statusTriggerRelativePath, normalizeRelativePath relativePath, watchPathComparison)
+                    || isPathUnderDirectoryTrigger statusTriggerRelativePath relativePath)
+
+            if not statusTriggerOwnsPath
+               && finalPathMatchesEntryType FileSystemEntryType.File relativePath
+               && File.Exists(fullPath)
+               && enqueueFileUpload fullPath then
                 requeuedRelativePaths.Add(relativePath)
 
         requeuedRelativePaths
@@ -1049,12 +1047,6 @@ module Watch =
     /// Captures the already-derived differences waiting for the shared status-application path.
     let private pendingStatusDifferencesSnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.ToList())
 
-    /// Checks whether a failed startup rescan left pending differences that must rescan again before applying.
-    let private pendingStatusDifferencesRequireRescanRetrySnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferencesRequireRescanRetry)
-
-    /// Records that pending startup differences still need a successful rescan before they can be applied.
-    let private requirePendingStatusDifferencesRescanRetry () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferencesRequireRescanRetry <- true)
-
     /// Checks whether any pre-derived filesystem differences still need status application.
     let private hasPendingStatusDifferences () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Count > 0)
 
@@ -1065,16 +1057,12 @@ module Watch =
                 pendingStatusDifferences.Remove(difference)
                 |> ignore
 
-            if pendingStatusDifferences.Count = 0 then
-                pendingStatusDifferencesRequireRescanRetry <- false)
+            ())
 
     /// Clears pre-derived differences when tests reset watch module state.
-    let private clearPendingStatusDifferencesForTests () =
-        lock pendingStatusDifferencesLock (fun () ->
-            pendingStatusDifferences.Clear()
-            pendingStatusDifferencesRequireRescanRetry <- false)
+    let private clearPendingStatusDifferencesForTests () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Clear())
 
-    /// Combines pre-derived and freshly scanned status differences without applying the same filesystem observation twice.
+    /// Combines status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
         let merged = List<FileSystemDifference>()
 
@@ -1100,7 +1088,7 @@ module Watch =
         && left.FileSystemEntryType = right.FileSystemEntryType
         && String.Equals(normalizeRelativePath left.RelativePath, normalizeRelativePath right.RelativePath, watchPathComparison)
 
-    /// Checks whether a difference came from uploaded file work that a successful rescan can supersede.
+    /// Checks whether a difference came from uploaded file work that newer event-derived upload state can supersede.
     let private isUploadedFileAddOrChangeDifference (difference: FileSystemDifference) =
         difference.FileSystemEntryType = FileSystemEntryType.File
         && (difference.DifferenceType = DifferenceType.Add
@@ -1114,42 +1102,34 @@ module Watch =
         |> Seq.exists (fun uploadedFileVersion ->
             String.Equals(normalizeRelativePath uploadedFileVersion.RelativePath, normalizedRelativePath, watchPathComparison))
 
-    /// Revalidates pending uploaded file differences against a successful rescan before retrying status application.
-    let private mergeRescannedStartupDifferences
+    /// Combines retryable pending differences with the current event-derived result for the same watch pass.
+    let private mergeCurrentStatusDifferences
         (processedFilePaths: RelativePath seq)
-        (startupDifferences: List<FileSystemDifference>)
-        (rescannedDifferences: List<FileSystemDifference>)
+        (pendingDifferences: List<FileSystemDifference>)
+        (eventDerivedDifferences: List<FileSystemDifference>)
         =
-        let retainedStartupDifferences = List<FileSystemDifference>()
+        let retainedPendingDifferences = List<FileSystemDifference>()
 
         let processedUploadedPaths =
             processedFilePaths
             |> Seq.map normalizeRelativePath
             |> Seq.toArray
 
-        for startupDifference in startupDifferences do
-            let isSupersededUploadedFileDifference =
-                isUploadedFileAddOrChangeDifference startupDifference
-                && hasUploadedFileVersionForPath startupDifference.RelativePath
+        for pendingDifference in pendingDifferences do
+            let supersededUploadedDifference =
+                isUploadedFileAddOrChangeDifference pendingDifference
+                && hasUploadedFileVersionForPath pendingDifference.RelativePath
                 && processedUploadedPaths
-                   |> Array.exists (fun processedPath -> String.Equals(normalizeRelativePath startupDifference.RelativePath, processedPath, watchPathComparison))
+                   |> Array.exists (fun processedPath -> String.Equals(normalizeRelativePath pendingDifference.RelativePath, processedPath, watchPathComparison))
                 && not (
-                    rescannedDifferences
-                    |> Seq.exists (statusDifferenceMatches startupDifference)
+                    eventDerivedDifferences
+                    |> Seq.exists (statusDifferenceMatches pendingDifference)
                 )
 
-            let isSupersededParentDirectoryAdd =
-                isStaleParentDirectoryAddDifference startupDifference
-                && not (
-                    rescannedDifferences
-                    |> Seq.exists (statusDifferenceMatches startupDifference)
-                )
+            if not supersededUploadedDifference then
+                retainedPendingDifferences.Add(pendingDifference)
 
-            if not isSupersededUploadedFileDifference
-               && not isSupersededParentDirectoryAdd then
-                retainedStartupDifferences.Add(startupDifference)
-
-        mergeStatusDifferences retainedStartupDifferences rescannedDifferences
+        mergeStatusDifferences retainedPendingDifferences eventDerivedDifferences
 
     /// Clears inherited pending watch work for tests values so explicitly scoped access commands do not target child resources accidentally.
     let internal clearPendingWatchWorkForTests () =
@@ -1211,12 +1191,6 @@ module Watch =
             .ToArray()
             .Select(fun trigger -> { RelativePath = trigger.Key; Generation = trigger.Value })
             .ToArray()
-
-    /// Coordinates reset working tree scan cache for status only triggers behavior for this CLI command path.
-    let private resetWorkingTreeScanCacheForStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
-        if directorySnapshot.Length > 0
-           || statusTriggerSnapshot.Length > 0 then
-            clearWorkingDirectoryWriteTimesForWatchRescan ()
 
     /// Coordinates drain status only triggers behavior for this CLI command path.
     let private drainStatusOnlyTriggers (directorySnapshot: string array) (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) =
@@ -1397,6 +1371,13 @@ module Watch =
             let canceledFileUpload = cancelPendingUploadsForDeletedPath args.FullPath
 
             if enqueueStatusUpdateTrigger args.FullPath then
+                match repositoryRelativePath args.FullPath with
+                | Some relativePath ->
+                    let invalidatedRelativePath = RelativePath relativePath
+                    clearProcessedFileRelativePathsPendingStatus [ invalidatedRelativePath ]
+                    removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+                | None -> ()
+
                 if canceledFileUpload then
                     match repositoryRelativePath args.FullPath with
                     | Some relativePath -> addCanceledFileUploadDeleteRelativePath (RelativePath relativePath)
@@ -1742,7 +1723,7 @@ module Watch =
         readGraceStatusFileClient
         copyFileToObjectDirectoryAndUploadToStorageClient
         _updateGraceStatusClient
-        scanForDifferencesClient
+        _scanForDifferencesClient
         updateGraceStatusFromDifferencesClient
         applyGraceStatusIncrementalClient
         updateGraceWatchInterprocessFileClient
@@ -1820,28 +1801,10 @@ module Watch =
                                 processedFileRelativePathsForStatus
                                 startupPendingDifferences
 
-                        resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
-
-                        let pendingDifferencesNeedRescan =
-                            startupPendingDifferences.Count > 0
-                            && (processedAnyFile
-                                || pendingStatusDifferencesRequireRescanRetrySnapshot ()
-                                || staleUploadedFileDifferencesNeedRescan startupPendingDifferences statusTriggerSnapshot)
-
-                        let! startupDifferences =
-                            if pendingDifferencesNeedRescan then
-                                task {
-                                    let! rescannedDifferences = scanForDifferencesClient graceStatus
-
-                                    return mergeRescannedStartupDifferences processedFileRelativePathsForStatus startupPendingDifferences rescannedDifferences
-                                }
-                            else
-                                Task.FromResult(startupPendingDifferences)
-
                         let! uploadedFileDifferences, unresolvedUploadedFilePaths =
                             deriveUploadedFileDifferences graceStatus processedFileRelativePathsForStatus
 
-                        let requeuedUnresolvedUploadedFilePaths = reenqueueUnresolvedUploadedFinalFileVersions unresolvedUploadedFilePaths
+                        let requeuedUnresolvedUploadedFilePaths = reenqueueUnresolvedUploadedFinalFileVersions statusTriggerSnapshot unresolvedUploadedFilePaths
 
                         let deleteDifferences = deriveDeleteDifferences graceStatus statusTriggerSnapshot
                         let eventDerivedDifferences = mergeStatusDifferences deleteDifferences uploadedFileDifferences
@@ -1852,22 +1815,12 @@ module Watch =
                         let pendingDifferencesToClear = mergeStatusDifferences startupPendingDifferences eventDerivedDifferences
 
                         let statusDifferencesForApply =
-                            splitApplicableStatusDifferences statusTriggerSnapshot (mergeStatusDifferences startupDifferences eventDerivedDifferences)
+                            splitApplicableStatusDifferences
+                                statusTriggerSnapshot
+                                (mergeCurrentStatusDifferences processedFileRelativePathsForStatus startupPendingDifferences eventDerivedDifferences)
 
                         let! statusUpdateResult =
-                            if
-                                startupPendingDifferences.Count > 0
-                                && pendingDifferencesNeedRescan
-                                && not (wasLastScanForDifferencesSuccessful ())
-                            then
-                                requirePendingStatusDifferencesRescanRetry ()
-
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Grace Status pending startup differences need a successful rescan before status application; status-only triggers will retry."
-
-                                Task.FromResult(None)
-                            elif requeuedResolvedFileDeletePaths.Count > 0 then
+                            if requeuedResolvedFileDeletePaths.Count > 0 then
                                 logToAnsiConsole
                                     Colors.Important
                                     $"Grace Status stale delete differences requeued live final content; requeued uploads will finish before status application."
@@ -1889,8 +1842,6 @@ module Watch =
                             let statusUpdateCanCommit =
                                 filesToProcess.IsEmpty
                                 && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
-                                && (not pendingDifferencesNeedRescan
-                                    || wasLastScanForDifferencesSuccessful ())
 
                             if statusUpdateCanCommit then
                                 graceStatus <- newGraceStatus
@@ -1915,15 +1866,13 @@ module Watch =
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
                                 removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
                             else
-                                if wasLastScanForDifferencesSuccessful () then
-                                    clearPendingStatusDifferences pendingDifferencesToClear
-
+                                clearPendingStatusDifferences pendingDifferencesToClear
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
                                 removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
 
                                 logToAnsiConsole
                                     Colors.Important
-                                    $"Grace Status file update completed while file upload work or a failed scan was pending; status-only triggers will retry."
+                                    $"Grace Status file update completed while newer file upload work was pending; status-only triggers will retry."
                         | None ->
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
