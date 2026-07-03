@@ -1041,6 +1041,67 @@ module WatchTests =
             pending.FilesToProcess
             |> should equal Array.empty<string>)
 
+    /// Verifies that case-sensitive delete derivation removes the exact tracked casing when a case-colliding file remains.
+    [<Test>]
+    let ``case-sensitive delete uses exact tracked file before ignore-case fallback`` () =
+        withTempRepo (fun root ->
+            Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+            let status = graceStatusTracking [| "Foo.txt"; "foo.txt" |] Array.empty<string>
+
+            Watch.setGraceStatusForWatchTests status
+
+            Watch.setFinalPathExistsForWatchTests
+                (fun fullPath -> String.Equals(Path.GetFileName(fullPath), "Foo.txt", StringComparison.Ordinal))
+                (fun _ -> false)
+
+            let deletedPath = Path.Combine(root, "foo.txt")
+            Watch.OnDeleted(deletedEvent deletedPath)
+
+            /// Tracks event-derived Differences changes so this scenario can assert the exact delete casing.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            /// Reads status metadata needed by the test scenario.
+            let readStatusMeta () = Task.FromResult(GraceStatus.Default)
+            /// Reads status file needed by the test scenario.
+            let readStatusFile () = Task.FromResult(status)
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+            /// Builds scan-oriented status update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+
+            /// Builds event-derived status apply test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status (differences: List<FileSystemDifference>) _ =
+                observedDifferences <- List<FileSystemDifference>(differences)
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatusMeta
+                readStatusFile
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> should
+                equal
+                [|
+                    DifferenceType.Delete, FileSystemEntryType.File, "foo.txt"
+                |])
+
     /// Verifies that status reload failure keeps ignored looking delete queued for retry.
     [<Test>]
     let ``status reload failure keeps ignored-looking delete queued for retry`` () =

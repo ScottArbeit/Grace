@@ -620,7 +620,12 @@ module Watch =
 
             match trackedDeletedPathKind status statusTrigger.RelativePath with
             | DeletedFile ->
-                match tryFindTrackedFileWithComparison deletedPathComparison status relativePath with
+                let trackedFile =
+                    match tryFindTrackedFileWithComparison StringComparison.Ordinal status relativePath with
+                    | Some exactTrackedFile -> Some exactTrackedFile
+                    | None -> tryFindTrackedFileWithComparison deletedPathComparison status relativePath
+
+                match trackedFile with
                 | Some trackedFile ->
                     if not (finalPathMatchesEntryType FileSystemEntryType.File trackedFile.RelativePath) then
                         differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
