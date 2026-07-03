@@ -188,6 +188,36 @@ module Services =
         | GraceWatchRuntimeMode.Stopping -> None
         | mode -> Some mode
 
+    /// Reports whether Grace Watch may perform a full working-tree scan in the supplied runtime mode.
+    let isGraceWatchScanLegal mode =
+        match mode with
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.Resynchronizing -> true
+        | GraceWatchRuntimeMode.HealthyIncremental
+        | GraceWatchRuntimeMode.Suspended
+        | GraceWatchRuntimeMode.Stopping
+        | _ -> false
+
+    /// Reports whether Grace Watch may record filesystem observations for later incremental application.
+    let isGraceWatchObservationCaptureLegal mode =
+        match mode with
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.HealthyIncremental -> true
+        | GraceWatchRuntimeMode.Resynchronizing
+        | GraceWatchRuntimeMode.Suspended
+        | GraceWatchRuntimeMode.Stopping
+        | _ -> false
+
+    /// Reports whether Grace Watch may apply normal event-derived observations to Grace Status and branch history.
+    let isGraceWatchObservationApplicationLegal mode =
+        match mode with
+        | GraceWatchRuntimeMode.HealthyIncremental -> true
+        | GraceWatchRuntimeMode.StartingUp
+        | GraceWatchRuntimeMode.Resynchronizing
+        | GraceWatchRuntimeMode.Suspended
+        | GraceWatchRuntimeMode.Stopping
+        | _ -> false
+
     /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
     let private toGraceWatchStatusContract (status: GraceWatchStatus) =
         {

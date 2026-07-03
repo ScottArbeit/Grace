@@ -5851,6 +5851,182 @@ module WatchTests =
             |> Set.contains "requiresExplicitResync"
             |> should equal true)
 
+    /// Verifies that scan legality follows the compact Watch runtime state contract.
+    [<Test>]
+    let ``watch runtime mode gates scan legality`` () =
+        Services.isGraceWatchScanLegal Services.GraceWatchRuntimeMode.StartingUp
+        |> should equal true
+
+        Services.isGraceWatchScanLegal Services.GraceWatchRuntimeMode.Resynchronizing
+        |> should equal true
+
+        Services.isGraceWatchScanLegal Services.GraceWatchRuntimeMode.HealthyIncremental
+        |> should equal false
+
+        Services.isGraceWatchScanLegal Services.GraceWatchRuntimeMode.Suspended
+        |> should equal false
+
+        Services.isGraceWatchScanLegal Services.GraceWatchRuntimeMode.Stopping
+        |> should equal false
+
+    /// Verifies that normal event-derived observations apply only in healthy incremental mode.
+    [<Test>]
+    let ``healthy runtime mode applies event-derived observations`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let filePath = Path.Combine(root, "healthy-observation.txt")
+            File.WriteAllText(filePath, "healthy observation")
+            Watch.OnChanged(changedEvent filePath)
+
+            /// Tracks apply-from-differences Calls changes so healthy mode proves observation application.
+            let mutable applyFromDifferencesCalls = 0
+
+            /// Reads status needed by the state-gate scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise healthy observation processing.
+            let upload _ filePath =
+                let fullPath = $"{filePath}"
+
+                if File.Exists(fullPath) then recordUploadedFileVersion fullPath
+
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise healthy observation processing.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            applyFromDifferencesCalls |> should equal 1)
+
+    /// Verifies that suspended mode does not queue or apply filesystem observations.
+    [<Test>]
+    let ``suspended runtime mode does not apply observations`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.Suspended
+
+            let filePath = Path.Combine(root, "suspended-observation.txt")
+            File.WriteAllText(filePath, "suspended observation")
+            Watch.OnChanged(changedEvent filePath)
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            /// Tracks apply-from-differences Calls changes so suspended mode proves no status application.
+            let mutable applyFromDifferencesCalls = 0
+
+            /// Reads status needed by the state-gate scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise suspended observation processing.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise suspended observation processing.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            applyFromDifferencesCalls |> should equal 0)
+
+    /// Verifies that stopping mode leaves queued observation work untouched and cannot create a new Save.
+    [<Test>]
+    let ``stopping runtime mode does not create saves from queued observations`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let filePath = Path.Combine(root, "stopping-observation.txt")
+            File.WriteAllText(filePath, "stopping observation")
+            Watch.OnChanged(changedEvent filePath)
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.Stopping
+
+            /// Tracks apply-from-differences Calls changes so stopping mode proves no Save-producing application.
+            let mutable applyFromDifferencesCalls = 0
+
+            /// Reads status needed by the state-gate scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise stopping observation processing.
+            let upload _ filePath =
+                let fullPath = $"{filePath}"
+
+                if File.Exists(fullPath) then recordUploadedFileVersion fullPath
+
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise stopping observation processing.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            applyFromDifferencesCalls |> should equal 0
+
+            Watch.processedFileRelativePathsPendingStatusForWatchTests ()
+            |> should equal [| "stopping-observation.txt" |])
+
     /// Verifies that watch status preserves root blake3 from grace status index.
     [<Test>]
     let ``watch status preserves root Blake3 from GraceStatus index`` () =
