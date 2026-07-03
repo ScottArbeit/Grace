@@ -550,8 +550,7 @@ module Watch =
     let private isStaleParentDirectoryAddDifference (difference: FileSystemDifference) =
         difference.FileSystemEntryType = FileSystemEntryType.Directory
         && difference.DifferenceType = Add
-        && finalPathKind difference.RelativePath
-           <> FinalPathDirectory
+        && not (directoryExistsUsingWatchPathComparison difference.RelativePath)
 
     /// Checks whether a status-only trigger covers the same path as a pending file difference.
     let private hasMatchingStatusTrigger (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (difference: FileSystemDifference) =
