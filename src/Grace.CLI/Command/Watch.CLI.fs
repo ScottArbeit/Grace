@@ -45,6 +45,26 @@ open Grace.Types.Automation
 module Watch =
     exception private WatchCommandExit of int
 
+    let mutable private graceWatchRuntimeModeValue = int GraceWatchRuntimeMode.HealthyIncremental
+
+    /// Reads the process-local Grace Watch runtime mode used to gate scans and filesystem observations.
+    let private currentGraceWatchRuntimeMode () = enum<GraceWatchRuntimeMode> (Volatile.Read(&graceWatchRuntimeModeValue))
+
+    /// Updates the process-local Grace Watch runtime mode used by event handlers and status application.
+    let private setGraceWatchRuntimeMode mode =
+        Interlocked.Exchange(&graceWatchRuntimeModeValue, int mode)
+        |> ignore
+
+    /// Sets Grace Watch runtime mode for tests that exercise state-gated observation behavior.
+    let internal setGraceWatchRuntimeModeForWatchTests mode = setGraceWatchRuntimeMode mode
+
+    /// Checks whether the current runtime mode can record filesystem observations.
+    let private canCaptureFilesystemObservation () = isGraceWatchObservationCaptureLegal (currentGraceWatchRuntimeMode ())
+
+    /// Reports that a filesystem observation was ignored because the current runtime mode cannot capture it.
+    let private logObservationSuppressed fullPath =
+        logToAnsiConsole Colors.Verbose $"Grace Watch ignored filesystem observation for {fullPath} while runtime mode is {currentGraceWatchRuntimeMode ()}."
+
     let private uploadedFileVersions = ConcurrentDictionary<RelativePath * Sha256Hash * Blake3Hash, FileVersion>()
 
     /// Reads uploaded file version identity data needed by the command workflow without changing remote state.
@@ -1311,6 +1331,7 @@ module Watch =
         fileExistsForWatchFinalPath <- File.Exists
         directoryExistsForWatchFinalPath <- Directory.Exists
         createLocalFileVersionForWatchStatus <- createLocalFileVersion
+        setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
         setLastScanForDifferencesSuccessfulForWatchTests true
 
     /// Coordinates pending watch work snapshot for tests behavior for this CLI command path.
@@ -1474,7 +1495,9 @@ module Watch =
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
-        if
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif
             updateNotInProgress ()
             && Directory.Exists(args.FullPath)
         then
@@ -1496,8 +1519,10 @@ module Watch =
 
     /// Coordinates on changed behavior for this CLI command path.
     let OnChanged (args: FileSystemEventArgs) =
-        if updateNotInProgress ()
-           && isNotDirectory args.FullPath then
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress ()
+             && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
             //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
 
@@ -1530,7 +1555,9 @@ module Watch =
 
     /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
-        if updateNotInProgress () then
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress () then
             let canceledFileUpload = cancelPendingUploadsForDeletedPath args.FullPath
 
             if enqueueStatusUpdateTrigger args.FullPath then
@@ -1559,7 +1586,9 @@ module Watch =
 
     /// Coordinates on renamed behavior for this CLI command path.
     let OnRenamed (args: RenamedEventArgs) =
-        if updateNotInProgress () then
+        if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress () then
             let newPathIsDirectory = Directory.Exists(args.FullPath)
 
             let canceledFileUpload = cancelPendingUploadsForDeletedPath args.OldFullPath
@@ -1786,9 +1815,15 @@ module Watch =
     /// Updates the Grace Status file's Index with updates detected from the file system.
     let updateGraceStatus graceStatus correlationId =
         task {
-            // Get the list of differences between what's in the working directory, and what Grace Index knows about.
-            let! differences = scanForDifferences graceStatus
-            return! updateGraceStatusFromDifferences graceStatus differences correlationId
+            let runtimeMode = currentGraceWatchRuntimeMode ()
+
+            if not (isGraceWatchScanLegal runtimeMode) then
+                logToAnsiConsole Colors.Verbose $"Grace Watch skipped working-tree scan while runtime mode is {runtimeMode}."
+                return Some graceStatus
+            else
+                // Get the list of differences between what's in the working directory, and what Grace Index knows about.
+                let! differences = scanForDifferences graceStatus
+                return! updateGraceStatusFromDifferences graceStatus differences correlationId
         }
 
     /// Reads cached file version for upload skip from ParseResult, local configuration, or Grace ids.
@@ -1911,6 +1946,7 @@ module Watch =
             // First, check if there's anything to process.
             if hasPendingWatchWork () then
                 try
+                    let runtimeMode = currentGraceWatchRuntimeMode ()
                     let correlationId = generateCorrelationId ()
                     let! graceStatusFromDisk = readGraceStatusMetaClient ()
                     graceStatus <- graceStatusFromDisk
@@ -1997,6 +2033,11 @@ module Watch =
                                 statusTriggerSnapshot
                                 (mergeCurrentStatusDifferences processedFileRelativePathsForStatus startupPendingDifferences eventDerivedDifferences)
 
+                        let statusApplicationLegal =
+                            if runtimeMode = GraceWatchRuntimeMode.Stopping then false
+                            elif startupPendingDifferences.Count > 0 then true
+                            else isGraceWatchObservationApplicationLegal runtimeMode
+
                         let! statusUpdateResult =
                             if requeuedResolvedFileDeletePaths.Count > 0 then
                                 logToAnsiConsole
@@ -2009,6 +2050,9 @@ module Watch =
                                     Colors.Important
                                     $"Grace Status uploaded file differences include unresolved final content; requeued uploads will finish before status application."
 
+                                Task.FromResult(None)
+                            elif not statusApplicationLegal then
+                                logToAnsiConsole Colors.Verbose $"Grace Watch deferred status application while runtime mode is {runtimeMode}."
                                 Task.FromResult(None)
                             elif statusDifferencesForApply.Applicable.Count > 0 then
                                 updateGraceStatusFromDifferencesClient graceStatus statusDifferencesForApply.Applicable correlationId
@@ -2130,6 +2174,7 @@ module Watch =
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
 
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.StartingUp
                     configureWatchPathComparisonForCurrentRepository ()
 
                     // Create the FileSystemWatcher, but don't enable it yet.
@@ -2353,7 +2398,14 @@ module Watch =
 
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
-                    let! differences = scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
+
+                    let! differences =
+                        if isGraceWatchScanLegal (currentGraceWatchRuntimeMode ()) then
+                            scanForDifferences graceStatus // <--- This always finds the directories with updated write times, but we never update GraceStatus below..
+                        else
+                            logToAnsiConsole Colors.Verbose $"Grace Watch skipped startup scan while runtime mode is {currentGraceWatchRuntimeMode ()}."
+
+                            Task.FromResult(List<FileSystemDifference>())
 
                     if differences |> Seq.isEmpty then
                         logToAnsiConsole Colors.Verbose $"Already up-to-date."
@@ -2366,6 +2418,7 @@ module Watch =
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -2409,6 +2462,8 @@ module Watch =
                             GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
                             //logToAnsiConsole Colors.Verbose $"Memory before GC: {memoryBeforeGC:N0}; after: {Process.GetCurrentProcess().WorkingSet64:N0}."
                             previousGC <- getCurrentInstant ()
+
+                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Stopping
 
                     if parseResult |> json then
                         return renderJsonResult parseResult true true "Watch completed because cancellation was requested or the timer stopped."
