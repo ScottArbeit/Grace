@@ -417,6 +417,35 @@ module Watch =
         | FileSystemEntryType.Directory, FinalPathDirectory -> true
         | _ -> false
 
+    /// Checks directory existence using the active watch path comparison so case-insensitive event paths still match disk.
+    let private directoryExistsUsingWatchPathComparison (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+        let fullPath = Path.Combine(Current().RootDirectory, normalizedRelativePath)
+
+        if Directory.Exists(fullPath) then
+            true
+        else
+            let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
+            let mutable currentDirectory = Path.GetFullPath(Current().RootDirectory)
+            let mutable exists = segments.Length > 0
+            let mutable index = 0
+
+            while exists && index < segments.Length do
+                if Directory.Exists(currentDirectory) then
+                    let matchingDirectory =
+                        Directory.EnumerateDirectories(currentDirectory)
+                        |> Seq.tryFind (fun candidate -> String.Equals(Path.GetFileName(candidate), segments[index], watchPathComparison))
+
+                    match matchingDirectory with
+                    | Some directory ->
+                        currentDirectory <- directory
+                        index <- index + 1
+                    | None -> exists <- false
+                else
+                    exists <- false
+
+            exists
+
     /// Finds the uploaded identity that matches the final file content for a processed watch path.
     let private tryFindUploadedFinalFileVersion (relativePath: RelativePath) =
         task {
@@ -447,7 +476,6 @@ module Watch =
             for index in 0 .. segments.Length - 2 do
                 let parentRelativePath = RelativePath(String.Join("/", segments[0..index]))
                 let parentDifferenceRelativePath = canonicalizeTrackedAncestorCasing status parentRelativePath
-                let parentFullPath = Path.Combine(Current().RootDirectory, $"{parentRelativePath}")
 
                 let alreadyAdded =
                     differences
@@ -456,11 +484,9 @@ module Watch =
                         && difference.DifferenceType = Add
                         && String.Equals(normalizeRelativePath difference.RelativePath, normalizeRelativePath parentDifferenceRelativePath, watchPathComparison))
 
-                if
-                    not alreadyAdded
-                    && not (isTrackedDirectory status parentDifferenceRelativePath)
-                    && Directory.Exists(parentFullPath)
-                then
+                if not alreadyAdded
+                   && not (isTrackedDirectory status parentDifferenceRelativePath)
+                   && directoryExistsUsingWatchPathComparison parentDifferenceRelativePath then
                     differences.Add(FileSystemDifference.Create Add FileSystemEntryType.Directory parentDifferenceRelativePath)
 
         differences
