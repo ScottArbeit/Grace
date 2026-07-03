@@ -250,7 +250,7 @@ module Watch =
             .Replace(Path.DirectorySeparatorChar, '/')
             .Replace(Path.AltDirectorySeparatorChar, '/')
 
-    /// Coordinates default watch path comparison behavior for this CLI command path.
+    /// Provides the fallback path comparison until the repository volume can be probed.
     let private defaultWatchPathComparison () =
         if OperatingSystem.IsWindows() then
             StringComparison.OrdinalIgnoreCase
@@ -258,6 +258,64 @@ module Watch =
             StringComparison.Ordinal
 
     let mutable private watchPathComparison = defaultWatchPathComparison ()
+    let mutable private watchPathComparisonOverride: StringComparison option = None
+    let mutable private watchPathComparisonConfiguredRoot: string option = None
+
+    /// Checks whether the repository volume resolves differently-cased names to the same file.
+    let private detectRepositoryPathCaseInsensitiveLookup (rootDirectory: string) =
+        let mutable probePath = String.Empty
+        let mutable alternateProbePath = String.Empty
+
+        try
+            try
+                let probeDirectory =
+                    let graceDirectory = Current().GraceDirectory
+
+                    if String.IsNullOrWhiteSpace(graceDirectory) then
+                        Path.Combine(rootDirectory, Constants.GraceConfigDirectory)
+                    else
+                        graceDirectory
+
+                Directory.CreateDirectory(probeDirectory)
+                |> ignore
+
+                let probeName = $"grace-watch-case-probe-{Guid.NewGuid():N}"
+                probePath <- Path.Combine(probeDirectory, probeName.ToLowerInvariant())
+                alternateProbePath <- Path.Combine(probeDirectory, probeName.ToUpperInvariant())
+
+                File.WriteAllText(probePath, String.Empty)
+                File.Exists(alternateProbePath)
+            with
+            | _ -> OperatingSystem.IsWindows()
+        finally
+            for path in [| probePath; alternateProbePath |] do
+                try
+                    if
+                        not (String.IsNullOrWhiteSpace(path))
+                        && File.Exists(path)
+                    then
+                        File.Delete(path)
+                with
+                | _ -> ()
+
+    let mutable private repositoryPathCaseInsensitiveLookupForWatch = detectRepositoryPathCaseInsensitiveLookup
+
+    /// Aligns watch path matching with the active repository volume's case behavior.
+    let private configureWatchPathComparisonForCurrentRepository () =
+        match watchPathComparisonOverride with
+        | Some comparison -> watchPathComparison <- comparison
+        | None ->
+            let normalizedRoot = Path.GetFullPath(Current().RootDirectory)
+
+            if watchPathComparisonConfiguredRoot
+               <> Some normalizedRoot then
+                watchPathComparison <-
+                    if repositoryPathCaseInsensitiveLookupForWatch normalizedRoot then
+                        StringComparison.OrdinalIgnoreCase
+                    else
+                        StringComparison.Ordinal
+
+                watchPathComparisonConfiguredRoot <- Some normalizedRoot
 
     /// Compares delete-trigger paths against GraceStatus with the legacy status delete semantics.
     let private deletedPathComparison = StringComparison.OrdinalIgnoreCase
@@ -352,8 +410,16 @@ module Watch =
     let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
     /// Reads set enumerate files for directory upload for watch tests data needed by the command workflow without changing remote state.
     let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
+
     /// Coordinates set watch path comparison for watch tests behavior for this CLI command path.
-    let internal setWatchPathComparisonForWatchTests comparison = watchPathComparison <- comparison
+    let internal setWatchPathComparisonForWatchTests comparison =
+        watchPathComparison <- comparison
+        watchPathComparisonOverride <- Some comparison
+
+    /// Installs the repository case-sensitivity detector used by watch tests.
+    let internal setRepositoryPathCaseInsensitiveLookupForWatchTests detector =
+        repositoryPathCaseInsensitiveLookupForWatch <- detector
+        watchPathComparisonConfiguredRoot <- None
 
     /// Finds the tracked file entry that owns a repository-relative path in GraceStatus.
     let private tryFindTrackedFile (status: GraceStatus) (relativePath: RelativePath) = tryFindTrackedFileWithComparison watchPathComparison status relativePath
@@ -410,13 +476,21 @@ module Watch =
         | FinalPathFile
         | FinalPathDirectory
 
+    let mutable private fileExistsForWatchFinalPath = File.Exists
+    let mutable private directoryExistsForWatchFinalPath = Directory.Exists
+
     /// Reads the final filesystem kind for a repository-relative path.
     let private finalPathKind (relativePath: RelativePath) =
         let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
-        if File.Exists(fullPath) then FinalPathFile
-        elif Directory.Exists(fullPath) then FinalPathDirectory
+        if fileExistsForWatchFinalPath fullPath then FinalPathFile
+        elif directoryExistsForWatchFinalPath fullPath then FinalPathDirectory
         else FinalPathMissing
+
+    /// Installs final path existence readers used by watch classification tests.
+    let internal setFinalPathExistsForWatchTests fileExists directoryExists =
+        fileExistsForWatchFinalPath <- fileExists
+        directoryExistsForWatchFinalPath <- directoryExists
 
     /// Checks whether final path state still has the same kind as a delete difference.
     let private finalPathMatchesEntryType entryType relativePath =
@@ -546,10 +620,13 @@ module Watch =
 
             match trackedDeletedPathKind status statusTrigger.RelativePath with
             | DeletedFile ->
-                if not (finalPathMatchesEntryType FileSystemEntryType.File relativePath) then
-                    match tryFindTrackedFileWithComparison deletedPathComparison status relativePath with
-                    | Some trackedFile -> differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
-                    | None -> differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File relativePath)
+                match tryFindTrackedFileWithComparison deletedPathComparison status relativePath with
+                | Some trackedFile ->
+                    if not (finalPathMatchesEntryType FileSystemEntryType.File trackedFile.RelativePath) then
+                        differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
+                | None ->
+                    if not (finalPathMatchesEntryType FileSystemEntryType.File relativePath) then
+                        differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File relativePath)
             | DeletedDirectory ->
                 if not (finalPathMatchesEntryType FileSystemEntryType.Directory relativePath) then
                     differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.Directory relativePath)
@@ -952,6 +1029,11 @@ module Watch =
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         watchPathComparison <- defaultWatchPathComparison ()
+        watchPathComparisonOverride <- None
+        watchPathComparisonConfiguredRoot <- None
+        repositoryPathCaseInsensitiveLookupForWatch <- detectRepositoryPathCaseInsensitiveLookup
+        fileExistsForWatchFinalPath <- File.Exists
+        directoryExistsForWatchFinalPath <- Directory.Exists
         createLocalFileVersionForWatchStatus <- createLocalFileVersion
         setLastScanForDifferencesSuccessfulForWatchTests true
 
@@ -1517,6 +1599,8 @@ module Watch =
         updateGraceWatchInterprocessFileClient
         =
         task {
+            configureWatchPathComparisonForCurrentRepository ()
+
             // First, check if there's anything to process.
             if hasPendingWatchWork () then
                 try
@@ -1747,6 +1831,8 @@ module Watch =
                     if not claimedGraceWatchStatus then
                         logToAnsiConsole Colors.Error "GraceWatch is already running."
                         raise (WatchCommandExit -1)
+
+                    configureWatchPathComparisonForCurrentRepository ()
 
                     // Create the FileSystemWatcher, but don't enable it yet.
                     use rootDirectoryFileSystemWatcher = createFileSystemWatcher (Current().RootDirectory)

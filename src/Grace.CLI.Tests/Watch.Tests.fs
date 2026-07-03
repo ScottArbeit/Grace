@@ -1606,6 +1606,67 @@ module WatchTests =
                     DifferenceType.Add, FileSystemEntryType.File, "foo.txt"
                 |])
 
+    /// Verifies that repository case detection can make default matching case-insensitive without a test override.
+    [<Test>]
+    let ``case-insensitive repository default preserves tracked file casing`` () =
+        withTempRepo (fun root ->
+            let uploadedPath = Path.Combine(root, "foo.txt")
+            /// Tracks probe Calls changes so the test proves repository case behavior configures watch matching.
+            let mutable probeCalls = 0
+            /// Tracks the Differences passed to the apply seam so default tracked casing is proven.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.setRepositoryPathCaseInsensitiveLookupForWatchTests (fun _ ->
+                probeCalls <- probeCalls + 1
+                true)
+
+            File.WriteAllText(uploadedPath, "uploaded lowercase content")
+            Watch.OnChanged(changedEvent uploadedPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(graceStatusTracking [| "Foo.txt" |] Array.empty<string>)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ filePath =
+                recordUploadedFileVersion $"{filePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            probeCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Change, FileSystemEntryType.File, "Foo.txt"
+                |])
+
     /// Verifies that case-insensitive tracked file matching emits changes with the tracked path casing.
     [<Test>]
     let ``case-insensitive changed file preserves tracked path casing`` () =
@@ -1714,6 +1775,66 @@ module WatchTests =
                 [|
                     DifferenceType.Delete, FileSystemEntryType.File, "Foo.txt"
                 |])
+
+    /// Verifies that a differently-cased delete event does not delete a tracked file that still exists.
+    [<Test>]
+    let ``matched delete checks tracked path before deleting tracked file`` () =
+        withTempRepo (fun root ->
+            Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+            let trackedRelativePath = "Foo.txt"
+            let deletedEventRelativePath = "foo.txt"
+            let trackedPath = Path.Combine(root, trackedRelativePath)
+            let deletedEventPath = Path.Combine(root, deletedEventRelativePath)
+            let status = graceStatusTracking [| trackedRelativePath |] Array.empty<string>
+            /// Tracks apply-from-differences Calls changes so stale delete suppression is proven.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply seam so the test fails if Foo.txt is deleted.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.setGraceStatusForWatchTests status
+
+            Watch.setFinalPathExistsForWatchTests (fun fullPath -> String.Equals(fullPath, trackedPath, StringComparison.Ordinal)) (fun _ -> false)
+
+            Watch.OnDeleted(deletedEvent deletedEventPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            applyFromDifferencesCalls |> should equal 0
+
+            observedDifferences
+            |> Seq.toArray
+            |> should equal Array.empty<FileSystemDifference>)
 
     /// Verifies that delete classification stays case-insensitive even when other watch matching is case-sensitive.
     [<Test>]
