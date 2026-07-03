@@ -174,6 +174,11 @@ module Services =
             SafetyFlags: string array
         }
 
+    /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
+    let private safetyFlagsForGraceWatchStatusContract (status: GraceWatchStatus) =
+        status.SafetyFlags
+        |> Array.filter (fun safetyFlag -> not (String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)))
+
     /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
     let private toGraceWatchStatusContract (status: GraceWatchStatus) =
         {
@@ -186,7 +191,7 @@ module Services =
             LastDirectoryVersionInstant = status.LastDirectoryVersionInstant
             DirectoryIds = status.DirectoryIds
             Mode = Some status.Mode
-            SafetyFlags = status.SafetyFlags
+            SafetyFlags = safetyFlagsForGraceWatchStatusContract status
         }
 
     /// Writes the compact Watch IPC JSON contract to the already-open status stream.

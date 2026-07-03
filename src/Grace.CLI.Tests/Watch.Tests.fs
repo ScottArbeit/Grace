@@ -207,6 +207,18 @@ module WatchTests =
         File.WriteAllText(ipcFileName, statusNode.ToJsonString(Constants.JsonSerializerOptions))
         ipcFileName
 
+    /// Rewrites only the Watch IPC heartbeat timestamp so tests can model a healthy writer that later dies.
+    let private updatePersistedWatchStatusUpdatedAt updatedAt =
+        let ipcFileName = Services.IpcFileName()
+
+        let statusNode =
+            JsonNode
+                .Parse(File.ReadAllText(ipcFileName))
+                .AsObject()
+
+        statusNode["UpdatedAt"] <- JsonSerializer.SerializeToNode(updatedAt, Constants.JsonSerializerOptions)
+        File.WriteAllText(ipcFileName, statusNode.ToJsonString(Constants.JsonSerializerOptions))
+
     /// Writes live watch status file needed by the test scenario.
     let private writeLiveWatchStatusFile () =
         let rootDirectoryId = Guid.NewGuid()
@@ -5579,7 +5591,7 @@ module WatchTests =
 
             safetyFlags
             |> Set.contains "incrementalSafe"
-            |> should equal true
+            |> should equal false
 
             let roundTripped: Services.GraceWatchStatus = deserialize json
 
@@ -5589,6 +5601,55 @@ module WatchTests =
             safetyFlagSet roundTripped
             |> Set.contains "incrementalSafe"
             |> should equal true)
+
+    /// Verifies that raw compact IPC readers cannot inherit incremental safety after a healthy writer dies.
+    [<Test>]
+    let ``watch compact status does not expose incremental safety after healthy snapshot ages`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { GraceStatus.Default with
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = Sha256Hash "aging-watch-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "aging-watch-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonSafetyFlags ()
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            getCurrentInstant()
+                .Minus(Duration.FromMinutes(6.0))
+            |> updatePersistedWatchStatusUpdatedAt
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            readWatchStatusJsonSafetyFlags ()
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            let agedStatus: Services.GraceWatchStatus = deserialize (File.ReadAllText(Services.IpcFileName()))
+            let derivedSafetyFlags = safetyFlagSet agedStatus
+
+            derivedSafetyFlags
+            |> Set.contains "staleStatus"
+            |> should equal true
+
+            derivedSafetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            derivedSafetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false)
 
     /// Verifies that stale watch status json does not advertise incremental safety.
     [<Test>]
