@@ -382,6 +382,9 @@ module Watch =
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
+    let mutable private enumerateDirectoriesForDirectoryStatusAdd =
+        fun directoryPath -> Directory.EnumerateDirectories(directoryPath, "*", SearchOption.AllDirectories)
+
     /// Records an uploaded watch path until the status update pass drains every file upload batch.
     let private addProcessedFileRelativePathPendingStatus (relativePath: RelativePath) =
         lock processedFileRelativePathsPendingStatusLock (fun () ->
@@ -631,6 +634,65 @@ module Watch =
                 .Length
 
         deriveDirectoryAddDifferencesThroughSegment status relativePath (segmentCount - 2)
+
+    /// Lists new non-ignored directories under the observed directory without scanning outside that subtree.
+    let private tryDeriveDirectorySubtreeAddDifferences (status: GraceStatus) (directoryPath: string) =
+        let differences = List<FileSystemDifference>()
+
+        /// Adds one directory add difference when GraceStatus does not already track the final path.
+        let addDirectoryDifference fullPath =
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                let canonicalRelativePath =
+                    RelativePath relativePath
+                    |> canonicalizeTrackedAncestorCasing status
+
+                let segmentCount =
+                    (normalizeRelativePath canonicalRelativePath)
+                        .Split(
+                        '/',
+                        StringSplitOptions.RemoveEmptyEntries
+                    )
+                        .Length
+
+                let directoryAddDifferences = deriveDirectoryAddDifferencesThroughSegment status canonicalRelativePath (segmentCount - 1)
+
+                for directoryAddDifference in directoryAddDifferences do
+                    let alreadyAdded =
+                        differences
+                        |> Seq.exists (fun difference ->
+                            difference.FileSystemEntryType = FileSystemEntryType.Directory
+                            && difference.DifferenceType = Add
+                            && String.Equals(
+                                normalizeRelativePath difference.RelativePath,
+                                normalizeRelativePath directoryAddDifference.RelativePath,
+                                watchPathComparison
+                            ))
+
+                    if not alreadyAdded then differences.Add(directoryAddDifference)
+            | None -> ()
+
+        if
+            Directory.Exists(directoryPath)
+            && shouldNotIgnoreDirectory directoryPath
+        then
+            try
+                addDirectoryDifference directoryPath
+
+                for childDirectoryPath in enumerateDirectoriesForDirectoryStatusAdd directoryPath do
+                    if shouldNotIgnoreDirectory childDirectoryPath then
+                        addDirectoryDifference childDirectoryPath
+
+                differences, true
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Error
+                    $"Unable to enumerate directory subtree {directoryPath}; status update will retry after directory adds can be queued. {Markup.Escape(ex.Message)}"
+
+                differences, false
+        else
+            differences, true
 
     /// Derives add and change differences from uploads already completed by the watch loop.
     let private deriveUploadedFileDifferences (status: GraceStatus) (processedFilePaths: seq<RelativePath>) =
@@ -1075,40 +1137,15 @@ module Watch =
             with
             | _ -> GraceStatus.Default
 
-    /// Queues a directory-only structural add when final path state contains a new non-ignored directory.
-    let private enqueueDirectoryStatusAdd fullPath =
-        if
-            Directory.Exists(fullPath)
-            && shouldNotIgnoreDirectory fullPath
-        then
-            match repositoryRelativePath fullPath with
-            | Some relativePath ->
-                let relativePath = RelativePath relativePath
-                let status = readGraceStatusForDirectoryAddClassification ()
+    /// Queues directory add differences and reports whether the affected subtree was fully enumerated.
+    let private tryEnqueueDirectoryStatusAdds fullPath =
+        let status = readGraceStatusForDirectoryAddClassification ()
+        let directoryAddDifferences, completedEnumeration = tryDeriveDirectorySubtreeAddDifferences status fullPath
 
-                let canonicalRelativePath = canonicalizeTrackedAncestorCasing status relativePath
+        for difference in directoryAddDifferences do
+            addPendingStatusDifference difference
 
-                if not (isTrackedDirectory status canonicalRelativePath) then
-                    let directoryAddDifferences =
-                        let segmentCount =
-                            (normalizeRelativePath canonicalRelativePath)
-                                .Split(
-                                '/',
-                                StringSplitOptions.RemoveEmptyEntries
-                            )
-                                .Length
-
-                        deriveDirectoryAddDifferencesThroughSegment status canonicalRelativePath (segmentCount - 1)
-
-                    for difference in directoryAddDifferences do
-                        addPendingStatusDifference difference
-
-                    true
-                else
-                    false
-            | None -> false
-        else
-            false
+        directoryAddDifferences.Count > 0, completedEnumeration
 
     /// Captures the already-derived differences waiting for the shared status-application path.
     let private pendingStatusDifferencesSnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.ToList())
@@ -1217,6 +1254,7 @@ module Watch =
         graceStatusHasChanged <- false
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
+        enumerateDirectoriesForDirectoryStatusAdd <- fun directoryPath -> Directory.EnumerateDirectories(directoryPath, "*", SearchOption.AllDirectories)
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None
@@ -1391,8 +1429,13 @@ module Watch =
             updateNotInProgress ()
             && Directory.Exists(args.FullPath)
         then
-            if enqueueDirectoryStatusAdd args.FullPath then
+            let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds args.FullPath
+
+            if directoryStatusAddQueued then
                 logToAnsiConsole Colors.Added $"I saw that directory {args.FullPath} was created."
+
+            if not directoryStatusEnumerationComplete then
+                enqueueDirectoryUploadRetry args.FullPath
         elif updateNotInProgress ()
              && isNotDirectory args.FullPath then
             if enqueueFileUpload args.FullPath then
@@ -1428,7 +1471,11 @@ module Watch =
         let mutable unitValue = ()
 
         for directoryPath in directoriesToProcess.Keys.ToArray() do
-            if enqueueDirectoryContentsForUpload directoryPath then
+            let _, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds directoryPath
+            let fileUploadEnumerationComplete = enqueueDirectoryContentsForUpload directoryPath
+
+            if directoryStatusEnumerationComplete
+               && fileUploadEnumerationComplete then
                 directoriesToProcess.TryRemove(directoryPath, &unitValue)
                 |> ignore
 
@@ -1479,7 +1526,16 @@ module Watch =
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
             if newPathIsDirectory then
+                let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds args.FullPath
+
+                if directoryStatusAddQueued
+                   && not oldPathStatusQueued then
+                    logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
+
                 if not (enqueueDirectoryContentsForUpload args.FullPath) then
+                    enqueueDirectoryUploadRetry args.FullPath
+
+                if not directoryStatusEnumerationComplete then
                     enqueueDirectoryUploadRetry args.FullPath
             elif enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
