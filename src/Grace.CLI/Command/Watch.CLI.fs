@@ -161,6 +161,8 @@ module Watch =
 
     let private pendingStatusDifferences = List<FileSystemDifference>()
 
+    let mutable private pendingStatusDifferencesRequireRescanRetry = false
+
     /// Defines structured data exchanged by CLI helpers.
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
 
@@ -423,6 +425,12 @@ module Watch =
     /// Captures the already-derived differences waiting for the shared status-application path.
     let private pendingStatusDifferencesSnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.ToList())
 
+    /// Checks whether a failed startup rescan left pending differences that must rescan again before applying.
+    let private pendingStatusDifferencesRequireRescanRetrySnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferencesRequireRescanRetry)
+
+    /// Records that pending startup differences still need a successful rescan before they can be applied.
+    let private requirePendingStatusDifferencesRescanRetry () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferencesRequireRescanRetry <- true)
+
     /// Checks whether any pre-derived filesystem differences still need status application.
     let private hasPendingStatusDifferences () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Count > 0)
 
@@ -431,10 +439,16 @@ module Watch =
         lock pendingStatusDifferencesLock (fun () ->
             for difference in differences do
                 pendingStatusDifferences.Remove(difference)
-                |> ignore)
+                |> ignore
+
+            if pendingStatusDifferences.Count = 0 then
+                pendingStatusDifferencesRequireRescanRetry <- false)
 
     /// Clears pre-derived differences when tests reset watch module state.
-    let private clearPendingStatusDifferencesForTests () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.Clear())
+    let private clearPendingStatusDifferencesForTests () =
+        lock pendingStatusDifferencesLock (fun () ->
+            pendingStatusDifferences.Clear()
+            pendingStatusDifferencesRequireRescanRetry <- false)
 
     /// Combines pre-derived and freshly scanned status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
@@ -1084,8 +1098,13 @@ module Watch =
                         resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
                         let pendingDifferences = pendingStatusDifferencesSnapshot ()
 
+                        let pendingDifferencesNeedRescan =
+                            processedAnyFile
+                            || pendingStatusDifferencesRequireRescanRetrySnapshot ()
+
                         let! differencesToApply =
-                            if pendingDifferences.Count > 0 && processedAnyFile then
+                            if pendingDifferences.Count > 0
+                               && pendingDifferencesNeedRescan then
                                 task {
                                     let! rescannedDifferences = scanForDifferencesClient graceStatus
                                     return mergeStatusDifferences pendingDifferences rescannedDifferences
@@ -1094,7 +1113,19 @@ module Watch =
                                 Task.FromResult(pendingDifferences)
 
                         let! statusUpdateResult =
-                            if differencesToApply.Count > 0 then
+                            if
+                                pendingDifferences.Count > 0
+                                && pendingDifferencesNeedRescan
+                                && not (wasLastScanForDifferencesSuccessful ())
+                            then
+                                requirePendingStatusDifferencesRescanRetry ()
+
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Status pending startup differences need a successful rescan before status application; status-only triggers will retry."
+
+                                Task.FromResult(None)
+                            elif differencesToApply.Count > 0 then
                                 updateGraceStatusFromDifferencesClient graceStatus differencesToApply correlationId
                             else
                                 updateGraceStatusClient graceStatus correlationId
@@ -1105,7 +1136,7 @@ module Watch =
                                 filesToProcess.IsEmpty
                                 && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
                                 && (pendingDifferences.Count > 0
-                                    && not processedAnyFile
+                                    && not pendingDifferencesNeedRescan
                                     || wasLastScanForDifferencesSuccessful ())
 
                             if statusUpdateCanCommit then
@@ -1113,7 +1144,8 @@ module Watch =
                                 drainAppliedStatusWork directorySnapshot statusTriggerSnapshot pendingDifferences
                                 clearPendingStatusDifferences pendingDifferences
                             else
-                                clearPendingStatusDifferences pendingDifferences
+                                if wasLastScanForDifferencesSuccessful () then
+                                    clearPendingStatusDifferences pendingDifferences
 
                                 logToAnsiConsole
                                     Colors.Important

@@ -1444,6 +1444,96 @@ module WatchTests =
             afterProcessing.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that failed startup rescan retries before applying pending startup differences.
+    [<Test>]
+    let ``startup apply retries failed rescan before applying pending differences`` () =
+        withTempRepo (fun root ->
+            let startupDifference = FileSystemDifference.Create Add FileSystemEntryType.File "retry-after-failed-rescan.txt"
+            let liveFilePath = Path.Combine(root, "live-upload-after-failed-rescan.txt")
+            let liveUploadDifference = FileSystemDifference.Create Add FileSystemEntryType.File "live-upload-after-failed-rescan.txt"
+            /// Tracks scan Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanCalls = 0
+            /// Tracks apply-from-differences Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable uploadCalls = 0
+            /// Tracks the Differences passed to the apply seam so the test fails if retry skips the failed rescan result.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.queueStartupDifferenceForWatch startupDifference
+            File.WriteAllText(liveFilePath, "live content")
+            Watch.OnChanged(changedEvent liveFilePath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Services.setLastScanForDifferencesSuccessfulForWatchTests (scanCalls > 1)
+
+                Task.FromResult(List<FileSystemDifference>([ liveUploadDifference ]))
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            scanCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 0
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 2
+            scanCalls |> should equal 2
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    startupDifference
+                    liveUploadDifference
+                |]
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
     /// Verifies that failed startup-derived status application remains retryable without rescanning.
     [<Test>]
     let ``startup pre-derived differences retry apply seam after transient status failure`` () =
