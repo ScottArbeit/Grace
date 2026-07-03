@@ -58,23 +58,34 @@ module Watch =
 
     let private canceledFileUploadDeleteRelativePaths = List<RelativePath>()
 
-    /// Removes uploaded identities after their matching watch work is either applied or proven content-equivalent.
-    let private removeUploadedFileVersionsForPaths (relativePaths: seq<RelativePath>) =
-        let normalizedPaths =
-            relativePaths
-            |> Seq.map normalizeFilePath
-            |> HashSet
+    /// Makes an uploaded identity available under the casing that status application will write to GraceStatus.
+    let private recordUploadedFileVersionForCanonicalPath (canonicalRelativePath: RelativePath) (uploadedFileVersion: FileVersion) =
+        let canonicalRelativePath = RelativePath(normalizeFilePath $"{canonicalRelativePath}")
 
-        for uploadedFileVersion in uploadedFileVersions.Values.ToArray() do
-            if normalizedPaths.Contains(normalizeFilePath $"{uploadedFileVersion.RelativePath}") then
-                let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
-
-                uploadedFileVersions.TryRemove(uploadedFileVersionIdentity uploadedFileVersion, &removedFileVersion)
-                |> ignore
+        if uploadedFileVersion.RelativePath
+           <> canonicalRelativePath then
+            let canonicalUploadedFileVersion = FileVersion()
+            canonicalUploadedFileVersion.Class <- uploadedFileVersion.Class
+            canonicalUploadedFileVersion.RelativePath <- canonicalRelativePath
+            canonicalUploadedFileVersion.Sha256Hash <- uploadedFileVersion.Sha256Hash
+            canonicalUploadedFileVersion.Blake3Hash <- uploadedFileVersion.Blake3Hash
+            canonicalUploadedFileVersion.IsBinary <- uploadedFileVersion.IsBinary
+            canonicalUploadedFileVersion.Size <- uploadedFileVersion.Size
+            canonicalUploadedFileVersion.CreatedAt <- uploadedFileVersion.CreatedAt
+            canonicalUploadedFileVersion.BlobUri <- uploadedFileVersion.BlobUri
+            canonicalUploadedFileVersion.ContentReference <- uploadedFileVersion.ContentReference
+            uploadedFileVersions[uploadedFileVersionIdentity canonicalUploadedFileVersion] <- canonicalUploadedFileVersion
 
     /// Records uploaded file identity data for watch tests that replace the storage upload client.
     let internal recordUploadedFileVersionForWatchTests (fileVersion: FileVersion) =
         uploadedFileVersions[uploadedFileVersionIdentity fileVersion] <- fileVersion
+
+    /// Lists uploaded identity paths so watch tests can prove casing aliases are present or removed.
+    let internal uploadedFileVersionRelativePathsForWatchTests () =
+        uploadedFileVersions.Values
+        |> Seq.map (fun fileVersion -> $"{fileVersion.RelativePath}")
+        |> Seq.sort
+        |> Seq.toArray
 
     /// Defines the options parsed by the watch command handlers.
     module private Options =
@@ -260,6 +271,23 @@ module Watch =
     let mutable private watchPathComparison = defaultWatchPathComparison ()
     let mutable private watchPathComparisonOverride: StringComparison option = None
     let mutable private watchPathComparisonConfiguredRoot: string option = None
+
+    /// Removes uploaded identities after their matching watch work is either applied or proven content-equivalent.
+    let private removeUploadedFileVersionsForPaths (relativePaths: seq<RelativePath>) =
+        let normalizedPaths =
+            relativePaths
+            |> Seq.map normalizeFilePath
+            |> Seq.toArray
+
+        for uploadedFileVersion in uploadedFileVersions.Values.ToArray() do
+            let normalizedUploadedPath = normalizeFilePath $"{uploadedFileVersion.RelativePath}"
+
+            if normalizedPaths
+               |> Array.exists (fun relativePath -> String.Equals(relativePath, normalizedUploadedPath, watchPathComparison)) then
+                let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+
+                uploadedFileVersions.TryRemove(uploadedFileVersionIdentity uploadedFileVersion, &removedFileVersion)
+                |> ignore
 
     /// Checks whether the repository volume resolves differently-cased names to the same file.
     let private detectRepositoryPathCaseInsensitiveLookup (rootDirectory: string) =
@@ -598,11 +626,13 @@ module Watch =
                 | UploadedFinalFileVersionFound uploadedFileVersion ->
                     match tryFindTrackedFile status uploadedFileVersion.RelativePath with
                     | Some trackedFile when uploadedFileContentChanged trackedFile uploadedFileVersion ->
+                        recordUploadedFileVersionForCanonicalPath trackedFile.RelativePath uploadedFileVersion
                         differences.Add(FileSystemDifference.Create Change FileSystemEntryType.File trackedFile.RelativePath)
                     | Some _ -> ()
                     | None ->
                         differences.AddRange(deriveParentDirectoryAddDifferences status uploadedFileVersion.RelativePath)
                         let addRelativePath = canonicalizeTrackedAncestorCasing status uploadedFileVersion.RelativePath
+                        recordUploadedFileVersionForCanonicalPath addRelativePath uploadedFileVersion
                         differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File addRelativePath)
                 | UploadedFinalFileVersionUnavailable
                 | UploadedFinalFileVersionUnmatched -> unresolvedFilePaths.Add(relativePath)
@@ -1102,6 +1132,13 @@ module Watch =
             DirectoriesToProcess = directoriesToProcess.Keys.OrderBy(id).ToArray()
             StatusUpdateTriggers = statusUpdateTriggers.Keys.OrderBy(id).ToArray()
         }
+
+    /// Lists processed upload paths that are waiting for GraceStatus application in watch tests.
+    let internal processedFileRelativePathsPendingStatusForWatchTests () =
+        processedFileRelativePathsPendingStatusSnapshot ()
+        |> Seq.map string
+        |> Seq.sort
+        |> Seq.toArray
 
     /// Evaluates has pending watch work against parsed options and command state.
     let private hasPendingWatchWork () =
@@ -1718,7 +1755,7 @@ module Watch =
                         let processedFileRelativePathsForStatus = processedFileRelativePathsPendingStatusSnapshot ()
                         let startupPendingDifferences = pendingStatusDifferencesSnapshot ()
 
-                        let! _ =
+                        let! requeuedResolvedFileDeletePaths =
                             reenqueueUploadsForResolvedFileDeletes
                                 graceStatus
                                 statusTriggerSnapshot
@@ -1773,6 +1810,12 @@ module Watch =
                                     $"Grace Status pending startup differences need a successful rescan before status application; status-only triggers will retry."
 
                                 Task.FromResult(None)
+                            elif requeuedResolvedFileDeletePaths.Count > 0 then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Status stale file-delete differences requeued changed final content; requeued uploads will finish before status application."
+
+                                Task.FromResult(None)
                             elif requeuedUnresolvedUploadedFilePaths.Count > 0 then
                                 logToAnsiConsole
                                     Colors.Important
@@ -1817,6 +1860,9 @@ module Watch =
                             else
                                 if wasLastScanForDifferencesSuccessful () then
                                     clearPendingStatusDifferences pendingDifferencesToClear
+
+                                clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
+                                removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
 
                                 logToAnsiConsole
                                     Colors.Important
