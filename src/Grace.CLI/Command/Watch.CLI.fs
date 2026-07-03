@@ -915,8 +915,8 @@ module Watch =
         else
             true
 
-    /// Requeues uploaded paths whose final content could not be matched and is not superseded by delete-triggered work.
-    let private reenqueueUnresolvedUploadedFinalFileVersions (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (relativePaths: seq<RelativePath>) =
+    /// Requeues uploaded paths whose final content could not be matched while the final file still exists.
+    let private reenqueueUnresolvedUploadedFinalFileVersions (relativePaths: seq<RelativePath>) =
         let requeuedRelativePaths = List<RelativePath>()
 
         for relativePath in
@@ -924,16 +924,7 @@ module Watch =
             |> Seq.distinctBy normalizeRelativePath do
             let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
-            let statusTriggerOwnsPath =
-                statusTriggerSnapshot
-                |> Array.exists (fun statusTrigger ->
-                    let statusTriggerRelativePath = RelativePath statusTrigger.RelativePath
-
-                    String.Equals(normalizeRelativePath statusTriggerRelativePath, normalizeRelativePath relativePath, watchPathComparison)
-                    || isPathUnderDirectoryTrigger statusTriggerRelativePath relativePath)
-
-            if not statusTriggerOwnsPath
-               && finalPathMatchesEntryType FileSystemEntryType.File relativePath
+            if finalPathMatchesEntryType FileSystemEntryType.File relativePath
                && File.Exists(fullPath)
                && enqueueFileUpload fullPath then
                 requeuedRelativePaths.Add(relativePath)
@@ -1374,8 +1365,13 @@ module Watch =
                 match repositoryRelativePath args.FullPath with
                 | Some relativePath ->
                     let invalidatedRelativePath = RelativePath relativePath
-                    clearProcessedFileRelativePathsPendingStatus [ invalidatedRelativePath ]
-                    removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
+
+                    if
+                        canceledFileUpload
+                        || not (finalPathMatchesEntryType FileSystemEntryType.File invalidatedRelativePath)
+                    then
+                        clearProcessedFileRelativePathsPendingStatus [ invalidatedRelativePath ]
+                        removeUploadedFileVersionsForPaths [ invalidatedRelativePath ]
                 | None -> ()
 
                 if canceledFileUpload then
@@ -1804,7 +1800,7 @@ module Watch =
                         let! uploadedFileDifferences, unresolvedUploadedFilePaths =
                             deriveUploadedFileDifferences graceStatus processedFileRelativePathsForStatus
 
-                        let requeuedUnresolvedUploadedFilePaths = reenqueueUnresolvedUploadedFinalFileVersions statusTriggerSnapshot unresolvedUploadedFilePaths
+                        let requeuedUnresolvedUploadedFilePaths = reenqueueUnresolvedUploadedFinalFileVersions unresolvedUploadedFilePaths
 
                         let deleteDifferences = deriveDeleteDifferences graceStatus statusTriggerSnapshot
                         let eventDerivedDifferences = mergeStatusDifferences deleteDifferences uploadedFileDifferences
