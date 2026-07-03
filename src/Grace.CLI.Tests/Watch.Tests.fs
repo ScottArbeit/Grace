@@ -763,6 +763,101 @@ module WatchTests =
             afterSuccess.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that a stale status only delete requeues recreated content without a canceled upload marker.
+    [<Test>]
+    let ``stale status-only delete requeues recreated changed tracked file without canceled upload`` () =
+        withTempRepo (fun root ->
+            let relativePath = "stale-delete-recreated.txt"
+            let filePath = Path.Combine(root, relativePath)
+            /// Tracks upload Calls changes so this scenario can assert the requeued upload happened.
+            let mutable uploadCalls = 0
+            /// Tracks apply-from-differences Calls changes so the changed content reaches status application.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply seam so the stale delete becomes a file change.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            File.WriteAllText(filePath, "tracked content")
+
+            let trackedFile =
+                (Services.createLocalFileVersion (FileInfo(filePath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            File.Delete(filePath)
+            Watch.OnDeleted(deletedEvent filePath)
+            File.WriteAllText(filePath, "recreated changed content")
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(graceStatusTrackingFileVersions [| trackedFile |])
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForNoDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 0
+
+            let afterRequeue = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterRequeue.StatusUpdateTriggers
+            |> should equal [| relativePath |]
+
+            afterRequeue.FilesToProcess
+            |> should equal [| filePath |]
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Change, FileSystemEntryType.File, relativePath
+                |]
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Verifies that status only triggers remain pending when scan failure is swallowed as unchanged status.
     [<Test>]
     let ``status-only triggers remain pending when scan failure is swallowed as unchanged status`` () =

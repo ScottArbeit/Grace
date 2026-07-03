@@ -663,6 +663,42 @@ module Watch =
         |> Array.exists (fun statusTrigger ->
             String.Equals(normalizeRelativePath statusTrigger.RelativePath, normalizeRelativePath difference.RelativePath, watchPathComparison))
 
+    /// Checks whether a completed file upload already waits for status application on this path.
+    let private hasProcessedFileRelativePath (processedRelativePaths: List<RelativePath>) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        processedRelativePaths
+        |> Seq.exists (fun processedPath -> String.Equals(normalizeRelativePath processedPath, normalizedRelativePath, watchPathComparison))
+
+    /// Checks whether startup recovery already owns the stale delete decision for this path.
+    let private hasMatchingStartupFileDeleteDifference (startupPendingDifferences: List<FileSystemDifference>) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        startupPendingDifferences
+        |> Seq.exists (fun difference ->
+            difference.DifferenceType = DifferenceType.Delete
+            && difference.FileSystemEntryType = FileSystemEntryType.File
+            && String.Equals(normalizeRelativePath difference.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Finds the GraceStatus file entry represented by a status-only trigger.
+    let private tryFindTrackedFileForStatusTrigger (status: GraceStatus) (relativePath: RelativePath) =
+        match tryFindTrackedFileWithComparison StringComparison.Ordinal status relativePath with
+        | Some exactTrackedFile -> Some exactTrackedFile
+        | None -> tryFindTrackedFileWithComparison deletedPathComparison status relativePath
+
+    /// Checks whether a stale delete trigger's final file content differs from GraceStatus.
+    let private finalFileContentChangedFromTrackedStatus (status: GraceStatus) (relativePath: RelativePath) =
+        task {
+            match tryFindTrackedFileForStatusTrigger status relativePath with
+            | Some trackedFile when finalPathMatchesEntryType FileSystemEntryType.File relativePath ->
+                let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+                match! createLocalFileVersionForWatchStatus (FileInfo(fullPath)) with
+                | Some finalFileVersion -> return uploadedFileContentChanged trackedFile finalFileVersion.ToFileVersion
+                | None -> return false
+            | _ -> return false
+        }
+
     /// Records a delete-triggered cancellation that may need the final file re-uploaded if the delete proves stale.
     let private addCanceledFileUploadDeleteRelativePath (relativePath: RelativePath) =
         lock canceledFileUploadDeleteRelativePathsLock (fun () ->
@@ -822,29 +858,46 @@ module Watch =
 
         requeuedRelativePaths
 
-    /// Requeues a same-path upload when a stale delete had canceled upload work for a final file that exists again.
-    let private reenqueueCanceledUploadsForResolvedFileDeletes
-        (_status: GraceStatus)
+    /// Requeues a same-path upload when a stale delete resolves to changed final file content.
+    let private reenqueueUploadsForResolvedFileDeletes
+        (status: GraceStatus)
         (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
         (canceledRelativePaths: List<RelativePath>)
+        (processedRelativePaths: List<RelativePath>)
+        (startupPendingDifferences: List<FileSystemDifference>)
         =
-        let requeuedRelativePaths = List<RelativePath>()
+        task {
+            let requeuedRelativePaths = List<RelativePath>()
+            let mutable index = 0
 
-        for statusTrigger in statusTriggerSnapshot do
-            let relativePath = RelativePath statusTrigger.RelativePath
+            while index < statusTriggerSnapshot.Length do
+                let statusTrigger = statusTriggerSnapshot[index]
+                let relativePath = RelativePath statusTrigger.RelativePath
 
-            let uploadWasCanceled =
-                canceledRelativePaths
-                |> Seq.exists (fun canceledPath -> String.Equals(normalizeRelativePath canceledPath, normalizeRelativePath relativePath, watchPathComparison))
+                if not (hasProcessedFileRelativePath processedRelativePaths relativePath) then
+                    let uploadWasCanceled =
+                        canceledRelativePaths
+                        |> Seq.exists (fun canceledPath ->
+                            String.Equals(normalizeRelativePath canceledPath, normalizeRelativePath relativePath, watchPathComparison))
 
-            if uploadWasCanceled then
-                if finalPathMatchesEntryType FileSystemEntryType.File relativePath then
-                    let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+                    let! finalFileContentChanged =
+                        if uploadWasCanceled
+                           || hasMatchingStartupFileDeleteDifference startupPendingDifferences relativePath then
+                            Task.FromResult(false)
+                        else
+                            finalFileContentChangedFromTrackedStatus status relativePath
 
-                    if enqueueFileUpload fullPath then requeuedRelativePaths.Add(relativePath)
+                    if (uploadWasCanceled || finalFileContentChanged)
+                       && finalPathMatchesEntryType FileSystemEntryType.File relativePath then
+                        let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
-        clearCanceledFileUploadDeleteRelativePaths requeuedRelativePaths
-        requeuedRelativePaths
+                        if enqueueFileUpload fullPath then requeuedRelativePaths.Add(relativePath)
+
+                index <- index + 1
+
+            clearCanceledFileUploadDeleteRelativePaths requeuedRelativePaths
+            return requeuedRelativePaths
+        }
 
     /// Reads remove pending file upload data needed by the command workflow without changing remote state.
     let private removePendingFileUpload filePath =
@@ -1662,13 +1715,18 @@ module Watch =
                         let! graceStatusSnapshot = readGraceStatusFileClient ()
                         graceStatus <- graceStatusSnapshot
                         let canceledFileUploadDeleteRelativePathsForStatus = canceledFileUploadDeleteRelativePathsSnapshot ()
+                        let processedFileRelativePathsForStatus = processedFileRelativePathsPendingStatusSnapshot ()
+                        let startupPendingDifferences = pendingStatusDifferencesSnapshot ()
 
-                        reenqueueCanceledUploadsForResolvedFileDeletes graceStatus statusTriggerSnapshot canceledFileUploadDeleteRelativePathsForStatus
-                        |> ignore
+                        let! _ =
+                            reenqueueUploadsForResolvedFileDeletes
+                                graceStatus
+                                statusTriggerSnapshot
+                                canceledFileUploadDeleteRelativePathsForStatus
+                                processedFileRelativePathsForStatus
+                                startupPendingDifferences
 
                         resetWorkingTreeScanCacheForStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
-                        let startupPendingDifferences = pendingStatusDifferencesSnapshot ()
-                        let processedFileRelativePathsForStatus = processedFileRelativePathsPendingStatusSnapshot ()
 
                         let pendingDifferencesNeedRescan =
                             startupPendingDifferences.Count > 0
