@@ -222,6 +222,9 @@ module WatchTests =
     let private renamedEvent (oldFullPath: string) (fullPath: string) =
         RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
 
+    /// Produces an empty difference list for watch tests that do not exercise a scan path.
+    let private scanForNoDifferences _ = Task.FromResult(List<FileSystemDifference>())
+
     /// Builds process pending watch work for test test data used to exercise CLI watch behavior.
     let private processPendingWatchWorkForTest () =
         let status = GraceStatus.Default
@@ -243,12 +246,24 @@ module WatchTests =
             updateCalls <- updateCalls + 1
             Task.FromResult(Some status)
 
+        /// Builds update grace status from differences test data used to exercise CLI watch behavior.
+        let updateGraceStatusFromDifferences status _ _ = updateGraceStatus status CorrelationId.Empty
+
         /// Builds apply incremental test data used to exercise CLI watch behavior.
         let applyIncremental _ _ _ = Task.FromResult(())
         /// Builds update ipc test data used to exercise CLI watch behavior.
         let updateIpc _ _ = Task.FromResult(())
 
-        let processTask = Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc
+        let processTask =
+            Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc
 
         processTask.GetAwaiter().GetResult()
 
@@ -261,12 +276,22 @@ module WatchTests =
         let readStatusMeta () = Task.FromResult(status)
         /// Builds upload test data used to exercise CLI watch behavior.
         let upload _ _ = Task.FromResult(())
+        /// Builds update grace status from differences test data used to exercise CLI watch behavior.
+        let updateGraceStatusFromDifferences status _ _ = updateGraceStatus status CorrelationId.Empty
         /// Builds apply incremental test data used to exercise CLI watch behavior.
         let applyIncremental _ _ _ = Task.FromResult(())
         /// Builds update ipc test data used to exercise CLI watch behavior.
         let updateIpc _ _ = Task.FromResult(())
 
-        Watch.processChangedFilesWithClients readStatusMeta readStatusFile upload updateGraceStatus applyIncremental updateIpc
+        Watch.processChangedFilesWithClients
+            readStatusMeta
+            readStatusFile
+            upload
+            updateGraceStatus
+            scanForNoDifferences
+            updateGraceStatusFromDifferences
+            applyIncremental
+            updateIpc
         |> fun processTask -> processTask.GetAwaiter().GetResult()
 
     /// Writes grace ignore needed by the test scenario.
@@ -431,12 +456,23 @@ module WatchTests =
                 updateCalls <- updateCalls + 1
                 Task.FromResult(Some status)
 
+            /// Builds update grace status from differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ = updateGraceStatus status CorrelationId.Empty
+
             /// Builds apply incremental test data used to exercise CLI watch behavior.
             let applyIncremental _ _ _ = Task.FromResult(())
             /// Builds update ipc test data used to exercise CLI watch behavior.
             let updateIpc _ _ = Task.FromResult(())
 
-            (Watch.processChangedFilesWithClients readStatus readStatus failingUpload updateGraceStatus applyIncremental updateIpc)
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                failingUpload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
                 .GetAwaiter()
                 .GetResult()
 
@@ -496,12 +532,23 @@ module WatchTests =
                 updateCalls <- updateCalls + 1
                 Task.FromResult(Some status)
 
+            /// Builds update grace status from differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ = updateGraceStatus status CorrelationId.Empty
+
             /// Builds apply incremental test data used to exercise CLI watch behavior.
             let applyIncremental _ _ _ = Task.FromResult(())
             /// Builds update ipc test data used to exercise CLI watch behavior.
             let updateIpc _ _ = Task.FromResult(())
 
-            (Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc)
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
                 .GetAwaiter()
                 .GetResult()
 
@@ -513,7 +560,15 @@ module WatchTests =
             afterFirstUpload.FilesToProcess
             |> should equal [| changedFilePath |]
 
-            (Watch.processChangedFilesWithClients readStatus readStatus upload updateGraceStatus applyIncremental updateIpc)
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
                 .GetAwaiter()
                 .GetResult()
 
@@ -1235,6 +1290,446 @@ module WatchTests =
 
             updateCalls |> should equal 1
             uploadCalls |> should equal 0)
+
+    /// Verifies that startup-derived file differences use the shared apply seam without rescanning.
+    [<Test>]
+    let ``startup file difference applies pre-derived differences without scan-oriented update`` () =
+        withTempRepo (fun _ ->
+            let startupDifference = FileSystemDifference.Create Add FileSystemEntryType.File "offline-add.txt"
+            /// Tracks scan-oriented update Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanOrientedUpdateCalls = 0
+            /// Tracks apply-from-differences Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable uploadCalls = 0
+            /// Tracks the Differences passed to the apply seam so the test fails if startup scan findings are discarded.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.queueStartupDifferenceForWatch startupDifference
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ =
+                scanOrientedUpdateCalls <- scanOrientedUpdateCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            scanOrientedUpdateCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.toArray
+            |> should equal [| startupDifference |]
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that live uploads drained before startup apply are included by a fresh status scan.
+    [<Test>]
+    let ``startup apply rescans after live upload drains before applying differences`` () =
+        withTempRepo (fun root ->
+            let startupDifference = FileSystemDifference.Create Delete FileSystemEntryType.File "offline-delete.txt"
+            let liveFilePath = Path.Combine(root, "live-upload.txt")
+            let liveUploadDifference = FileSystemDifference.Create Add FileSystemEntryType.File "live-upload.txt"
+            /// Tracks scan Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanCalls = 0
+            /// Tracks scan-oriented update Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanOrientedUpdateCalls = 0
+            /// Tracks apply-from-differences Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable uploadCalls = 0
+            /// Tracks the Differences passed to the apply seam so the test fails if live uploads are omitted.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.queueStartupDifferenceForWatch startupDifference
+            File.WriteAllText(liveFilePath, "live content")
+            Watch.OnChanged(changedEvent liveFilePath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ =
+                scanOrientedUpdateCalls <- scanOrientedUpdateCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Task.FromResult(List<FileSystemDifference>([ liveUploadDifference ]))
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            scanCalls |> should equal 1
+            scanOrientedUpdateCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    startupDifference
+                    liveUploadDifference
+                |]
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that failed startup rescan retries before applying pending startup differences.
+    [<Test>]
+    let ``startup apply retries failed rescan before applying pending differences`` () =
+        withTempRepo (fun root ->
+            let startupDifference = FileSystemDifference.Create Add FileSystemEntryType.File "retry-after-failed-rescan.txt"
+            let liveFilePath = Path.Combine(root, "live-upload-after-failed-rescan.txt")
+            let liveUploadDifference = FileSystemDifference.Create Add FileSystemEntryType.File "live-upload-after-failed-rescan.txt"
+            /// Tracks scan Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanCalls = 0
+            /// Tracks apply-from-differences Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable uploadCalls = 0
+            /// Tracks the Differences passed to the apply seam so the test fails if retry skips the failed rescan result.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.queueStartupDifferenceForWatch startupDifference
+            File.WriteAllText(liveFilePath, "live content")
+            Watch.OnChanged(changedEvent liveFilePath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds scan-for-differences test data used to exercise CLI watch behavior.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                Services.setLastScanForDifferencesSuccessfulForWatchTests (scanCalls > 1)
+
+                Task.FromResult(List<FileSystemDifference>([ liveUploadDifference ]))
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            scanCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 0
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 2
+            scanCalls |> should equal 2
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    startupDifference
+                    liveUploadDifference
+                |]
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that failed startup-derived status application remains retryable without rescanning.
+    [<Test>]
+    let ``startup pre-derived differences retry apply seam after transient status failure`` () =
+        withTempRepo (fun _ ->
+            let startupDifference = FileSystemDifference.Create Add FileSystemEntryType.File "retry-add.txt"
+            /// Tracks scan-oriented update Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanOrientedUpdateCalls = 0
+            /// Tracks apply-from-differences Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable uploadCalls = 0
+
+            Watch.queueStartupDifferenceForWatch startupDifference
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ =
+                scanOrientedUpdateCalls <- scanOrientedUpdateCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+
+                if applyFromDifferencesCalls = 1 then
+                    Task.FromResult(None)
+                else
+                    Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForNoDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+            processPendingWork ()
+
+            uploadCalls |> should equal 1
+            scanOrientedUpdateCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 2
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that already-applied startup differences are dropped when concurrent file work blocks status commit.
+    [<Test>]
+    let ``startup applied differences are dropped when commit gate loses file-event race`` () =
+        withTempRepo (fun root ->
+            let startupDifference = FileSystemDifference.Create Delete FileSystemEntryType.File "race-delete.txt"
+            let createdDuringApplyPath = Path.Combine(root, "created-during-apply.txt")
+            /// Tracks scan-oriented update Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanOrientedUpdateCalls = 0
+            /// Tracks apply-from-differences Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks upload Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable uploadCalls = 0
+
+            Watch.queueStartupDifferenceForWatch startupDifference
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ =
+                scanOrientedUpdateCalls <- scanOrientedUpdateCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+
+                differences
+                |> Seq.toArray
+                |> should equal [| startupDifference |]
+
+                if applyFromDifferencesCalls = 1 then
+                    File.WriteAllText(createdDuringApplyPath, "created during apply")
+                    Watch.OnChanged(changedEvent createdDuringApplyPath)
+
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForNoDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            let afterRace = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterRace.FilesToProcess
+            |> should equal [| createdDuringApplyPath |]
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 1
+            scanOrientedUpdateCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 1)
+
+    /// Verifies that startup apply does not drain unrelated status-only work queued before the same pass.
+    [<Test>]
+    let ``startup apply preserves unrelated status-only trigger for later scan`` () =
+        withTempRepo (fun root ->
+            let startupDifference = FileSystemDifference.Create Add FileSystemEntryType.File "startup-add.txt"
+            let unrelatedDeletedPath = Path.Combine(root, "unrelated-delete.txt")
+            /// Tracks scan-oriented update Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable scanOrientedUpdateCalls = 0
+            /// Tracks apply-from-differences Calls changes so this scenario can assert the resulting side effect explicitly.
+            let mutable applyFromDifferencesCalls = 0
+
+            Watch.queueStartupDifferenceForWatch startupDifference
+            Watch.OnDeleted(deletedEvent unrelatedDeletedPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ =
+                scanOrientedUpdateCalls <- scanOrientedUpdateCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanOrientedUpdateCalls |> should equal 0
+            applyFromDifferencesCalls |> should equal 1
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal [| "unrelated-delete.txt" |])
 
     /// Verifies that renamed tracked file matching directory only ignore queues old path status trigger.
     [<Test>]
