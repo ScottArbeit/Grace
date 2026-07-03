@@ -41,9 +41,12 @@ When planning a feature or epic, and when creating issue or pull request bodies,
 Grace and its users. Use that purpose to help implementation agents make better local decisions when the plan leaves a
 gap or an acceptance criterion is ambiguous.
 When creating the epic and child issues from PowerShell, avoid one giant inline script that embeds every issue body.
-Write each issue body to its own temporary Markdown file with `Set-Content` or an equivalent small file-write command,
-call `gh issue create --body-file <path>` for each issue, then patch the epic body with the real child issue numbers
-and create the native relationships with GraphQL `addSubIssue`.
+For large issue batches, go directly to a short-lived generator script checked into the worktree or written in a temp
+directory, run that script to emit one temporary Markdown body per issue, lint those files, then call
+`gh issue create --body-file <path>` for each issue. Do not paste large scripts through an interactive shell or pass
+them as a single `pwsh -Command` string; that wastes time, floods the transcript, and can hit Windows command-length
+limits. After issue creation, patch the epic body with the real child issue numbers and create the native relationships
+with GraphQL `addSubIssue`.
 When implementing an epic, always use an explicit epic integration branch. Create
 `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
 sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as

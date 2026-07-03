@@ -68,9 +68,16 @@ what it reveals to refine child issues, owned paths, validation profiles, and pa
 out into parallel implementation work.
 
 Create the parent epic issue and child issues with `gh issue create --body-file`, using issue bodies written as separate
-Markdown files in a temporary directory. Prefer one small `Set-Content` or equivalent file-write command per issue body
-over one giant inline PowerShell script or command that embeds every Markdown body. This avoids Windows command-line
-length limits and keeps failed issue creation recoverable.
+Markdown files in a temporary directory. For small issue sets, one small `Set-Content` or equivalent file-write command
+per issue body is enough. For large issue batches, go directly to a short-lived generator script, either checked into the
+worktree for the duration of the run or written under the temp directory. The script should read the plan or packet,
+emit one Markdown body per issue, write a metadata file that maps conceptual issue keys to body paths, and stop before
+any GitHub writes. Lint the generated Markdown files before creation.
+
+Do not build one giant inline PowerShell command that embeds every Markdown body. Do not paste large generator scripts
+through an interactive shell, and do not pass them as a single `pwsh -Command` string. Those paths waste time, flood the
+transcript, and can hit Windows command-line length limits before the real work starts. Prefer file-backed generator
+scripts and file-backed issue bodies so failed issue creation remains recoverable.
 
 Create the issues first. After GitHub returns the real child issue numbers, patch the parent epic body so its checklist
 and DAG reference those actual numbers. Then create the native GitHub parent/child relationships with the GitHub GraphQL
