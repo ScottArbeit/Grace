@@ -596,14 +596,14 @@ module Watch =
     /// Installs the local file-version reader used by watch status derivation tests.
     let internal setCreateLocalFileVersionForWatchTests createLocalFileVersionClient = createLocalFileVersionForWatchStatus <- createLocalFileVersionClient
 
-    /// Lists missing parent directories that must be added before a new uploaded file can link into GraceStatus.
-    let private deriveParentDirectoryAddDifferences (status: GraceStatus) (relativePath: RelativePath) =
+    /// Lists untracked directory add differences through the selected repository-relative path segment.
+    let private deriveDirectoryAddDifferencesThroughSegment (status: GraceStatus) (relativePath: RelativePath) lastSegmentIndex =
         let differences = List<FileSystemDifference>()
         let normalizedRelativePath = normalizeRelativePath relativePath
         let segments = normalizedRelativePath.Split('/', StringSplitOptions.RemoveEmptyEntries)
 
-        if segments.Length > 1 then
-            for index in 0 .. segments.Length - 2 do
+        if segments.Length > 0 && lastSegmentIndex >= 0 then
+            for index in 0 .. min lastSegmentIndex (segments.Length - 1) do
                 let parentRelativePath = RelativePath(String.Join("/", segments[0..index]))
                 let parentDifferenceRelativePath = canonicalizeTrackedAncestorCasing status parentRelativePath
 
@@ -620,6 +620,17 @@ module Watch =
                     differences.Add(FileSystemDifference.Create Add FileSystemEntryType.Directory parentDifferenceRelativePath)
 
         differences
+
+    /// Lists missing parent directories that must be added before a new uploaded file can link into GraceStatus.
+    let private deriveParentDirectoryAddDifferences (status: GraceStatus) (relativePath: RelativePath) =
+        let segmentCount =
+            (normalizeRelativePath relativePath).Split(
+                '/',
+                StringSplitOptions.RemoveEmptyEntries
+            )
+                .Length
+
+        deriveDirectoryAddDifferencesThroughSegment status relativePath (segmentCount - 2)
 
     /// Derives add and change differences from uploads already completed by the watch loop.
     let private deriveUploadedFileDifferences (status: GraceStatus) (processedFilePaths: seq<RelativePath>) =
@@ -703,6 +714,12 @@ module Watch =
         && difference.DifferenceType = Add
         && not (directoryExistsUsingWatchPathComparison difference.RelativePath)
 
+    /// Checks whether a queued directory add was already incorporated by a fresher GraceStatus snapshot.
+    let private isAlreadyTrackedDirectoryAddDifference (status: GraceStatus) (difference: FileSystemDifference) =
+        difference.FileSystemEntryType = FileSystemEntryType.Directory
+        && difference.DifferenceType = Add
+        && isTrackedDirectory status difference.RelativePath
+
     /// Checks whether a status-only trigger covers the same path as a pending file difference.
     let private hasMatchingStatusTrigger (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (difference: FileSystemDifference) =
         statusTriggerSnapshot
@@ -777,7 +794,11 @@ module Watch =
                 |> ignore)
 
     /// Removes stale differences when final path state proves newer same-path work superseded them.
-    let private splitApplicableStatusDifferences (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array) (differences: List<FileSystemDifference>) =
+    let private splitApplicableStatusDifferences
+        (status: GraceStatus)
+        (statusTriggerSnapshot: StatusUpdateTriggerSnapshot array)
+        (differences: List<FileSystemDifference>)
+        =
         let applicable = List<FileSystemDifference>()
         let resolved = List<FileSystemDifference>()
 
@@ -790,6 +811,8 @@ module Watch =
                      || hasContainingStatusTrigger statusTriggerSnapshot difference) then
                 resolved.Add(difference)
             elif isStaleParentDirectoryAddDifference difference then
+                resolved.Add(difference)
+            elif isAlreadyTrackedDirectoryAddDifference status difference then
                 resolved.Add(difference)
             else
                 applicable.Add(difference)
@@ -1034,6 +1057,58 @@ module Watch =
                    && existing.DifferenceType = difference.DifferenceType
                    && existing.FileSystemEntryType = difference.FileSystemEntryType) then
                 pendingStatusDifferences.Add(difference))
+
+    /// Reads the best available GraceStatus snapshot for classifying directory-create observations.
+    let private readGraceStatusForDirectoryAddClassification () =
+        if (not graceStatusHasChanged)
+           && graceStatus.Index.Count > 0 then
+            graceStatus
+        else
+            try
+                let refreshedStatus =
+                    (readGraceStatusFileForDeletedPathClassification ())
+                        .GetAwaiter()
+                        .GetResult()
+
+                graceStatus <- refreshedStatus
+                refreshedStatus
+            with
+            | _ -> GraceStatus.Default
+
+    /// Queues a directory-only structural add when final path state contains a new non-ignored directory.
+    let private enqueueDirectoryStatusAdd fullPath =
+        if
+            Directory.Exists(fullPath)
+            && shouldNotIgnoreDirectory fullPath
+        then
+            match repositoryRelativePath fullPath with
+            | Some relativePath ->
+                let relativePath = RelativePath relativePath
+                let status = readGraceStatusForDirectoryAddClassification ()
+
+                let canonicalRelativePath = canonicalizeTrackedAncestorCasing status relativePath
+
+                if not (isTrackedDirectory status canonicalRelativePath) then
+                    let directoryAddDifferences =
+                        let segmentCount =
+                            (normalizeRelativePath canonicalRelativePath)
+                                .Split(
+                                '/',
+                                StringSplitOptions.RemoveEmptyEntries
+                            )
+                                .Length
+
+                        deriveDirectoryAddDifferencesThroughSegment status canonicalRelativePath (segmentCount - 1)
+
+                    for difference in directoryAddDifferences do
+                        addPendingStatusDifference difference
+
+                    true
+                else
+                    false
+            | None -> false
+        else
+            false
 
     /// Captures the already-derived differences waiting for the shared status-application path.
     let private pendingStatusDifferencesSnapshot () = lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferences.ToList())
@@ -1312,15 +1387,16 @@ module Watch =
 
     /// Coordinates on created behavior for this CLI command path.
     let OnCreated (args: FileSystemEventArgs) =
-        // Ignore directory creation; need to think about this more... should we capture new empty directories?
-        if updateNotInProgress ()
-           && isNotDirectory args.FullPath then
-            let shouldIgnore = shouldIgnoreFile args.FullPath
-            //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
-
-            if not <| shouldIgnore then
+        if
+            updateNotInProgress ()
+            && Directory.Exists(args.FullPath)
+        then
+            if enqueueDirectoryStatusAdd args.FullPath then
+                logToAnsiConsole Colors.Added $"I saw that directory {args.FullPath} was created."
+        elif updateNotInProgress ()
+             && isNotDirectory args.FullPath then
+            if enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
-                enqueueFileUpload args.FullPath |> ignore
 
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
@@ -1812,6 +1888,7 @@ module Watch =
 
                         let statusDifferencesForApply =
                             splitApplicableStatusDifferences
+                                graceStatus
                                 statusTriggerSnapshot
                                 (mergeCurrentStatusDifferences processedFileRelativePathsForStatus startupPendingDifferences eventDerivedDifferences)
 
