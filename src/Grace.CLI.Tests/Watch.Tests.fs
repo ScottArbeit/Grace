@@ -1466,6 +1466,91 @@ module WatchTests =
                     for index in 1..fileCount -> $"batch-{index:D2}.txt"
                 |])
 
+    /// Verifies that uploaded adds retry when the final file cannot be hashed during status derivation.
+    [<Test>]
+    let ``uploaded add retries when final hashing is unavailable`` () =
+        withTempRepo (fun root ->
+            let relativePath = "retry-unhashed-add.txt"
+            let filePath = Path.Combine(root, relativePath)
+            /// Tracks upload Calls changes so this scenario can assert the retry side effect explicitly.
+            let mutable uploadCalls = 0
+            /// Tracks apply-from-differences Calls changes so the unavailable hash pass does not clear the add.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks the Differences passed to the apply seam so the retried add is proven.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            File.WriteAllText(filePath, "content that cannot be hashed during the first status pass")
+            Watch.OnCreated(changedEvent filePath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForNoDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            Watch.setCreateLocalFileVersionForWatchTests (fun _ -> Task.FromResult<LocalFileVersion option>(None))
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 0
+
+            let retrySnapshot = Watch.pendingWatchWorkSnapshotForTests ()
+
+            retrySnapshot.FilesToProcess
+            |> should equal [| filePath |]
+
+            Watch.setCreateLocalFileVersionForWatchTests Services.createLocalFileVersion
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 2
+            applyFromDifferencesCalls |> should equal 1
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Add, FileSystemEntryType.File, relativePath
+                |]
+
+            let appliedSnapshot = Watch.pendingWatchWorkSnapshotForTests ()
+
+            appliedSnapshot.FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Verifies that case-sensitive watch comparison does not collapse distinct tracked and uploaded file paths.
     [<Test>]
     let ``case-sensitive tracked file matching preserves distinct uploaded path`` () =
@@ -1585,6 +1670,60 @@ module WatchTests =
             let deletedPath = Path.Combine(root, "foo.txt")
             let status = graceStatusTracking [| "Foo.txt" |] Array.empty<string>
             /// Tracks the Differences passed to the apply seam so tracked delete casing is proven.
+            let mutable observedDifferences = List<FileSystemDifference>()
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.OnDeleted(deletedEvent deletedPath)
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status differences _ =
+                observedDifferences <- differences
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForNoDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            observedDifferences
+            |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, $"{difference.RelativePath}")
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    DifferenceType.Delete, FileSystemEntryType.File, "Foo.txt"
+                |])
+
+    /// Verifies that delete classification stays case-insensitive even when other watch matching is case-sensitive.
+    [<Test>]
+    let ``case-sensitive watch comparison still preserves tracked delete casing`` () =
+        withTempRepo (fun root ->
+            Watch.setWatchPathComparisonForWatchTests StringComparison.Ordinal
+
+            let deletedPath = Path.Combine(root, "foo.txt")
+            let status = graceStatusTracking [| "Foo.txt" |] Array.empty<string>
+            /// Tracks the Differences passed to the apply seam so legacy delete casing is proven.
             let mutable observedDifferences = List<FileSystemDifference>()
 
             Watch.setGraceStatusForWatchTests status

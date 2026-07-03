@@ -259,19 +259,35 @@ module Watch =
 
     let mutable private watchPathComparison = defaultWatchPathComparison ()
 
+    /// Compares delete-trigger paths against GraceStatus with the legacy status delete semantics.
+    let private deletedPathComparison = StringComparison.OrdinalIgnoreCase
+
+    /// Finds the tracked file entry that owns a repository-relative path with the requested comparison.
+    let private tryFindTrackedFileWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        status.Index.Values
+        |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+        |> Seq.tryFind (fun fileVersion -> String.Equals(normalizeRelativePath fileVersion.RelativePath, normalizedRelativePath, comparison))
+
+    /// Finds the tracked directory entry that owns a repository-relative path with the requested comparison.
+    let private tryFindTrackedDirectoryWithComparison (comparison: StringComparison) (status: GraceStatus) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        status.Index.Values
+        |> Seq.tryFind (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, comparison))
+
     /// Coordinates tracked deleted path kind behavior for this CLI command path.
     let private trackedDeletedPathKind (status: GraceStatus) (relativePath: string) =
-        let deletedRelativePath = normalizeRelativePath relativePath
+        let deletedRelativePath = RelativePath(normalizeRelativePath relativePath)
 
         let isTrackedFile =
-            status.Index.Values
-            |> Seq.exists (fun directoryVersion ->
-                directoryVersion.Files
-                |> Seq.exists (fun fileVersion -> String.Equals(normalizeRelativePath fileVersion.RelativePath, deletedRelativePath, watchPathComparison)))
+            tryFindTrackedFileWithComparison deletedPathComparison status deletedRelativePath
+            |> Option.isSome
 
         let isTrackedDirectory =
-            status.Index.Values
-            |> Seq.exists (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, deletedRelativePath, watchPathComparison))
+            tryFindTrackedDirectoryWithComparison deletedPathComparison status deletedRelativePath
+            |> Option.isSome
 
         match isTrackedFile, isTrackedDirectory with
         | true, _ -> DeletedFile
@@ -340,12 +356,7 @@ module Watch =
     let internal setWatchPathComparisonForWatchTests comparison = watchPathComparison <- comparison
 
     /// Finds the tracked file entry that owns a repository-relative path in GraceStatus.
-    let private tryFindTrackedFile (status: GraceStatus) (relativePath: RelativePath) =
-        let normalizedRelativePath = normalizeRelativePath relativePath
-
-        status.Index.Values
-        |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
-        |> Seq.tryFind (fun fileVersion -> String.Equals(normalizeRelativePath fileVersion.RelativePath, normalizedRelativePath, watchPathComparison))
+    let private tryFindTrackedFile (status: GraceStatus) (relativePath: RelativePath) = tryFindTrackedFileWithComparison watchPathComparison status relativePath
 
     /// Checks whether GraceStatus already tracks a repository-relative directory path.
     let private isTrackedDirectory (status: GraceStatus) (relativePath: RelativePath) =
@@ -356,10 +367,7 @@ module Watch =
 
     /// Finds the tracked directory entry that owns a repository-relative path in GraceStatus.
     let private tryFindTrackedDirectory (status: GraceStatus) (relativePath: RelativePath) =
-        let normalizedRelativePath = normalizeRelativePath relativePath
-
-        status.Index.Values
-        |> Seq.tryFind (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, watchPathComparison))
+        tryFindTrackedDirectoryWithComparison watchPathComparison status relativePath
 
     /// Uses the longest tracked ancestor casing before status application performs exact path lookups.
     let private canonicalizeTrackedAncestorCasing (status: GraceStatus) (relativePath: RelativePath) =
@@ -446,25 +454,37 @@ module Watch =
 
             exists
 
+    /// Describes whether a completed upload can be matched against the current final path content.
+    type private UploadedFinalFileVersionResolution =
+        | UploadedFinalFileVersionFound of FileVersion
+        | UploadedFinalFileVersionUnavailable
+        | UploadedFinalFileVersionUnmatched
+        | UploadedFinalFileVersionMissing
+
+    let mutable private createLocalFileVersionForWatchStatus = createLocalFileVersion
+
     /// Finds the uploaded identity that matches the final file content for a processed watch path.
     let private tryFindUploadedFinalFileVersion (relativePath: RelativePath) =
         task {
             let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
 
             if File.Exists(fullPath) then
-                match! createLocalFileVersion (FileInfo(fullPath)) with
+                match! createLocalFileVersionForWatchStatus (FileInfo(fullPath)) with
                 | Some localFileVersion ->
                     let identity = (localFileVersion.RelativePath, localFileVersion.Sha256Hash, localFileVersion.Blake3Hash)
                     let mutable uploadedFileVersion = Unchecked.defaultof<FileVersion>
 
                     if uploadedFileVersions.TryGetValue(identity, &uploadedFileVersion) then
-                        return Some uploadedFileVersion
+                        return UploadedFinalFileVersionFound uploadedFileVersion
                     else
-                        return None
-                | None -> return None
+                        return UploadedFinalFileVersionUnmatched
+                | None -> return UploadedFinalFileVersionUnavailable
             else
-                return None
+                return UploadedFinalFileVersionMissing
         }
+
+    /// Installs the local file-version reader used by watch status derivation tests.
+    let internal setCreateLocalFileVersionForWatchTests createLocalFileVersionClient = createLocalFileVersionForWatchStatus <- createLocalFileVersionClient
 
     /// Lists missing parent directories that must be added before a new uploaded file can link into GraceStatus.
     let private deriveParentDirectoryAddDifferences (status: GraceStatus) (relativePath: RelativePath) =
@@ -495,12 +515,13 @@ module Watch =
     let private deriveUploadedFileDifferences (status: GraceStatus) (processedFilePaths: seq<RelativePath>) =
         task {
             let differences = List<FileSystemDifference>()
+            let unresolvedFilePaths = List<RelativePath>()
 
             for relativePath in
                 processedFilePaths
                 |> Seq.distinctBy normalizeRelativePath do
                 match! tryFindUploadedFinalFileVersion relativePath with
-                | Some uploadedFileVersion ->
+                | UploadedFinalFileVersionFound uploadedFileVersion ->
                     match tryFindTrackedFile status uploadedFileVersion.RelativePath with
                     | Some trackedFile when uploadedFileContentChanged trackedFile uploadedFileVersion ->
                         differences.Add(FileSystemDifference.Create Change FileSystemEntryType.File trackedFile.RelativePath)
@@ -509,9 +530,11 @@ module Watch =
                         differences.AddRange(deriveParentDirectoryAddDifferences status uploadedFileVersion.RelativePath)
                         let addRelativePath = canonicalizeTrackedAncestorCasing status uploadedFileVersion.RelativePath
                         differences.Add(FileSystemDifference.Create Add FileSystemEntryType.File addRelativePath)
-                | None -> ()
+                | UploadedFinalFileVersionUnavailable -> unresolvedFilePaths.Add(relativePath)
+                | UploadedFinalFileVersionUnmatched -> ()
+                | UploadedFinalFileVersionMissing -> ()
 
-            return differences
+            return differences, unresolvedFilePaths
         }
 
     /// Derives delete differences from GraceStatus while rejecting stale deletes for paths that exist again.
@@ -524,7 +547,7 @@ module Watch =
             match trackedDeletedPathKind status statusTrigger.RelativePath with
             | DeletedFile ->
                 if not (finalPathMatchesEntryType FileSystemEntryType.File relativePath) then
-                    match tryFindTrackedFile status relativePath with
+                    match tryFindTrackedFileWithComparison deletedPathComparison status relativePath with
                     | Some trackedFile -> differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File trackedFile.RelativePath)
                     | None -> differences.Add(FileSystemDifference.Create Delete FileSystemEntryType.File relativePath)
             | DeletedDirectory ->
@@ -699,6 +722,23 @@ module Watch =
             true
         else
             false
+
+    /// Requeues uploaded paths whose final content could not be hashed during status derivation.
+    let private reenqueueUnresolvedUploadedFinalFileVersions (relativePaths: seq<RelativePath>) =
+        let requeuedRelativePaths = List<RelativePath>()
+
+        for relativePath in
+            relativePaths
+            |> Seq.distinctBy normalizeRelativePath do
+            let fullPath = Path.Combine(Current().RootDirectory, $"{relativePath}")
+
+            if
+                File.Exists(fullPath)
+                && enqueueFileUpload fullPath
+            then
+                requeuedRelativePaths.Add(relativePath)
+
+        requeuedRelativePaths
 
     /// Requeues a same-path upload when a stale delete had canceled upload work for a final file that exists again.
     let private reenqueueCanceledUploadsForResolvedFileDeletes
@@ -912,6 +952,7 @@ module Watch =
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         watchPathComparison <- defaultWatchPathComparison ()
+        createLocalFileVersionForWatchStatus <- createLocalFileVersion
         setLastScanForDifferencesSuccessfulForWatchTests true
 
     /// Coordinates pending watch work snapshot for tests behavior for this CLI command path.
@@ -1556,7 +1597,12 @@ module Watch =
                             else
                                 Task.FromResult(startupPendingDifferences)
 
-                        let! uploadedFileDifferences = deriveUploadedFileDifferences graceStatus processedFileRelativePathsForStatus
+                        let! uploadedFileDifferences, unresolvedUploadedFilePaths =
+                            deriveUploadedFileDifferences graceStatus processedFileRelativePathsForStatus
+
+                        reenqueueUnresolvedUploadedFinalFileVersions unresolvedUploadedFilePaths
+                        |> ignore
+
                         let deleteDifferences = deriveDeleteDifferences graceStatus statusTriggerSnapshot
                         let eventDerivedDifferences = mergeStatusDifferences uploadedFileDifferences deleteDifferences
 
