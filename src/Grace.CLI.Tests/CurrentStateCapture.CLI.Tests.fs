@@ -10,6 +10,7 @@ open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
 open Grace.Types.Common
 open Grace.Types.Reference
+open Microsoft.Data.Sqlite
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -189,7 +190,23 @@ module CurrentStateCaptureCliTests =
             | Some configuration -> updateConfiguration configuration
             | None -> resetConfiguration ()
 
-            if Directory.Exists(root) then Directory.Delete(root, true)
+            if Directory.Exists(root) then
+                SqliteConnection.ClearAllPools()
+                Directory.Delete(root, true)
+
+    /// Counts rows in the local state database so tests can assert persisted structure without model shortcuts.
+    let private countLocalStateRows dbPath commandText parameterName parameterValue =
+        use connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+
+        use command = connection.CreateCommand()
+        command.CommandText <- commandText
+
+        command.Parameters.Add(parameterName, SqliteType.Text)
+        |> ignore
+
+        command.Parameters[parameterName].Value <- parameterValue
+        Convert.ToInt32(command.ExecuteScalar())
 
     /// Verifies that directory delete removes subtree reference from nearest surviving parent.
     [<Test>]
@@ -446,6 +463,177 @@ module CurrentStateCaptureCliTests =
 
             newDirectoryVersions[0].RelativePath
             |> should equal Constants.RootDirectoryPath)
+
+    /// Verifies that empty directory additions create directory-version status without uploaded files.
+    [<Test>]
+    let ``empty directory add creates GraceStatus directory version without uploaded files`` () =
+        withTempRepo (fun root configuration ->
+            let emptyPath = Path.Combine(root, "empty")
+
+            Directory.CreateDirectory(emptyPath) |> ignore
+
+            let rootId = Guid.NewGuid()
+            let previousRoot = directoryVersion configuration rootId Constants.RootDirectoryPath Seq.empty Seq.empty
+            let previousStatus = graceStatusFromDirectories previousRoot [| previousRoot |]
+
+            let differences =
+                List<FileSystemDifference>(
+                    [|
+                        FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory (RelativePath "empty")
+                    |]
+                )
+
+            let updatedStatus, newDirectoryVersions =
+                (getNewGraceStatusAndDirectoryVersions previousStatus differences)
+                    .Result
+
+            let emptyDirectory =
+                updatedStatus.Index.Values
+                |> Seq.find (fun directoryVersion -> directoryVersion.RelativePath = RelativePath "empty")
+
+            emptyDirectory.Directories.Count |> should equal 0
+            emptyDirectory.Files.Count |> should equal 0
+            emptyDirectory.Size |> should equal 0L
+
+            let updatedRoot = updatedStatus.Index[updatedStatus.RootDirectoryId]
+
+            updatedRoot.Directories
+            |> Seq.exists (fun directoryVersionId -> directoryVersionId = emptyDirectory.DirectoryVersionId)
+            |> should equal true
+
+            getChangedFileVersionsReferencedByUpdatedDirectories differences newDirectoryVersions
+            |> Seq.isEmpty
+            |> should equal true)
+
+    /// Verifies that empty LocalDirectoryVersion rows survive local status and object-cache persistence.
+    [<Test>]
+    let ``empty directory version persists to status and object cache without child rows`` () =
+        withTempRepo (fun _ configuration ->
+            let rootId = Guid.NewGuid()
+            let emptyId = Guid.NewGuid()
+            let empty = directoryVersion configuration emptyId (RelativePath "empty") Seq.empty Seq.empty
+            let root = directoryVersion configuration rootId Constants.RootDirectoryPath [| emptyId |] Seq.empty
+            let status = graceStatusFromDirectories root [| root; empty |]
+
+            (writeGraceStatusFile status)
+                .GetAwaiter()
+                .GetResult()
+
+            (upsertObjectCache status.Index.Values)
+                .GetAwaiter()
+                .GetResult()
+
+            let readBack = (readGraceStatusFile ()).GetAwaiter().GetResult()
+
+            readBack.Index.ContainsKey(emptyId)
+            |> should equal true
+
+            let readBackEmpty = readBack.Index[emptyId]
+
+            readBackEmpty.RelativePath
+            |> should equal (RelativePath "empty")
+
+            readBackEmpty.Directories.Count |> should equal 0
+            readBackEmpty.Files.Count |> should equal 0
+            readBackEmpty.Size |> should equal 0L
+
+            readBack.Index[rootId].Directories
+            |> Seq.exists (fun directoryVersionId -> directoryVersionId = emptyId)
+            |> should equal true
+
+            countLocalStateRows
+                configuration.GraceStatusFile
+                "SELECT COUNT(*) FROM object_cache_directories WHERE directory_version_id = $directory_version_id;"
+                "$directory_version_id"
+                $"{emptyId}"
+            |> should equal 1
+
+            countLocalStateRows
+                configuration.GraceStatusFile
+                "SELECT COUNT(*) FROM object_cache_directory_children WHERE parent_directory_version_id = $parent_directory_version_id;"
+                "$parent_directory_version_id"
+                $"{emptyId}"
+            |> should equal 0
+
+            countLocalStateRows
+                configuration.GraceStatusFile
+                "SELECT COUNT(*) FROM object_cache_directory_files WHERE directory_version_id = $directory_version_id;"
+                "$directory_version_id"
+                $"{emptyId}"
+            |> should equal 0)
+
+    /// Verifies that read-only current-state scans track non-ignored empty directories and skip ignored ones.
+    [<Test>]
+    let ``read-only current-state scan tracks non-ignored empty directory and skips ignored empty directory`` () =
+        let root = Path.Combine(Path.GetTempPath(), $"grace-current-state-scan-{Guid.NewGuid():N}")
+        let graceDirectory = Path.Combine(root, Constants.GraceConfigDirectory)
+
+        try
+            Directory.CreateDirectory(Path.Combine(root, "empty"))
+            |> ignore
+
+            Directory.CreateDirectory(Path.Combine(root, "ignored"))
+            |> ignore
+
+            Directory.CreateDirectory(graceDirectory)
+            |> ignore
+
+            let previousRoot = rootDirectoryVersion rootDirectoryId rootSha
+            let previousStatus = graceStatusFromDirectories previousRoot [| previousRoot |]
+
+            let scanInput =
+                {
+                    RootDirectory = root
+                    GraceDirectory = graceDirectory
+                    GraceStatusFile = Path.Combine(graceDirectory, Constants.GraceLocalStateDbFileName)
+                    DirectoryIgnoreEntries = [| "ignored" |]
+                    FileIgnoreEntries = Array.empty
+                }
+
+            match (scanWorkingTreeForDifferencesReadOnly scanInput previousStatus)
+                .Result
+                with
+            | Error error -> Assert.Fail($"Expected scan success, got: {error}")
+            | Ok differences ->
+                differences
+                |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, difference.RelativePath)
+                |> should
+                    equal
+                    [|
+                        DifferenceType.Add, FileSystemEntryType.Directory, RelativePath "empty"
+                    |]
+        finally
+            if Directory.Exists(root) then Directory.Delete(root, true)
+
+    /// Verifies that materialization creates empty directories carried by directory-version DTOs.
+    [<Test>]
+    let ``updateWorkingDirectory materializes empty directory version`` () =
+        withTempRepo (fun root configuration ->
+            let previousRootId = Guid.NewGuid()
+            let updatedRootId = Guid.NewGuid()
+            let emptyId = Guid.NewGuid()
+            let previousRoot = directoryVersion configuration previousRootId Constants.RootDirectoryPath Seq.empty Seq.empty
+            let empty = directoryVersion configuration emptyId (RelativePath "empty") Seq.empty Seq.empty
+            let updatedRoot = directoryVersion configuration updatedRootId Constants.RootDirectoryPath [| emptyId |] Seq.empty
+            let previousStatus = graceStatusFromDirectories previousRoot [| previousRoot |]
+            let updatedStatus = graceStatusFromDirectories updatedRoot [| updatedRoot; empty |]
+
+            let directoryVersionDtos =
+                [|
+                    { DirectoryVersionDto.Default with DirectoryVersion = updatedRoot.ToDirectoryVersion }
+                    { DirectoryVersionDto.Default with DirectoryVersion = empty.ToDirectoryVersion }
+                |]
+
+            updateWorkingDirectory previousStatus updatedStatus directoryVersionDtos correlationId
+            |> fun task -> task.GetAwaiter().GetResult()
+
+            let emptyPath = Path.Combine(root, "empty")
+
+            Directory.Exists(emptyPath) |> should equal true
+
+            Directory.EnumerateFileSystemEntries(emptyPath)
+            |> Seq.isEmpty
+            |> should equal true)
 
     /// Builds default operations test data used to exercise CLI current State Capture behavior.
     let private defaultOperations branchDto =
