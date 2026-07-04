@@ -55,6 +55,9 @@ module Services =
     /// A cache of paths that we've already decided to ignore or not.
     let private shouldIgnoreCache = ConcurrentDictionary<FilePath, bool>()
 
+    /// Clears process-local `.graceignore` decisions after repository configuration changes.
+    let clearShouldIgnoreCache () = shouldIgnoreCache.Clear()
+
     // This section is "borrowed" from Common.CLI.fs, because Services.CLI.fs comes before Common.CLI.fs in the build order.
 
     /// Checks if the output format from the command line is a specific format.

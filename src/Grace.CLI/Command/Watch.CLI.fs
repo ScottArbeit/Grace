@@ -253,21 +253,43 @@ module Watch =
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     /// Coordinates update not in progress behavior for this CLI command path.
     let updateNotInProgress () = not <| updateInProgress ()
+
+    /// Reports whether the deleted callback path is an update marker path owned by any branch temp directory.
+    let private isUpdateMarkerPath (markerFileName: string) =
+        String.Equals(Path.GetFileName(markerFileName), Constants.UpdateInProgressFileName, StringComparison.OrdinalIgnoreCase)
+
     let private graceUpdateMarkerDeletionLock = obj ()
     let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
-    let mutable private lastGraceUpdateMarkerDeletedUtc = DateTime.MinValue
+    let private recentGraceUpdateMarkerCompletedUtc = List<DateTime>()
+    let private observedGraceUpdateMarkerLastWriteUtc = Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
 
     /// Gets the completion sidecar written before the Grace update marker is removed.
     let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
 
+    /// Gets the completion sidecar paired with a specific update marker callback path.
+    let private updateMarkerCompletedFileNameForMarker markerFileName = markerFileName + ".completed"
+
     /// Records the completed Grace-owned update instant so delayed callbacks can be classified by switch authority.
     let private recordGraceUpdateMarkerCompletedUtc completedUtc =
-        lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc <- completedUtc)
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            if completedUtc <> DateTime.MinValue then
+                let cutoffUtc =
+                    DateTime.UtcNow
+                    - graceUpdateMarkerDeletedObservationWindow
 
-    /// Clears the recent marker-deletion fact when a new Grace-owned update starts or tests reset Watch state.
-    let private clearGraceUpdateMarkerDeletedUtc () =
-        recordGraceUpdateMarkerCompletedUtc DateTime.MinValue
+                recentGraceUpdateMarkerCompletedUtc.RemoveAll(fun recordedUtc -> recordedUtc < cutoffUtc)
+                |> ignore
 
+                recentGraceUpdateMarkerCompletedUtc.Add(completedUtc))
+
+    /// Clears every recent marker-deletion fact when tests reset Watch state.
+    let private clearGraceUpdateMarkerDeletedUtcForReset () =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            recentGraceUpdateMarkerCompletedUtc.Clear()
+            observedGraceUpdateMarkerLastWriteUtc.Clear())
+
+    /// Removes the current marker sidecar when a new marker supersedes stale sidecar evidence.
+    let private clearCurrentGraceUpdateMarkerCompletedSidecar () =
         try
             let completedFileName = updateMarkerCompletedFileName ()
 
@@ -277,13 +299,13 @@ module Watch =
         | :? UnauthorizedAccessException -> ()
 
     /// Sets the recent Grace update marker deletion instant for deterministic Watch callback tests.
-    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc = recordGraceUpdateMarkerCompletedUtc deletedUtc
+    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc =
+        clearGraceUpdateMarkerDeletedUtcForReset ()
+        recordGraceUpdateMarkerCompletedUtc deletedUtc
 
-    /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
-    let private tryReadGraceUpdateMarkerCompletedUtc () =
+    /// Reads a marker completion sidecar for the specific marker path that produced the callback.
+    let private tryReadGraceUpdateMarkerCompletedUtcFrom completedFileName =
         try
-            let completedFileName = updateMarkerCompletedFileName ()
-
             if File.Exists(completedFileName) then
                 match DateTime.TryParse(File.ReadAllText(completedFileName), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
                 | true, completedUtc -> Some completedUtc
@@ -294,14 +316,89 @@ module Watch =
         | :? IOException -> None
         | :? UnauthorizedAccessException -> None
 
-    /// Reports whether the completed sidecar was written for the marker that is currently still present.
+    /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
+    let private tryReadGraceUpdateMarkerCompletedUtc () =
+        updateMarkerCompletedFileName ()
+        |> tryReadGraceUpdateMarkerCompletedUtcFrom
+
+    /// Reads the completion instant for the marker whose deletion callback is being processed.
+    let private tryReadGraceUpdateMarkerCompletedUtcForMarker markerFileName =
+        markerFileName
+        |> updateMarkerCompletedFileNameForMarker
+        |> tryReadGraceUpdateMarkerCompletedUtcFrom
+
+    /// Records marker file freshness while the marker still exists so deletion cannot trust stale sidecars.
+    let private observeGraceUpdateMarkerInstance markerFileName =
+        try
+            if File.Exists(markerFileName) then
+                lock graceUpdateMarkerDeletionLock (fun () -> observedGraceUpdateMarkerLastWriteUtc[markerFileName] <- File.GetLastWriteTimeUtc(markerFileName))
+        with
+        | :? IOException -> ()
+        | :? UnauthorizedAccessException -> ()
+
+    /// Retires marker freshness state after a deletion callback consumes or rejects it.
+    let private forgetObservedGraceUpdateMarkerInstance markerFileName =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            observedGraceUpdateMarkerLastWriteUtc.Remove(markerFileName)
+            |> ignore)
+
+    /// Reports whether the completed sidecar was written for the current marker instance Watch observed.
     let private currentUpdateMarkerMatchesCompletedSidecar completedUtc =
         try
-            File.GetLastWriteTimeUtc(updateInProgressFileName ())
-            <= completedUtc
+            let currentMarkerFileName = updateInProgressFileName ()
+
+            if File.Exists(currentMarkerFileName) then
+                File.GetLastWriteTimeUtc(currentMarkerFileName)
+                <= completedUtc
+            else
+                lock graceUpdateMarkerDeletionLock (fun () ->
+                    match observedGraceUpdateMarkerLastWriteUtc.TryGetValue(currentMarkerFileName) with
+                    | true, markerLastWriteUtc -> markerLastWriteUtc <= completedUtc
+                    | false, _ -> false)
         with
         | :? IOException -> false
         | :? UnauthorizedAccessException -> false
+
+    /// Classifies whether a deleted marker sidecar can be trusted for branch transition authority.
+    type private DeletedMarkerSidecarAuthority =
+        | ObservedCurrentMarker
+        | ObservedStaleMarker
+        | UnobservedMarker
+
+    /// Proves whether a deleted marker sidecar was written for the marker instance Watch observed.
+    let private classifyDeletedMarkerCompletedSidecar markerFileName completedUtc =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            match observedGraceUpdateMarkerLastWriteUtc.TryGetValue(markerFileName) with
+            | true, markerLastWriteUtc ->
+                observedGraceUpdateMarkerLastWriteUtc.Remove(markerFileName)
+                |> ignore
+
+                if markerLastWriteUtc <= completedUtc then
+                    ObservedCurrentMarker
+                else
+                    ObservedStaleMarker
+            | false, _ -> UnobservedMarker)
+
+    /// Reports whether a deleted marker path is the current transition marker Watch was expected to observe.
+    let private deletedMarkerIsCurrentMarker markerFileName = String.Equals(markerFileName, updateInProgressFileName (), StringComparison.OrdinalIgnoreCase)
+
+    /// Reports whether the on-disk repository config has moved beyond Watch's cached branch identity.
+    let private persistedConfigurationChangedSinceWatchCached () =
+        try
+            let cached = Current()
+
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection ->
+                let persisted = inspection.Configuration
+
+                cached.RepositoryId <> persisted.RepositoryId
+                || not (String.Equals(cached.RepositoryName, persisted.RepositoryName, StringComparison.OrdinalIgnoreCase))
+                || cached.BranchId <> persisted.BranchId
+                || not (String.Equals(cached.BranchName, persisted.BranchName, StringComparison.OrdinalIgnoreCase))
+                || not (String.Equals(cached.RootDirectory, persisted.RootDirectory, StringComparison.OrdinalIgnoreCase))
+            | Error _ -> false
+        with
+        | _ -> false
 
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
@@ -460,6 +557,79 @@ module Watch =
     let mutable private readGraceStatusFileForDeletedPathClassification = readGraceStatusFile
 
     let mutable private readGraceStatusFileForPendingWorkTransition = readGraceStatusFile
+    let mutable private readGraceStatusFileForTransitionCompletion = readGraceStatusFile
+
+    let private updateMarkerWatcherRebindLock = obj ()
+    let mutable private rebindUpdateMarkerWatcherForTransitionCompletion = ignore
+    let private branchTransitionCompletionProbeLock = obj ()
+    let mutable private branchTransitionCompletionAfterRetireProbe = ignore
+    let private previousBranchIpcDowngradeRetryProbeLock = obj ()
+    let mutable private previousBranchIpcDowngradeRetryProbe = ignore
+
+    /// Installs the active update-marker watcher retarget operation used after branch identity changes.
+    let private registerUpdateMarkerWatcherRebind rebind =
+        lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- rebind)
+
+        { new IDisposable with
+            member _.Dispose() = lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- ignore)
+        }
+
+    /// Runs the current update-marker watcher retarget operation after transition identity reloads.
+    let private rebindUpdateMarkerWatcherAfterTransitionCompletion () =
+        let rebind = lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion)
+        rebind ()
+
+    /// Installs the update-marker watcher retarget operation used by transition-completion tests.
+    let internal setUpdateMarkerWatcherRebindForWatchTests rebind =
+        lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- rebind)
+
+    /// Restores the default no-op update-marker watcher retarget operation after transition-completion tests.
+    let internal resetUpdateMarkerWatcherRebindForWatchTests () =
+        lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- ignore)
+
+    /// Runs the transition-boundary probe after old branch IPC retirement but before branch identity reload.
+    let private runBranchTransitionCompletionAfterRetireProbe () =
+        let probe = lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe)
+        probe ()
+
+    /// Installs a transition-boundary probe used to prove publishers cannot race old branch IPC retirement.
+    let internal setBranchTransitionCompletionAfterRetireProbeForWatchTests probe =
+        lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- probe)
+
+    /// Restores the transition-boundary probe to the production no-op behavior after Watch tests.
+    let internal resetBranchTransitionCompletionAfterRetireProbeForWatchTests () =
+        lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- ignore)
+
+    /// Runs the current previous-branch IPC downgrade retry probe after a failed verification.
+    let private runPreviousBranchIpcDowngradeRetryProbe () =
+        let probe = lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe)
+        probe ()
+
+    /// Installs a retry probe used to make previous-branch IPC downgrade verification deterministic in tests.
+    let internal setPreviousBranchIpcDowngradeRetryProbeForWatchTests probe =
+        lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe <- probe)
+
+    /// Restores the previous-branch IPC downgrade retry probe to the production no-op behavior after Watch tests.
+    let internal resetPreviousBranchIpcDowngradeRetryProbeForWatchTests () =
+        lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe <- ignore)
+
+    /// Removes stale source-branch Watch IPC before transition completion publishes under the target identity.
+    let mutable private retirePreviousBranchWatchIpcForTransitionCompletion = fun previousIpcFileName -> File.Delete(previousIpcFileName)
+
+    /// Installs the previous-branch IPC retirement operation used by transition-completion tests.
+    let internal setRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests retirePreviousBranchIpc =
+        retirePreviousBranchWatchIpcForTransitionCompletion <- retirePreviousBranchIpc
+
+    /// Restores previous-branch IPC retirement to the production file-delete behavior after Watch tests.
+    let internal resetRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests () =
+        retirePreviousBranchWatchIpcForTransitionCompletion <- fun previousIpcFileName -> File.Delete(previousIpcFileName)
+
+    /// Reloads repository configuration after another Grace process changes the current branch.
+    let private reloadConfigurationForTransitionCompletion () =
+        resetConfiguration ()
+        clearShouldIgnoreCache ()
+        Current() |> ignore
+        configureWatchPathComparisonForCurrentRepository ()
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
@@ -557,23 +727,42 @@ module Watch =
         with
         | _ -> DeletedPathStatusUnavailable
 
+    /// Reports whether a marker completion instant is recent enough to suppress delayed Watch callbacks.
+    let private isRecentGraceUpdateMarkerCompletion completedUtc =
+        completedUtc <> DateTime.MinValue
+        && DateTime.UtcNow - completedUtc
+           <= graceUpdateMarkerDeletedObservationWindow
+
     /// Reads the switch-owned completion instant that should govern delayed Watch callback suppression.
     let private tryRecentGraceUpdateMarkerCompletedUtc () =
-        let markerCompletedUtc =
+        let recordedUtc =
+            lock graceUpdateMarkerDeletionLock (fun () ->
+                let cutoffUtc =
+                    DateTime.UtcNow
+                    - graceUpdateMarkerDeletedObservationWindow
+
+                recentGraceUpdateMarkerCompletedUtc.RemoveAll(fun completedUtc -> completedUtc < cutoffUtc)
+                |> ignore
+
+                recentGraceUpdateMarkerCompletedUtc
+                |> Seq.sortDescending
+                |> Seq.tryHead)
+
+        let currentSidecarUtc =
             match tryReadGraceUpdateMarkerCompletedUtc () with
-            | Some completedUtc -> Some completedUtc
-            | None ->
-                let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
+            | Some completedUtc when
+                isRecentGraceUpdateMarkerCompletion completedUtc
+                && currentUpdateMarkerMatchesCompletedSidecar completedUtc
+                ->
+                Some completedUtc
+            | _ -> None
 
-                if recordedUtc <> DateTime.MinValue then Some recordedUtc else None
-
-        match markerCompletedUtc with
-        | Some completedUtc when
-            DateTime.UtcNow - completedUtc
-            <= graceUpdateMarkerDeletedObservationWindow
-            ->
-            Some completedUtc
-        | _ -> None
+        match currentSidecarUtc, recordedUtc with
+        | Some currentCompletedUtc, Some recordedCompletedUtc when isRecentGraceUpdateMarkerCompletion recordedCompletedUtc ->
+            Some(max currentCompletedUtc recordedCompletedUtc)
+        | Some currentCompletedUtc, _ -> Some currentCompletedUtc
+        | None, Some recordedCompletedUtc when isRecentGraceUpdateMarkerCompletion recordedCompletedUtc -> Some recordedCompletedUtc
+        | None, _ -> None
 
     /// Reports whether a missing path is already absent from the post-switch GraceStatus snapshot.
     let private completedSwitchRemovedPathFromGraceStatus fullPath =
@@ -638,6 +827,8 @@ module Watch =
 
     /// Coordinates set grace status for watch tests behavior for this CLI command path.
     let internal setGraceStatusForWatchTests status = graceStatus <- status
+    /// Replaces Watch's cached directory identity set after a trusted GraceStatus reload.
+    let internal updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
     /// Reads the in-memory Grace Status snapshot so transition-publication tests can prove state isolation.
     let internal graceStatusForWatchTests () = graceStatus
     /// Reads the in-memory Grace Status directory identities so transition-publication tests can prove state isolation.
@@ -659,9 +850,14 @@ module Watch =
             graceStatusHasChanged <- false
 
     /// Coordinates set read grace status file for watch tests behavior for this CLI command path.
-    let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
+    let internal setReadGraceStatusFileForWatchTests readStatusFile =
+        readGraceStatusFileForDeletedPathClassification <- readStatusFile
+        readGraceStatusFileForTransitionCompletion <- readStatusFile
+
     /// Sets the Grace Status reader used by pending-work transition tests.
     let internal setReadGraceStatusFileForPendingWorkTransitionForWatchTests readStatusFile = readGraceStatusFileForPendingWorkTransition <- readStatusFile
+    /// Sets the Grace Status reader used by branch-transition completion tests.
+    let internal setReadGraceStatusFileForTransitionCompletionForWatchTests readStatusFile = readGraceStatusFileForTransitionCompletion <- readStatusFile
     /// Reads set enumerate files for directory upload for watch tests data needed by the command workflow without changing remote state.
     let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
 
@@ -1446,6 +1642,9 @@ module Watch =
     /// Reports whether an explicit resync scan must run before incremental observation application resumes.
     let private isGraceWatchResyncPending () = currentGraceWatchResyncAttempt () <> 0L
 
+    /// Reports whether an explicit resync scan is pending for Watch confidence-boundary tests.
+    let internal isGraceWatchResyncPendingForWatchTests () = isGraceWatchResyncPending ()
+
     /// Reports whether an in-flight resync attempt still owns the recovery boundary.
     let private isGraceWatchResyncAttemptCurrent attempt =
         attempt <> 0L
@@ -1774,6 +1973,198 @@ module Watch =
     /// Counts quarantined observations for tests that verify confidence loss does not replay stale work.
     let internal quarantinedWatchObservationCountForWatchTests () = Volatile.Read(&quarantinedWatchObservationCount)
 
+    /// Verifies a reloaded branch configuration has enough identity to own a branch-scoped Watch IPC file.
+    let private isTransitionCompletionConfigurationCoherent () =
+        let current = Current()
+
+        let hasRepositoryIdentity =
+            current.RepositoryId <> RepositoryId.Empty
+            || not (String.IsNullOrWhiteSpace(string current.RepositoryName))
+
+        let hasBranchIdentity =
+            current.BranchId <> BranchId.Empty
+            || not (String.IsNullOrWhiteSpace(string current.BranchName))
+
+        hasRepositoryIdentity
+        && hasBranchIdentity
+        && not (String.IsNullOrWhiteSpace current.RootDirectory)
+        && Directory.Exists(current.RootDirectory)
+
+    /// Verifies a reloaded GraceStatus can support a trusted incremental Watch snapshot after branch switch.
+    let private isTransitionCompletionGraceStatusCoherent (status: GraceStatus) =
+        let hasRootIdentity =
+            status.RootDirectoryId <> DirectoryVersionId.Empty
+            && not (String.IsNullOrWhiteSpace($"{status.RootDirectorySha256Hash}"))
+            && not (String.IsNullOrWhiteSpace($"{status.RootDirectoryBlake3Hash}"))
+
+        let mutable rootDirectoryVersion = LocalDirectoryVersion.Default
+
+        hasRootIdentity
+        && not (isNull status.Index)
+        && status.Index.TryGetValue(status.RootDirectoryId, &rootDirectoryVersion)
+        && rootDirectoryVersion.Sha256Hash = status.RootDirectorySha256Hash
+        && rootDirectoryVersion.Blake3Hash = status.RootDirectoryBlake3Hash
+
+    /// Publishes a branch-scoped non-incremental transition snapshot when Watch cannot safely resume.
+    let private publishNonIncrementalTransitionCompletionStatus context =
+        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+            match currentGraceWatchRuntimeMode () with
+            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
+            | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds))
+
+        logToAnsiConsole Colors.Important $"Grace Watch published non-incremental IPC for branch transition completion: {context}."
+
+    /// Removes the previous branch IPC snapshot so stale healthy status cannot survive a branch transition.
+    let private retirePreviousBranchWatchIpc previousIpcFileName =
+        if File.Exists(previousIpcFileName) then
+            retirePreviousBranchWatchIpcForTransitionCompletion previousIpcFileName
+
+            logToAnsiConsole Colors.Important $"Grace Watch retired previous branch IPC before completing branch transition: {previousIpcFileName}."
+
+        not (File.Exists(previousIpcFileName))
+
+    /// Verifies that the previous branch IPC no longer exposes a healthy incremental shortcut.
+    let private previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName =
+        if not (File.Exists(previousIpcFileName)) then
+            true
+        else
+            try
+                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                String.Equals(IpcFileName(), previousIpcFileName, StringComparison.OrdinalIgnoreCase)
+                && isGraceWatchResyncRequiredStatusPublished inspection
+            with
+            | _ -> false
+
+    /// Retries deletion or downgrades the previous branch IPC before Watch abandons that branch identity.
+    let private retryOrDowngradePreviousBranchWatchIpc previousIpcFileName failure =
+        requestGraceWatchExplicitResync $"previous branch IPC retirement failed: {failure}"
+
+        let maxAttempts = 3
+        let mutable attempt = 1
+        let mutable verified = previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName
+
+        while not verified && attempt < maxAttempts do
+            runPreviousBranchIpcDowngradeRetryProbe ()
+
+            Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 25)))
+            attempt <- attempt + 1
+
+            try
+                retirePreviousBranchWatchIpc previousIpcFileName
+                |> ignore
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch retry {attempt} could not retire previous branch IPC before transition completion: {Markup.Escape(ex.Message)}."
+
+            if File.Exists(previousIpcFileName) then publishGraceWatchResyncRequired ()
+
+            verified <- previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName
+
+        if not verified then
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch could not verify previous branch IPC was retired or downgraded after {attempt} attempts; target branch IPC publication is deferred."
+
+        verified
+
+    /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
+    let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
+        let previousIpcFileName = IpcFileName()
+
+        logToAnsiConsole
+            Colors.Error
+            $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; verifying old IPC downgrade before target publication: {Markup.Escape(failure)}."
+
+        if retryOrDowngradePreviousBranchWatchIpc previousIpcFileName failure then
+            try
+                reloadConfigurationForTransitionCompletion ()
+                rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Error
+                    $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
+
+    /// Completes a Grace-owned branch transition inside the serialized Watch publication boundary.
+    let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
+        lock watchStatusPublishLock (fun () ->
+            recordGraceUpdateMarkerCompletedUtc completedUtc
+            let previousIpcFileName = IpcFileName()
+
+            let previousIpcRetired =
+                try
+                    let retired = retirePreviousBranchWatchIpc previousIpcFileName
+
+                    if not retired then
+                        publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc "previous branch IPC still existed after delete"
+
+                    retired
+                with
+                | ex ->
+                    publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
+                    false
+
+            if previousIpcRetired then
+                runBranchTransitionCompletionAfterRetireProbe ()
+
+                let reloadedConfiguration =
+                    try
+                        reloadConfigurationForTransitionCompletion ()
+                        rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                        true
+                    with
+                    | ex ->
+                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+                        graceStatusHasChanged <- true
+
+                        lastPublishedHasPendingWatchWork <- None
+
+                        logToAnsiConsole
+                            Colors.Error
+                            $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
+
+                        false
+
+                if reloadedConfiguration then
+                    try
+                        let refreshedStatus =
+                            readGraceStatusFileForTransitionCompletion()
+                                .GetAwaiter()
+                                .GetResult()
+
+                        graceStatus <- refreshedStatus
+                        updateGraceStatusDirectoryIds graceStatus
+
+                        if isTransitionCompletionConfigurationCoherent ()
+                           && isTransitionCompletionGraceStatusCoherent graceStatus then
+                            if
+                                currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                                && not (isGraceWatchResyncPending ())
+                            then
+                                let transitionPublicationVerified =
+                                    tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                        updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+
+                                if transitionPublicationVerified then
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                                else
+                                    requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
+                            else
+                                publishNonIncrementalTransitionCompletionStatus
+                                    $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
+                        else
+                            requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
+                    with
+                    | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}")
+
     /// Combines status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
         let merged = List<FileSystemDifference>()
@@ -1875,9 +2266,13 @@ module Watch =
 
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
+        readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
+        clearShouldIgnoreCache ()
+        resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
-        clearGraceUpdateMarkerDeletedUtc ()
+        clearGraceUpdateMarkerDeletedUtcForReset ()
+        clearCurrentGraceUpdateMarkerCompletedSidecar ()
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None
@@ -2330,6 +2725,9 @@ module Watch =
 
     /// Coordinates on grace update in progress created behavior for this CLI command path.
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
+        if isUpdateMarkerPath args.FullPath then
+            observeGraceUpdateMarkerInstance args.FullPath
+
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
                 let hasCurrentCompletedSidecar =
@@ -2337,22 +2735,55 @@ module Watch =
                     | Some completedUtc -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
                     | None -> false
 
-                if not hasCurrentCompletedSidecar then clearGraceUpdateMarkerDeletedUtc ()
+                if not hasCurrentCompletedSidecar then
+                    clearCurrentGraceUpdateMarkerCompletedSidecar ()
 
                 logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
 
+    /// Reports whether a marker deletion callback still owns branch transition completion authority.
+    let private deletedMarkerCanCompleteCurrentTransition markerFileName =
+        let currentMarkerFileName = updateInProgressFileName ()
+
+        String.Equals(markerFileName, currentMarkerFileName, StringComparison.OrdinalIgnoreCase)
+        || not (File.Exists(currentMarkerFileName))
+
     /// Coordinates on grace update in progress deleted behavior for this CLI command path.
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
-        if args.FullPath = updateInProgressFileName () then
-            if updateNotInProgress () then
-                match tryReadGraceUpdateMarkerCompletedUtc () with
+        if isUpdateMarkerPath args.FullPath then
+            if not (File.Exists(args.FullPath)) then
+                match tryReadGraceUpdateMarkerCompletedUtcForMarker args.FullPath with
                 | Some completedUtc ->
-                    recordGraceUpdateMarkerCompletedUtc completedUtc
-                    logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                    match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
+                    | ObservedCurrentMarker ->
+                        if deletedMarkerCanCompleteCurrentTransition args.FullPath then
+                            completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+                            logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                        else
+                            recordGraceUpdateMarkerCompletedUtc completedUtc
+
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Ignored stale update marker deletion for {args.FullPath}; current marker {updateInProgressFileName ()} is still live."
+                    | UnobservedMarker when
+                        deletedMarkerIsCurrentMarker args.FullPath
+                        && isRecentGraceUpdateMarkerCompletion completedUtc
+                        && persistedConfigurationChangedSinceWatchCached ()
+                        ->
+                        requestGraceWatchExplicitResync "branch transition marker deletion had a fresh completion sidecar but no observed marker creation"
+                        completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Update marker ended with an unobserved fresh completed sidecar for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
+                    | ObservedStaleMarker
+                    | UnobservedMarker ->
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
                 | None ->
-                    clearGraceUpdateMarkerDeletedUtc ()
+                    forgetObservedGraceUpdateMarkerInstance args.FullPath
                     logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
@@ -2660,9 +3091,6 @@ module Watch =
             do! gzStream.DisposeAsync()
             graceStatus <- GraceStatus.Default
         }
-
-    /// Coordinates update grace status directory ids behavior for this CLI command path.
-    let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
 
     /// Publishes a trusted Watch IPC snapshot only when incremental mode is currently safe for other processes.
     let private tryPublishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =
@@ -3253,6 +3681,35 @@ module Watch =
                     |> ignore
 
                     use updateInProgressFileSystemWatcher = createFileSystemWatcher (Path.GetDirectoryName(updateInProgressFileName ()))
+
+                    use updateMarkerWatcherRebindRegistration =
+                        registerUpdateMarkerWatcherRebind (fun () ->
+                            let markerDirectory = Path.GetDirectoryName(updateInProgressFileName ())
+
+                            Directory.CreateDirectory(markerDirectory)
+                            |> ignore
+
+                            let currentPath = Path.GetFullPath(updateInProgressFileSystemWatcher.Path)
+                            let targetPath = Path.GetFullPath(markerDirectory)
+
+                            if
+                                not
+                                <| String.Equals
+                                    (
+                                        currentPath,
+                                        targetPath,
+                                        if OperatingSystem.IsWindows() then
+                                            StringComparison.OrdinalIgnoreCase
+                                        else
+                                            StringComparison.Ordinal
+                                    )
+                            then
+                                let wasEnabled = updateInProgressFileSystemWatcher.EnableRaisingEvents
+                                updateInProgressFileSystemWatcher.EnableRaisingEvents <- false
+                                updateInProgressFileSystemWatcher.Path <- markerDirectory
+                                updateInProgressFileSystemWatcher.EnableRaisingEvents <- wasEnabled
+
+                                logToAnsiConsole Colors.Important $"Grace Watch rebound update marker watcher to {markerDirectory}.")
 
                     use updateInProgressChanged =
                         Observable
