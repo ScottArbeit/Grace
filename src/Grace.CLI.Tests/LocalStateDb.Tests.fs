@@ -171,6 +171,12 @@ module LocalStateDbTests =
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Allocates Watch journal sequences without adding replay semantics beyond the schema scaffold.
+    let private insertWatchJournalRows (connection: SqliteConnection) throughSequence =
+        [| 1L .. throughSequence |]
+        |> Array.iter (fun sequence ->
+            executeNonQuery connection $"INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES ({sequence}, {sequence});")
+
     /// Gets corrupt backups needed by the test scenario.
     let private getCorruptBackups (dbPath: string) =
         let directoryPath = Path.GetDirectoryName(dbPath)
@@ -243,7 +249,13 @@ module LocalStateDbTests =
             "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
 
         executeNonQuery connection "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
-        executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4');"
+
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL);"
+
+        executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5');"
+        executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
 
         executeNonQuery
             connection
@@ -331,11 +343,202 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
                 statusMetaCount |> should equal 1
+            })
+
+    /// Verifies that initializes watch journal schema and applied through metadata.
+    [<Test>]
+    let ``initializes watch journal schema and applied through metadata`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                let journalTableCount = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                journalTableCount |> should equal 1
+
+                let sequencePk = executeScalarInt connection "SELECT pk FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
+
+                let sequenceType = executeScalarString connection "SELECT UPPER(type) FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
+
+                sequencePk |> should equal 1
+                sequenceType |> should equal "INTEGER"
+
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                appliedThrough |> should equal "0"
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 0L
+            })
+
+    /// Verifies that v5 initialization recreates meta tables that ignore the default Watch watermark insert.
+    [<Test>]
+    let ``initialization recreates constrained meta table when default watch watermark insert is ignored`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = getCurrentInstant().ToUnixTimeTicks()
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile (Guid.NewGuid()) "root-sha" "root-blake3" now
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "ALTER TABLE meta RENAME TO meta_valid;"
+
+                    executeNonQuery
+                        connection
+                        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, required_marker TEXT NOT NULL CHECK (required_marker = 'seeded'));"
+
+                    executeNonQuery
+                        connection
+                        "INSERT INTO meta (key, value, required_marker) SELECT key, value, 'seeded' FROM meta_valid WHERE key <> 'AppliedThroughSequence';"
+
+                    executeNonQuery connection "DROP TABLE meta_valid;"
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 0L
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                appliedThrough |> should equal "0"
+
+                let requiredMarkerColumns = executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('meta') WHERE name = 'required_marker';"
+                requiredMarkerColumns |> should equal 0
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 0L
+
+                getCorruptBackups configuration.GraceStatusFile
+                |> should haveLength 1
+            })
+
+    /// Verifies that watch journal retention keeps unapplied rows and a bounded applied tail.
+    [<Test>]
+    let ``watch journal retention keeps unapplied rows and bounded applied tail`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                insertWatchJournalRows connection 1030L
+
+                do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 1026L
+                do! LocalStateDb.pruneWatchJournalRetention configuration.GraceStatusFile
+
+                let minSequence = executeScalarInt64 connection "SELECT MIN(sequence) FROM watch_journal;"
+                let maxSequence = executeScalarInt64 connection "SELECT MAX(sequence) FROM watch_journal;"
+                let rowCount = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                minSequence |> should equal 3L
+                maxSequence |> should equal 1030L
+                rowCount |> should equal 1028
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 1026L
+            })
+
+    /// Verifies that Watch recovery metadata cannot be moved behind the current applied sequence.
+    [<Test>]
+    let ``watch journal applied through sequence cannot rewind`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 5L
+
+                do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 5L
+
+                let operation = Func<Task>(fun () -> LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 4L :> Task)
+
+                let ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+                ex.Message
+                |> should contain "cannot move backward"
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 5L
+            })
+
+    /// Verifies that Watch recovery metadata cannot outrun SQLite's allocated journal sequence.
+    [<Test>]
+    let ``watch journal applied through sequence cannot exceed allocated sequence`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let operation = Func<Task>(fun () -> LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 1L :> Task)
+
+                let ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+                ex.Message
+                |> should contain "only allocated through 0"
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 0L
+            })
+
+    /// Verifies that concurrent Watch recovery watermark advances cannot let a lower stale write win.
+    [<Test>]
+    let ``watch journal applied through sequence is atomic under interleaved advances`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                do
+                    use seedConnection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows seedConnection 4L
+
+                use lockConnection = openRawConnection configuration.GraceStatusFile
+                executeNonQuery lockConnection "BEGIN IMMEDIATE;"
+
+                let runAdvance sequence =
+                    task {
+                        try
+                            do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile sequence
+                            return Some sequence
+                        with
+                        | :? InvalidOperationException as ex when ex.Message.Contains("cannot move backward", StringComparison.OrdinalIgnoreCase) -> return None
+                    }
+
+                let startAdvance sequence =
+                    Task
+                        .Factory
+                        .StartNew(Func<Task<int64 option>>(fun () -> runAdvance sequence))
+                        .Unwrap()
+
+                let highTask = startAdvance 4L
+                do! Task.Delay(50)
+
+                let lowerTasks = [| 1L .. 3L |] |> Array.map startAdvance
+
+                do! Task.Delay(100)
+                executeNonQuery lockConnection "ROLLBACK;"
+
+                let! highResult = highTask
+                let! lowerResults = Task.WhenAll lowerTasks
+
+                highResult |> should equal (Some 4L)
+
+                lowerResults
+                |> Array.choose id
+                |> Array.iter (fun sequence -> sequence |> should be (lessThanOrEqualTo 4L))
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 4L
             })
 
     /// Verifies that round trips status snapshot.
@@ -604,7 +807,674 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that ensure db initialized recreates db when schema v5 has a malformed Watch journal table.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 watch journal shape is malformed`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+
+                let ticks =
+                    Instant
+                        .FromUtc(2026, 1, 2, 3, 4)
+                        .ToUnixTimeTicks()
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_journal;"
+                    executeNonQuery connection "CREATE TABLE watch_journal (sequence TEXT PRIMARY KEY);"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                schemaVersion |> should equal "5"
+
+                let sequencePk = executeScalarInt connection "SELECT pk FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
+                sequencePk |> should equal 1
+
+                let sequenceType = executeScalarString connection "SELECT UPPER(type) FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
+                sequenceType |> should equal "INTEGER"
+
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
+                let createdAtNotNull =
+                    executeScalarInt connection "SELECT [notnull] FROM pragma_table_info('watch_journal') WHERE name = 'created_at_unix_ticks';"
+
+                createdAtNotNull |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that ensure db initialized recreates db when schema v5 reuses rowids for Watch journal sequences.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 watch journal lacks autoincrement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+
+                let ticks =
+                    Instant
+                        .FromUtc(2026, 1, 2, 3, 4)
+                        .ToUnixTimeTicks()
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_journal;"
+                    executeNonQuery connection "CREATE TABLE watch_journal (sequence INTEGER PRIMARY KEY, created_at_unix_ticks INTEGER NOT NULL);"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                schemaVersion |> should equal "5"
+
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that AUTOINCREMENT acceptance belongs to the sequence column declaration, not nearby SQL text.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 autoincrement text is outside sequence declaration`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_journal;"
+
+                    executeNonQuery
+                        connection
+                        "CREATE TABLE watch_journal (sequence INTEGER PRIMARY KEY, created_at_unix_ticks INTEGER NOT NULL CHECK ('sequence INTEGER PRIMARY KEY AUTOINCREMENT' IS NOT NULL));"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                schemaVersion |> should equal "5"
+
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("sequence INTEGER PRIMARY KEY AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that ensure db initialized recreates db when Watch recovery metadata is malformed.
+    [<TestCase("not-a-number")>]
+    [<TestCase("-1")>]
+    let ``ensureDbInitialized recreates DB when schema v5 applied through metadata is invalid`` (appliedThroughValue: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery connection $"UPDATE meta SET value = '{appliedThroughValue}' WHERE key = 'AppliedThroughSequence';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 0L
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects duplicated Watch recovery metadata in malformed schema v5 tables.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 applied through metadata is duplicated`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE meta;"
+                    executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '1');"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let duplicateRows = executeScalarInt connection "SELECT COUNT(*) FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                duplicateRows |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects meta tables that cannot preserve one row per key.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 meta key is not unique`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE meta;"
+                    executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                let duplicateInsertSucceeded =
+                    try
+                        executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '1');"
+                        true
+                    with
+                    | :? SqliteException -> false
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                duplicateInsertSucceeded |> should equal false
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects malformed SQLite journal allocation metadata.
+    [<TestCase("not-a-number")>]
+    [<TestCase("-1")>]
+    let ``ensureDbInitialized recreates DB when schema v5 allocated journal sequence is invalid`` (allocatedSequence: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    executeNonQuery connection "UPDATE meta SET value = '1' WHERE key = 'AppliedThroughSequence';"
+                    executeNonQuery connection $"UPDATE sqlite_sequence SET seq = '{allocatedSequence}' WHERE name = 'watch_journal';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that empty schema v5 databases still reject malformed SQLite journal allocation metadata.
+    [<TestCase("not-a-number")>]
+    [<TestCase("-1")>]
+    let ``ensureDbInitialized recreates DB when schema v5 empty journal has invalid allocation row`` (allocatedSequence: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
+                    executeNonQuery connection $"INSERT INTO sqlite_sequence (name, seq) VALUES ('watch_journal', '{allocatedSequence}');"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+                let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+                allocationRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects missing SQLite journal allocation metadata when rows exist.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 journal rows have no allocation row`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    executeNonQuery connection "DELETE FROM sqlite_sequence WHERE name = 'watch_journal';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects stale SQLite journal allocation below the highest persisted row.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 allocated journal sequence is below journal max`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    executeNonQuery connection "UPDATE sqlite_sequence SET seq = 1 WHERE name = 'watch_journal';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects Watch recovery metadata beyond SQLite's allocated journal sequence.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 applied through metadata exceeds allocated sequence`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    executeNonQuery connection "UPDATE meta SET value = '3' WHERE key = 'AppliedThroughSequence';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects NULL Watch recovery metadata without throwing.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 applied through metadata is null`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE meta;"
+                    executeNonQuery connection "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NULL);"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', NULL);"
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal true
+
+                inspection.WatchJournalAppliedThroughMetadataValid
+                |> should equal (Some false)
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance skips expression indexes when proving metadata key uniqueness.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 meta uniqueness is expression index only`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE meta;"
+                    executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
+                    executeNonQuery connection "CREATE UNIQUE INDEX ux_meta_lower_key ON meta(lower(key));"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal true
+
+                inspection.WatchJournalAppliedThroughMetadataValid
+                |> should equal (Some false)
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects composite primary keys before trusting metadata key uniqueness.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 meta key is part of composite primary key`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE meta;"
+                    executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL, PRIMARY KEY (key, value));"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal true
+
+                inspection.WatchJournalAppliedThroughMetadataValid
+                |> should equal (Some false)
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects journal rows whose SQLite sequence was not positively allocated.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 journal rows have non-positive sequence`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (0, 1);"
+                    executeNonQuery connection "UPDATE sqlite_sequence SET seq = 0 WHERE name = 'watch_journal';"
+
+                let inspection = LocalStateDb.inspectReadOnly configuration.GraceStatusFile
+
+                inspection.OpenedReadOnly |> should equal true
+
+                inspection.WatchJournalAppliedThroughMetadataValid
+                |> should equal (Some false)
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema v5 databases with journal rows must carry trustworthy Watch recovery metadata.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 has journal rows without applied through metadata`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (1, 1);"
+                    executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -632,7 +1502,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -687,7 +1557,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "4")
+                |> should equal (Some "5")
 
                 inspection.MissingRequiredTables
                 |> should equal Array.empty<string>
@@ -718,8 +1588,8 @@ module LocalStateDbTests =
                 let walPath = configuration.GraceStatusFile + "-wal"
                 let shmPath = configuration.GraceStatusFile + "-shm"
 
-                for sidecar in [| walPath; shmPath |] do
-                    if File.Exists(sidecar) then File.Delete(sidecar)
+                [| walPath; shmPath |]
+                |> Array.iter (fun sidecar -> if File.Exists(sidecar) then File.Delete(sidecar))
 
                 File.Exists(walPath) |> should equal false
                 File.Exists(shmPath) |> should equal false
@@ -732,7 +1602,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "4")
+                |> should equal (Some "5")
 
                 inspection.IntegrityCheckRows
                 |> should equal [| "ok" |]
@@ -785,9 +1655,10 @@ module LocalStateDbTests =
                     [| "-journal"; "-wal"; "-shm" |]
                     |> Array.map (fun suffix -> configuration.GraceStatusFile + suffix)
 
-                for sidecar in sidecars do
+                sidecars
+                |> Array.iter (fun sidecar ->
                     File.WriteAllText(sidecar, $"sentinel-{Path.GetFileName(sidecar)}")
-                    File.SetLastWriteTimeUtc(sidecar, oldTime)
+                    File.SetLastWriteTimeUtc(sidecar, oldTime))
 
                 let dbBefore = snapshotFile configuration.GraceStatusFile
                 let sidecarsBefore = sidecars |> Array.map snapshotFile
@@ -910,6 +1781,7 @@ module LocalStateDbTests =
                         "index:ix_object_cache_children_parent"
                         "table:object_cache_directory_files"
                         "index:ix_object_cache_files_path_hash"
+                        "table:watch_journal"
                     |]
 
                 expected
@@ -926,7 +1798,9 @@ module LocalStateDbTests =
                 use connection1 = openRawConnection configuration.GraceStatusFile
                 let createdAt1 = executeScalarInt64 connection1 "SELECT CAST(value AS INTEGER) FROM meta WHERE key = 'created_at_unix_ticks';"
                 let statusMetaCount1 = executeScalarInt connection1 "SELECT COUNT(*) FROM status_meta;"
+                let appliedThrough1 = executeScalarString connection1 "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 statusMetaCount1 |> should equal 1
+                appliedThrough1 |> should equal "0"
 
                 do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
 
@@ -935,7 +1809,9 @@ module LocalStateDbTests =
                 createdAt2 |> should equal createdAt1
 
                 let statusMetaCount2 = executeScalarInt connection2 "SELECT COUNT(*) FROM status_meta;"
+                let appliedThrough2 = executeScalarString connection2 "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 statusMetaCount2 |> should equal 1
+                appliedThrough2 |> should equal "0"
             })
 
     /// Verifies that ensure db initialized recreates legacy schema v2 database without blake3 columns.
@@ -975,7 +1851,7 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection2 "SELECT value FROM meta WHERE key = 'schema_version';"
                 let readRootId = executeScalarString connection2 "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection2 "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
 
                 readRootId
                 |> should not' (equal (rootId.ToString()))
@@ -989,9 +1865,9 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
-    /// Verifies that ensure db initialized preserves existing schema v4 current schema status meta row.
+    /// Verifies that ensure db initialized preserves existing current schema status meta row.
     [<Test>]
-    let ``ensureDbInitialized preserves existing schema v4 current schema status_meta row`` () =
+    let ``ensureDbInitialized preserves existing current schema status_meta row`` () =
         withTempDir (fun _ configuration ->
             task {
                 let rootId = Guid.NewGuid()
@@ -1012,7 +1888,7 @@ module LocalStateDbTests =
                 let readRootId = executeScalarString connection "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
                 let readRootBlake3Hash = executeScalarString connection "SELECT root_directory_blake3_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
                 readRootId |> should equal (rootId.ToString())
                 readRootHash |> should equal rootHash
                 readRootBlake3Hash |> should equal rootBlake3Hash
@@ -1041,6 +1917,43 @@ module LocalStateDbTests =
                 corruptAfter |> should equal corruptBefore
             })
 
+    /// Verifies that ensure db initialized rejects schema v5 databases without watch journal.
+    [<Test>]
+    let ``ensureDbInitialized recreates schema v5 database missing watch journal`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let rootHash = "missing-journal-root-hash"
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId rootHash "root-blake3" ticks
+
+                use seedConnection = openRawConnection configuration.GraceStatusFile
+                executeNonQuery seedConnection "DROP TABLE watch_journal;"
+                seedConnection.Dispose()
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let watchJournalCount = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                schemaVersion |> should equal "5"
+                watchJournalCount |> should equal 1
+                appliedThrough |> should equal "0"
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
     /// Verifies that ensure db initialized recreates partial schema v4 database missing root blake3 column.
     [<Test>]
     let ``ensureDbInitialized recreates partial schema v4 database missing root blake3 column`` () =
@@ -1066,7 +1979,7 @@ module LocalStateDbTests =
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
                 rootBlake3Columns |> should equal 1
                 statusMetaCount |> should equal 1
 
@@ -1107,7 +2020,7 @@ module LocalStateDbTests =
                 let statusDirectoryCount = executeScalarInt connection "SELECT COUNT(*) FROM status_directories;"
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
                 statusDirectoryCount |> should equal 0
                 statusMetaCount |> should equal 1
 
@@ -1300,7 +2213,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
@@ -1327,7 +2240,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "4"
+                schemaVersion |> should equal "5"
             })
 
     /// Verifies that replace status snapshot fully clears old snapshot rows.
@@ -1641,7 +2554,7 @@ module LocalStateDbTests =
                 do
                     use connection = openRawConnection configuration.GraceStatusFile
                     executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '4');"
+                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '5');"
 
                     executeNonQuery
                         connection
@@ -2551,7 +3464,7 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "4"
+                    schemaVersion |> should equal "5"
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1

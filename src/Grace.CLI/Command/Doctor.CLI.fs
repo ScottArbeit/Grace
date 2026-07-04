@@ -87,6 +87,9 @@ module Doctor =
     let private StateDbForeignKeyCheckId = "state.db.foreign-key-check"
 
     [<Literal>]
+    let private StateDbWatchJournalCheckId = "state.db.watch-journal"
+
+    [<Literal>]
     let private ObjectCacheIndexReadableCheckId = "object-cache.index-readable"
 
     [<Literal>]
@@ -102,7 +105,7 @@ module Doctor =
     let private ServerAuthPrincipalAvailableCheckId = "server.auth-principal.available"
 
     [<Literal>]
-    let private ExpectedLocalStateSchemaVersion = "4"
+    let private ExpectedLocalStateSchemaVersion = "5"
 
     [<Literal>]
     let private DoctorServerProbeTimeoutMilliseconds = 1500
@@ -312,6 +315,14 @@ module Doctor =
                 Category = "Local state"
                 Title = "SQLite foreign-key check"
                 Description = "Runs SQLite foreign_key_check read-only and reports violations without mutation."
+                DefaultEnabled = true
+                SupportsOffline = true
+            }
+            {
+                Id = StateDbWatchJournalCheckId
+                Category = "Local state"
+                Title = "Watch journal persisted shape"
+                Description = "Verifies Watch journal table shape and applied-through metadata without mutating local state."
                 DefaultEnabled = true
                 SupportsOffline = true
             }
@@ -1073,6 +1084,21 @@ module Doctor =
             else
                 failed
                     $"SQLite foreign_key_check reported violations: {formatListOrNone inspection.ForeignKeyViolations}. Doctor did not repair object-cache rows."
+        | StateDbWatchJournalCheckId ->
+            let inspection = context.LocalStateInspection.Value
+
+            if not inspection.OpenedReadOnly then
+                skipped check (localStateUnavailableSummary StateDbWatchJournalCheckId inspection)
+            else
+                match inspection.WatchJournalShapeValid, inspection.WatchJournalAppliedThroughMetadataValid with
+                | Some true, Some true -> ok "Watch journal table shape and applied-through metadata match the local-state schema contract."
+                | Some false, _ ->
+                    failed
+                        "Watch journal table shape is invalid; expected sequence INTEGER PRIMARY KEY AUTOINCREMENT and created_at_unix_ticks INTEGER NOT NULL. Doctor did not repair or recreate local state."
+                | Some true, Some false ->
+                    failed
+                        "Watch journal applied-through metadata is missing while journal rows exist, malformed, or negative. Doctor did not write default metadata."
+                | _, _ -> skipped check "Watch journal persisted-shape inspection was not attempted."
         | ObjectCacheIndexReadableCheckId ->
             let inspection = context.LocalStateInspection.Value
 

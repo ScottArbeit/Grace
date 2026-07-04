@@ -6,6 +6,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.IO
 open System.Text
+open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 open Grace.Shared.Client.Configuration
@@ -18,7 +19,15 @@ open SQLitePCL
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let private SchemaVersion = "4"
+    let private SchemaVersion = "5"
+
+    /// Identifies the single local Watch journal metadata row that records applied-through progress.
+    [<Literal>]
+    let WatchJournalAppliedThroughSequenceMetaKey = "AppliedThroughSequence"
+
+    /// Keeps a bounded diagnostic tail of already-applied Watch journal rows.
+    [<Literal>]
+    let WatchJournalRetainedAppliedRows = 1024L
 
     [<Literal>]
     let private BusyTimeoutMs = 30000
@@ -177,6 +186,7 @@ module LocalStateDb =
             "CREATE INDEX IF NOT EXISTS ix_object_cache_children_parent ON object_cache_directory_children(parent_directory_version_id);"
             "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL);"
         |]
 
     let private requiredTableNames =
@@ -188,6 +198,7 @@ module LocalStateDb =
             "object_cache_directories"
             "object_cache_directory_children"
             "object_cache_directory_files"
+            "watch_journal"
         |]
 
     let private requiredIndexNames =
@@ -216,6 +227,8 @@ module LocalStateDb =
             MissingRequiredIndexes: string array
             IntegrityCheckRows: string array
             ForeignKeyViolations: string array
+            WatchJournalShapeValid: bool option
+            WatchJournalAppliedThroughMetadataValid: bool option
             ObjectCacheReadable: bool option
             ObjectCacheError: string option
         }
@@ -234,6 +247,8 @@ module LocalStateDb =
             MissingRequiredIndexes = requiredIndexNames
             IntegrityCheckRows = Array.empty
             ForeignKeyViolations = Array.empty
+            WatchJournalShapeValid = None
+            WatchJournalAppliedThroughMetadataValid = None
             ObjectCacheReadable = None
             ObjectCacheError = None
         }
@@ -390,6 +405,408 @@ module LocalStateDb =
 
         found
 
+    /// Reports whether a LocalStateDb table exists before writable operations trust the schema version.
+    let private tableExists (connection: SqliteConnection) tableName =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $table_name LIMIT 1;"
+
+        command.Parameters.AddWithValue("$table_name", tableName)
+        |> ignore
+
+        use reader = command.ExecuteReader()
+        reader.Read()
+
+    /// Captures the SQLite column shape that writable schema checks must trust before using a table.
+    type private TableColumnShape = { Name: string; TypeName: string; NotNull: bool; PrimaryKeyOrdinal: int }
+
+    /// Reads SQLite table column metadata so schema-version checks can reject partially created local databases.
+    let private readTableColumnShapes (connection: SqliteConnection) tableName =
+        use command = connection.CreateCommand()
+        command.CommandText <- $"PRAGMA table_info({tableName});"
+        use reader = command.ExecuteReader()
+        let columns = ResizeArray<TableColumnShape>()
+
+        while reader.Read() do
+            columns.Add(
+                { Name = reader.GetString(1); TypeName = reader.GetString(2); NotNull = reader.GetInt32(3) <> 0; PrimaryKeyOrdinal = reader.GetInt32(5) }
+            )
+
+        columns |> Seq.toArray
+
+    /// Reports whether SQLite declared a column with INTEGER affinity for a trusted local-state sequence.
+    let private isIntegerColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "INTEGER")
+
+    /// Reports whether SQLite declared a column with TEXT affinity for trusted local metadata.
+    let private isTextColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "TEXT")
+
+    /// Quotes SQLite identifiers used by schema PRAGMA calls against Grace-owned table and index names.
+    let private quoteSqlIdentifier (identifier: string) = "\"" + identifier.Replace("\"", "\"\"") + "\""
+
+    /// Reads the ordered table columns that make up an SQLite index, rejecting expression index entries.
+    let private readIndexColumnNames (connection: SqliteConnection) indexName =
+        use command = connection.CreateCommand()
+        command.CommandText <- $"PRAGMA index_info({quoteSqlIdentifier indexName});"
+        use reader = command.ExecuteReader()
+        let columns = ResizeArray<int * string>()
+        let mutable containsExpression = false
+
+        while reader.Read() do
+            if reader.IsDBNull(2) then
+                containsExpression <- true
+            else
+                columns.Add(reader.GetInt32(0), reader.GetString(2))
+
+        if containsExpression then
+            None
+        else
+            columns
+            |> Seq.sortBy fst
+            |> Seq.map snd
+            |> Seq.toArray
+            |> Some
+
+    /// Verifies that SQLite enforces one metadata row for each key before INSERT OR IGNORE can be trusted.
+    let private hasUniqueMetaKeyConstraint (connection: SqliteConnection) =
+        let columns = readTableColumnShapes connection "meta"
+
+        let keyIsPrimaryKey =
+            columns
+            |> Array.filter (fun column -> column.PrimaryKeyOrdinal > 0)
+            |> function
+                | [| column |] ->
+                    StringComparer.OrdinalIgnoreCase.Equals(column.Name, "key")
+                    && column.PrimaryKeyOrdinal = 1
+                | _ -> false
+
+        if keyIsPrimaryKey then
+            true
+        else
+            use command = connection.CreateCommand()
+            command.CommandText <- "PRAGMA index_list(meta);"
+            use reader = command.ExecuteReader()
+            let uniqueIndexNames = ResizeArray<string>()
+
+            while reader.Read() do
+                let isUnique = reader.GetInt32(2) <> 0
+                let isPartial = reader.FieldCount > 4 && reader.GetInt32(4) <> 0
+
+                if isUnique && not isPartial then uniqueIndexNames.Add(reader.GetString(1))
+
+            uniqueIndexNames
+            |> Seq.exists (fun indexName ->
+                match readIndexColumnNames connection indexName with
+                | Some [| columnName |] -> StringComparer.OrdinalIgnoreCase.Equals(columnName, "key")
+                | _ -> false)
+
+    /// Verifies that Grace-owned metadata can accept key/value writes without hidden required columns.
+    let private hasRequiredMetaKeyValueShape (connection: SqliteConnection) =
+        let columns = readTableColumnShapes connection "meta"
+
+        let hasOnlyKeyAndValueColumns =
+            columns.Length = 2
+            && columns
+               |> Array.exists (fun column ->
+                   StringComparer.OrdinalIgnoreCase.Equals(column.Name, "key")
+                   && isTextColumnType column.TypeName
+                   && column.PrimaryKeyOrdinal = 1)
+            && columns
+               |> Array.exists (fun column ->
+                   StringComparer.OrdinalIgnoreCase.Equals(column.Name, "value")
+                   && isTextColumnType column.TypeName
+                   && column.NotNull
+                   && column.PrimaryKeyOrdinal = 0)
+
+        hasOnlyKeyAndValueColumns
+        && hasUniqueMetaKeyConstraint connection
+
+    /// Locates the top-level column list inside SQLite's stored CREATE TABLE statement.
+    let private tryGetCreateTableColumnList (sql: string) =
+        let mutable startIndex = -1
+        let mutable endIndex = -1
+        let mutable depth = 0
+        let mutable quote = '\000'
+        let mutable index = 0
+
+        while index < sql.Length && endIndex < 0 do
+            let ch = sql[index]
+
+            if quote <> '\000' then
+                if quote = ']' then
+                    if ch = ']' then quote <- '\000'
+                elif ch = quote then
+                    if index + 1 < sql.Length && sql[index + 1] = quote then
+                        index <- index + 1
+                    else
+                        quote <- '\000'
+            else
+                match ch with
+                | '\''
+                | '"'
+                | '`' -> quote <- ch
+                | '[' -> quote <- ']'
+                | '(' ->
+                    if depth = 0 then startIndex <- index + 1
+                    depth <- depth + 1
+                | ')' ->
+                    if depth > 0 then
+                        depth <- depth - 1
+
+                        if depth = 0 then endIndex <- index
+                | _ -> ()
+
+            index <- index + 1
+
+        if startIndex >= 0 && endIndex > startIndex then
+            Some(sql.Substring(startIndex, endIndex - startIndex))
+        else
+            None
+
+    /// Splits SQLite column and constraint declarations without trusting text inside defaults or CHECK expressions.
+    let private splitTopLevelSqlDeclarations (declarations: string) =
+        let parts = ResizeArray<string>()
+        let mutable startIndex = 0
+        let mutable depth = 0
+        let mutable quote = '\000'
+        let mutable index = 0
+
+        while index < declarations.Length do
+            let ch = declarations[index]
+
+            if quote <> '\000' then
+                if quote = ']' then
+                    if ch = ']' then quote <- '\000'
+                elif ch = quote then
+                    if index + 1 < declarations.Length
+                       && declarations[index + 1] = quote then
+                        index <- index + 1
+                    else
+                        quote <- '\000'
+            else
+                match ch with
+                | '\''
+                | '"'
+                | '`' -> quote <- ch
+                | '[' -> quote <- ']'
+                | '(' -> depth <- depth + 1
+                | ')' when depth > 0 -> depth <- depth - 1
+                | ',' when depth = 0 ->
+                    parts.Add(
+                        declarations
+                            .Substring(startIndex, index - startIndex)
+                            .Trim()
+                    )
+
+                    startIndex <- index + 1
+                | _ -> ()
+
+            index <- index + 1
+
+        let last = declarations.Substring(startIndex).Trim()
+
+        if not (String.IsNullOrWhiteSpace(last)) then parts.Add(last)
+
+        parts |> Seq.toArray
+
+    /// Parses the leading SQLite identifier from a column declaration.
+    let private tryReadLeadingSqlIdentifier (declaration: string) =
+        let mutable index = 0
+
+        while index < declaration.Length
+              && Char.IsWhiteSpace(declaration[index]) do
+            index <- index + 1
+
+        if index >= declaration.Length then
+            None
+        else
+            let ch = declaration[index]
+
+            if ch = '"' || ch = '`' || ch = '[' then
+                let terminator = if ch = '[' then ']' else ch
+                let startIndex = index + 1
+                index <- startIndex
+                let mutable identifier = StringBuilder()
+                let mutable closed = false
+
+                while index < declaration.Length && not closed do
+                    if declaration[index] = terminator then
+                        if terminator <> ']'
+                           && index + 1 < declaration.Length
+                           && declaration[index + 1] = terminator then
+                            identifier.Append(terminator) |> ignore
+                            index <- index + 2
+                        else
+                            closed <- true
+                            index <- index + 1
+                    else
+                        identifier.Append(declaration[index]) |> ignore
+                        index <- index + 1
+
+                if closed then
+                    Some(identifier.ToString(), declaration.Substring(index))
+                else
+                    None
+            else
+                let startIndex = index
+
+                while index < declaration.Length
+                      && not (Char.IsWhiteSpace(declaration[index]))
+                      && declaration[index] <> ',' do
+                    index <- index + 1
+
+                if index > startIndex then
+                    Some(declaration.Substring(startIndex, index - startIndex), declaration.Substring(index))
+                else
+                    None
+
+    /// Matches the actual Watch journal sequence column declaration that prevents rowid reuse after pruning.
+    let private watchJournalSequenceAutoincrementDeclarationPattern =
+        Regex(
+            @"^\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+            RegexOptions.IgnoreCase
+            ||| RegexOptions.CultureInvariant
+        )
+
+    /// Reports whether SQLite's stored CREATE TABLE statement gives the sequence column AUTOINCREMENT semantics.
+    let private createSqlDeclaresSequenceAutoincrement (sql: string) =
+        match tryGetCreateTableColumnList sql with
+        | Some columnList ->
+            splitTopLevelSqlDeclarations columnList
+            |> Array.exists (fun declaration ->
+                match tryReadLeadingSqlIdentifier declaration with
+                | Some (identifier, remainder) when StringComparer.OrdinalIgnoreCase.Equals(identifier, "sequence") ->
+                    watchJournalSequenceAutoincrementDeclarationPattern.IsMatch(remainder)
+                | _ -> false)
+        | None -> false
+
+    /// Reports whether SQLite stored the Watch journal table as an AUTOINCREMENT sequence table.
+    let private watchJournalUsesAutoincrement (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal' LIMIT 1;"
+        let value = command.ExecuteScalar()
+
+        match value with
+        | :? string as sql -> createSqlDeclaresSequenceAutoincrement sql
+        | _ -> false
+
+    /// Verifies that the Watch journal table can support ordered local recovery and retention operations.
+    let private hasRequiredWatchJournalShape (connection: SqliteConnection) =
+        let columns = readTableColumnShapes connection "watch_journal"
+
+        let tryFindColumn columnName =
+            columns
+            |> Array.tryFind (fun column -> StringComparer.OrdinalIgnoreCase.Equals(column.Name, columnName))
+
+        let hasSequenceColumn =
+            match tryFindColumn "sequence" with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && column.PrimaryKeyOrdinal = 1
+            | None -> false
+
+        let hasCreatedAtColumn =
+            match tryFindColumn "created_at_unix_ticks" with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+            | None -> false
+
+        hasSequenceColumn
+        && hasCreatedAtColumn
+        && watchJournalUsesAutoincrement connection
+
+    /// Reports whether the Watch journal contains rows that require trustworthy recovery metadata.
+    let private hasWatchJournalRows (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT EXISTS(SELECT 1 FROM watch_journal LIMIT 1);"
+        Convert.ToInt32(command.ExecuteScalar()) <> 0
+
+    /// Tries to read SQLite's allocated Watch journal sequence without trusting malformed persisted values.
+    let private tryReadAllocatedWatchJournalSequence (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT seq FROM sqlite_sequence WHERE name = 'watch_journal' LIMIT 1;"
+        let value = command.ExecuteScalar()
+
+        match value with
+        | null
+        | :? DBNull -> Some 0L
+        | :? int64 as sequence when sequence >= 0L -> Some sequence
+        | :? int as sequence when sequence >= 0 -> Some(int64 sequence)
+        | :? string as value ->
+            match Int64.TryParse(value) with
+            | true, sequence when sequence >= 0L -> Some sequence
+            | _ -> None
+        | _ -> None
+
+    /// Reads trusted Watch journal sequence bounds so malformed rows cannot be accepted by allocation checks.
+    let private tryReadWatchJournalSequenceBounds (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT COUNT(*), MIN(sequence), MAX(sequence) FROM watch_journal;"
+
+        use reader = command.ExecuteReader()
+
+        if reader.Read() then
+            let rowCount = reader.GetInt64(0)
+
+            if rowCount = 0L then
+                Some(0L, 0L)
+            else
+                let tryReadSequence ordinal =
+                    if reader.IsDBNull(ordinal) then
+                        None
+                    else
+                        match reader.GetValue(ordinal) with
+                        | :? int64 as sequence -> Some sequence
+                        | :? int as sequence -> Some(int64 sequence)
+                        | :? string as value ->
+                            match Int64.TryParse(value) with
+                            | true, sequence -> Some sequence
+                            | _ -> None
+                        | _ -> None
+
+                match tryReadSequence 1, tryReadSequence 2 with
+                | Some minSequence, Some maxSequence when minSequence > 0L && maxSequence >= minSequence -> Some(minSequence, maxSequence)
+                | _ -> None
+        else
+            None
+
+    /// Accepts SQLite's Watch journal allocation only when it covers every currently persisted journal row.
+    let private tryReadConsistentAllocatedWatchJournalSequence (connection: SqliteConnection) =
+        match tryReadAllocatedWatchJournalSequence connection, tryReadWatchJournalSequenceBounds connection with
+        | Some allocatedSequence, Some (_, maxJournalSequence) when allocatedSequence >= maxJournalSequence -> Some allocatedSequence
+        | _ -> None
+
+    /// Reads SQLite's allocated Watch journal sequence so recovery metadata cannot outrun future row ids.
+    let private readAllocatedWatchJournalSequence (connection: SqliteConnection) =
+        match tryReadAllocatedWatchJournalSequence connection with
+        | Some sequence -> sequence
+        | None -> raise (InvalidDataException("sqlite_sequence.seq for watch_journal must be a non-negative 64-bit integer."))
+
+    /// Reads local-state metadata for read-only inspection checks without writing default rows.
+    let private tryGetMetaValueReadOnly (connection: SqliteConnection) (key: string) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- "SELECT value FROM meta WHERE key = $key LIMIT 1;"
+        cmd.Parameters.AddWithValue("$key", key) |> ignore
+        use reader = cmd.ExecuteReader()
+
+        if reader.Read() && not (reader.IsDBNull(0)) then
+            Some(reader.GetString(0))
+        else
+            None
+
+    /// Counts persisted metadata rows for a key so schema trust rejects duplicate recovery watermarks.
+    let private countMetaValues (connection: SqliteConnection) (key: string) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- "SELECT COUNT(*) FROM meta WHERE key = $key;"
+        cmd.Parameters.AddWithValue("$key", key) |> ignore
+        cmd.ExecuteScalar() |> Convert.ToInt32
+
+    /// Parses read-only Watch recovery metadata using the same nonnegative sequence contract as writable acceptance.
+    let private tryParseWatchJournalAppliedThroughSequenceReadOnly (value: string) =
+        match Int64.TryParse(value) with
+        | true, sequence when sequence >= 0L -> Some sequence
+        | _ -> None
+
     /// Reads inspect object cache read only data from the local SQLite state database.
     let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
         try
@@ -406,6 +823,44 @@ module LocalStateDb =
             Some true, None
         with
         | ex -> Some false, Some ex.Message
+
+    /// Reads Watch journal schema and recovery metadata health without mutating local state.
+    let private inspectWatchJournalReadOnly (connection: SqliteConnection) =
+        if not (tableExists connection "watch_journal") then
+            Some false, None
+        else
+            let shapeValid =
+                try
+                    hasRequiredWatchJournalShape connection
+                with
+                | _ -> false
+
+            let metadataValid =
+                if shapeValid
+                   && hasRequiredMetaKeyValueShape connection then
+                    try
+                        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+                        | 1 ->
+                            match tryGetMetaValueReadOnly connection WatchJournalAppliedThroughSequenceMetaKey with
+                            | Some value ->
+                                match tryParseWatchJournalAppliedThroughSequenceReadOnly value with
+                                | Some sequence ->
+                                    match tryReadConsistentAllocatedWatchJournalSequence connection with
+                                    | Some allocatedSequence -> sequence <= allocatedSequence
+                                    | None -> false
+                                | None -> false
+                            | None -> false
+                        | count when count > 1 -> false
+                        | _ ->
+                            not (hasWatchJournalRows connection)
+                            && tryReadConsistentAllocatedWatchJournalSequence connection
+                               |> Option.isSome
+                    with
+                    | _ -> false
+                else
+                    false
+
+            Some shapeValid, Some metadataValid
 
     /// Reads inspect read only data from the local SQLite state database.
     let inspectReadOnly (dbPath: string) =
@@ -471,6 +926,7 @@ module LocalStateDb =
                         | ex -> [| ex.Message |]
 
                     let objectCacheReadable, objectCacheError = inspectObjectCacheReadOnly connection
+                    let watchJournalShapeValid, watchJournalAppliedThroughMetadataValid = inspectWatchJournalReadOnly connection
 
                     {
                         DbPath = normalizedPath
@@ -484,6 +940,8 @@ module LocalStateDb =
                         MissingRequiredIndexes = missingRequiredIndexes
                         IntegrityCheckRows = integrityRows
                         ForeignKeyViolations = foreignKeyViolations
+                        WatchJournalShapeValid = watchJournalShapeValid
+                        WatchJournalAppliedThroughMetadataValid = watchJournalAppliedThroughMetadataValid
                         ObjectCacheReadable = objectCacheReadable
                         ObjectCacheError = objectCacheError
                     }
@@ -496,13 +954,63 @@ module LocalStateDb =
         cmd.CommandText <- "SELECT value FROM meta WHERE key = $key LIMIT 1;"
         cmd.Parameters.AddWithValue("$key", key) |> ignore
         use reader = cmd.ExecuteReader()
-        if reader.Read() then Some(reader.GetString(0)) else None
+
+        if reader.Read() && not (reader.IsDBNull(0)) then
+            Some(reader.GetString(0))
+        else
+            None
 
     /// Coordinates local SQLite state for set meta value, including Grace status, object cache, or watch metadata.
     let private setMetaValue (connection: SqliteConnection) (key: string) (value: string) =
         executeNonQueryWithParams connection "INSERT OR REPLACE INTO meta (key, value) VALUES ($key, $value);" (fun parameters ->
             parameters.AddWithValue("$key", key) |> ignore
             parameters.AddWithValue("$value", value) |> ignore)
+
+    /// Persists the watch journal applied-through metadata default without advancing recovery state.
+    let private insertWatchJournalAppliedThroughIfMissing (connection: SqliteConnection) =
+        executeNonQueryWithParams connection "INSERT OR IGNORE INTO meta (key, value) VALUES ($key, '0');" (fun parameters ->
+            parameters.AddWithValue("$key", WatchJournalAppliedThroughSequenceMetaKey)
+            |> ignore)
+
+    /// Parses Watch journal recovery metadata only when it preserves the nonnegative sequence invariant.
+    let private tryParseWatchJournalAppliedThroughSequence (value: string) =
+        match Int64.TryParse(value) with
+        | true, sequence when sequence >= 0L -> Some sequence
+        | _ -> None
+
+    /// Verifies that the persisted Watch recovery metadata row can be trusted.
+    let private hasPersistedValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
+        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+        | 1 ->
+            match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
+            | Some value ->
+                match tryParseWatchJournalAppliedThroughSequence value with
+                | Some sequence ->
+                    match tryReadConsistentAllocatedWatchJournalSequence connection with
+                    | Some allocatedSequence -> sequence <= allocatedSequence
+                    | None -> false
+                | None -> false
+            | None -> false
+        | _ -> false
+
+    /// Verifies that existing Watch recovery metadata can be trusted before accepting schema version 5.
+    let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
+        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+        | 1 -> hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection
+        | count when count > 1 -> false
+        | _ ->
+            not (hasWatchJournalRows connection)
+            && tryReadConsistentAllocatedWatchJournalSequence connection
+               |> Option.isSome
+
+    /// Reads the applied-through journal sequence used by future Watch recovery work.
+    let private readWatchJournalAppliedThroughSequenceInternal (connection: SqliteConnection) =
+        match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
+        | Some value ->
+            match tryParseWatchJournalAppliedThroughSequence value with
+            | Some sequence -> sequence
+            | None -> raise (InvalidDataException($"{WatchJournalAppliedThroughSequenceMetaKey} must be a non-negative 64-bit integer."))
+        | None -> 0L
 
     /// Persists insert status meta if missing changes in the local SQLite state database.
     let private insertStatusMetaIfMissing (connection: SqliteConnection) =
@@ -530,10 +1038,14 @@ module LocalStateDb =
     /// Evaluates has required writable schema against parsed options and command state.
     let private hasRequiredWritableSchema (connection: SqliteConnection) =
         columnExists connection "status_meta" "root_directory_blake3_hash"
+        && hasRequiredMetaKeyValueShape connection
         && columnExists connection "status_directories" "blake3_hash"
         && columnExists connection "status_files" "blake3_hash"
         && columnExists connection "object_cache_directories" "blake3_hash"
         && columnExists connection "object_cache_directory_files" "blake3_hash"
+        && tableExists connection "watch_journal"
+        && hasRequiredWatchJournalShape connection
+        && hasValidWatchJournalAppliedThroughSequenceMeta connection
 
     /// Evaluates has empty writable status blake3 rows against parsed options and command state.
     let private hasEmptyWritableStatusBlake3Rows (connection: SqliteConnection) =
@@ -646,6 +1158,10 @@ module LocalStateDb =
                                                 if not recreate then
                                                     logTrace "status_meta ensuring default row"
                                                     insertStatusMetaIfMissing connection
+                                                    insertWatchJournalAppliedThroughIfMissing connection
+
+                                                    if not (hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection) then
+                                                        recreate <- true
                                             with
                                             | :? SqliteException as ex when ex.SqliteErrorCode = 26 -> recreate <- true
                                         with
@@ -664,6 +1180,11 @@ module LocalStateDb =
                                         ensureJournalMode connection
                                         setMetaValue connection "schema_version" SchemaVersion
                                         setMetaValue connection "created_at_unix_ticks" $"{getCurrentInstant().ToUnixTimeTicks()}"
+                                        insertWatchJournalAppliedThroughIfMissing connection
+
+                                        if not (hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection) then
+                                            raise (InvalidDataException($"{WatchJournalAppliedThroughSequenceMetaKey} default could not be stored."))
+
                                         logTrace "status_meta ensuring default row"
                                         insertStatusMetaIfMissing connection
                                 })
@@ -671,6 +1192,77 @@ module LocalStateDb =
                         initializedDbs[normalizedPath] <- true
                 finally
                     semaphore.Release() |> ignore
+        }
+
+    /// Reads the local Watch journal recovery watermark from LocalStateDb metadata.
+    let readWatchJournalAppliedThroughSequence (dbPath: string) =
+        task {
+            do! ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            return readWatchJournalAppliedThroughSequenceInternal connection
+        }
+
+    /// Persists the local Watch journal recovery watermark without changing journal rows.
+    let setWatchJournalAppliedThroughSequence (dbPath: string) (sequence: int64) =
+        task {
+            if sequence < 0L then
+                invalidArg (nameof sequence) "Applied-through sequence must be greater than or equal to zero."
+
+            do! ensureDbInitialized dbPath
+
+            return!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
+                        let mutable committed = false
+
+                        try
+                            let currentSequence = readWatchJournalAppliedThroughSequenceInternal connection
+
+                            if sequence < currentSequence then
+                                invalidOp $"Applied-through sequence cannot move backward from {currentSequence} to {sequence}."
+
+                            let allocatedSequence = readAllocatedWatchJournalSequence connection
+
+                            if sequence > allocatedSequence then
+                                invalidOp
+                                    $"Applied-through sequence cannot advance to {sequence} because the Watch journal has only allocated through {allocatedSequence}."
+
+                            setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{sequence}"
+                            executeNonQuery connection "COMMIT;"
+                            committed <- true
+                        finally
+                            if not committed then
+                                try
+                                    executeNonQuery connection "ROLLBACK;"
+                                with
+                                | _ -> ()
+                    })
+        }
+
+    /// Prunes applied Watch journal rows while keeping a small diagnostic tail behind the watermark.
+    let pruneWatchJournalRetention (dbPath: string) =
+        task {
+            do! ensureDbInitialized dbPath
+
+            return!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+                        let appliedThroughSequence = readWatchJournalAppliedThroughSequenceInternal connection
+
+                        let pruneThroughSequence =
+                            max
+                                0L
+                                (appliedThroughSequence
+                                 - WatchJournalRetainedAppliedRows)
+
+                        if pruneThroughSequence > 0L then
+                            executeNonQueryWithParams connection "DELETE FROM watch_journal WHERE sequence <= $sequence;" (fun parameters ->
+                                parameters.AddWithValue("$sequence", pruneThroughSequence)
+                                |> ignore)
+                    })
         }
 
     /// Models status meta values passed between the parser and local state db handlers.
