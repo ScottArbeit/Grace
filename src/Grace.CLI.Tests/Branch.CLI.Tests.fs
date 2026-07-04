@@ -5,11 +5,13 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.CLI.Services
 open Grace.Shared
+open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Utilities
 open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.Reference
+open NodaTime
 open NUnit.Framework
 open Spectre.Console
 open System
@@ -77,6 +79,237 @@ module BranchCommandTests =
             Source = ExplicitReference
             CreatedSaveMessage = None
         }
+
+    /// Runs the supplied action with a temporary current repository identity for branch switch preflight tests.
+    let private withTempBranchSwitchRepo (action: unit -> unit) =
+        let tempDir = Path.Combine(Path.GetTempPath(), $"grace-branch-switch-tests-{Guid.NewGuid():N}")
+        let graceDir = Path.Combine(tempDir, Constants.GraceConfigDirectory)
+        let originalDir = Environment.CurrentDirectory
+        let originalParseResult = Services.parseResult
+
+        try
+            Directory.CreateDirectory(graceDir) |> ignore
+            File.WriteAllText(Path.Combine(graceDir, Constants.GraceConfigFileName), "{}")
+            Environment.CurrentDirectory <- tempDir
+            Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
+            resetConfiguration ()
+
+            let configuration = Current()
+            configuration.RepositoryId <- repositoryId
+            configuration.RepositoryName <- "branch-switch-repository"
+            configuration.BranchId <- branchId
+            configuration.BranchName <- "branch-switch-current"
+            configuration.RootDirectory <- tempDir
+
+            action ()
+        finally
+            resetConfiguration ()
+            Services.parseResult <- originalParseResult
+            Environment.CurrentDirectory <- originalDir
+
+            if Directory.Exists(tempDir) then Directory.Delete(tempDir, true)
+
+    /// Builds a trusted Watch IPC inspection snapshot for branch switch preflight tests.
+    let private branchSwitchWatchStatus () : GraceWatchStatus =
+        let current = Current()
+        let rootDirectoryId = Guid.NewGuid()
+
+        {
+            UpdatedAt = getCurrentInstant ()
+            IsStartupClaim = false
+            RepositoryId = current.RepositoryId
+            RepositoryName = RepositoryName current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = BranchName current.BranchName
+            RootDirectory = current.RootDirectory
+            HasPendingWatchWork = false
+            IsWorkingTreeClean = true
+            RootDirectoryId = rootDirectoryId
+            RootDirectorySha256Hash = Sha256Hash "branch-switch-watch-root"
+            RootDirectoryBlake3Hash = Blake3Hash "branch-switch-watch-root-blake3"
+            LastFileUploadInstant = Instant.MinValue
+            LastDirectoryVersionInstant = Instant.MinValue
+            DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
+        }
+
+    /// Wraps a status snapshot in the inspection shape consumed by branch switch preflight.
+    let private branchSwitchWatchInspection persistedMode status =
+        { Exists = true; Status = Some status; PersistedMode = persistedMode; SafetyFlags = status.SafetyFlags; ReadError = None }
+
+    /// Runs branch switch preflight with injected side effects and reports which effects occurred.
+    let private runBranchSwitchPreflight markerExists inspection =
+        let mutable inspected = false
+        let mutable markerCreated = false
+
+        let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+            {
+                UpdateMarkerExists = fun () -> markerExists
+                InspectWatchStatus =
+                    fun () ->
+                        inspected <- true
+                        Task.FromResult inspection
+                CreateUpdateMarker =
+                    fun () ->
+                        task {
+                            markerCreated <- true
+                            return ()
+                        }
+            }
+
+        let result =
+            (Branch.runBranchSwitchWatchCleanPreflight operations correlationId)
+                .GetAwaiter()
+                .GetResult()
+
+        result, inspected, markerCreated
+
+    /// Verifies that branch switch accepts matching IDs even when display names in Watch status are stale.
+    [<Test>]
+    let ``branch switch Watch preflight allows healthy clean status with stale display names`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let status =
+                { branchSwitchWatchStatus () with
+                    RepositoryName = RepositoryName "stale-repository-display-name"
+                    BranchName = BranchName "stale-branch-display-name"
+                }
+
+            let result, inspected, markerCreated =
+                branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) status
+                |> runBranchSwitchPreflight false
+
+            match result with
+            | Ok _ -> ()
+            | Error error -> Assert.Fail($"Expected healthy Watch status to allow branch switch, got: {error.Error}")
+
+            inspected |> should equal true
+            markerCreated |> should equal true)
+
+    /// Verifies that a pre-existing update marker refuses before Watch inspection or marker mutation.
+    [<Test>]
+    let ``branch switch Watch preflight refuses existing update marker before inspection`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let result, inspected, markerCreated =
+                branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ())
+                |> runBranchSwitchPreflight true
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before mutation"
+
+                error.Error
+                |> should contain "update marker already exists"
+            | Ok _ -> Assert.Fail("Expected existing update marker to refuse branch switch.")
+
+            inspected |> should equal false
+            markerCreated |> should equal false)
+
+    /// Verifies that untrusted Watch states refuse before branch switch marker creation.
+    [<Test>]
+    let ``branch switch Watch preflight refuses untrusted Watch states before marker creation`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let current = Current()
+            let healthyStatus = branchSwitchWatchStatus ()
+
+            let missingStatus: GraceWatchStatusInspection =
+                {
+                    Exists = false
+                    Status = None
+                    PersistedMode = None
+                    SafetyFlags =
+                        [|
+                            "missingStatus"
+                            "requiresExplicitResync"
+                        |]
+                    ReadError = None
+                }
+
+            let unreadableStatus: GraceWatchStatusInspection =
+                {
+                    Exists = true
+                    Status = None
+                    PersistedMode = None
+                    SafetyFlags =
+                        [|
+                            "unreadableStatus"
+                            "requiresExplicitResync"
+                        |]
+                    ReadError = Some "The Grace Watch status file exists but could not be read."
+                }
+
+            let staleStatus =
+                { healthyStatus with
+                    UpdatedAt =
+                        getCurrentInstant()
+                            .Minus(Duration.FromMinutes(10.0))
+                }
+
+            let crossRootStatus = { healthyStatus with RootDirectory = Path.Combine(Path.GetTempPath(), $"other-root-{Guid.NewGuid():N}") }
+
+            let crossRepositoryStatus = { healthyStatus with RepositoryId = Guid.NewGuid(); RepositoryName = RepositoryName current.RepositoryName }
+
+            let crossBranchStatus = { healthyStatus with BranchId = Guid.NewGuid(); BranchName = BranchName current.BranchName }
+
+            let legacyNonAuthoritativeStatus =
+                { healthyStatus with
+                    RepositoryId = RepositoryId.Empty
+                    RepositoryName = RepositoryName String.Empty
+                    BranchId = BranchId.Empty
+                    BranchName = BranchName String.Empty
+                    RootDirectory = String.Empty
+                }
+
+            let resynchronizingStatus = { healthyStatus with DirectoryIds = HashSet<DirectoryVersionId>() }
+
+            let pendingStatus = { healthyStatus with HasPendingWatchWork = true }
+
+            let dirtyStatus = { healthyStatus with IsWorkingTreeClean = false }
+
+            let startupStatus = { healthyStatus with IsStartupClaim = true }
+
+            let cases =
+                [|
+                    "missing Watch status", missingStatus, "status file is missing"
+                    "unreadable Watch status", unreadableStatus, "could not be read"
+                    "stale Watch heartbeat", branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) staleStatus, "heartbeat is stale"
+                    "cross-root Watch status",
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) crossRootStatus,
+                    "does not match the current repository root"
+                    "cross-repository Watch status",
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) crossRepositoryStatus,
+                    "persisted IDs are authoritative"
+                    "cross-branch Watch status",
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) crossBranchStatus,
+                    "persisted IDs are authoritative"
+                    "legacy non-authoritative Watch status",
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) legacyNonAuthoritativeStatus,
+                    "legacy non-authoritative identity"
+                    "suspended Watch mode",
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.Suspended) healthyStatus,
+                    "requires healthy/current incremental mode"
+                    "resynchronizing Watch status",
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) resynchronizingStatus,
+                    "resynchronizing"
+                    "pending local observations",
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) pendingStatus,
+                    "pending local observations"
+                    "dirty Watch status", branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) dirtyStatus, "dirty working tree"
+                    "startup Watch claim", branchSwitchWatchInspection (Some GraceWatchRuntimeMode.StartingUp) startupStatus, "still starting"
+                |]
+
+            for name, inspection, expectedReason in cases do
+                let result, inspected, markerCreated = runBranchSwitchPreflight false inspection
+
+                match result with
+                | Error error ->
+                    error.Error
+                    |> should contain "Branch switch refused before mutation"
+
+                    error.Error |> should contain expectedReason
+                | Ok _ -> Assert.Fail($"Expected {name} to refuse branch switch.")
+
+                inspected |> should equal true
+                markerCreated |> should equal false)
 
     let private sampleAnnotation =
         let lastChangedReferenceId = Guid.NewGuid()
