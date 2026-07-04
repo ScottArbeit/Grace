@@ -298,8 +298,8 @@ module Services =
                     .Minus(Duration.FromMinutes(5.0))
             | None -> false
 
-        /// Reports whether the IPC snapshot can serve trusted incremental shortcuts.
-        member this.IsUsable =
+        /// Reports whether the IPC snapshot belongs to the current repository identity before trust checks.
+        member this.HasCurrentRepositoryIdentity =
             match this.Status, this.EffectiveMode with
             | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
                 let current = Current()
@@ -316,16 +316,23 @@ module Services =
                         with
                         | _ -> false
 
-                this.IsFresh
-                && not status.IsStartupClaim
-                && status.IsWorkingTreeClean
-                && not status.HasPendingWatchWork
-                && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
+                status.Mode = GraceWatchRuntimeMode.HealthyIncremental
                 && (status.RepositoryId = RepositoryId.Empty
                     || status.RepositoryId = current.RepositoryId)
                 && (status.BranchId = BranchId.Empty
                     || status.BranchId = current.BranchId)
                 && rootDirectoryMatchesCurrent
+            | _ -> false
+
+        /// Reports whether the IPC snapshot can serve trusted incremental shortcuts.
+        member this.IsUsable =
+            match this.Status, this.EffectiveMode with
+            | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                this.IsFresh
+                && not status.IsStartupClaim
+                && status.IsWorkingTreeClean
+                && not status.HasPendingWatchWork
+                && this.HasCurrentRepositoryIdentity
             | _ -> false
 
         /// Reports whether a fresh Watch process appears to own the IPC file even when shortcuts are unavailable.
@@ -346,6 +353,11 @@ module Services =
     let private isCleanShortcutSafetyFlag safetyFlag =
         String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)
         || String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal)
+
+    /// Reports whether a compact Watch safety flag depends on current-repository identity validation.
+    let private isIdentitySensitiveSafetyFlag safetyFlag =
+        isCleanShortcutSafetyFlag safetyFlag
+        || String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)
 
     /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
     let private safetyFlagsForGraceWatchStatusContract persistedModeOverride (status: GraceWatchStatus) =
@@ -379,7 +391,12 @@ module Services =
         else
             let safetyFlags =
                 inspection.SafetyFlags
-                |> Array.filter (isCleanShortcutSafetyFlag >> not)
+                |> Array.filter (
+                    if inspection.HasCurrentRepositoryIdentity then
+                        isCleanShortcutSafetyFlag >> not
+                    else
+                        isIdentitySensitiveSafetyFlag >> not
+                )
 
             if safetyFlags
                |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "requiresExplicitResync", StringComparison.Ordinal)) then

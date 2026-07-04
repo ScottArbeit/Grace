@@ -7703,6 +7703,50 @@ module WatchTests =
                 Services.getGraceWatchStatus().Result
                 |> should equal None)
 
+    /// Verifies that unusable dirty Watch IPC keeps current-repo pending diagnostics after identity validation.
+    [<Test>]
+    let ``watch status preserves current repo pending apply when dirty snapshot is unusable`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let dirtyStatus = { liveWatchStatus rootDirectoryId with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+            let statusLevelFlags = safetyFlagSet dirtyStatus
+
+            statusLevelFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal true
+
+            statusLevelFlags
+            |> Set.contains "pendingStatusApply"
+            |> should equal true
+
+            writeWatchStatusJsonWithRuntimeSurface dirtyStatus
+            |> ignore
+
+            let inspection =
+                Services
+                    .inspectGraceWatchStatus()
+                    .GetAwaiter()
+                    .GetResult()
+
+            inspection.IsLiveProcess |> should equal true
+            inspection.IsUsable |> should equal false
+
+            let inspectionSafetyFlags = inspection.SafetyFlags |> Set.ofArray
+
+            inspectionSafetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal true
+
+            inspectionSafetyFlags
+            |> Set.contains "pendingStatusApply"
+            |> should equal true
+
+            inspectionSafetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
+
     /// Verifies that root identity comparisons reject case-only path differences under case-sensitive semantics.
     [<Test>]
     let ``watch root identity comparison respects case-sensitive path semantics`` () =
@@ -7867,6 +7911,63 @@ module WatchTests =
 
             readFileIfExists ipcFileName
             |> should equal originalContents)
+
+    /// Verifies that watch check does not advertise pending apply from a dirty snapshot for another root.
+    [<Test>]
+    let ``watch check json strips pending apply for dirty root mismatch`` () =
+        withTempRepo (fun tempDir ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let dirtyMismatchedStatus =
+                { liveWatchStatus rootDirectoryId with
+                    RootDirectory = Path.Combine(tempDir, "other-worktree")
+                    HasPendingWatchWork = true
+                    IsWorkingTreeClean = false
+                }
+
+            safetyFlagSet dirtyMismatchedStatus
+            |> Set.contains "pendingStatusApply"
+            |> should equal true
+
+            writeWatchStatusJsonWithRuntimeSurface dirtyMismatchedStatus
+            |> ignore
+
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "watch"
+                                                  "--check" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let root = document.RootElement.GetProperty("ReturnValue")
+
+            root.GetProperty("IsRunning").GetBoolean()
+            |> should equal true
+
+            root
+                .GetProperty("CanUseIncrementalStatus")
+                .GetBoolean()
+            |> should equal false
+
+            let safetyFlags =
+                root.GetProperty("SafetyFlags").EnumerateArray()
+                |> Seq.map (fun flag -> flag.GetString())
+                |> Set.ofSeq
+
+            safetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "pendingStatusApply"
+            |> should equal false)
 
     /// Verifies that watch check select mode projects status fields and preserves live watcher status.
     [<Test>]
