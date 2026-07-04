@@ -2655,6 +2655,8 @@ module Watch =
                 then
                     let! graceStatusFromDisk = readGraceStatusMetaClient ()
                     do! updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds)
+                elif runtimeMode = GraceWatchRuntimeMode.Suspended then
+                    do! updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
                 else
                     do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
 

@@ -748,10 +748,37 @@ module CommandOutputContractRegistryTests =
                 schema.Status |> should equal "schema-ready"
 
                 schema.Envelope
-                |> should contain "supported status-check success"
+                |> should contain "status envelope for status checks"
+
+                schema.Envelope
+                |> should contain "unavailable modes with nonzero exit codes"
+
+                schema.Envelope
+                |> should not' (contain "GraceError on unsupported or failed modes")
 
                 schema.ReturnValueContract
                 |> should equal "WatchStatusDto"
+
+                use successSchema = JsonDocument.Parse(Grace.Shared.Utilities.serialize schema.SuccessSchema)
+
+                let watchStatusSchema =
+                    successSchema
+                        .RootElement
+                        .GetProperty("properties")
+                        .GetProperty("ReturnValue")
+
+                let requiredFields =
+                    watchStatusSchema
+                        .GetProperty("required")
+                        .EnumerateArray()
+                    |> Seq.map (fun field -> field.GetString())
+                    |> Set.ofSeq
+
+                requiredFields
+                |> should not' (contain "UpdatedAt")
+
+                requiredFields
+                |> should not' (contain "RootDirectoryId")
             | None -> Assert.Fail("watch schema introspection should include the conditional status schema document.")
         | None -> Assert.Fail("watch should have a registry entry.")
 

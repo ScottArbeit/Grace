@@ -6543,7 +6543,15 @@ module WatchTests =
                 .GetResult()
 
             Services.getGraceWatchStatus().Result
-            |> should equal None)
+            |> should equal None
+
+            readWatchStatusJsonStringProperty "Mode"
+            |> should equal "suspended"
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            inspection.PersistedMode
+            |> should equal (Some Services.GraceWatchRuntimeMode.Suspended))
 
     /// Verifies that Grace Status DB refreshes cannot publish healthy IPC while resync is pending.
     [<Test>]

@@ -452,8 +452,6 @@ module CommandOutputContract =
                 "HasUsableRootSnapshot"
                 "HasDirectoryIndexSnapshot"
                 "IsStartupClaim"
-                "UpdatedAt"
-                "RootDirectoryId"
             |]
 
     let private watchStatusExample =
@@ -834,7 +832,7 @@ module CommandOutputContract =
                 match entry.EnvelopeContract with
                 | JsonModeErrorOnly reason -> $"GraceError only in JSON mode for this release; no success ReturnValue envelope is emitted. {reason}"
                 | ConditionalGraceResultEnvelope (_, condition) ->
-                    $"GraceReturnValue<T> on supported status-check success; GraceError on unsupported or failed modes. {condition}"
+                    $"GraceReturnValue<T> status envelope for status checks, including unavailable modes with nonzero exit codes. GraceError remains for parser and command execution errors outside that status-check path. {condition}"
                 | _ -> "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
             ReturnValueDisposition = returnValueDispositionText entry.EnvelopeContract
             ReturnValueContract = entry.ReturnValueContract.Name
