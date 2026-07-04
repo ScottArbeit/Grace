@@ -253,6 +253,76 @@ module Watch =
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     /// Coordinates update not in progress behavior for this CLI command path.
     let updateNotInProgress () = not <| updateInProgress ()
+    let private graceUpdateMarkerDeletionLock = obj ()
+    let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
+    let mutable private lastGraceUpdateMarkerDeletedUtc = DateTime.MinValue
+
+    /// Gets the completion sidecar written before the Grace update marker is removed.
+    let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
+
+    /// Records when the Grace-owned update marker disappeared so stale changed/created callbacks can be classified.
+    let private recordGraceUpdateMarkerDeletedUtc deletedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc <- deletedUtc)
+
+    /// Clears the recent marker-deletion fact when a new Grace-owned update starts or tests reset Watch state.
+    let private clearGraceUpdateMarkerDeletedUtc () =
+        recordGraceUpdateMarkerDeletedUtc DateTime.MinValue
+
+        try
+            let completedFileName = updateMarkerCompletedFileName ()
+
+            if File.Exists(completedFileName) then File.Delete(completedFileName)
+        with
+        | :? IOException -> ()
+        | :? UnauthorizedAccessException -> ()
+
+    /// Sets the recent Grace update marker deletion instant for deterministic Watch callback tests.
+    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc = recordGraceUpdateMarkerDeletedUtc deletedUtc
+
+    /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
+    let private tryReadGraceUpdateMarkerCompletedUtc () =
+        try
+            let completedFileName = updateMarkerCompletedFileName ()
+
+            if File.Exists(completedFileName) then
+                match DateTime.TryParse(File.ReadAllText(completedFileName), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
+                | true, completedUtc -> Some completedUtc
+                | false, _ -> None
+            else
+                None
+        with
+        | :? IOException -> None
+        | :? UnauthorizedAccessException -> None
+
+    /// Identifies delayed file callbacks for writes that completed while a Grace update marker was still present.
+    let private isDelayedGraceOwnedFileObservation fullPath =
+        let markerDeletedUtc =
+            let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
+
+            if recordedUtc <> DateTime.MinValue then
+                Some recordedUtc
+            else
+                tryReadGraceUpdateMarkerCompletedUtc ()
+
+        match markerDeletedUtc with
+        | None -> false
+        | Some markerDeletedUtc when DateTime.UtcNow - markerDeletedUtc > graceUpdateMarkerDeletedObservationWindow -> false
+        | Some _ when
+            not (File.Exists fullPath)
+            && not (Directory.Exists fullPath)
+            ->
+            false
+        | Some markerDeletedUtc ->
+            try
+                let lastWriteTimeUtc =
+                    if File.Exists fullPath then
+                        File.GetLastWriteTimeUtc(fullPath)
+                    else
+                        Directory.GetLastWriteTimeUtc(fullPath)
+
+                lastWriteTimeUtc <= markerDeletedUtc
+            with
+            | :? IOException -> false
+            | :? UnauthorizedAccessException -> false
 
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
@@ -1749,6 +1819,7 @@ module Watch =
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
+        clearGraceUpdateMarkerDeletedUtc ()
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None
@@ -2039,6 +2110,8 @@ module Watch =
     let OnCreated (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
+        elif isDelayedGraceOwnedFileObservation args.FullPath then
+            logObservationSuppressed args.FullPath
         elif
             updateNotInProgress ()
             && Directory.Exists(args.FullPath)
@@ -2066,6 +2139,8 @@ module Watch =
     /// Coordinates on changed behavior for this CLI command path.
     let OnChanged (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif isDelayedGraceOwnedFileObservation args.FullPath then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress ()
              && isNotDirectory args.FullPath then
@@ -2192,6 +2267,7 @@ module Watch =
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
+                clearGraceUpdateMarkerDeletedUtc ()
                 logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
@@ -2200,6 +2276,7 @@ module Watch =
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateNotInProgress () then
+                recordGraceUpdateMarkerDeletedUtc DateTime.UtcNow
                 logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."

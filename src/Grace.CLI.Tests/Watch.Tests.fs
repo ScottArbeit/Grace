@@ -425,6 +425,59 @@ module WatchTests =
             finally
                 if File.Exists(updateMarkerFile) then File.Delete(updateMarkerFile))
 
+    /// Verifies that delayed callbacks for writes completed under the update marker do not enqueue after deletion.
+    [<Test>]
+    let ``update marker deletion keeps delayed Grace-owned changed observation suppressed`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "delayed-grace-owned-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+            File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
+            File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(-1.0))
+            File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
+            File.Delete(updateMarkerFile)
+
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that user writes after marker deletion still enqueue as local Watch work.
+    [<Test>]
+    let ``update marker deletion does not suppress later user changed observation`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "later-user-write.txt")
+            let markerDeletedUtc = DateTime.UtcNow.AddSeconds(-5.0)
+
+            File.WriteAllText(changedFilePath, "user edit after branch switch")
+            File.SetLastWriteTimeUtc(changedFilePath, markerDeletedUtc.AddSeconds(1.0))
+            Watch.recordGraceUpdateMarkerDeletedUtcForTests markerDeletedUtc
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| changedFilePath |]
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
     /// Produces an empty difference list for watch tests that do not exercise a scan path.
     let private scanForNoDifferences _ = Task.FromResult(List<FileSystemDifference>())
 
