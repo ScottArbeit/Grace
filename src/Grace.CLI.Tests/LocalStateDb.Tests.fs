@@ -171,6 +171,12 @@ module LocalStateDbTests =
         cmd.CommandText <- sql
         cmd.ExecuteNonQuery() |> ignore
 
+    /// Allocates Watch journal sequences without adding replay semantics beyond the schema scaffold.
+    let private insertWatchJournalRows (connection: SqliteConnection) throughSequence =
+        [| 1L .. throughSequence |]
+        |> Array.iter (fun sequence ->
+            executeNonQuery connection $"INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES ({sequence}, {sequence});")
+
     /// Gets corrupt backups needed by the test scenario.
     let private getCorruptBackups (dbPath: string) =
         let directoryPath = Path.GetDirectoryName(dbPath)
@@ -386,9 +392,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
 
-                [| 1L .. 1030L |]
-                |> Array.iter (fun sequence ->
-                    executeNonQuery connection $"INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES ({sequence}, {sequence});")
+                insertWatchJournalRows connection 1030L
 
                 do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 1026L
                 do! LocalStateDb.pruneWatchJournalRetention configuration.GraceStatusFile
@@ -411,6 +415,11 @@ module LocalStateDbTests =
         withTempDir (fun _ configuration ->
             task {
                 do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 5L
+
                 do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 5L
 
                 let operation = Func<Task>(fun () -> LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 4L :> Task)
@@ -422,6 +431,74 @@ module LocalStateDbTests =
 
                 let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
                 readThrough |> should equal 5L
+            })
+
+    /// Verifies that Watch recovery metadata cannot outrun SQLite's allocated journal sequence.
+    [<Test>]
+    let ``watch journal applied through sequence cannot exceed allocated sequence`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let operation = Func<Task>(fun () -> LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 1L :> Task)
+
+                let ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+                ex.Message
+                |> should contain "only allocated through 0"
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 0L
+            })
+
+    /// Verifies that concurrent Watch recovery watermark advances cannot let a lower stale write win.
+    [<Test>]
+    let ``watch journal applied through sequence is atomic under interleaved advances`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                do
+                    use seedConnection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows seedConnection 4L
+
+                use lockConnection = openRawConnection configuration.GraceStatusFile
+                executeNonQuery lockConnection "BEGIN IMMEDIATE;"
+
+                let runAdvance sequence =
+                    task {
+                        try
+                            do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile sequence
+                            return Some sequence
+                        with
+                        | :? InvalidOperationException as ex when ex.Message.Contains("cannot move backward", StringComparison.OrdinalIgnoreCase) -> return None
+                    }
+
+                let startAdvance sequence =
+                    Task
+                        .Factory
+                        .StartNew(Func<Task<int64 option>>(fun () -> runAdvance sequence))
+                        .Unwrap()
+
+                let highTask = startAdvance 4L
+                do! Task.Delay(50)
+
+                let lowerTasks = [| 1L .. 3L |] |> Array.map startAdvance
+
+                do! Task.Delay(100)
+                executeNonQuery lockConnection "ROLLBACK;"
+
+                let! highResult = highTask
+                let! lowerResults = Task.WhenAll lowerTasks
+
+                highResult |> should equal (Some 4L)
+
+                lowerResults
+                |> Array.choose id
+                |> Array.iter (fun sequence -> sequence |> should be (lessThanOrEqualTo 4L))
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 4L
             })
 
     /// Verifies that round trips status snapshot.
@@ -792,6 +869,46 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that AUTOINCREMENT acceptance belongs to the sequence column declaration, not nearby SQL text.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 autoincrement text is outside sequence declaration`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_journal;"
+
+                    executeNonQuery
+                        connection
+                        "CREATE TABLE watch_journal (sequence INTEGER PRIMARY KEY, created_at_unix_ticks INTEGER NOT NULL CHECK ('sequence INTEGER PRIMARY KEY AUTOINCREMENT' IS NOT NULL));"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                schemaVersion |> should equal "5"
+
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("sequence INTEGER PRIMARY KEY AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
     /// Verifies that ensure db initialized recreates db when Watch recovery metadata is malformed.
     [<TestCase("not-a-number")>]
     [<TestCase("-1")>]
@@ -823,6 +940,43 @@ module LocalStateDbTests =
 
                 let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
                 readThrough |> should equal 0L
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema acceptance rejects Watch recovery metadata beyond SQLite's allocated journal sequence.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 applied through metadata exceeds allocated sequence`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    executeNonQuery connection "UPDATE meta SET value = '3' WHERE key = 'AppliedThroughSequence';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile

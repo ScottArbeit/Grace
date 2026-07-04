@@ -436,13 +436,164 @@ module LocalStateDb =
     /// Reports whether SQLite declared a column with INTEGER affinity for a trusted local-state sequence.
     let private isIntegerColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "INTEGER")
 
-    /// Matches the Watch journal sequence declaration that prevents SQLite rowid reuse after retention pruning.
-    let private watchJournalSequenceAutoincrementPattern =
+    /// Locates the top-level column list inside SQLite's stored CREATE TABLE statement.
+    let private tryGetCreateTableColumnList (sql: string) =
+        let mutable startIndex = -1
+        let mutable endIndex = -1
+        let mutable depth = 0
+        let mutable quote = '\000'
+        let mutable index = 0
+
+        while index < sql.Length && endIndex < 0 do
+            let ch = sql[index]
+
+            if quote <> '\000' then
+                if quote = ']' then
+                    if ch = ']' then quote <- '\000'
+                elif ch = quote then
+                    if index + 1 < sql.Length && sql[index + 1] = quote then
+                        index <- index + 1
+                    else
+                        quote <- '\000'
+            else
+                match ch with
+                | '\''
+                | '"'
+                | '`' -> quote <- ch
+                | '[' -> quote <- ']'
+                | '(' ->
+                    if depth = 0 then startIndex <- index + 1
+                    depth <- depth + 1
+                | ')' ->
+                    if depth > 0 then
+                        depth <- depth - 1
+
+                        if depth = 0 then endIndex <- index
+                | _ -> ()
+
+            index <- index + 1
+
+        if startIndex >= 0 && endIndex > startIndex then
+            Some(sql.Substring(startIndex, endIndex - startIndex))
+        else
+            None
+
+    /// Splits SQLite column and constraint declarations without trusting text inside defaults or CHECK expressions.
+    let private splitTopLevelSqlDeclarations (declarations: string) =
+        let parts = ResizeArray<string>()
+        let mutable startIndex = 0
+        let mutable depth = 0
+        let mutable quote = '\000'
+        let mutable index = 0
+
+        while index < declarations.Length do
+            let ch = declarations[index]
+
+            if quote <> '\000' then
+                if quote = ']' then
+                    if ch = ']' then quote <- '\000'
+                elif ch = quote then
+                    if index + 1 < declarations.Length
+                       && declarations[index + 1] = quote then
+                        index <- index + 1
+                    else
+                        quote <- '\000'
+            else
+                match ch with
+                | '\''
+                | '"'
+                | '`' -> quote <- ch
+                | '[' -> quote <- ']'
+                | '(' -> depth <- depth + 1
+                | ')' when depth > 0 -> depth <- depth - 1
+                | ',' when depth = 0 ->
+                    parts.Add(
+                        declarations
+                            .Substring(startIndex, index - startIndex)
+                            .Trim()
+                    )
+
+                    startIndex <- index + 1
+                | _ -> ()
+
+            index <- index + 1
+
+        let last = declarations.Substring(startIndex).Trim()
+
+        if not (String.IsNullOrWhiteSpace(last)) then parts.Add(last)
+
+        parts |> Seq.toArray
+
+    /// Parses the leading SQLite identifier from a column declaration.
+    let private tryReadLeadingSqlIdentifier (declaration: string) =
+        let mutable index = 0
+
+        while index < declaration.Length
+              && Char.IsWhiteSpace(declaration[index]) do
+            index <- index + 1
+
+        if index >= declaration.Length then
+            None
+        else
+            let ch = declaration[index]
+
+            if ch = '"' || ch = '`' || ch = '[' then
+                let terminator = if ch = '[' then ']' else ch
+                let startIndex = index + 1
+                index <- startIndex
+                let mutable identifier = StringBuilder()
+                let mutable closed = false
+
+                while index < declaration.Length && not closed do
+                    if declaration[index] = terminator then
+                        if terminator <> ']'
+                           && index + 1 < declaration.Length
+                           && declaration[index + 1] = terminator then
+                            identifier.Append(terminator) |> ignore
+                            index <- index + 2
+                        else
+                            closed <- true
+                            index <- index + 1
+                    else
+                        identifier.Append(declaration[index]) |> ignore
+                        index <- index + 1
+
+                if closed then
+                    Some(identifier.ToString(), declaration.Substring(index))
+                else
+                    None
+            else
+                let startIndex = index
+
+                while index < declaration.Length
+                      && not (Char.IsWhiteSpace(declaration[index]))
+                      && declaration[index] <> ',' do
+                    index <- index + 1
+
+                if index > startIndex then
+                    Some(declaration.Substring(startIndex, index - startIndex), declaration.Substring(index))
+                else
+                    None
+
+    /// Matches the actual Watch journal sequence column declaration that prevents rowid reuse after pruning.
+    let private watchJournalSequenceAutoincrementDeclarationPattern =
         Regex(
-            @"(?:""sequence""|\[sequence\]|`sequence`|sequence)\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+            @"^\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
             RegexOptions.IgnoreCase
             ||| RegexOptions.CultureInvariant
         )
+
+    /// Reports whether SQLite's stored CREATE TABLE statement gives the sequence column AUTOINCREMENT semantics.
+    let private createSqlDeclaresSequenceAutoincrement (sql: string) =
+        match tryGetCreateTableColumnList sql with
+        | Some columnList ->
+            splitTopLevelSqlDeclarations columnList
+            |> Array.exists (fun declaration ->
+                match tryReadLeadingSqlIdentifier declaration with
+                | Some (identifier, remainder) when StringComparer.OrdinalIgnoreCase.Equals(identifier, "sequence") ->
+                    watchJournalSequenceAutoincrementDeclarationPattern.IsMatch(remainder)
+                | _ -> false)
+        | None -> false
 
     /// Reports whether SQLite stored the Watch journal table as an AUTOINCREMENT sequence table.
     let private watchJournalUsesAutoincrement (connection: SqliteConnection) =
@@ -451,7 +602,7 @@ module LocalStateDb =
         let value = command.ExecuteScalar()
 
         match value with
-        | :? string as sql -> watchJournalSequenceAutoincrementPattern.IsMatch(sql)
+        | :? string as sql -> createSqlDeclaresSequenceAutoincrement sql
         | _ -> false
 
     /// Verifies that the Watch journal table can support ordered local recovery and retention operations.
@@ -486,6 +637,17 @@ module LocalStateDb =
         use command = connection.CreateCommand()
         command.CommandText <- "SELECT EXISTS(SELECT 1 FROM watch_journal LIMIT 1);"
         Convert.ToInt32(command.ExecuteScalar()) <> 0
+
+    /// Reads SQLite's allocated Watch journal sequence so recovery metadata cannot outrun future row ids.
+    let private readAllocatedWatchJournalSequence (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT seq FROM sqlite_sequence WHERE name = 'watch_journal' LIMIT 1;"
+        let value = command.ExecuteScalar()
+
+        match value with
+        | null
+        | :? DBNull -> 0L
+        | _ -> Convert.ToInt64(value)
 
     /// Reads local-state metadata for read-only inspection checks without writing default rows.
     let private tryGetMetaValueReadOnly (connection: SqliteConnection) (key: string) =
@@ -534,8 +696,11 @@ module LocalStateDb =
                     try
                         match tryGetMetaValueReadOnly connection WatchJournalAppliedThroughSequenceMetaKey with
                         | Some value ->
-                            tryParseWatchJournalAppliedThroughSequenceReadOnly value
-                            |> Option.isSome
+                            match tryParseWatchJournalAppliedThroughSequenceReadOnly value with
+                            | Some sequence ->
+                                sequence
+                                <= readAllocatedWatchJournalSequence connection
+                            | None -> false
                         | None -> not (hasWatchJournalRows connection)
                     with
                     | _ -> false
@@ -660,8 +825,11 @@ module LocalStateDb =
     let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
         match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
         | Some value ->
-            tryParseWatchJournalAppliedThroughSequence value
-            |> Option.isSome
+            match tryParseWatchJournalAppliedThroughSequence value with
+            | Some sequence ->
+                sequence
+                <= readAllocatedWatchJournalSequence connection
+            | None -> false
         | None -> not (hasWatchJournalRows connection)
 
     /// Reads the applied-through journal sequence used by future Watch recovery work.
@@ -867,12 +1035,30 @@ module LocalStateDb =
                 executeWithRetry (fun () ->
                     task {
                         use connection = openConnection dbPath
-                        let currentSequence = readWatchJournalAppliedThroughSequenceInternal connection
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
+                        let mutable committed = false
 
-                        if sequence < currentSequence then
-                            invalidOp $"Applied-through sequence cannot move backward from {currentSequence} to {sequence}."
+                        try
+                            let currentSequence = readWatchJournalAppliedThroughSequenceInternal connection
 
-                        setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{sequence}"
+                            if sequence < currentSequence then
+                                invalidOp $"Applied-through sequence cannot move backward from {currentSequence} to {sequence}."
+
+                            let allocatedSequence = readAllocatedWatchJournalSequence connection
+
+                            if sequence > allocatedSequence then
+                                invalidOp
+                                    $"Applied-through sequence cannot advance to {sequence} because the Watch journal has only allocated through {allocatedSequence}."
+
+                            setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{sequence}"
+                            executeNonQuery connection "COMMIT;"
+                            committed <- true
+                        finally
+                            if not committed then
+                                try
+                                    executeNonQuery connection "ROLLBACK;"
+                                with
+                                | _ -> ()
                     })
         }
 
