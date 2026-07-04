@@ -7,6 +7,7 @@ open Grace.Operations.Data
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Usage
+open Microsoft.Data.SqlClient
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
@@ -397,6 +398,18 @@ type OperationsUsageWorkerService
         | None, Some fullyQualifiedNamespace -> ServiceBusClient(fullyQualifiedNamespace, credential.Value)
         | None, None -> invalidOp "Azure Service Bus connection string or namespace must be configured."
 
+    /// Extracts the non-secret SQL data source for dependency diagnostics without logging credentials.
+    let sqlDataSource () =
+        try
+            let builder = SqlConnectionStringBuilder(settings.SqlConnectionString)
+
+            if String.IsNullOrWhiteSpace builder.DataSource then
+                "<missing>"
+            else
+                builder.DataSource
+        with
+        | _ -> "<unavailable>"
+
     /// Starts the Azure Service Bus processor after SQL schema initialization succeeds.
     let startProcessingAsync (cancellationToken: CancellationToken) =
         task {
@@ -472,7 +485,11 @@ type OperationsUsageWorkerService
                         | Some client -> do! client.DisposeAsync()
                         | None -> ()
 
-                        logger.LogWarning(ex, "Operations usage worker dependencies are not ready; pausing for five seconds before retrying.")
+                        logger.LogWarning(
+                            ex,
+                            "Operations usage worker dependencies are not ready for SQL data source {SqlDataSource}; pausing for five seconds before retrying.",
+                            sqlDataSource ()
+                        )
 
                         do! Task.Delay(TimeSpan.FromSeconds(5.0), cancellationToken)
         }

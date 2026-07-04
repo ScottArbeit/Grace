@@ -141,6 +141,27 @@ and Service Bus readiness before running server integration tests. The
 `Grace.Server.Tests` profile today because the shared setup drains the Service
 Bus test subscription and verifies the Owner Created event.
 
+### Operations Usage Tracer Bullet
+
+`Grace.Server.Tests` includes a dev/test-only operations tracer bullet that
+publishes one repository-storage `UsageFact` to the dedicated operational facts
+topic, waits for `grace-operations-worker` to consume it, and queries the local
+`GraceOperations` SQL database for the raw fact and UTC minute aggregate. The
+test also injects a duplicate delivery with the same `UsageFactId` and verifies
+that the raw row and aggregate quantity remain single-counted.
+
+The tracer bullet is proof of the local operational usage pipeline only:
+
+- It uses the existing Aspire-local Service Bus emulator and SQL Server
+  container.
+- It keeps `UsageFactId` and `CorrelationId` distinct in the end-to-end
+  evidence.
+- It verifies malformed or unsupported usage payloads are dead-lettered and do
+  not become authoritative SQL usage.
+- It does not add customer-facing usage APIs, pricing, charge ledgers, billing
+  close, invoices, dashboards, Azure Cost Management ingestion, Azure Storage
+  diagnostic ingestion, or a durable outbox.
+
 ## Troubleshooting
 
 - **Port conflicts** – Update bindings inside

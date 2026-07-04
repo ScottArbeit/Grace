@@ -34,6 +34,8 @@ type TestHostState =
         ServiceBusTopic: string
         ServiceBusServerSubscription: string
         ServiceBusTestSubscription: string
+        OperationalFactsTopic: string
+        OperationsSqlConnectionString: string
     }
 
 /// Groups shared helpers for aspire test host.
@@ -41,6 +43,7 @@ module AspireTestHost =
     do AppDomain.CurrentDomain.ProcessExit.Add(fun _ -> Environment.ExitCode <- 0)
 
     let private graceServerResourceName = "grace-server"
+    let private operationsWorkerResourceName = "grace-operations-worker"
     let private azuriteResourceName = "azurite"
     let private sharedStateLock = new SemaphoreSlim(1, 1)
     let mutable private sharedState: TestHostState option = None
@@ -1244,6 +1247,61 @@ module AspireTestHost =
                     let testSubscription = $"{subscription}-tests"
                     connection, topic, subscription, testSubscription
 
+            let! operationsWorkerEnv =
+                if shouldSkipServiceBus () then
+                    Task.FromResult Map.empty
+                else
+                    getEnvironmentVariablesAsync app operationsWorkerResourceName
+
+            let! serviceBusSqlEnv =
+                if shouldSkipServiceBus () then
+                    Task.FromResult Map.empty
+                else
+                    getEnvironmentVariablesAsync app serviceBusSqlResourceName
+
+            let! operationalFactsTopic, operationsSqlConnectionString =
+                if shouldSkipServiceBus () then
+                    Task.FromResult("", "")
+                else
+                    task {
+                        let topic =
+                            requireEnv operationsWorkerResourceName Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic operationsWorkerEnv
+
+                        let! dockerPortResult = runProcessAsync "docker" $"port {serviceBusSqlResourceName} 1433/tcp" (TimeSpan.FromSeconds(10.0))
+
+                        let sqlHost, sqlPort =
+                            if
+                                dockerPortResult.ExitCode = Some 0
+                                && not (String.IsNullOrWhiteSpace dockerPortResult.StdOut)
+                            then
+                                let dockerPortLines = dockerPortResult.StdOut.Split([| '\r'; '\n' |], StringSplitOptions.RemoveEmptyEntries)
+
+                                let firstLine = dockerPortLines[ 0 ].Trim()
+
+                                let separator = firstLine.LastIndexOf(':')
+
+                                if separator > 0 then
+                                    let host = firstLine.Substring(0, separator).Trim('[', ']')
+                                    let port = firstLine.Substring(separator + 1)
+
+                                    let host = if host = "0.0.0.0" || host = "::" then "127.0.0.1" else host
+
+                                    host, port
+                                else
+                                    let sqlEndpoint = app.GetEndpoint(serviceBusSqlResourceName, "sql")
+                                    sqlEndpoint.Host, string sqlEndpoint.Port
+                            else
+                                let sqlEndpoint = app.GetEndpoint(serviceBusSqlResourceName, "sql")
+                                sqlEndpoint.Host, string sqlEndpoint.Port
+
+                        let sqlPassword = requireEnv serviceBusSqlResourceName "MSSQL_SA_PASSWORD" serviceBusSqlEnv
+
+                        let sqlConnectionString =
+                            $"Server=tcp:{sqlHost},{sqlPort};Initial Catalog=GraceOperations;User ID=sa;Password={sqlPassword};TrustServerCertificate=True;Encrypt=False;Connection Timeout=3;"
+
+                        return topic, sqlConnectionString
+                    }
+
             let baseAddress = endpointUri.ToString().TrimEnd('/')
 
             let state =
@@ -1255,10 +1313,13 @@ module AspireTestHost =
                     ServiceBusTopic = serviceBusTopic
                     ServiceBusServerSubscription = serviceBusSubscription
                     ServiceBusTestSubscription = serviceBusTestSubscription
+                    OperationalFactsTopic = operationalFactsTopic
+                    OperationsSqlConnectionString = operationsSqlConnectionString
                 }
 
             if not (shouldSkipServiceBus ()) then
                 do! waitForServiceBusReadyAsync serviceBusEmulatorResourceName serviceBusSqlResourceName state
+                do! waitForResourceHealthyAsync notificationService app operationsWorkerResourceName cts.Token
             else
                 Console.WriteLine("Skipping Service Bus functional readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
 

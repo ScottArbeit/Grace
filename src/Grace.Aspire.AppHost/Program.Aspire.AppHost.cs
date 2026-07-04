@@ -280,7 +280,7 @@ public partial class Program
                             .WithEnvironment("ACCEPT_EULA", "Y")
                             .WithEnvironment("MSSQL_SA_PASSWORD", serviceBusSqlPassword)
                             //.WithLifetime(ContainerLifetime.Session)
-                            .WithEndpoint(targetPort: 1433, port: 21433, name: "sql", scheme: "tcp");
+                            .WithEndpoint(targetPort: 1433, name: "sql", scheme: "tcp");
                         if (isTestRun)
                         {
                             serviceBusSql.WithEnvironment("MSSQL_MEMORY_LIMIT_MB", "1024");
@@ -299,11 +299,6 @@ public partial class Program
                         }
 
                         var serviceBusSqlEndpoint = serviceBusSql.GetEndpoint("sql");
-                        var serviceBusSqlHost = serviceBusSqlEndpoint.Property(EndpointProperty.Host);
-                        var serviceBusSqlPort = serviceBusSqlEndpoint.Property(EndpointProperty.Port);
-                        var serviceBusSqlDataSource = BuildSqlTcpDataSource(serviceBusSqlHost, serviceBusSqlPort);
-                        var operationsSqlConnectionString = ReferenceExpression.Create(
-                            $"Server={serviceBusSqlDataSource};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;");
 
                         var serviceBusEmulatorResourceName = runSuffix is null ? "servicebus-emulator" : $"servicebus-emulator-{runSuffix}";
                         var serviceBusEmulator = builder.AddContainer(serviceBusEmulatorResourceName, "mcr.microsoft.com/azure-messaging/servicebus-emulator", "latest")
@@ -353,7 +348,22 @@ public partial class Program
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
                             .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
-                            .WithEnvironment(OperationsSqlConnectionStringSettingName, operationsSqlConnectionString)
+                            .WithEnvironment(async context =>
+                            {
+                                var sqlEndpoint = await serviceBusSqlEndpoint.GetValueAsync(context.CancellationToken);
+                                if (string.IsNullOrWhiteSpace(sqlEndpoint))
+                                {
+                                    throw new InvalidOperationException("Service Bus SQL endpoint was not allocated for operations worker configuration.");
+                                }
+
+                                var sqlEndpointUri = new Uri(sqlEndpoint);
+                                var sqlDataSource = BuildSqlTcpDataSource(sqlEndpointUri.Host, sqlEndpointUri.Port);
+                                context.Logger.LogInformation(
+                                    "Configured operations worker SQL data source {SqlDataSource}.",
+                                    sqlDataSource);
+                                context.EnvironmentVariables[OperationsSqlConnectionStringSettingName] =
+                                    $"Server={sqlDataSource};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;";
+                            })
                             .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Local")
                             .WithOtlpExporter();
                     }
@@ -647,6 +657,12 @@ public partial class Program
         var normalizedHost = hostValue.StartsWith("tcp:", StringComparison.OrdinalIgnoreCase)
             ? hostValue.Substring(4)
             : hostValue;
+
+        if (normalizedHost.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || normalizedHost.EndsWith(".localhost", StringComparison.OrdinalIgnoreCase))
+        {
+            normalizedHost = IPAddress.Loopback.ToString();
+        }
 
         return $"tcp:{normalizedHost},{portValue}";
     }

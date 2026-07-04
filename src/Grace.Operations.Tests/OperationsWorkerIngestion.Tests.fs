@@ -172,13 +172,13 @@ type OperationsWorkerIngestionTests() =
     /// Creates an already-processed persistence result for a fact.
     let alreadyProcessed fact = { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = fact.UsageFactId; Aggregate = None }
 
-    /// Verifies AppHost SQL Server data sources use SqlClient comma-port syntax.
+    /// Verifies AppHost SQL Server data sources use SqlClient comma-port syntax and IPv4 loopback for local endpoints.
     [<Test>]
     member _.AppHostFormatsLocalSqlDataSourceWithCommaPort() =
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(global.Program.BuildSqlTcpDataSource("localhost", 21433), Is.EqualTo("tcp:localhost,21433"))
-                Assert.That(global.Program.BuildSqlTcpDataSource("tcp:localhost", "21433"), Is.EqualTo("tcp:localhost,21433")))
+                Assert.That(global.Program.BuildSqlTcpDataSource("localhost", 21433), Is.EqualTo("tcp:127.0.0.1,21433"))
+                Assert.That(global.Program.BuildSqlTcpDataSource("tcp:localhost", "21433"), Is.EqualTo("tcp:127.0.0.1,21433")))
         )
 
     /// Verifies AppHost-style environment names resolve after Host configuration normalizes `__` to `:`.

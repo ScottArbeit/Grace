@@ -34,6 +34,8 @@ module private EventingIntegrationHelpers =
                 ServiceBusTopic = serviceBusTopic
                 ServiceBusServerSubscription = serviceBusServerSubscription
                 ServiceBusTestSubscription = serviceBusTestSubscription
+                OperationalFactsTopic = operationalFactsTopic
+                OperationsSqlConnectionString = operationsSqlConnectionString
             }
         | Microsoft.FSharp.Core.Option.None -> failwith "Aspire test host has not started."
 
