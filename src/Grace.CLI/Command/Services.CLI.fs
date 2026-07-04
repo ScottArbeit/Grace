@@ -81,6 +81,61 @@ module Services =
         /// Grace Watch is shutting down and should not be treated as a live incremental source.
         | Stopping = 4
 
+    /// Checks whether the repository root resolves differently-cased names to the same file.
+    let private detectWatchRootPathCaseInsensitiveLookup (rootDirectory: string) =
+        let mutable probePath = String.Empty
+        let mutable alternateProbePath = String.Empty
+
+        try
+            try
+                let probeDirectory = Path.Combine(rootDirectory, Constants.GraceConfigDirectory)
+
+                Directory.CreateDirectory(probeDirectory)
+                |> ignore
+
+                let probeName = $"grace-watch-root-case-probe-{Guid.NewGuid():N}"
+                probePath <- Path.Combine(probeDirectory, probeName.ToLowerInvariant())
+                alternateProbePath <- Path.Combine(probeDirectory, probeName.ToUpperInvariant())
+
+                File.WriteAllText(probePath, String.Empty)
+                File.Exists(alternateProbePath)
+            with
+            | _ -> OperatingSystem.IsWindows()
+        finally
+            for path in [| probePath; alternateProbePath |] do
+                try
+                    if
+                        not (String.IsNullOrWhiteSpace(path))
+                        && File.Exists(path)
+                    then
+                        File.Delete(path)
+                with
+                | _ -> ()
+
+    let mutable private watchRootPathCaseInsensitiveLookup = detectWatchRootPathCaseInsensitiveLookup
+
+    /// Chooses the root path identity comparison used when trusting Watch IPC snapshots.
+    let private watchRootPathComparisonForRepository rootDirectory =
+        if watchRootPathCaseInsensitiveLookup rootDirectory then
+            StringComparison.OrdinalIgnoreCase
+        else
+            StringComparison.Ordinal
+
+    /// Compares normalized repository root paths using the supplied repository path identity semantics.
+    let internal watchRootDirectoriesMatchWithComparison comparison persistedRootDirectory currentRootDirectory =
+        let normalizeRootDirectory (rootDirectory: string) =
+            Path
+                .GetFullPath(rootDirectory)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+        String.Equals(normalizeRootDirectory persistedRootDirectory, normalizeRootDirectory currentRootDirectory, comparison)
+
+    /// Installs root path case lookup behavior used by Watch IPC identity tests.
+    let internal setWatchRootPathCaseInsensitiveLookupForTests detector = watchRootPathCaseInsensitiveLookup <- detector
+
+    /// Restores the production root path case lookup behavior after Watch IPC identity tests.
+    let internal resetWatchRootPathCaseInsensitiveLookupForTests () = watchRootPathCaseInsensitiveLookup <- detectWatchRootPathCaseInsensitiveLookup
+
     /// GraceWatchStatus defines the schema for the inter-process communication (IPC) file that lets Grace know if `grace watch` is already running.
     ///
     /// It's written by `grace watch`. It holds everything required to allow other instances of Grace to skip checking current status.
@@ -254,16 +309,10 @@ module Services =
                         true
                     else
                         try
-                            let normalizeRootDirectory (rootDirectory: string) =
-                                Path
-                                    .GetFullPath(rootDirectory)
-                                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
-
-                            String.Equals(
-                                normalizeRootDirectory status.RootDirectory,
-                                normalizeRootDirectory current.RootDirectory,
-                                StringComparison.OrdinalIgnoreCase
-                            )
+                            watchRootDirectoriesMatchWithComparison
+                                (watchRootPathComparisonForRepository current.RootDirectory)
+                                status.RootDirectory
+                                current.RootDirectory
                         with
                         | _ -> false
 

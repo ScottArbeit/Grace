@@ -214,6 +214,31 @@ module WatchTests =
         | false, _ -> None
         | true, _ -> None
 
+    /// Returns the same path text with one ASCII letter cased differently for root identity regressions.
+    let private requireDifferentlyCasedPath path =
+        let chars = $"{path}".ToCharArray()
+        let mutable changed = false
+        let mutable index = 0
+
+        while not changed && index < chars.Length do
+            if Char.IsAsciiLetter(chars[index]) then
+                let replacement =
+                    if Char.IsUpper(chars[index]) then
+                        Char.ToLowerInvariant(chars[index])
+                    else
+                        Char.ToUpperInvariant(chars[index])
+
+                if replacement <> chars[index] then
+                    chars[index] <- replacement
+                    changed <- true
+
+            index <- index + 1
+
+        if not changed then
+            Assert.Fail($"Expected path '{path}' to contain an ASCII letter whose casing can be changed.")
+
+        String(chars)
+
     /// Reads a boolean property from the persisted Watch IPC JSON contract.
     let private readWatchStatusJsonBooleanProperty (propertyName: string) =
         let json = File.ReadAllText(Services.IpcFileName())
@@ -7634,6 +7659,75 @@ module WatchTests =
 
                 Services.getGraceWatchStatus().Result
                 |> should equal None)
+
+    /// Verifies that root identity comparisons reject case-only path differences under case-sensitive semantics.
+    [<Test>]
+    let ``watch root identity comparison respects case-sensitive path semantics`` () =
+        let currentRoot = Path.Combine(Path.GetTempPath(), "grace-watch-root")
+        let persistedRoot = requireDifferentlyCasedPath currentRoot
+
+        Services.watchRootDirectoriesMatchWithComparison StringComparison.Ordinal persistedRoot currentRoot
+        |> should equal false
+
+        Services.watchRootDirectoriesMatchWithComparison StringComparison.OrdinalIgnoreCase persistedRoot currentRoot
+        |> should equal true
+
+    /// Verifies that Watch IPC root reuse rejects case-only root differences on case-sensitive repositories.
+    [<Test>]
+    let ``watch status root identity rejects case-only mismatch on case-sensitive repository`` () =
+        Services.setWatchRootPathCaseInsensitiveLookupForTests (fun _ -> false)
+
+        try
+            withTempRepo (fun tempDir ->
+                let rootDirectoryId = Guid.NewGuid()
+                let persistedRoot = requireDifferentlyCasedPath tempDir
+                let status = { liveWatchStatus rootDirectoryId with RootDirectory = persistedRoot }
+
+                writeWatchStatusJsonWithRuntimeSurface status
+                |> ignore
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                inspection.IsLiveProcess |> should equal true
+
+                inspection.IsUsable |> should equal false
+
+                Services.getGraceWatchStatus().Result
+                |> should equal None)
+        finally
+            Services.resetWatchRootPathCaseInsensitiveLookupForTests ()
+
+    /// Verifies that Watch IPC root reuse preserves case-insensitive repository behavior.
+    [<Test>]
+    let ``watch status root identity accepts case-only mismatch on case-insensitive repository`` () =
+        Services.setWatchRootPathCaseInsensitiveLookupForTests (fun _ -> true)
+
+        try
+            withTempRepo (fun tempDir ->
+                let rootDirectoryId = Guid.NewGuid()
+                let persistedRoot = requireDifferentlyCasedPath tempDir
+                let status = { liveWatchStatus rootDirectoryId with RootDirectory = persistedRoot }
+
+                writeWatchStatusJsonWithRuntimeSurface status
+                |> ignore
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                inspection.IsLiveProcess |> should equal true
+                inspection.IsUsable |> should equal true
+
+                Services.getGraceWatchStatus().Result
+                |> should not' (equal None))
+        finally
+            Services.resetWatchRootPathCaseInsensitiveLookupForTests ()
 
     /// Verifies that watch check exits zero when live watcher status exists.
     [<Test>]
