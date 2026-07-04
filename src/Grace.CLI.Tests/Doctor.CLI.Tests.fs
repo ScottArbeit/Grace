@@ -2779,6 +2779,50 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor reports meta tables that cannot preserve one row per key without repairing local state.
+    [<Test>]
+    let ``doctor local-state reports malformed meta key uniqueness`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let dbPath = localStateDbPath root
+
+                do
+                    use connection = openRawConnection dbPath
+                    executeNonQuery connection "DROP TABLE meta;"
+                    executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
+
+                let beforeRoot = snapshotFiles root
+
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.watch-journal" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "malformed"
+
+                snapshotFiles root |> should equal beforeRoot))
+
     /// Verifies that doctor reports stale Watch journal allocation without repairing local state.
     [<Test>]
     let ``doctor local-state reports stale watch journal allocation with rows`` () =

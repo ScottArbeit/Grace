@@ -436,6 +436,54 @@ module LocalStateDb =
     /// Reports whether SQLite declared a column with INTEGER affinity for a trusted local-state sequence.
     let private isIntegerColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "INTEGER")
 
+    /// Quotes SQLite identifiers used by schema PRAGMA calls against Grace-owned table and index names.
+    let private quoteSqlIdentifier (identifier: string) = "\"" + identifier.Replace("\"", "\"\"") + "\""
+
+    /// Reads the ordered table columns that make up an SQLite index.
+    let private readIndexColumnNames (connection: SqliteConnection) indexName =
+        use command = connection.CreateCommand()
+        command.CommandText <- $"PRAGMA index_info({quoteSqlIdentifier indexName});"
+        use reader = command.ExecuteReader()
+        let columns = ResizeArray<int * string>()
+
+        while reader.Read() do
+            columns.Add(reader.GetInt32(0), reader.GetString(2))
+
+        columns
+        |> Seq.sortBy fst
+        |> Seq.map snd
+        |> Seq.toArray
+
+    /// Verifies that SQLite enforces one metadata row for each key before INSERT OR IGNORE can be trusted.
+    let private hasUniqueMetaKeyConstraint (connection: SqliteConnection) =
+        let columns = readTableColumnShapes connection "meta"
+
+        let keyIsPrimaryKey =
+            columns
+            |> Array.exists (fun column ->
+                StringComparer.OrdinalIgnoreCase.Equals(column.Name, "key")
+                && column.PrimaryKeyOrdinal = 1)
+
+        if keyIsPrimaryKey then
+            true
+        else
+            use command = connection.CreateCommand()
+            command.CommandText <- "PRAGMA index_list(meta);"
+            use reader = command.ExecuteReader()
+            let uniqueIndexNames = ResizeArray<string>()
+
+            while reader.Read() do
+                let isUnique = reader.GetInt32(2) <> 0
+                let isPartial = reader.FieldCount > 4 && reader.GetInt32(4) <> 0
+
+                if isUnique && not isPartial then uniqueIndexNames.Add(reader.GetString(1))
+
+            uniqueIndexNames
+            |> Seq.exists (fun indexName ->
+                match readIndexColumnNames connection indexName with
+                | [| columnName |] -> StringComparer.OrdinalIgnoreCase.Equals(columnName, "key")
+                | _ -> false)
+
     /// Locates the top-level column list inside SQLite's stored CREATE TABLE statement.
     let private tryGetCreateTableColumnList (sql: string) =
         let mutable startIndex = -1
@@ -734,7 +782,8 @@ module LocalStateDb =
                 | _ -> false
 
             let metadataValid =
-                if shapeValid then
+                if shapeValid
+                   && hasUniqueMetaKeyConstraint connection then
                     try
                         match tryGetMetaValueReadOnly connection WatchJournalAppliedThroughSequenceMetaKey with
                         | Some value when countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey = 1 ->
@@ -919,6 +968,7 @@ module LocalStateDb =
     /// Evaluates has required writable schema against parsed options and command state.
     let private hasRequiredWritableSchema (connection: SqliteConnection) =
         columnExists connection "status_meta" "root_directory_blake3_hash"
+        && hasUniqueMetaKeyConstraint connection
         && columnExists connection "status_directories" "blake3_hash"
         && columnExists connection "status_files" "blake3_hash"
         && columnExists connection "object_cache_directories" "blake3_hash"
