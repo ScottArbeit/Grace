@@ -31,6 +31,9 @@ type OperationalFactsPublisherAppHostTests() =
                 Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(serviceBusTopic, operationalFactsTopic)"))
                 Assert.That(appHostSource, Does.Contain("ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)"))
                 Assert.That(appHostSource, Does.Contain("EnsureDistinctServiceBusTopics(topicName, operationalFactsTopicName)"))
+                Assert.That(appHostSource, Does.Contain("var operationalFactsSubscriptionName = $\"{operationalFactsTopicName}-processor\";"))
                 Assert.That(appHostSource, Does.Contain("RequiresDuplicateDetection = true"))
-                Assert.That(appHostSource, Does.Contain("DuplicateDetectionHistoryTimeWindow = \"PT5M\"")))
+                Assert.That(appHostSource, Does.Contain("DuplicateDetectionHistoryTimeWindow = \"PT5M\""))
+
+                Assert.That(appHostSource, Does.Contain(".AddServiceBusSubscription(operationalFactsSubscriptionName)")))
         )

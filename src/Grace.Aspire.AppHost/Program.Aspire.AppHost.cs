@@ -409,16 +409,21 @@ public partial class Program
                 var zipStorage = storage.AddBlobContainer("zipfiles");
 
                 var serviceBus = builder.AddAzureServiceBus("servicebus");
+                var operationalFactsTopicName =
+                    configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)]
+                    ?? Constants.GraceOperationalFactsTopic;
+                var operationalFactsSubscriptionName = $"{operationalFactsTopicName}-processor";
                 _ = serviceBus.AddServiceBusTopic(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
                     .AddServiceBusSubscription(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server");
                 _ = serviceBus.AddServiceBusTopic(
                         "operational-facts",
-                        configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)] ?? Constants.GraceOperationalFactsTopic)
+                        operationalFactsTopicName)
                     .WithProperties(topic =>
                     {
                         topic.RequiresDuplicateDetection = true;
                         topic.DuplicateDetectionHistoryTimeWindow = TimeSpan.FromMinutes(5);
-                    });
+                    })
+                    .AddServiceBusSubscription(operationalFactsSubscriptionName);
 
                 var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
@@ -446,7 +451,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-prod")
                         .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
-                    .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)] ?? Constants.GraceOperationalFactsTopic)
+                    .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
                     .WithEnvironment(EnvironmentVariables.GraceAuthOidcAuthority, configuration[EnvironmentVariables.GraceAuthOidcAuthority])
