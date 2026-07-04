@@ -364,6 +364,11 @@ module LocalStateDbTests =
                 sequencePk |> should equal 1
                 sequenceType |> should equal "INTEGER"
 
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
                 appliedThrough |> should equal "0"
@@ -381,8 +386,9 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
 
-                for sequence in 1L .. 1030L do
-                    executeNonQuery connection $"INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES ({sequence}, {sequence});"
+                [| 1L .. 1030L |]
+                |> Array.iter (fun sequence ->
+                    executeNonQuery connection $"INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES ({sequence}, {sequence});")
 
                 do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 1026L
                 do! LocalStateDb.pruneWatchJournalRetention configuration.GraceStatusFile
@@ -709,10 +715,95 @@ module LocalStateDbTests =
                 let sequenceType = executeScalarString connection "SELECT UPPER(type) FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
                 sequenceType |> should equal "INTEGER"
 
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
                 let createdAtNotNull =
                     executeScalarInt connection "SELECT [notnull] FROM pragma_table_info('watch_journal') WHERE name = 'created_at_unix_ticks';"
 
                 createdAtNotNull |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that ensure db initialized recreates db when schema v5 reuses rowids for Watch journal sequences.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 watch journal lacks autoincrement`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+
+                let ticks =
+                    Instant
+                        .FromUtc(2026, 1, 2, 3, 4)
+                        .ToUnixTimeTicks()
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_journal;"
+                    executeNonQuery connection "CREATE TABLE watch_journal (sequence INTEGER PRIMARY KEY, created_at_unix_ticks INTEGER NOT NULL);"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                schemaVersion |> should equal "5"
+
+                let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
+
+                tableSql.IndexOf("AUTOINCREMENT", StringComparison.OrdinalIgnoreCase)
+                |> should be (greaterThanOrEqualTo 0)
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that ensure db initialized recreates db when Watch recovery metadata is malformed.
+    [<TestCase("not-a-number")>]
+    [<TestCase("-1")>]
+    let ``ensureDbInitialized recreates DB when schema v5 applied through metadata is invalid`` (appliedThroughValue: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+
+                    executeNonQuery connection $"UPDATE meta SET value = '{appliedThroughValue}' WHERE key = 'AppliedThroughSequence';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 0L
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -826,8 +917,8 @@ module LocalStateDbTests =
                 let walPath = configuration.GraceStatusFile + "-wal"
                 let shmPath = configuration.GraceStatusFile + "-shm"
 
-                for sidecar in [| walPath; shmPath |] do
-                    if File.Exists(sidecar) then File.Delete(sidecar)
+                [| walPath; shmPath |]
+                |> Array.iter (fun sidecar -> if File.Exists(sidecar) then File.Delete(sidecar))
 
                 File.Exists(walPath) |> should equal false
                 File.Exists(shmPath) |> should equal false
@@ -893,9 +984,10 @@ module LocalStateDbTests =
                     [| "-journal"; "-wal"; "-shm" |]
                     |> Array.map (fun suffix -> configuration.GraceStatusFile + suffix)
 
-                for sidecar in sidecars do
+                sidecars
+                |> Array.iter (fun sidecar ->
                     File.WriteAllText(sidecar, $"sentinel-{Path.GetFileName(sidecar)}")
-                    File.SetLastWriteTimeUtc(sidecar, oldTime)
+                    File.SetLastWriteTimeUtc(sidecar, oldTime))
 
                 let dbBefore = snapshotFile configuration.GraceStatusFile
                 let sidecarsBefore = sidecars |> Array.map snapshotFile

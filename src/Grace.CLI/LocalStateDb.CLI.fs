@@ -6,6 +6,7 @@ open System.Collections.Generic
 open System.Diagnostics
 open System.IO
 open System.Text
+open System.Text.RegularExpressions
 open System.Threading
 open System.Threading.Tasks
 open Grace.Shared.Client.Configuration
@@ -431,6 +432,24 @@ module LocalStateDb =
     /// Reports whether SQLite declared a column with INTEGER affinity for a trusted local-state sequence.
     let private isIntegerColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "INTEGER")
 
+    /// Matches the Watch journal sequence declaration that prevents SQLite rowid reuse after retention pruning.
+    let private watchJournalSequenceAutoincrementPattern =
+        Regex(
+            @"(?:""sequence""|\[sequence\]|`sequence`|sequence)\s+INTEGER\s+PRIMARY\s+KEY\s+AUTOINCREMENT\b",
+            RegexOptions.IgnoreCase
+            ||| RegexOptions.CultureInvariant
+        )
+
+    /// Reports whether SQLite stored the Watch journal table as an AUTOINCREMENT sequence table.
+    let private watchJournalUsesAutoincrement (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal' LIMIT 1;"
+        let value = command.ExecuteScalar()
+
+        match value with
+        | :? string as sql -> watchJournalSequenceAutoincrementPattern.IsMatch(sql)
+        | _ -> false
+
     /// Verifies that the Watch journal table can support ordered local recovery and retention operations.
     let private hasRequiredWatchJournalShape (connection: SqliteConnection) =
         let columns = readTableColumnShapes connection "watch_journal"
@@ -454,7 +473,9 @@ module LocalStateDb =
                 && column.PrimaryKeyOrdinal = 0
             | None -> false
 
-        hasSequenceColumn && hasCreatedAtColumn
+        hasSequenceColumn
+        && hasCreatedAtColumn
+        && watchJournalUsesAutoincrement connection
 
     /// Reads inspect object cache read only data from the local SQLite state database.
     let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
@@ -576,13 +597,27 @@ module LocalStateDb =
             parameters.AddWithValue("$key", WatchJournalAppliedThroughSequenceMetaKey)
             |> ignore)
 
+    /// Parses Watch journal recovery metadata only when it preserves the nonnegative sequence invariant.
+    let private tryParseWatchJournalAppliedThroughSequence (value: string) =
+        match Int64.TryParse(value) with
+        | true, sequence when sequence >= 0L -> Some sequence
+        | _ -> None
+
+    /// Verifies that existing Watch recovery metadata can be trusted before accepting schema version 5.
+    let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
+        match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
+        | Some value ->
+            tryParseWatchJournalAppliedThroughSequence value
+            |> Option.isSome
+        | None -> true
+
     /// Reads the applied-through journal sequence used by future Watch recovery work.
     let private readWatchJournalAppliedThroughSequenceInternal (connection: SqliteConnection) =
         match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
         | Some value ->
-            match Int64.TryParse(value) with
-            | true, sequence when sequence >= 0L -> sequence
-            | _ -> 0L
+            match tryParseWatchJournalAppliedThroughSequence value with
+            | Some sequence -> sequence
+            | None -> raise (InvalidDataException($"{WatchJournalAppliedThroughSequenceMetaKey} must be a non-negative 64-bit integer."))
         | None -> 0L
 
     /// Persists insert status meta if missing changes in the local SQLite state database.
@@ -617,6 +652,7 @@ module LocalStateDb =
         && columnExists connection "object_cache_directory_files" "blake3_hash"
         && tableExists connection "watch_journal"
         && hasRequiredWatchJournalShape connection
+        && hasValidWatchJournalAppliedThroughSequenceMeta connection
 
     /// Evaluates has empty writable status blake3 rows against parsed options and command state.
     let private hasEmptyWritableStatusBlake3Rows (connection: SqliteConnection) =
