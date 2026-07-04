@@ -174,6 +174,48 @@ module Services =
             SafetyFlags: string array
         }
 
+    /// Describes the Watch IPC snapshot without requiring it to be trusted for incremental status shortcuts.
+    type GraceWatchStatusInspection =
+        {
+            Exists: bool
+            Status: GraceWatchStatus option
+            PersistedMode: GraceWatchRuntimeMode option
+            SafetyFlags: string array
+            ReadError: string option
+        }
+
+        /// Reports the best runtime mode available from persisted IPC metadata or derived status facts.
+        member this.EffectiveMode =
+            match this.PersistedMode, this.Status with
+            | Some mode, _ -> Some mode
+            | None, Some status -> Some status.Mode
+            | None, None -> None
+
+        /// Reports whether the IPC heartbeat is recent enough to represent a live Watch process.
+        member this.IsFresh =
+            match this.Status with
+            | Some status ->
+                status.UpdatedAt > getCurrentInstant()
+                    .Minus(Duration.FromMinutes(5.0))
+            | None -> false
+
+        /// Reports whether the IPC snapshot can serve trusted incremental shortcuts.
+        member this.IsUsable =
+            match this.Status, this.EffectiveMode with
+            | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                this.IsFresh
+                && not status.IsStartupClaim
+                && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
+            | _ -> false
+
+        /// Reports whether a fresh Watch process appears to own the IPC file even when shortcuts are unavailable.
+        member this.IsLiveProcess =
+            this.Exists
+            && this.IsFresh
+            && this.Status.IsSome
+            && this.EffectiveMode
+               <> Some GraceWatchRuntimeMode.Stopping
+
     /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
     let private safetyFlagsForGraceWatchStatusContract (status: GraceWatchStatus) =
         status.SafetyFlags
@@ -235,6 +277,32 @@ module Services =
 
     /// Writes the compact Watch IPC JSON contract to the already-open status stream.
     let private writeGraceWatchStatusContractToStream fileStream graceWatchStatus = serializeAsync fileStream (toGraceWatchStatusContract graceWatchStatus)
+
+    /// Reads the compact persisted Watch runtime mode from IPC JSON written by newer Watch processes.
+    let private tryReadGraceWatchPersistedMode (json: string) =
+        try
+            use document = JsonDocument.Parse(json)
+            let mutable modeElement = Unchecked.defaultof<JsonElement>
+
+            if document.RootElement.TryGetProperty("Mode", &modeElement)
+               && modeElement.ValueKind <> JsonValueKind.Null
+               && modeElement.ValueKind <> JsonValueKind.Undefined then
+                let modeText =
+                    if modeElement.ValueKind = System.Text.Json.JsonValueKind.String then
+                        modeElement.GetString()
+                    else
+                        modeElement.GetRawText()
+
+                let mutable parsedMode = Unchecked.defaultof<GraceWatchRuntimeMode>
+
+                if Enum.TryParse<GraceWatchRuntimeMode>(modeText, true, &parsedMode) then
+                    Some parsedMode
+                else
+                    None
+            else
+                None
+        with
+        | _ -> None
 
     let mutable graceWatchStatusUpdateTime = Instant.MinValue
     let mutable parseResult: ParseResult = null
@@ -2119,6 +2187,51 @@ module Services =
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
     let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
 
+    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
+    let inspectGraceWatchStatus () =
+        task {
+            if System.IO.File.Exists(IpcFileName()) then
+                try
+                    let json = System.IO.File.ReadAllText(IpcFileName())
+                    let status = deserialize<GraceWatchStatus> json
+
+                    return
+                        {
+                            Exists = true
+                            Status = Some status
+                            PersistedMode = tryReadGraceWatchPersistedMode json
+                            SafetyFlags = status.SafetyFlags
+                            ReadError = None
+                        }
+                with
+                | _ ->
+                    return
+                        {
+                            Exists = true
+                            Status = None
+                            PersistedMode = None
+                            SafetyFlags =
+                                [|
+                                    "unreadableStatus"
+                                    "requiresExplicitResync"
+                                |]
+                            ReadError = Some "The Grace Watch status file exists but could not be read."
+                        }
+            else
+                return
+                    {
+                        Exists = false
+                        Status = None
+                        PersistedMode = None
+                        SafetyFlags =
+                            [|
+                                "missingStatus"
+                                "requiresExplicitResync"
+                            |]
+                        ReadError = None
+                    }
+        }
+
     /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
     let private createGraceWatchStatus (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         let directoryIds =
@@ -2193,33 +2306,14 @@ module Services =
     /// Reads the `grace watch` status inter-process communication file.
     let getGraceWatchStatus () =
         task {
-            try
-                // If the file exists, `grace watch` is running.
-                if File.Exists(IpcFileName()) then
-                    //logToAnsiConsole Colors.Verbose $"File {IpcFileName} exists."
-                    use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.Read, FileShare.Read)
+            let! inspection = inspectGraceWatchStatus ()
 
-                    let! graceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
-
-                    // `grace watch` updates the file at least every five minutes to indicate that it's still alive.
-                    // When `grace watch` exits, the status file is deleted in a try...finally (Program.CLI.fs), so the only
-                    //   circumstance where it would be on-disk without `grace watch` running is if the process were killed.
-                    // Just to be safe, only return fresh status that contains real root data. A startup claim is only a
-                    // duplicate-start guard and must not be consumed as a usable repository snapshot.
-                    if isGraceWatchStatusUsable graceWatchStatus then
-                        return Some graceWatchStatus
-                    else
-                        return None // The file is stale, a startup claim, or does not contain usable root data.
-                else
-                    //logToAnsiConsole Colors.Verbose $"File {IpcFileName} does not exist."
-                    return None // `grace watch` isn't running.
-            with
-            | ex ->
-                logToAnsiConsole Colors.Error $"Exception when reading inter-process communication file."
-                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}."
-                logToAnsiConsole Colors.Error $"ex.Message: {StringExtensions.EscapeMarkup(ex.Message)}."
-                logToAnsiConsole Colors.Error $"{Environment.NewLine}{StringExtensions.EscapeMarkup(ex.StackTrace)}."
-                return None
+            // `grace watch` updates the file at least every five minutes to indicate that it's still alive.
+            // When `grace watch` exits, the status file is deleted in a try...finally (Program.CLI.fs), so the only
+            // circumstance where it would be on-disk without `grace watch` running is if the process were killed.
+            // Just to be safe, only return fresh status that contains real root data. A startup claim is only a
+            // duplicate-start guard and must not be consumed as a usable repository snapshot.
+            if inspection.IsUsable then return inspection.Status else return None // The file is stale, a startup claim, unreadable, or does not contain usable root data.
         }
 
     /// Atomically claims the `grace watch` status IPC file before foreground watch startup.

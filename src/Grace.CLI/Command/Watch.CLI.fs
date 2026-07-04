@@ -1602,6 +1602,130 @@ module Watch =
             return resolveSignalRAccessTokenResult tokenResult
         }
 
+    /// Defines the machine-readable payload emitted by `grace watch --check`.
+    type private WatchCheckStatusDto =
+        {
+            IsRunning: bool
+            CanUseIncrementalStatus: bool
+            Mode: string
+            Reason: string
+            Message: string
+            SafetyFlags: string array
+            IsFresh: bool
+            HasUsableRootSnapshot: bool
+            HasDirectoryIndexSnapshot: bool
+            IsStartupClaim: bool
+            UpdatedAt: string option
+            RootDirectoryId: DirectoryVersionId option
+        }
+
+    /// Reports whether a Watch IPC snapshot has the root identity needed by incremental status shortcuts.
+    let private hasUsableRootSnapshotForCheck (status: GraceWatchStatus) =
+        status.RootDirectoryId <> Guid.Empty
+        && not (String.IsNullOrWhiteSpace($"{status.RootDirectorySha256Hash}"))
+        && not (String.IsNullOrWhiteSpace($"{status.RootDirectoryBlake3Hash}"))
+
+    /// Reports whether a Watch IPC snapshot includes directory identities for current-state comparisons.
+    let private hasDirectoryIndexSnapshotForCheck (status: GraceWatchStatus) =
+        not (isNull status.DirectoryIds)
+        && status.DirectoryIds.Count > 0
+
+    /// Builds safety flags for `watch --check` after combining persisted and derived mode facts.
+    let private safetyFlagsForWatchCheck (inspection: GraceWatchStatusInspection) =
+        let flags = HashSet<string>(inspection.SafetyFlags, StringComparer.Ordinal)
+
+        if not inspection.IsUsable then
+            flags.Remove("incrementalSafe") |> ignore
+            flags.Add("requiresExplicitResync") |> ignore
+
+        flags |> Seq.sort |> Seq.toArray
+
+    /// Maps a Watch IPC inspection result to the stable status reason emitted to humans and agents.
+    let private watchCheckReason (inspection: GraceWatchStatusInspection) =
+        match inspection.ReadError, inspection.Exists, inspection.Status, inspection.EffectiveMode with
+        | Some _, _, _, _ -> "unreadableStatus"
+        | None, false, _, _ -> "notRunning"
+        | None, true, None, _ -> "unreadableStatus"
+        | None, true, Some _, _ when not inspection.IsFresh -> "staleStatus"
+        | None, true, Some status, _ when status.IsStartupClaim -> "startingUp"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when inspection.IsUsable -> "running"
+        | None, true, Some _, Some GraceWatchRuntimeMode.Resynchronizing -> "resynchronizing"
+        | None, true, Some _, Some GraceWatchRuntimeMode.Suspended -> "suspended"
+        | None, true, Some _, Some GraceWatchRuntimeMode.Stopping -> "stopping"
+        | None, true, Some _, Some GraceWatchRuntimeMode.StartingUp -> "startingUp"
+        | _ -> "notReady"
+
+    /// Explains Watch check status without exposing local IPC paths, raw repository paths, or exception stacks.
+    let private watchCheckMessage reason =
+        match reason with
+        | "running" -> "GraceWatch is running in HealthyIncremental mode. Incremental status shortcuts are available."
+        | "startingUp" -> "GraceWatch is starting and has not published a usable status snapshot yet."
+        | "resynchronizing" -> "GraceWatch is resynchronizing trusted state; incremental status shortcuts are suspended until resync completes."
+        | "suspended" -> "GraceWatch is suspended after confidence loss; restart watch or run an explicit resync before relying on incremental status."
+        | "stopping" -> "GraceWatch is stopping and should not be treated as a live incremental source."
+        | "staleStatus" -> "GraceWatch status is stale. The previous watcher may have exited before removing its status file."
+        | "unreadableStatus" -> "GraceWatch status exists but could not be read. Restart watch or clear the stale status file by starting watch again."
+        | "notRunning" -> "GraceWatch is not running."
+        | _ -> "GraceWatch status is not ready for incremental shortcuts."
+
+    /// Converts Watch IPC inspection into the public `watch --check` status payload.
+    let private toWatchCheckStatusDto (inspection: GraceWatchStatusInspection) =
+        let status = inspection.Status
+        let reason = watchCheckReason inspection
+
+        let mode =
+            inspection.EffectiveMode
+            |> Option.map (fun mode -> $"{mode}")
+            |> Option.defaultValue "Unavailable"
+
+        {
+            IsRunning = inspection.IsLiveProcess
+            CanUseIncrementalStatus = inspection.IsUsable
+            Mode = mode
+            Reason = reason
+            Message = watchCheckMessage reason
+            SafetyFlags = safetyFlagsForWatchCheck inspection
+            IsFresh = inspection.IsFresh
+            HasUsableRootSnapshot =
+                status
+                |> Option.map hasUsableRootSnapshotForCheck
+                |> Option.defaultValue false
+            HasDirectoryIndexSnapshot =
+                status
+                |> Option.map hasDirectoryIndexSnapshotForCheck
+                |> Option.defaultValue false
+            IsStartupClaim =
+                status
+                |> Option.map (fun status -> status.IsStartupClaim)
+                |> Option.defaultValue false
+            UpdatedAt =
+                status
+                |> Option.map (fun status -> status.UpdatedAt.ToString())
+            RootDirectoryId =
+                status
+                |> Option.map (fun status -> status.RootDirectoryId)
+        }
+
+    /// Renders `watch --check` in either human or machine-readable mode while preserving check exit semantics.
+    let private renderWatchCheckStatus parseResult (status: WatchCheckStatusDto) =
+        if parseResult |> json then
+            let renderExit =
+                Ok(GraceReturnValue.Create status (getCorrelationId parseResult))
+                |> renderOutput parseResult
+
+            if renderExit <> 0 then renderExit
+            elif status.CanUseIncrementalStatus then 0
+            else -1
+        else
+            let color =
+                if status.CanUseIncrementalStatus then Colors.Important
+                elif status.IsRunning then Colors.Important
+                else Colors.Error
+
+            logToAnsiConsole color status.Message
+
+            if status.CanUseIncrementalStatus then 0 else -1
+
     /// Renders json result results only when the selected output mode includes human-readable console text.
     let private renderJsonResult parseResult started completed message =
         let configuration = Current()
@@ -2576,15 +2700,9 @@ module Watch =
             task {
                 try
                     if isCheckRequested parseResult then
-                        let! existingGraceWatchStatus = getGraceWatchStatus ()
-
-                        match existingGraceWatchStatus with
-                        | Some _ ->
-                            logToAnsiConsole Colors.Important "GraceWatch is running."
-                            raise (WatchCommandExit 0)
-                        | None ->
-                            logToAnsiConsole Colors.Error "GraceWatch is not running."
-                            raise (WatchCommandExit -1)
+                        let! watchStatusInspection = inspectGraceWatchStatus ()
+                        let watchCheckStatus = toWatchCheckStatusDto watchStatusInspection
+                        raise (WatchCommandExit(renderWatchCheckStatus parseResult watchCheckStatus))
 
                     let! claimedGraceWatchStatus = tryClaimGraceWatchInterprocessFile ()
 

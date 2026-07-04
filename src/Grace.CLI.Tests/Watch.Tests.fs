@@ -217,6 +217,20 @@ module WatchTests =
         File.WriteAllText(ipcFileName, statusNode.ToJsonString(Constants.JsonSerializerOptions))
         ipcFileName
 
+    /// Writes a Watch IPC JSON snapshot with an explicit persisted runtime mode for status-readability tests.
+    let private writeWatchStatusJsonWithPersistedMode mode (status: Services.GraceWatchStatus) =
+        let statusNode = JsonNode.Parse(serialize status).AsObject()
+        statusNode["Mode"] <- JsonSerializer.SerializeToNode(mode, Constants.JsonSerializerOptions)
+        statusNode["SafetyFlags"] <- JsonSerializer.SerializeToNode(status.SafetyFlags, Constants.JsonSerializerOptions)
+
+        let ipcFileName = Services.IpcFileName()
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+        |> ignore
+
+        File.WriteAllText(ipcFileName, statusNode.ToJsonString(Constants.JsonSerializerOptions))
+        ipcFileName
+
     /// Rewrites only the Watch IPC heartbeat timestamp so tests can model a healthy writer that later dies.
     let private updatePersistedWatchStatusUpdatedAt updatedAt =
         let ipcFileName = Services.IpcFileName()
@@ -7009,9 +7023,9 @@ module WatchTests =
             readFileIfExists ipcFileName
             |> should equal originalContents)
 
-    /// Verifies that watch check json mode emits error envelope and preserves live watcher status.
+    /// Verifies that watch check json mode emits a status envelope and preserves live watcher status.
     [<Test>]
-    let ``watch check json mode emits error envelope and preserves live watcher status`` () =
+    let ``watch check json mode emits status envelope and preserves live watcher status`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
             let originalContents = readFileIfExists ipcFileName
@@ -7023,30 +7037,51 @@ module WatchTests =
                                                   "watch"
                                                   "--check" |]
 
-            exitCode |> should equal -1
+            exitCode |> should equal 0
             standardError |> should equal String.Empty
-
-            standardOut
-            |> should not' (contain "GraceWatch is running")
 
             use document = parseJsonOutput standardOut
             let root = document.RootElement
 
-            root.GetProperty("Error").GetString()
-            |> should contain "watch is a continuous foreground workflow"
+            root
+                .GetProperty("ReturnValue")
+                .GetProperty("IsRunning")
+                .GetBoolean()
+            |> should equal true
 
-            /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
-            let mutable returnValue = Unchecked.defaultof<JsonElement>
+            root
+                .GetProperty("ReturnValue")
+                .GetProperty("CanUseIncrementalStatus")
+                .GetBoolean()
+            |> should equal true
 
-            root.TryGetProperty("ReturnValue", &returnValue)
+            root
+                .GetProperty("ReturnValue")
+                .GetProperty("Mode")
+                .GetString()
+            |> should equal "HealthyIncremental"
+
+            root
+                .GetProperty("ReturnValue")
+                .GetProperty("SafetyFlags")
+                .EnumerateArray()
+            |> Seq.map (fun flag -> flag.GetString())
+            |> Set.ofSeq
+            |> Set.contains "incrementalSafe"
+            |> should equal true
+
+            /// Tracks error changes so this scenario can assert the resulting side effect explicitly.
+            let mutable error = Unchecked.defaultof<JsonElement>
+
+            root.TryGetProperty("Error", &error)
             |> should equal false
 
             readFileIfExists ipcFileName
             |> should equal originalContents)
 
-    /// Verifies that watch check select mode emits error envelope and preserves live watcher status.
+    /// Verifies that watch check select mode projects status fields and preserves live watcher status.
     [<Test>]
-    let ``watch check select mode emits error envelope and preserves live watcher status`` () =
+    let ``watch check select mode projects status field and preserves live watcher status`` () =
         withTempRepo (fun _ ->
             let ipcFileName = writeLiveWatchStatusFile ()
             let originalContents = readFileIfExists ipcFileName
@@ -7056,28 +7091,136 @@ module WatchTests =
                 runWithCapturedStdoutAndStderr [| "watch"
                                                   "--check"
                                                   "--select"
-                                                  "RootDirectoryId" |]
+                                                  "Mode" |]
 
-            exitCode |> should equal -1
+            exitCode |> should equal 0
             standardError |> should equal String.Empty
 
             standardOut
             |> should not' (contain "GraceWatch is running")
 
-            use document = parseJsonOutput standardOut
-            let root = document.RootElement
-
-            root.GetProperty("Error").GetString()
-            |> should contain "does not support --select in this release"
-
-            /// Tracks return Value changes so this scenario can assert the resulting side effect explicitly.
-            let mutable returnValue = Unchecked.defaultof<JsonElement>
-
-            root.TryGetProperty("ReturnValue", &returnValue)
-            |> should equal false
+            standardOut.Trim()
+            |> should equal "\"HealthyIncremental\""
 
             readFileIfExists ipcFileName
             |> should equal originalContents)
+
+    /// Verifies that watch check json mode reports missing status without human text.
+    [<Test>]
+    let ``watch check json mode reports missing status`` () =
+        withTempRepo (fun _ ->
+            clearWatchAuthEnv (fun () ->
+                /// Verifies that the CLI watch scenario exits with the expected process status.
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "watch"
+                                                      "--check" |]
+
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
+
+                use document = parseJsonOutput standardOut
+                let root = document.RootElement.GetProperty("ReturnValue")
+
+                root.GetProperty("IsRunning").GetBoolean()
+                |> should equal false
+
+                root
+                    .GetProperty("CanUseIncrementalStatus")
+                    .GetBoolean()
+                |> should equal false
+
+                root.GetProperty("Mode").GetString()
+                |> should equal "Unavailable"
+
+                root.GetProperty("Reason").GetString()
+                |> should equal "notRunning"))
+
+    /// Verifies that watch check explains resynchronizing state without exposing local status internals.
+    [<Test>]
+    let ``watch check explains resynchronizing state without raw paths or stacks`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status = { liveWatchStatus rootDirectoryId with DirectoryIds = HashSet<DirectoryVersionId>() }
+
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, serialize status)
+
+            /// Verifies that the CLI watch scenario exits with the expected process status.
+            let exitCode, output =
+                runWithCapturedOutput [| "watch"
+                                         "--check" |]
+
+            exitCode |> should equal -1
+
+            output
+            |> should contain "resynchronizing trusted state"
+
+            output
+            |> should contain "incremental status shortcuts are suspended until resync completes"
+
+            output |> should not' (contain ipcFileName)
+            output |> should not' (contain "StackTrace")
+            output |> should not' (contain "System."))
+
+    /// Verifies that watch check explains suspended state without exposing local status internals.
+    [<Test>]
+    let ``watch check explains suspended state without raw paths or stacks`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            rootDirectoryId
+            |> liveWatchStatus
+            |> writeWatchStatusJsonWithPersistedMode Services.GraceWatchRuntimeMode.Suspended
+            |> ignore
+
+            /// Verifies that the CLI watch scenario exits with the expected process status.
+            let exitCode, output =
+                runWithCapturedOutput [| "watch"
+                                         "--check" |]
+
+            exitCode |> should equal -1
+
+            output
+            |> should contain "suspended after confidence loss"
+
+            output
+            |> should not' (contain (Services.IpcFileName()))
+
+            output |> should not' (contain "StackTrace")
+            output |> should not' (contain "System."))
+
+    /// Verifies that watch check handles malformed status without exposing parser exception details.
+    [<Test>]
+    let ``watch check handles malformed status without raw paths or stacks`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, "not-json")
+
+            /// Verifies that the CLI watch scenario exits with the expected process status.
+            let exitCode, output =
+                runWithCapturedOutput [| "watch"
+                                         "--check" |]
+
+            exitCode |> should equal -1
+
+            output
+            |> should contain "status exists but could not be read"
+
+            output |> should not' (contain ipcFileName)
+            output |> should not' (contain "Json")
+            output |> should not' (contain "StackTrace")
+            output |> should not' (contain "System."))
 
     /// Verifies that watch check exits nonzero when live watcher status is missing.
     [<Test>]
@@ -7123,8 +7266,7 @@ module WatchTests =
 
                 exitCode |> should equal -1
 
-                output
-                |> should contain "GraceWatch is not running"
+                output |> should contain "GraceWatch is starting"
 
                 output
                 |> should not' (contain "Unable to acquire an access token for SignalR")
