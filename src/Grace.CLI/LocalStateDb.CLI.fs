@@ -692,6 +692,13 @@ module LocalStateDb =
         use reader = cmd.ExecuteReader()
         if reader.Read() then Some(reader.GetString(0)) else None
 
+    /// Counts persisted metadata rows for a key so schema trust rejects duplicate recovery watermarks.
+    let private countMetaValues (connection: SqliteConnection) (key: string) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- "SELECT COUNT(*) FROM meta WHERE key = $key;"
+        cmd.Parameters.AddWithValue("$key", key) |> ignore
+        cmd.ExecuteScalar() |> Convert.ToInt32
+
     /// Parses read-only Watch recovery metadata using the same nonnegative sequence contract as writable acceptance.
     let private tryParseWatchJournalAppliedThroughSequenceReadOnly (value: string) =
         match Int64.TryParse(value) with
@@ -730,13 +737,14 @@ module LocalStateDb =
                 if shapeValid then
                     try
                         match tryGetMetaValueReadOnly connection WatchJournalAppliedThroughSequenceMetaKey with
-                        | Some value ->
+                        | Some value when countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey = 1 ->
                             match tryParseWatchJournalAppliedThroughSequenceReadOnly value with
                             | Some sequence ->
                                 match tryReadConsistentAllocatedWatchJournalSequence connection with
                                 | Some allocatedSequence -> sequence <= allocatedSequence
                                 | None -> false
                             | None -> false
+                        | Some _ -> false
                         | None ->
                             not (hasWatchJournalRows connection)
                             && tryReadConsistentAllocatedWatchJournalSequence connection
@@ -863,13 +871,14 @@ module LocalStateDb =
     /// Verifies that existing Watch recovery metadata can be trusted before accepting schema version 5.
     let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
         match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
-        | Some value ->
+        | Some value when countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey = 1 ->
             match tryParseWatchJournalAppliedThroughSequence value with
             | Some sequence ->
                 match tryReadConsistentAllocatedWatchJournalSequence connection with
                 | Some allocatedSequence -> sequence <= allocatedSequence
                 | None -> false
             | None -> false
+        | Some _ -> false
         | None ->
             not (hasWatchJournalRows connection)
             && tryReadConsistentAllocatedWatchJournalSequence connection
