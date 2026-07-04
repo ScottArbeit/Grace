@@ -439,20 +439,28 @@ module LocalStateDb =
     /// Quotes SQLite identifiers used by schema PRAGMA calls against Grace-owned table and index names.
     let private quoteSqlIdentifier (identifier: string) = "\"" + identifier.Replace("\"", "\"\"") + "\""
 
-    /// Reads the ordered table columns that make up an SQLite index.
+    /// Reads the ordered table columns that make up an SQLite index, rejecting expression index entries.
     let private readIndexColumnNames (connection: SqliteConnection) indexName =
         use command = connection.CreateCommand()
         command.CommandText <- $"PRAGMA index_info({quoteSqlIdentifier indexName});"
         use reader = command.ExecuteReader()
         let columns = ResizeArray<int * string>()
+        let mutable containsExpression = false
 
         while reader.Read() do
-            columns.Add(reader.GetInt32(0), reader.GetString(2))
+            if reader.IsDBNull(2) then
+                containsExpression <- true
+            else
+                columns.Add(reader.GetInt32(0), reader.GetString(2))
 
-        columns
-        |> Seq.sortBy fst
-        |> Seq.map snd
-        |> Seq.toArray
+        if containsExpression then
+            None
+        else
+            columns
+            |> Seq.sortBy fst
+            |> Seq.map snd
+            |> Seq.toArray
+            |> Some
 
     /// Verifies that SQLite enforces one metadata row for each key before INSERT OR IGNORE can be trusted.
     let private hasUniqueMetaKeyConstraint (connection: SqliteConnection) =
@@ -460,9 +468,12 @@ module LocalStateDb =
 
         let keyIsPrimaryKey =
             columns
-            |> Array.exists (fun column ->
-                StringComparer.OrdinalIgnoreCase.Equals(column.Name, "key")
-                && column.PrimaryKeyOrdinal = 1)
+            |> Array.filter (fun column -> column.PrimaryKeyOrdinal > 0)
+            |> function
+                | [| column |] ->
+                    StringComparer.OrdinalIgnoreCase.Equals(column.Name, "key")
+                    && column.PrimaryKeyOrdinal = 1
+                | _ -> false
 
         if keyIsPrimaryKey then
             true
@@ -481,7 +492,7 @@ module LocalStateDb =
             uniqueIndexNames
             |> Seq.exists (fun indexName ->
                 match readIndexColumnNames connection indexName with
-                | [| columnName |] -> StringComparer.OrdinalIgnoreCase.Equals(columnName, "key")
+                | Some [| columnName |] -> StringComparer.OrdinalIgnoreCase.Equals(columnName, "key")
                 | _ -> false)
 
     /// Locates the top-level column list inside SQLite's stored CREATE TABLE statement.
@@ -703,27 +714,42 @@ module LocalStateDb =
             | _ -> None
         | _ -> None
 
-    /// Reads the highest persisted Watch journal row sequence so schema acceptance can reject stale allocation state.
-    let private tryReadMaxWatchJournalSequence (connection: SqliteConnection) =
+    /// Reads trusted Watch journal sequence bounds so malformed rows cannot be accepted by allocation checks.
+    let private tryReadWatchJournalSequenceBounds (connection: SqliteConnection) =
         use command = connection.CreateCommand()
-        command.CommandText <- "SELECT MAX(sequence) FROM watch_journal;"
-        let value = command.ExecuteScalar()
+        command.CommandText <- "SELECT COUNT(*), MIN(sequence), MAX(sequence) FROM watch_journal;"
 
-        match value with
-        | null
-        | :? DBNull -> Some 0L
-        | :? int64 as sequence when sequence >= 0L -> Some sequence
-        | :? int as sequence when sequence >= 0 -> Some(int64 sequence)
-        | :? string as value ->
-            match Int64.TryParse(value) with
-            | true, sequence when sequence >= 0L -> Some sequence
-            | _ -> None
-        | _ -> None
+        use reader = command.ExecuteReader()
+
+        if reader.Read() then
+            let rowCount = reader.GetInt64(0)
+
+            if rowCount = 0L then
+                Some(0L, 0L)
+            else
+                let tryReadSequence ordinal =
+                    if reader.IsDBNull(ordinal) then
+                        None
+                    else
+                        match reader.GetValue(ordinal) with
+                        | :? int64 as sequence -> Some sequence
+                        | :? int as sequence -> Some(int64 sequence)
+                        | :? string as value ->
+                            match Int64.TryParse(value) with
+                            | true, sequence -> Some sequence
+                            | _ -> None
+                        | _ -> None
+
+                match tryReadSequence 1, tryReadSequence 2 with
+                | Some minSequence, Some maxSequence when minSequence > 0L && maxSequence >= minSequence -> Some(minSequence, maxSequence)
+                | _ -> None
+        else
+            None
 
     /// Accepts SQLite's Watch journal allocation only when it covers every currently persisted journal row.
     let private tryReadConsistentAllocatedWatchJournalSequence (connection: SqliteConnection) =
-        match tryReadAllocatedWatchJournalSequence connection, tryReadMaxWatchJournalSequence connection with
-        | Some allocatedSequence, Some maxJournalSequence when allocatedSequence >= maxJournalSequence -> Some allocatedSequence
+        match tryReadAllocatedWatchJournalSequence connection, tryReadWatchJournalSequenceBounds connection with
+        | Some allocatedSequence, Some (_, maxJournalSequence) when allocatedSequence >= maxJournalSequence -> Some allocatedSequence
         | _ -> None
 
     /// Reads SQLite's allocated Watch journal sequence so recovery metadata cannot outrun future row ids.
@@ -738,7 +764,11 @@ module LocalStateDb =
         cmd.CommandText <- "SELECT value FROM meta WHERE key = $key LIMIT 1;"
         cmd.Parameters.AddWithValue("$key", key) |> ignore
         use reader = cmd.ExecuteReader()
-        if reader.Read() then Some(reader.GetString(0)) else None
+
+        if reader.Read() && not (reader.IsDBNull(0)) then
+            Some(reader.GetString(0))
+        else
+            None
 
     /// Counts persisted metadata rows for a key so schema trust rejects duplicate recovery watermarks.
     let private countMetaValues (connection: SqliteConnection) (key: string) =
@@ -785,16 +815,19 @@ module LocalStateDb =
                 if shapeValid
                    && hasUniqueMetaKeyConstraint connection then
                     try
-                        match tryGetMetaValueReadOnly connection WatchJournalAppliedThroughSequenceMetaKey with
-                        | Some value when countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey = 1 ->
-                            match tryParseWatchJournalAppliedThroughSequenceReadOnly value with
-                            | Some sequence ->
-                                match tryReadConsistentAllocatedWatchJournalSequence connection with
-                                | Some allocatedSequence -> sequence <= allocatedSequence
+                        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+                        | 1 ->
+                            match tryGetMetaValueReadOnly connection WatchJournalAppliedThroughSequenceMetaKey with
+                            | Some value ->
+                                match tryParseWatchJournalAppliedThroughSequenceReadOnly value with
+                                | Some sequence ->
+                                    match tryReadConsistentAllocatedWatchJournalSequence connection with
+                                    | Some allocatedSequence -> sequence <= allocatedSequence
+                                    | None -> false
                                 | None -> false
                             | None -> false
-                        | Some _ -> false
-                        | None ->
+                        | count when count > 1 -> false
+                        | _ ->
                             not (hasWatchJournalRows connection)
                             && tryReadConsistentAllocatedWatchJournalSequence connection
                                |> Option.isSome
@@ -897,7 +930,11 @@ module LocalStateDb =
         cmd.CommandText <- "SELECT value FROM meta WHERE key = $key LIMIT 1;"
         cmd.Parameters.AddWithValue("$key", key) |> ignore
         use reader = cmd.ExecuteReader()
-        if reader.Read() then Some(reader.GetString(0)) else None
+
+        if reader.Read() && not (reader.IsDBNull(0)) then
+            Some(reader.GetString(0))
+        else
+            None
 
     /// Coordinates local SQLite state for set meta value, including Grace status, object cache, or watch metadata.
     let private setMetaValue (connection: SqliteConnection) (key: string) (value: string) =
@@ -919,16 +956,19 @@ module LocalStateDb =
 
     /// Verifies that existing Watch recovery metadata can be trusted before accepting schema version 5.
     let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
-        match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
-        | Some value when countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey = 1 ->
-            match tryParseWatchJournalAppliedThroughSequence value with
-            | Some sequence ->
-                match tryReadConsistentAllocatedWatchJournalSequence connection with
-                | Some allocatedSequence -> sequence <= allocatedSequence
+        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+        | 1 ->
+            match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
+            | Some value ->
+                match tryParseWatchJournalAppliedThroughSequence value with
+                | Some sequence ->
+                    match tryReadConsistentAllocatedWatchJournalSequence connection with
+                    | Some allocatedSequence -> sequence <= allocatedSequence
+                    | None -> false
                 | None -> false
             | None -> false
-        | Some _ -> false
-        | None ->
+        | count when count > 1 -> false
+        | _ ->
             not (hasWatchJournalRows connection)
             && tryReadConsistentAllocatedWatchJournalSequence connection
                |> Option.isSome
