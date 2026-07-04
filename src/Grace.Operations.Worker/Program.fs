@@ -22,7 +22,7 @@ module Program =
 
                     services.AddSingleton(settings) |> ignore
 
-                    services.AddSingleton(OperationsUsageSchema(settings.SqlConnectionString))
+                    services.AddSingleton(OperationsUsageSchema(settings.SqlConnectionString, settings.SchemaBootstrapMode))
                     |> ignore
 
                     services.AddSingleton<IOperationsUsageFactStore> (fun _ ->

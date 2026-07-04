@@ -88,6 +88,7 @@ type OperationsWorkerSettings =
         SqlConnectionString: string
         ServiceBusConnectionString: string option
         ServiceBusFullyQualifiedNamespace: string option
+        SchemaBootstrapMode: OperationsUsageSchemaBootstrapMode
         MaxConcurrentCalls: int
         PrefetchCount: int
     }
@@ -116,6 +117,23 @@ module OperationsWorkerSettings =
     [<Literal>]
     let PrefetchCountEnvironmentVariable = "grace__operations_worker__prefetch_count"
 
+    /// Converts short Service Bus namespace settings into the fully qualified host expected by Azure.Messaging.ServiceBus.
+    let private normalizeServiceBusNamespace (value: string) =
+        let trimmed = value.Trim()
+
+        let withoutScheme =
+            if trimmed.StartsWith("sb://", StringComparison.OrdinalIgnoreCase) then
+                trimmed.Substring(5)
+            else
+                trimmed
+
+        let normalizedNamespace = withoutScheme.Trim().TrimEnd('/')
+
+        if normalizedNamespace.Contains "." then
+            normalizedNamespace
+        else
+            $"{normalizedNamespace}.servicebus.windows.net"
+
     /// Returns a trimmed setting value when configuration contains a non-empty entry.
     let private optionalSetting (configuration: IConfiguration) name =
         [
@@ -139,6 +157,12 @@ module OperationsWorkerSettings =
             | _ -> defaultValue
         | None -> defaultValue
 
+    /// Allows local SQL emulator runs to create the operations database while keeping Azure connections least-privilege.
+    let private schemaBootstrapMode configuration =
+        match optionalSetting configuration Constants.EnvironmentVariables.DebugEnvironment with
+        | Some value when value.Equals("Local", StringComparison.OrdinalIgnoreCase) -> OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing
+        | _ -> OperationsUsageSchemaBootstrapMode.TargetDatabaseOnly
+
     /// Attempts managed-identity Service Bus discovery without letting unrelated Azure environment gaps abort validation.
     let private serviceBusNamespaceFromAzureEnvironment () =
         try
@@ -157,7 +181,9 @@ module OperationsWorkerSettings =
 
         let serviceBusConnectionString = optionalSetting configuration Constants.EnvironmentVariables.AzureServiceBusConnectionString
 
-        let serviceBusNamespace = optionalSetting configuration Constants.EnvironmentVariables.AzureServiceBusNamespace
+        let serviceBusNamespace =
+            optionalSetting configuration Constants.EnvironmentVariables.AzureServiceBusNamespace
+            |> Option.map normalizeServiceBusNamespace
 
         let errors = ResizeArray<string>()
 
@@ -195,6 +221,7 @@ module OperationsWorkerSettings =
                         | None ->
                             serviceBusNamespace
                             |> Option.orElseWith serviceBusNamespaceFromAzureEnvironment
+                    SchemaBootstrapMode = schemaBootstrapMode configuration
                     MaxConcurrentCalls = positiveIntSetting configuration MaxConcurrentCallsEnvironmentVariable 4
                     PrefetchCount = positiveIntSetting configuration PrefetchCountEnvironmentVariable 16
                 }

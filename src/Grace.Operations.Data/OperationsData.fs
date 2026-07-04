@@ -119,6 +119,14 @@ module OperationsUsageSql =
     [<Literal>]
     let CaseSensitiveStoragePoolIdCollation = "Latin1_General_100_BIN2"
 
+    /// Limits correlation identifiers to the raw fact column width used by the operations store.
+    [<Literal>]
+    let CorrelationIdMaxLength = 200
+
+    /// Limits storage-pool identifiers to the aggregate key column width used by the operations store.
+    [<Literal>]
+    let StoragePoolIdMaxLength = 256
+
     /// Creates the operations schema when it is absent.
     [<Literal>]
     let CreateSchema = "IF SCHEMA_ID(N'ops') IS NULL EXEC(N'CREATE SCHEMA ops');"
@@ -282,36 +290,47 @@ module UsageFactPersistencePlan =
         match UsageFact.Validate fact with
         | Error errors -> Error errors
         | Ok () ->
-            let bucketStart = bucketObservedAt fact.ObservedAt
+            let errors = ResizeArray<string>()
 
-            let rawFact =
-                {
-                    UsageFactId = fact.UsageFactId
-                    CorrelationId = fact.CorrelationId
-                    FactKind = fact.FactKind
-                    OwnerId = fact.Scope.OwnerId
-                    OrganizationId = fact.Scope.OrganizationId
-                    RepositoryId = fact.Scope.RepositoryId
-                    StoragePoolId = fact.Resource.StoragePoolId
-                    Quantity = fact.Quantity
-                    ObservedAt = bucketStart
-                }
+            if fact.CorrelationId.Length > OperationsUsageSql.CorrelationIdMaxLength then
+                errors.Add($"CorrelationId must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer for operations SQL storage.")
 
-            let aggregate =
-                {
-                    Key =
-                        {
-                            FactKind = fact.FactKind
-                            OwnerId = fact.Scope.OwnerId
-                            OrganizationId = fact.Scope.OrganizationId
-                            RepositoryId = fact.Scope.RepositoryId
-                            StoragePoolId = fact.Resource.StoragePoolId
-                            BucketStart = bucketStart
-                        }
-                    Quantity = fact.Quantity
-                }
+            if fact.Resource.StoragePoolId.Length > OperationsUsageSql.StoragePoolIdMaxLength then
+                errors.Add($"Resource.StoragePoolId must be {OperationsUsageSql.StoragePoolIdMaxLength} characters or fewer for operations SQL storage.")
 
-            Ok { RawFact = rawFact; Aggregate = aggregate }
+            if errors.Count > 0 then
+                Error(List.ofSeq errors)
+            else
+                let bucketStart = bucketObservedAt fact.ObservedAt
+
+                let rawFact =
+                    {
+                        UsageFactId = fact.UsageFactId
+                        CorrelationId = fact.CorrelationId
+                        FactKind = fact.FactKind
+                        OwnerId = fact.Scope.OwnerId
+                        OrganizationId = fact.Scope.OrganizationId
+                        RepositoryId = fact.Scope.RepositoryId
+                        StoragePoolId = fact.Resource.StoragePoolId
+                        Quantity = fact.Quantity
+                        ObservedAt = bucketStart
+                    }
+
+                let aggregate =
+                    {
+                        Key =
+                            {
+                                FactKind = fact.FactKind
+                                OwnerId = fact.Scope.OwnerId
+                                OrganizationId = fact.Scope.OrganizationId
+                                RepositoryId = fact.Scope.RepositoryId
+                                StoragePoolId = fact.Resource.StoragePoolId
+                                BucketStart = bucketStart
+                            }
+                        Quantity = fact.Quantity
+                    }
+
+                Ok { RawFact = rawFact; Aggregate = aggregate }
 
 /// Represents the commands available inside one durable operations usage transaction.
 type IOperationsUsageTransaction =
@@ -355,12 +374,12 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
     /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
     let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
         addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
-        addStringParameter command "@CorrelationId" 200 rawFact.CorrelationId
+        addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
         addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
         addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
         addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
         addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
-        addStringParameter command "@StoragePoolId" 256 rawFact.StoragePoolId
+        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
 
@@ -370,7 +389,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addParameter command "@OwnerId" SqlDbType.UniqueIdentifier aggregate.Key.OwnerId
         addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier aggregate.Key.OrganizationId
         addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier aggregate.Key.RepositoryId
-        addStringParameter command "@StoragePoolId" 256 aggregate.Key.StoragePoolId
+        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength aggregate.Key.StoragePoolId
         addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (toUtcDateTime aggregate.Key.BucketStart)
         addParameter command "@Quantity" SqlDbType.BigInt aggregate.Quantity
 

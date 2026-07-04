@@ -110,6 +110,14 @@ type private StubUsageFactStore(storeAsync: UsageFact -> CancellationToken -> Ta
             events.Add("store")
             storeAsync fact cancellationToken
 
+/// Fails if deterministic validation lets an invalid fact reach a storage transaction.
+type private FailingOperationsUsageTransactionScope() =
+
+    interface IOperationsUsageTransactionScope with
+
+        member _.ExecuteAsync<'T>(_operation, _cancellationToken) =
+            Task.FromException<'T>(InvalidOperationException("Invalid usage facts must be rejected before opening a storage transaction."))
+
 /// Covers the Grace operations worker usage fact ingestion loop.
 [<TestFixture>]
 type OperationsWorkerIngestionTests() =
@@ -131,6 +139,20 @@ type OperationsWorkerIngestionTests() =
 
         OperationsUsageIngestionProcessor(store, logger), store, RecordingMessageActions(events), events
 
+    /// Creates a processor backed by the real data-layer validation path.
+    let createProcessorWithRealStore () =
+        let events = List<string>()
+
+        let store =
+            OperationsUsageStore(FailingOperationsUsageTransactionScope())
+            |> OperationsUsageFactStoreAdapter
+
+        let logger =
+            NullLogger<OperationsUsageIngestionProcessor>
+                .Instance
+
+        OperationsUsageIngestionProcessor(store, logger), RecordingMessageActions(events), events
+
     /// Formats ordered fake events for overload-free assertions.
     let eventText (events: seq<string>) = String.Join("|", events)
 
@@ -149,6 +171,15 @@ type OperationsWorkerIngestionTests() =
 
     /// Creates an already-processed persistence result for a fact.
     let alreadyProcessed fact = { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = fact.UsageFactId; Aggregate = None }
+
+    /// Verifies AppHost SQL Server data sources use SqlClient comma-port syntax.
+    [<Test>]
+    member _.AppHostFormatsLocalSqlDataSourceWithCommaPort() =
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(global.Program.BuildSqlTcpDataSource("localhost", 21433), Is.EqualTo("tcp:localhost,21433"))
+                Assert.That(global.Program.BuildSqlTcpDataSource("tcp:localhost", "21433"), Is.EqualTo("tcp:localhost,21433")))
+        )
 
     /// Verifies AppHost-style environment names resolve after Host configuration normalizes `__` to `:`.
     [<Test>]
@@ -189,6 +220,82 @@ type OperationsWorkerIngestionTests() =
 
                     Assert.That(value.MaxConcurrentCalls, Is.EqualTo(7))
                     Assert.That(value.PrefetchCount, Is.EqualTo(29)))
+            )
+        | Error errors -> Assert.Fail(String.Join("; ", errors))
+
+    /// Verifies DebugLocal opts into admin bootstrap so fresh local SQL containers get the operations database.
+    [<Test>]
+    member _.WorkerSettingsUseDatabaseCreationBootstrapForDebugLocal() =
+        let configuration =
+            configurationFromPairs [ KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic,
+                                         "operations-topic"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.ProcessorSubscriptionEnvironmentVariable,
+                                         OperationsWorkerSettings.DefaultProcessorSubscriptionName
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.SqlConnectionStringEnvironmentVariable,
+                                         "Server=tcp:localhost,21433;Database=GraceOperations;User ID=sa;Password=fake;TrustServerCertificate=True;Encrypt=False;"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusConnectionString,
+                                         "Endpoint=sb://localhost:5672;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=fake;UseDevelopmentEmulator=true;"
+                                     )
+                                     KeyValuePair<string, string>(getConfigKey Constants.EnvironmentVariables.DebugEnvironment, "Local") ]
+
+        match OperationsWorkerSettings.fromConfiguration configuration with
+        | Ok value -> Assert.That(value.SchemaBootstrapMode, Is.EqualTo(OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing))
+        | Error errors -> Assert.Fail(String.Join("; ", errors))
+
+    /// Verifies non-local worker settings keep least-privilege target-only schema initialization.
+    [<Test>]
+    member _.WorkerSettingsKeepTargetOnlyBootstrapForDebugAzure() =
+        let configuration =
+            configurationFromPairs [ KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic,
+                                         "operations-topic"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.ProcessorSubscriptionEnvironmentVariable,
+                                         OperationsWorkerSettings.DefaultProcessorSubscriptionName
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.SqlConnectionStringEnvironmentVariable,
+                                         "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                                     )
+                                     KeyValuePair<string, string>(getConfigKey Constants.EnvironmentVariables.AzureServiceBusNamespace, "operations-bus")
+                                     KeyValuePair<string, string>(getConfigKey Constants.EnvironmentVariables.DebugEnvironment, "Azure") ]
+
+        match OperationsWorkerSettings.fromConfiguration configuration with
+        | Ok value -> Assert.That(value.SchemaBootstrapMode, Is.EqualTo(OperationsUsageSchemaBootstrapMode.TargetDatabaseOnly))
+        | Error errors -> Assert.Fail(String.Join("; ", errors))
+
+    /// Verifies worker-only managed identity settings accept short Service Bus namespace names.
+    [<Test>]
+    member _.WorkerSettingsNormalizeManagedIdentityNamespace() =
+        let configuration =
+            configurationFromPairs [ KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic,
+                                         "operations-topic"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.ProcessorSubscriptionEnvironmentVariable,
+                                         OperationsWorkerSettings.DefaultProcessorSubscriptionName
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.SqlConnectionStringEnvironmentVariable,
+                                         "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                                     )
+                                     KeyValuePair<string, string>(getConfigKey Constants.EnvironmentVariables.AzureServiceBusNamespace, "mybus") ]
+
+        match OperationsWorkerSettings.fromConfiguration configuration with
+        | Ok value ->
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(value.ServiceBusConnectionString, Is.EqualTo(None))
+                    Assert.That(value.ServiceBusFullyQualifiedNamespace, Is.EqualTo(Some "mybus.servicebus.windows.net")))
             )
         | Error errors -> Assert.Fail(String.Join("; ", errors))
 
@@ -308,6 +415,42 @@ type OperationsWorkerIngestionTests() =
                     Assert.That(List.length store.StoredFacts, Is.EqualTo(1))
                     Assert.That(eventText events, Is.EqualTo("store|abandon"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon")))
+            )
+        }
+
+    /// Verifies usage facts that violate SQL-bound shape limits dead-letter instead of being retried.
+    [<Test>]
+    member _.SqlShapeValidationFailureIsDeadLettered() =
+        task {
+            let overlongCorrelationId = CorrelationId(String('c', OperationsUsageSql.CorrelationIdMaxLength + 1))
+
+            let overlongStoragePoolId = StoragePoolId(String('s', OperationsUsageSql.StoragePoolIdMaxLength + 1))
+
+            let fact =
+                UsageFact.RepositoryStorageBytesMinute(
+                    Guid.Parse("99999999-9999-9999-9999-999999999999"),
+                    overlongCorrelationId,
+                    OperationsWorkerIngestionTestData.ownerId,
+                    OperationsWorkerIngestionTestData.organizationId,
+                    OperationsWorkerIngestionTestData.repositoryId,
+                    overlongStoragePoolId,
+                    4096L,
+                    Instant.FromUtc(2026, 7, 4, 12, 39, 0)
+                )
+
+            let processor, actions, events = createProcessorWithRealStore ()
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
             )
         }
 

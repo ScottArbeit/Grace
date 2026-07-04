@@ -299,9 +299,11 @@ public partial class Program
                         }
 
                         var serviceBusSqlEndpoint = serviceBusSql.GetEndpoint("sql");
-                        var serviceBusSqlHostAndPort = serviceBusSqlEndpoint.Property(EndpointProperty.HostAndPort);
+                        var serviceBusSqlHost = serviceBusSqlEndpoint.Property(EndpointProperty.Host);
+                        var serviceBusSqlPort = serviceBusSqlEndpoint.Property(EndpointProperty.Port);
+                        var serviceBusSqlDataSource = BuildSqlTcpDataSource(serviceBusSqlHost, serviceBusSqlPort);
                         var operationsSqlConnectionString = ReferenceExpression.Create(
-                            $"Server=tcp:{serviceBusSqlHostAndPort};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;");
+                            $"Server={serviceBusSqlDataSource};Initial Catalog=GraceOperations;User ID=sa;Password={serviceBusSqlPassword};TrustServerCertificate=True;Encrypt=False;");
 
                         var serviceBusEmulatorResourceName = runSuffix is null ? "servicebus-emulator" : $"servicebus-emulator-{runSuffix}";
                         var serviceBusEmulator = builder.AddContainer(serviceBusEmulatorResourceName, "mcr.microsoft.com/azure-messaging/servicebus-emulator", "latest")
@@ -625,6 +627,28 @@ public partial class Program
             throw new InvalidOperationException(
                 $"DebugAzure requires existing Azure Service Bus topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' to contain durable subscription '{OperationalFactsProcessorSubscriptionName}'. Set '{OperationalFactsProcessorSubscriptionSettingName}' to '{OperationalFactsProcessorSubscriptionName}' after creating that subscription.");
         }
+    }
+
+    internal static string BuildSqlTcpDataSource(object host, object port)
+    {
+        var hostValue = Convert.ToString(host)?.Trim();
+        var portValue = Convert.ToString(port)?.Trim();
+
+        if (string.IsNullOrWhiteSpace(hostValue))
+        {
+            throw new ArgumentException("SQL host is required.", nameof(host));
+        }
+
+        if (string.IsNullOrWhiteSpace(portValue))
+        {
+            throw new ArgumentException("SQL port is required.", nameof(port));
+        }
+
+        var normalizedHost = hostValue.StartsWith("tcp:", StringComparison.OrdinalIgnoreCase)
+            ? hostValue.Substring(4)
+            : hostValue;
+
+        return $"tcp:{normalizedHost},{portValue}";
     }
 
     private static void AddOptionalEnvironment(

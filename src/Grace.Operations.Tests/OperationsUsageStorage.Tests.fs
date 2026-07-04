@@ -215,6 +215,37 @@ type OperationsUsageStorageTests() =
                 Assert.That(lowerPoolPlan.Aggregate.Key, Is.Not.EqualTo(mixedPoolPlan.Aggregate.Key)))
         )
 
+    /// Verifies facts that exceed SQL column widths are rejected before SQL Server can truncate them.
+    [<Test>]
+    member _.PersistencePlanRejectsSqlBoundStringOverflows() =
+        let overlongCorrelationId = CorrelationId(String('c', OperationsUsageSql.CorrelationIdMaxLength + 1))
+
+        let overlongStoragePoolId = StoragePoolId(String('s', OperationsUsageSql.StoragePoolIdMaxLength + 1))
+
+        let fact =
+            UsageFact.RepositoryStorageBytesMinute(
+                Guid.Parse("56565656-5656-5656-5656-565656565656"),
+                overlongCorrelationId,
+                OperationsUsageStorageTestData.ownerId,
+                OperationsUsageStorageTestData.organizationId,
+                OperationsUsageStorageTestData.repositoryId,
+                overlongStoragePoolId,
+                1L,
+                Instant.FromUtc(2026, 7, 4, 12, 37, 0)
+            )
+
+        match UsageFactPersistencePlan.tryCreate fact with
+        | Ok _ -> Assert.Fail("Overlong SQL-bound fact fields should be rejected before persistence.")
+        | Error errors ->
+            let errorText = String.Join("|", errors)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(errorText, Does.Contain($"CorrelationId must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer"))
+
+                    Assert.That(errorText, Does.Contain($"Resource.StoragePoolId must be {OperationsUsageSql.StoragePoolIdMaxLength} characters or fewer")))
+            )
+
     /// Verifies the production SQL transaction scope satisfies the store dependency.
     [<Test>]
     member _.SqlTransactionScopeImplementsOperationsUsageTransactionScope() =
