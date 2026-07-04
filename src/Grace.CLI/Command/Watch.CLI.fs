@@ -223,7 +223,7 @@ module Watch =
 
     let mutable private quarantinedWatchObservationCount = 0
 
-    let mutable private graceWatchResyncPending = 0
+    let mutable private graceWatchResyncGeneration = 0L
 
     /// Defines structured data exchanged by CLI helpers.
     type internal PendingWatchWorkSnapshot = { FilesToProcess: string array; DirectoriesToProcess: string array; StatusUpdateTriggers: string array }
@@ -1287,8 +1287,21 @@ module Watch =
         if quarantinedCount > 0 then
             logToAnsiConsole Colors.Important $"Grace Watch quarantined {quarantinedCount} pending observations after confidence loss: {reason}."
 
+    /// Reads the active explicit-resync attempt token used to reject stale recovery side effects.
+    let private currentGraceWatchResyncAttempt () = Volatile.Read(&graceWatchResyncGeneration)
+
     /// Reports whether an explicit resync scan must run before incremental observation application resumes.
-    let private isGraceWatchResyncPending () = Volatile.Read(&graceWatchResyncPending) <> 0
+    let private isGraceWatchResyncPending () = currentGraceWatchResyncAttempt () <> 0L
+
+    /// Reports whether an in-flight resync attempt still owns the recovery boundary.
+    let private isGraceWatchResyncAttemptCurrent attempt =
+        attempt <> 0L
+        && currentGraceWatchResyncAttempt () = attempt
+
+    /// Reports whether an in-flight resync attempt may still apply recovery side effects.
+    let private isGraceWatchResyncAttemptActive attempt =
+        isGraceWatchResyncAttemptCurrent attempt
+        && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Resynchronizing
 
     let mutable private statusSideEffectTrustPredicate = fun () -> true
 
@@ -1320,7 +1333,10 @@ module Watch =
         allowed
 
     /// Clears the pending resync request once scan-derived status has reached the durable boundary.
-    let private clearGraceWatchResyncPending () = Volatile.Write(&graceWatchResyncPending, 0)
+    let private clearGraceWatchResyncPending () = Volatile.Write(&graceWatchResyncGeneration, 0L)
+
+    /// Clears a specific resync attempt without losing a newer confidence-loss request.
+    let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
     /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
     let private promoteStartupModeIfRecoverySucceeded () =
@@ -1342,18 +1358,29 @@ module Watch =
         with
         | ex -> logToAnsiConsole Colors.Error $"Grace Watch could not publish resync-required status: {Markup.Escape(ex.Message)}."
 
-    /// Suspends incremental Watch processing after recovery fails so Grace does not silently continue.
-    let private suspendGraceWatchAfterFailedRecovery reason =
-        quarantinePendingWatchWork reason
-        clearGraceWatchResyncPending ()
-        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
-        publishGraceWatchResyncRequired ()
-        logToAnsiConsole Colors.Error $"Grace Watch suspended incremental processing: {reason}."
+    /// Suspends only the resync attempt that observed the failure, preserving newer overflow requests.
+    let private suspendGraceWatchAttemptAfterFailedRecovery attempt reason =
+        if isGraceWatchResyncAttemptActive attempt then
+            quarantinePendingWatchWork reason
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+
+            if tryClearGraceWatchResyncAttempt attempt then
+                publishGraceWatchResyncRequired ()
+                logToAnsiConsole Colors.Error $"Grace Watch suspended incremental processing: {reason}."
+            else
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                logToAnsiConsole Colors.Important $"Grace Watch kept newer resync attempt pending after stale attempt {attempt} failed."
+        else
+            logToAnsiConsole Colors.Important $"Grace Watch ignored stale resync failure for attempt {attempt} because a newer resync attempt is pending."
 
     /// Requests a scan-derived resync and quarantines observations captured under the previous root confidence.
     let private requestGraceWatchExplicitResync reason =
         quarantinePendingWatchWork reason
-        Volatile.Write(&graceWatchResyncPending, 1)
+
+        Interlocked.Increment(&graceWatchResyncGeneration)
+        |> ignore
+
         setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
         publishGraceWatchResyncRequired ()
         logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
@@ -2116,6 +2143,7 @@ module Watch =
         applyGraceStatusIncrementalClient
         correlationId
         recordProcessedPaths
+        resyncAttempt
         =
         task {
             let! graceStatusFromDisk = readGraceStatusMetaClient ()
@@ -2149,14 +2177,14 @@ module Watch =
                     let currentMode = currentGraceWatchRuntimeMode ()
 
                     let uploadResultStillTrusted =
-                        if recordProcessedPaths then
-                            not (isGraceWatchResyncPending ())
+                        match resyncAttempt with
+                        | Some attempt -> isGraceWatchResyncAttemptActive attempt
+                        | None ->
+                            recordProcessedPaths
+                            && not (isGraceWatchResyncPending ())
                             && (isGraceWatchObservationApplicationLegal currentMode
                                 || currentMode = GraceWatchRuntimeMode.StartingUp
                                 || currentMode = GraceWatchRuntimeMode.Stopping)
-                        else
-                            isGraceWatchResyncPending ()
-                            && currentMode = GraceWatchRuntimeMode.Resynchronizing
 
                     if
                         uploadResultStillTrusted
@@ -2213,74 +2241,110 @@ module Watch =
 
             // First, check if there's anything to process.
             if isGraceWatchResyncPending () then
+                let resyncAttempt = currentGraceWatchResyncAttempt ()
+
                 try
                     let correlationId = generateCorrelationId ()
 
-                    let! uploadedRetryContent =
+                    let! uploadedRetryContent, uploadRetryFailed =
                         if filesToProcess.IsEmpty then
-                            Task.FromResult(false)
+                            Task.FromResult(false, false)
                         else
-                            uploadPendingWatchFilesForStatusRetry
-                                readGraceStatusMetaClient
-                                copyFileToObjectDirectoryAndUploadToStorageClient
-                                applyGraceStatusIncrementalClient
-                                correlationId
-                                false
+                            task {
+                                try
+                                    let! uploadedRetryContent =
+                                        uploadPendingWatchFilesForStatusRetry
+                                            readGraceStatusMetaClient
+                                            copyFileToObjectDirectoryAndUploadToStorageClient
+                                            applyGraceStatusIncrementalClient
+                                            correlationId
+                                            false
+                                            (Some resyncAttempt)
 
-                    if uploadedRetryContent then
-                        logToAnsiConsole
-                            Colors.Important
-                            "Grace Watch uploaded file content queued by resync recovery; retrying the scan-derived status boundary."
+                                    return uploadedRetryContent, false
+                                with
+                                | ex ->
+                                    if isGraceWatchResyncAttemptActive resyncAttempt then
+                                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
-                    let! graceStatusSnapshot = readGraceStatusFileClient ()
-                    graceStatus <- graceStatusSnapshot
+                                    logToAnsiConsole
+                                        Colors.Error
+                                        $"Grace Watch resync upload retry failed and will remain queued for another tick: {ex.Message}"
 
-                    let! scanDerivedDifferences = _scanForDifferencesClient graceStatus
+                                    return false, true
+                            }
 
-                    if not (wasLastScanForDifferencesSuccessful ()) then
-                        failwith "scan-derived resync did not complete successfully"
+                    let resyncStatusUpdateStillTrusted () = isGraceWatchResyncAttemptActive resyncAttempt
 
-                    let resyncStatusUpdateStillTrusted () =
-                        isGraceWatchResyncPending ()
-                        && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Resynchronizing
-
-                    let! statusUpdateResult =
-                        if scanDerivedDifferences.Count > 0 then
-                            updateGraceStatusFromDifferencesWhenTrusted
-                                resyncStatusUpdateStillTrusted
-                                updateGraceStatusFromDifferencesClient
-                                graceStatus
-                                scanDerivedDifferences
-                                correlationId
-                        else
-                            Task.FromResult(Some graceStatus)
-
-                    match statusUpdateResult with
-                    | Some newGraceStatus ->
-                        graceStatus <- newGraceStatus
-                        updateGraceStatusDirectoryIds graceStatus
-                        clearGraceWatchResyncPending ()
-                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
-                        do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
-
-                        logToAnsiConsole
-                            Colors.Important
-                            $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
-                    | None ->
-                        if filesToProcess.IsEmpty then
-                            suspendGraceWatchAfterFailedRecovery "scan-derived status update returned no durable status"
-                        else
-                            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-
+                    if uploadRetryFailed then
+                        ()
+                    elif not (resyncStatusUpdateStillTrusted ()) then
+                        logToAnsiConsole Colors.Important $"Grace Watch skipped stale resync attempt {resyncAttempt} because a newer resync attempt is pending."
+                    else
+                        if uploadedRetryContent then
                             logToAnsiConsole
                                 Colors.Important
-                                $"Grace Watch resync queued file uploads before applying scan-derived status; retry will continue after uploads complete."
+                                "Grace Watch uploaded file content queued by resync recovery; retrying the scan-derived status boundary."
+
+                        let! graceStatusSnapshot = readGraceStatusFileClient ()
+                        graceStatus <- graceStatusSnapshot
+
+                        let! scanDerivedDifferences = _scanForDifferencesClient graceStatus
+
+                        if not (wasLastScanForDifferencesSuccessful ()) then
+                            failwith "scan-derived resync did not complete successfully"
+
+                        let! statusUpdateResult =
+                            if scanDerivedDifferences.Count > 0 then
+                                updateGraceStatusFromDifferencesWhenTrusted
+                                    resyncStatusUpdateStillTrusted
+                                    updateGraceStatusFromDifferencesClient
+                                    graceStatus
+                                    scanDerivedDifferences
+                                    correlationId
+                            else
+                                Task.FromResult(Some graceStatus)
+
+                        match statusUpdateResult with
+                        | Some newGraceStatus when resyncStatusUpdateStillTrusted () ->
+                            graceStatus <- newGraceStatus
+                            updateGraceStatusDirectoryIds graceStatus
+
+                            setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
+
+                            let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
+
+                            if clearedResyncAttempt then
+                                do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
+
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                            else
+                                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch kept newer resync attempt pending after stale attempt {resyncAttempt} completed."
+                        | Some _ ->
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Grace Watch skipped stale resync commit for attempt {resyncAttempt} because confidence changed before commit."
+                        | None ->
+                            if filesToProcess.IsEmpty then
+                                suspendGraceWatchAttemptAfterFailedRecovery resyncAttempt "scan-derived status update returned no durable status"
+                            else
+                                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch resync queued file uploads before applying scan-derived status; retry will continue after uploads complete."
 
                     graceStatus <- GraceStatus.Default
                     GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
                 with
                 | ex ->
-                    suspendGraceWatchAfterFailedRecovery $"resync failed before the durable status boundary: {ex.Message}"
+                    suspendGraceWatchAttemptAfterFailedRecovery resyncAttempt $"resync failed before the durable status boundary: {ex.Message}"
 
                     logToAnsiConsole
                         Colors.Error
@@ -2296,6 +2360,7 @@ module Watch =
                             applyGraceStatusIncrementalClient
                             correlationId
                             true
+                            None
 
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.

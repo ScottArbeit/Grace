@@ -6192,6 +6192,198 @@ module WatchTests =
             uploadCalls |> should equal 1
             applyFromDifferencesCalls |> should equal 2)
 
+    /// Verifies that a newer overflow during a resync scan cannot be cleared by the older scan result.
+    [<Test>]
+    let ``overflow during resync scan requires a later scan before healthy mode`` () =
+        withTempRepo (fun _ ->
+            let scanDifference = FileSystemDifference.Create Delete FileSystemEntryType.File "stale-resync-delete.txt"
+            /// Tracks scan Calls changes so the newer overflow must produce a fresh scan.
+            let mutable scanCalls = 0
+            /// Tracks apply-from-differences Calls changes so stale scan output cannot commit.
+            let mutable applyFromDifferencesCalls = 0
+
+            Watch.requestGraceWatchExplicitResyncForWatchTests "test stale resync"
+
+            /// Reads status needed by the stale resync scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Raises a second overflow during the first scan so that attempt cannot clear pending resync.
+            let scanForDifferences _ =
+                scanCalls <- scanCalls + 1
+                let differences = List<FileSystemDifference>()
+
+                if scanCalls = 1 then
+                    Watch.OnError(ErrorEventArgs(InternalBufferOverflowException("second resync overflow")))
+                    differences.Add(scanDifference)
+
+                Task.FromResult(differences)
+
+            /// Builds apply-from-differences test data used to prove stale scan output is ignored.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 0
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            scanCalls |> should equal 2
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental)
+
+    /// Verifies that transient upload failures during resync leave scan-derived work queued for retry.
+    [<Test>]
+    let ``resync upload retry failure keeps queued work`` () =
+        withTempRepo (fun root ->
+            let relativePath = "resync-upload-transient.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let scanDifference = FileSystemDifference.Create Add FileSystemEntryType.File relativePath
+            /// Tracks upload Calls changes so the failed upload is retried on the next tick.
+            let mutable uploadCalls = 0
+            /// Tracks apply-from-differences Calls changes so failed upload does not suspend recovery.
+            let mutable applyFromDifferencesCalls = 0
+
+            File.WriteAllText(filePath, "resync upload transient")
+            Watch.requestGraceWatchExplicitResyncForWatchTests "test transient resync upload"
+
+            /// Reads status needed by the transient upload scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Fails the first queued resync upload and succeeds when the next timer tick retries it.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+
+                if uploadCalls = 1 then
+                    Task.FromException<unit>(InvalidOperationException("transient upload failure"))
+                else
+                    recordUploadedFileVersion $"{pendingFilePath}"
+                    Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Produces a file add discovered by the resync scan.
+            let scanForDifferences _ =
+                let differences = List<FileSystemDifference>()
+                differences.Add(scanDifference)
+                Task.FromResult(differences)
+
+            /// Queues missing file content on the first status attempt and succeeds after upload.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+
+                if applyFromDifferencesCalls = 1 then
+                    Watch.OnChanged(changedEvent filePath)
+                    Task.FromResult(None)
+                else
+                    Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |]
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 1
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal [| filePath |]
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            uploadCalls |> should equal 2
+            applyFromDifferencesCalls |> should equal 2
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>)
+
     /// Verifies that a swallowed scan failure cannot complete resync as a clean empty scan.
     [<Test>]
     let ``resync suspends when scan reports failure with empty differences`` () =
