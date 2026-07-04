@@ -106,6 +106,27 @@ When acting as the main implementation orchestrator, follow the repo policy:
   validation evidence, includes the prevention line from `docs/Development process.md`, resolves the conversation,
   updates `Review Status`, and waits for the next bot review.
 
+Repeated review cycles need structural handling, not endless one-off fixes:
+
+- A substantive cycle is a fresh latest-head behavior, correctness, concurrency, recovery, durability, authority,
+  contract, or maintainability finding, followed by a worker fix, followed by another substantive latest-head finding.
+- Do not count stale threads, duplicates, formatting-only comments, administrative comments, CI flakes, invalid
+  findings, or maintainer-accepted deferrals.
+- After one substantive cycle, continue the normal fix loop. After two, add a repeated-theme prevention note to
+  `Review Status`. After three, pause one-off fixes and post a stabilization ledger to the issue and PR. After four,
+  hard stop until the ledger is implemented, proven, and self-reviewed.
+- Start stabilization after two substantive cycles for high-risk surfaces such as Watch state, IPC/status contracts,
+  branch-switch safety, storage, actors, authorization, public contracts, persisted shapes, concurrency, recovery, or
+  side-effect ordering.
+- If a PR has more than three Codex Code Review Bot review sessions even without three counted substantive cycles,
+  audit the timeline before assigning another routine fix worker. Decide whether the issue is missing invariants,
+  needs a future leaf deferral, or requires a structural ledger before the next review request.
+- In an epic-branch PR, a valid finding may be resolved as future work only when it is explicitly outside the current
+  leaf, the future issue already exists or is created first, the future issue body receives the exact finding and proof
+  obligation, the PR reply names the future issue, and `Review Status` records the deferral.
+- Do not defer prerequisites that make the current leaf trustworthy. If later leaves consume a fact, authority signal,
+  persisted field, status flag, or trust predicate produced by the current leaf, the current leaf owns that reliability.
+
 If subagent tools are unavailable or cannot be used under the active tool policy, state that limitation and preserve the
 rest of the Grace workflow as far as possible.
 
