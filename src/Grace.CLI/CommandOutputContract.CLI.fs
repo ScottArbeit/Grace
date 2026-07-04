@@ -30,6 +30,7 @@ module CommandOutputContract =
     type CurrentJsonBehavior =
         | CommonRenderOutputEnvelope
         | ImmediateJsonErrorOnly
+        | ConditionalCheckStatusEnvelope
         | HumanProgressOnlySuccess
         | PartialManualSuccess
         | ManualJsonUnenveloped
@@ -65,6 +66,7 @@ module CommandOutputContract =
     /// Models envelope contract values passed between the parser and command output contract handlers.
     type EnvelopeContract =
         | ExistingGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
+        | ConditionalGraceResultEnvelope of dtoDisposition: OutputDtoDisposition * condition: string
         | MigrationRequiredToGraceResultEnvelope of dtoDisposition: OutputDtoDisposition
         | JsonModeErrorOnly of reason: string
         | SourceOnlyUnsupported of disposition: string
@@ -422,6 +424,58 @@ module CommandOutputContract =
                     |]
             |}
 
+    let private watchStatusSchema =
+        schemaObject
+            "WatchStatusDto"
+            [
+                "IsRunning", scalarSchema "boolean"
+                "CanUseIncrementalStatus", scalarSchema "boolean"
+                "Mode", scalarSchema "string"
+                "Reason", scalarSchema "string"
+                "Message", scalarSchema "string"
+                "SafetyFlags", arraySchema (scalarSchema "string") "Compact status facts for agents deciding whether to trust Watch."
+                "IsFresh", scalarSchema "boolean"
+                "HasUsableRootSnapshot", scalarSchema "boolean"
+                "HasDirectoryIndexSnapshot", scalarSchema "boolean"
+                "IsStartupClaim", scalarSchema "boolean"
+                "UpdatedAt", nullableStringSchema "Watch IPC heartbeat timestamp when a status snapshot is readable."
+                "RootDirectoryId", nullableStringSchema "Root directory version id when a status snapshot is readable."
+            ]
+            [|
+                "IsRunning"
+                "CanUseIncrementalStatus"
+                "Mode"
+                "Reason"
+                "Message"
+                "SafetyFlags"
+                "IsFresh"
+                "HasUsableRootSnapshot"
+                "HasDirectoryIndexSnapshot"
+                "IsStartupClaim"
+            |]
+
+    let private watchStatusExample =
+        box
+            {|
+                IsRunning = true
+                CanUseIncrementalStatus = true
+                Mode = "HealthyIncremental"
+                Reason = "running"
+                Message = "GraceWatch is running in HealthyIncremental mode. Incremental status shortcuts are available."
+                SafetyFlags =
+                    [|
+                        "directoryIndex"
+                        "incrementalSafe"
+                        "usableRoot"
+                    |]
+                IsFresh = true
+                HasUsableRootSnapshot = true
+                HasDirectoryIndexSnapshot = true
+                IsStartupClaim = false
+                UpdatedAt = "2026-06-05T00:00:00Z"
+                RootDirectoryId = "11111111-1111-1111-1111-111111111111"
+            |}
+
     let private doctorCheckSchema =
         schemaObject
             "DoctorCheckDto"
@@ -589,6 +643,7 @@ module CommandOutputContract =
     let private envelopeContractText (contract: EnvelopeContract) =
         match contract with
         | ExistingGraceResultEnvelope disposition -> $"ExistingGraceResultEnvelope: {outputDtoDispositionText disposition}"
+        | ConditionalGraceResultEnvelope (disposition, condition) -> $"ConditionalGraceResultEnvelope: {outputDtoDispositionText disposition}; {condition}"
         | MigrationRequiredToGraceResultEnvelope disposition -> $"MigrationRequiredToGraceResultEnvelope: {outputDtoDispositionText disposition}"
         | JsonModeErrorOnly reason -> $"JsonModeErrorOnly: {reason}"
         | SourceOnlyUnsupported reason -> $"SourceOnlyUnsupported: {reason}"
@@ -597,6 +652,7 @@ module CommandOutputContract =
     let private returnValueDispositionText (contract: EnvelopeContract) =
         match contract with
         | ExistingGraceResultEnvelope disposition
+        | ConditionalGraceResultEnvelope (disposition, _)
         | MigrationRequiredToGraceResultEnvelope disposition -> outputDtoDispositionText disposition
         | JsonModeErrorOnly reason -> $"Unsupported: {reason}"
         | SourceOnlyUnsupported reason -> $"Unsupported: {reason}"
@@ -682,13 +738,26 @@ module CommandOutputContract =
                 [
                     "Representative scalar ReturnValue schema for a common Grace result envelope command."
                 ]
-        | "watch", JsonModeErrorOnly reason -> unsupportedReturnValueContract "WatchResultDto" reason
+        | "watch", ConditionalGraceResultEnvelope (RequiresCliDto, _) ->
+            supportedReturnValueContract
+                "WatchStatusDto"
+                "Grace.CLI.Command.Watch"
+                watchStatusSchema
+                watchStatusExample
+                [
+                    "`grace watch --check` emits this status DTO in JSON mode. Foreground `grace watch --output Json` remains unsupported because the watcher is a continuous workflow."
+                ]
+        | "watch", JsonModeErrorOnly reason -> unsupportedReturnValueContract "WatchStatusDto" reason
         | _, SourceOnlyUnsupported reason -> unsupportedReturnValueContract "unsupported" reason
         | _, JsonModeErrorOnly reason -> unsupportedReturnValueContract "unsupported" reason
         | _, MigrationRequiredToGraceResultEnvelope disposition ->
             incompleteReturnValueContract
                 (outputDtoDispositionText disposition)
                 "This command is routed, but its JSON success path still requires migration before schema/examples can describe the emitted ReturnValue."
+        | _, ConditionalGraceResultEnvelope (disposition, condition) ->
+            incompleteReturnValueContract
+                (outputDtoDispositionText disposition)
+                $"This command has a conditional JSON success path, but command-specific ReturnValue schema/example metadata has not been declared yet. {condition}"
         | _, ExistingGraceResultEnvelope disposition ->
             incompleteReturnValueContract
                 (outputDtoDispositionText disposition)
@@ -762,6 +831,8 @@ module CommandOutputContract =
             Envelope =
                 match entry.EnvelopeContract with
                 | JsonModeErrorOnly reason -> $"GraceError only in JSON mode for this release; no success ReturnValue envelope is emitted. {reason}"
+                | ConditionalGraceResultEnvelope (_, condition) ->
+                    $"GraceReturnValue<T> status envelope for status checks, including unavailable modes with nonzero exit codes. GraceError remains for parser and command execution errors outside that status-check path. {condition}"
                 | _ -> "GraceReturnValue<T> on success; GraceError on error. CLI success Properties are emitted as Key/Value entries."
             ReturnValueDisposition = returnValueDispositionText entry.EnvelopeContract
             ReturnValueContract = entry.ReturnValueContract.Name
@@ -866,6 +937,8 @@ module CommandOutputContract =
             { JsonMode = UnsupportedUntilRouted; Schema = UnsupportedUntilRouted; Examples = UnsupportedUntilRouted; Select = UnsupportedUntilRouted }
         | ImmediateJsonErrorOnly ->
             { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = RequiresMigration }
+        | ConditionalCheckStatusEnvelope ->
+            { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = ExistingBehavior }
         | CommonRenderOutputEnvelope ->
             { JsonMode = ExistingBehavior; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = ExistingBehavior }
         | _ -> { JsonMode = RequiresMigration; Schema = FutureInertIntrospection; Examples = FutureInertIntrospection; Select = FutureReturnValueProjection }
@@ -875,6 +948,11 @@ module CommandOutputContract =
         match routed, behavior with
         | false, _ -> SourceOnlyUnsupported "Defined in source but not root-routed for V1."
         | true, CommonRenderOutputEnvelope -> ExistingGraceResultEnvelope dtoDisposition
+        | true, ConditionalCheckStatusEnvelope ->
+            ConditionalGraceResultEnvelope(
+                dtoDisposition,
+                "`grace watch --check` supports JSON and --select status output; foreground `grace watch` still returns a JSON error because it is a continuous workflow."
+            )
         | true, ImmediateJsonErrorOnly ->
             JsonModeErrorOnly
                 "The command is routed, but --output Json is intentionally short-circuited before command execution because watch is a continuous foreground workflow."
@@ -935,6 +1013,7 @@ module CommandOutputContract =
 
     let private common_renderOutput_envelope = CommonRenderOutputEnvelope
     let private immediate_json_error_only = ImmediateJsonErrorOnly
+    let private conditional_check_status_envelope = ConditionalCheckStatusEnvelope
     let private human_progress_only_success = HumanProgressOnlySuccess
     let private partial_manual_success = PartialManualSuccess
     let private manual_json_unenveloped = ManualJsonUnenveloped
@@ -1225,7 +1304,7 @@ module CommandOutputContract =
             row [ "review"; "report" ] "export" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review"; "report" ] "show" true false common_renderOutput_envelope read_list_search composite_local_server RequiresCliDto
             row [ "review" ] "resolve" true true common_renderOutput_envelope mutating_state_transition verify ReuseExistingApiOrSdkDto
-            row [] "watch" true true immediate_json_error_only progress_local_workflow local_client RequiresCliDto
+            row [] "watch" true true conditional_check_status_envelope progress_local_workflow local_client RequiresCliDto
             row [ "webhook" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "delete" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto
             row [ "webhook" ] "deliveries" true false common_renderOutput_envelope read_list_search server_via_sdk ReuseExistingApiOrSdkDto

@@ -1385,7 +1385,7 @@ module GraceCommand =
                             //parseResult <- caseInsensitiveMiddleware (rootCommand, parseResult, isCaseInsensitive)
 
                             if (parseResult |> json)
-                               && (parseResult |> isGraceWatch) then
+                               && (parseResult |> isGraceWatchForeground) then
                                 let error =
                                     GraceError.Create
                                         "watch is a continuous foreground workflow; JSON mode requires a cancellation-aware automation host in this release."
@@ -1394,7 +1394,10 @@ module GraceCommand =
                                 Common.writeJsonErrorStdout error
                                 returnValue <- -1
                             else
-                                if parseResult |> hasOutput then
+                                if
+                                    (parseResult |> hasOutput)
+                                    && not (parseResult |> json)
+                                then
                                     if parseResult |> verbose then
                                         AnsiConsole.Write(
                                             (new Rule($"[{Colors.Important}]Started: {formatInstantExtended startTime}.[/]"))
@@ -1425,7 +1428,10 @@ module GraceCommand =
                                     logToAnsiConsole Colors.Important (getLocalizedString StringResourceName.InterprocessFileDeleted)
 
                                 // If we're writing output, write the final Rule() to the console.
-                                if parseResult |> hasOutput then
+                                if
+                                    (parseResult |> hasOutput)
+                                    && not (parseResult |> json)
+                                then
                                     let finishTime = getCurrentInstant ()
 
                                     let elapsed =
