@@ -184,6 +184,10 @@ so links stay traceable without relying on epic-branch auto-close behavior.
 - Start the stabilization pass after two substantive cycles for high-risk surfaces, including Watch state, IPC/status
   contracts, branch-switch safety, local working-tree mutation, runtime timers, storage, actors, retries,
   idempotency, authorization, public contracts, persisted shapes, concurrency, recovery, or side-effect ordering.
+- If a pull request has more than three Codex Code Review Bot review sessions even without three counted substantive
+  cycles, pause before assigning another routine fix worker. Audit the review timeline, separate stale/duplicate/invalid
+  sessions from fresh findings, and decide whether the issue needs a missing invariant, sibling-issue deferral, or
+  structural stabilization ledger before the next review request.
 - Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
   fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
   review surface. After a fix worker pushes, reply to and resolve only the fresh findings it addressed, update
