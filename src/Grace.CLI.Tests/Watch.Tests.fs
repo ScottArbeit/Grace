@@ -7,6 +7,7 @@ open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
+open Grace.Types.Automation
 open Grace.Types.Common
 open NodaTime
 open NUnit.Framework
@@ -506,6 +507,22 @@ module WatchTests =
         File.Delete(updateMarkerFile)
         Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
+    /// Builds a promotion-applied automation event targeting the supplied branch.
+    let private promotionAppliedEnvelope targetBranchId terminalReferenceId =
+        let current = Current()
+
+        let dataJson = JsonSerializer.Serialize({| targetBranchId = $"{targetBranchId}"; terminalPromotionReferenceId = $"{terminalReferenceId}" |})
+
+        AutomationEventEnvelope.Create
+            AutomationEventType.PromotionSetApplied
+            (getCurrentInstant ())
+            (generateCorrelationId ())
+            current.OwnerId
+            current.OrganizationId
+            current.RepositoryId
+            $"{targetBranchId}"
+            dataJson
+
     /// Builds renamed event test data used to exercise CLI watch behavior.
     let private renamedEvent (oldFullPath: string) (fullPath: string) =
         RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
@@ -737,6 +754,84 @@ module WatchTests =
 
             Services.getGraceWatchStatus().Result
             |> should equal None)
+
+    /// Verifies that branch transition completion refreshes SignalR parent identity before auto-rebase events resume.
+    [<Test>]
+    let ``update marker deletion refreshes signalr parent subscription for new branch`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let parentAId = Guid.NewGuid()
+            let parentBId = Guid.NewGuid()
+            let repositoryName = "transition-signalr-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+
+            try
+                writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+                resetConfiguration ()
+                Current() |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+                Watch.setSignalRBranchSubscriptionForWatchTests branchAId parentAId
+
+                let statusA = graceStatusTracking Array.empty<string> Array.empty<string>
+                let statusB = graceStatusTracking Array.empty<string> Array.empty<string>
+
+                (Services.updateGraceWatchInterprocessFile statusA (Some(HashSet<DirectoryVersionId>(statusA.Index.Keys))))
+                    .GetAwaiter()
+                    .GetResult()
+
+                let refreshedSubscriptions = ResizeArray<BranchId * BranchId>()
+
+                Watch.setSignalRSubscriptionRefreshForWatchTests (fun () ->
+                    let current = Current()
+                    Watch.setSignalRBranchSubscriptionForWatchTests current.BranchId parentBId
+                    let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+                    refreshedSubscriptions.Add(subscription.BranchId, subscription.ParentBranchId))
+
+                writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+                Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+
+                recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+                refreshedSubscriptions.ToArray()
+                |> should equal [| branchBId, parentBId |]
+
+                let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+                subscription.BranchId |> should equal branchBId
+
+                subscription.ParentBranchId
+                |> should equal parentBId
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentAId
+                |> should equal false
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentBId
+                |> should equal true
+
+                let rebasedStatuses = ResizeArray<DirectoryVersionId>()
+
+                let readStatus () = Task.FromResult(statusB)
+
+                let rebaseCurrentBranch (status: GraceStatus) = task { rebasedStatuses.Add(status.RootDirectoryId) }
+
+                (Watch.handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch (promotionAppliedEnvelope parentAId (Guid.NewGuid())))
+                    .GetAwaiter()
+                    .GetResult()
+
+                rebasedStatuses.ToArray()
+                |> should equal Array.empty<DirectoryVersionId>
+
+                (Watch.handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch (promotionAppliedEnvelope parentBId (Guid.NewGuid())))
+                    .GetAwaiter()
+                    .GetResult()
+
+                rebasedStatuses.ToArray()
+                |> should equal [| statusB.RootDirectoryId |]
+            finally
+                Watch.resetSignalRSubscriptionRefreshForWatchTests ())
 
     /// Verifies that a missed marker-created callback cannot leave Watch serving the previous branch indefinitely.
     [<Test>]

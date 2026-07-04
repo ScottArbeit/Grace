@@ -559,6 +559,58 @@ module Watch =
     let mutable private readGraceStatusFileForPendingWorkTransition = readGraceStatusFile
     let mutable private readGraceStatusFileForTransitionCompletion = readGraceStatusFile
 
+    /// Records the branch-scoped SignalR identity that Watch currently trusts for auto-rebase events.
+    type internal SignalRBranchSubscriptionState = { BranchId: BranchId; ParentBranchId: BranchId }
+
+    let private emptySignalRBranchSubscription = { BranchId = BranchId.Empty; ParentBranchId = BranchId.Empty }
+
+    let private signalRBranchSubscriptionLock = obj ()
+    let mutable private signalRBranchSubscription = emptySignalRBranchSubscription
+    let private signalRSubscriptionRefreshLock = obj ()
+    let mutable private refreshSignalRBranchSubscriptionsForTransitionCompletion = ignore
+
+    /// Replaces the watched SignalR branch identity after registration reaches the current parent branch.
+    let private setSignalRBranchSubscription branchId parentBranchId =
+        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription <- { BranchId = branchId; ParentBranchId = parentBranchId })
+
+    /// Clears branch-scoped SignalR trust while Watch recalculates the current parent branch.
+    let private clearSignalRBranchSubscription () = lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription <- emptySignalRBranchSubscription)
+
+    /// Reads the watched SignalR branch identity without exposing the mutable cell.
+    let internal signalRBranchSubscriptionForWatchTests () = lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription)
+
+    /// Replaces the watched SignalR branch identity in Watch tests without opening a HubConnection.
+    let internal setSignalRBranchSubscriptionForWatchTests branchId parentBranchId = setSignalRBranchSubscription branchId parentBranchId
+
+    /// Reports whether a SignalR automation event targets the parent branch Watch currently trusts.
+    let internal signalRAutomationEventTargetsWatchedParentBranchForWatchTests targetBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            signalRBranchSubscription.ParentBranchId = targetBranchId
+            && signalRBranchSubscription.ParentBranchId
+               <> BranchId.Empty)
+
+    /// Installs the active SignalR parent-branch refresh operation used after branch identity changes.
+    let private registerSignalRSubscriptionRefresh refresh =
+        lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- refresh)
+
+        { new IDisposable with
+            member _.Dispose() = lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- ignore)
+        }
+
+    /// Runs the current SignalR subscription refresh after transition identity reloads.
+    let private refreshSignalRSubscriptionsAfterTransitionCompletion () =
+        let refresh = lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion)
+        refresh ()
+
+    /// Installs the SignalR parent-branch refresh operation used by transition-completion tests.
+    let internal setSignalRSubscriptionRefreshForWatchTests refresh =
+        lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- refresh)
+
+    /// Restores SignalR subscription refresh state after transition-completion tests.
+    let internal resetSignalRSubscriptionRefreshForWatchTests () =
+        lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- ignore)
+        clearSignalRBranchSubscription ()
+
     let private updateMarkerWatcherRebindLock = obj ()
     let mutable private rebindUpdateMarkerWatcherForTransitionCompletion = ignore
     let private branchTransitionCompletionProbeLock = obj ()
@@ -2117,6 +2169,7 @@ module Watch =
                     try
                         reloadConfigurationForTransitionCompletion ()
                         rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
                         true
                     with
                     | ex ->
@@ -2269,6 +2322,7 @@ module Watch =
         readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
         clearShouldIgnoreCache ()
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
+        resetSignalRSubscriptionRefreshForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
         clearGraceUpdateMarkerDeletedUtcForReset ()
@@ -2549,6 +2603,99 @@ module Watch =
                             })
             )
             .Build()
+
+    /// Reads a GUID-valued property from a SignalR automation event payload without throwing on unsupported input.
+    let private tryParseAutomationEventGuidProperty (propertyName: string) (dataJson: string) =
+        try
+            use document = JsonDocument.Parse(dataJson)
+            let root = document.RootElement
+            let mutable propertyValue = Unchecked.defaultof<JsonElement>
+
+            if root.TryGetProperty(propertyName, &propertyValue) then
+                let propertyText = propertyValue.GetString()
+                let mutable parsedGuid = Guid.Empty
+
+                if
+                    String.IsNullOrWhiteSpace propertyText |> not
+                    && Guid.TryParse(propertyText, &parsedGuid)
+                then
+                    Some parsedGuid
+                else
+                    Option.None
+            else
+                Option.None
+        with
+        | _ -> Option.None
+
+    /// Reports whether an automation envelope is a parent-branch promotion for the current Watch subscription.
+    let private automationEventTargetsWatchedParentBranch (envelope: AutomationEventEnvelope) =
+        if envelope.EventType = AutomationEventType.PromotionSetApplied then
+            let targetBranchId =
+                tryParseAutomationEventGuidProperty "targetBranchId" envelope.DataJson
+                |> Option.defaultValue BranchId.Empty
+
+            signalRAutomationEventTargetsWatchedParentBranchForWatchTests targetBranchId
+        else
+            false
+
+    /// Handles SignalR automation events that can drive Watch auto-rebase.
+    let private handleSignalRAutomationEvent readStatus rebaseCurrentBranch (envelope: AutomationEventEnvelope) =
+        task {
+            try
+                if automationEventTargetsWatchedParentBranch envelope then
+                    let terminalReferenceId =
+                        tryParseAutomationEventGuidProperty "terminalPromotionReferenceId" envelope.DataJson
+                        |> Option.defaultValue ReferenceId.Empty
+
+                    let watchedParentBranchId =
+                        (signalRBranchSubscriptionForWatchTests ())
+                            .ParentBranchId
+
+                    logToAnsiConsole
+                        Colors.Highlighted
+                        $"Parent branch {watchedParentBranchId} received terminal promotion {terminalReferenceId}; starting auto-rebase."
+
+                    let! currentStatus = readStatus ()
+                    do! rebaseCurrentBranch currentStatus
+            with
+            | ex -> logToAnsiConsole Colors.Error $"Failed to process automation event payload for {envelope.EventType}: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Exposes the SignalR automation-event path to Watch tests without opening a HubConnection.
+    let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
+        handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
+
+    /// Registers the current repository branch with its parent-branch SignalR group and refreshes local event trust.
+    let private registerCurrentSignalRParentBranch (signalRConnection: HubConnection) cancellationToken =
+        task {
+            clearSignalRBranchSubscription ()
+
+            let current = Current()
+
+            let branchGetParameters =
+                GetBranchParameters(
+                    OwnerId = $"{current.OwnerId}",
+                    OrganizationId = $"{current.OrganizationId}",
+                    RepositoryId = $"{current.RepositoryId}",
+                    BranchId = $"{current.BranchId}"
+                )
+
+            match! Branch.GetParentBranch branchGetParameters with
+            | Ok returnValue ->
+                let parentBranchDto = returnValue.ReturnValue
+
+                do! signalRConnection.InvokeAsync("RegisterParentBranch", current.BranchId, parentBranchDto.BranchId, cancellationToken)
+                setSignalRBranchSubscription current.BranchId parentBranchDto.BranchId
+
+                logToAnsiConsole
+                    Colors.Highlighted
+                    $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
+
+                return Ok parentBranchDto
+            | Error error ->
+                clearSignalRBranchSubscription ()
+                return Error error
+        }
 
     /// Evaluates is grace status artifact against parsed options and command state.
     let private isGraceStatusArtifact (fullPath: string) =
@@ -3749,7 +3896,21 @@ module Watch =
 
                     use signalRConnection = createSignalRConnection signalRUrl
 
-                    let mutable watchedParentBranchId = BranchId.Empty
+                    use refreshSignalRSubscriptions =
+                        registerSignalRSubscriptionRefresh (fun () ->
+                            try
+                                match (registerCurrentSignalRParentBranch signalRConnection cancellationToken)
+                                    .GetAwaiter()
+                                    .GetResult()
+                                    with
+                                | Ok _ -> ()
+                                | Error error ->
+                                    requestGraceWatchExplicitResync "branch transition completion could not refresh SignalR parent subscription"
+                                    logToAnsiConsole Colors.Error $"Failed to refresh SignalR parent branch subscription: {Markup.Escape(error.ToString())}"
+                            with
+                            | ex ->
+                                clearSignalRBranchSubscription ()
+                                requestGraceWatchExplicitResync $"branch transition completion could not refresh SignalR parent subscription: {ex.Message}")
 
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(
@@ -3768,53 +3929,14 @@ module Watch =
                         signalRConnection.On<AutomationEventEnvelope>(
                             "NotifyAutomationEvent",
                             fun envelope ->
-                                (task {
-                                    if envelope.EventType = AutomationEventType.PromotionSetApplied then
-                                        try
-                                            use document = JsonDocument.Parse(envelope.DataJson)
-                                            let root = document.RootElement
-
-                                            /// Tries to map parse guid property and returns a GraceError instead of throwing on unsupported input.
-                                            let tryParseGuidProperty (propertyName: string) : Guid option =
-                                                let mutable propertyValue = Unchecked.defaultof<JsonElement>
-
-                                                if root.TryGetProperty(propertyName, &propertyValue) then
-                                                    let propertyText = propertyValue.GetString()
-                                                    let mutable parsedGuid = Guid.Empty
-
-                                                    if
-                                                        String.IsNullOrWhiteSpace propertyText |> not
-                                                        && Guid.TryParse(propertyText, &parsedGuid)
-                                                    then
-                                                        Some parsedGuid
-                                                    else
-                                                        Option.None
-                                                else
-                                                    Option.None
-
-                                            let targetBranchId =
-                                                tryParseGuidProperty "targetBranchId"
-                                                |> Option.defaultValue BranchId.Empty
-
-                                            let terminalReferenceId =
-                                                tryParseGuidProperty "terminalPromotionReferenceId"
-                                                |> Option.defaultValue ReferenceId.Empty
-
-                                            if watchedParentBranchId = targetBranchId
-                                               && watchedParentBranchId <> BranchId.Empty then
-                                                logToAnsiConsole
-                                                    Colors.Highlighted
-                                                    $"Parent branch {watchedParentBranchId} received terminal promotion {terminalReferenceId}; starting auto-rebase."
-
-                                                let! currentStatus = readGraceStatusFile ()
-                                                let! _ = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) currentStatus
-                                                ()
-                                        with
-                                        | ex ->
-                                            logToAnsiConsole
-                                                Colors.Error
-                                                $"Failed to process automation event payload for {envelope.EventType}: {Markup.Escape(ex.Message)}."
-                                })
+                                (handleSignalRAutomationEvent
+                                    readGraceStatusFile
+                                    (fun currentStatus ->
+                                        task {
+                                            let! _ = Branch.rebaseHandler (parseResult |> getNormalizedIdsAndNames) currentStatus
+                                            ()
+                                        })
+                                    envelope)
                                 :> Task
                         )
 
@@ -3862,31 +3984,15 @@ module Watch =
                         task { logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}." })
 
                     do! signalRConnection.StartAsync(cancellationToken)
+                    // Repository-wide notifications are keyed only by RepositoryId, so same-process branch switches do not change this group.
                     do! signalRConnection.InvokeAsync("RegisterRepository", Current().RepositoryId, cancellationToken)
 
                     logToAnsiConsole
                         Colors.Highlighted
                         $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in repository {Current().RepositoryName} ({Current().RepositoryId}); connectionId: {signalRConnection.ConnectionId}."
 
-                    // Get the parent BranchId so we can tell SignalR what to notify us about.
-                    let branchGetParameters =
-                        GetBranchParameters(
-                            OwnerId = $"{Current().OwnerId}",
-                            OrganizationId = $"{Current().OrganizationId}",
-                            RepositoryId = $"{Current().RepositoryId}",
-                            BranchId = $"{Current().BranchId}"
-                        )
-
-                    match! Branch.GetParentBranch branchGetParameters with
-                    | Ok returnValue ->
-                        let parentBranchDto = returnValue.ReturnValue
-                        watchedParentBranchId <- parentBranchDto.BranchId
-
-                        do! signalRConnection.InvokeAsync("RegisterParentBranch", Current().BranchId, parentBranchDto.BranchId, cancellationToken)
-
-                        logToAnsiConsole
-                            Colors.Highlighted
-                            $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
+                    match! registerCurrentSignalRParentBranch signalRConnection cancellationToken with
+                    | Ok _ -> ()
                     | Error error ->
                         logToAnsiConsole Colors.Error $"Failed to retrieve branch metadata. Cannot connect to SignalR Hub."
 
