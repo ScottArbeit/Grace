@@ -194,6 +194,20 @@ These capture failure classification, retryability, cleanup notes, and runtime m
   acknowledgement that the operational facts topic already has the durable `operational-facts-processor` subscription.
 - `grace__azure_service_bus__subscription`: Service Bus subscription name.
 
+### Operations Worker
+
+- `grace__operations__sql__connectionstring`: SQL Server connection string used by `Grace.Operations.Worker` for raw
+  usage facts and minute aggregates. Aspire local run mode points this at the local SQL Server container and database
+  `GraceOperations`.
+- `grace__operations_worker__max_concurrent_calls`: Optional Service Bus processor concurrency override. Defaults to
+  `4`.
+- `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `16`.
+
+The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and requires
+`grace__azure_service_bus__operational_facts_processor_subscription` to be exactly `operational-facts-processor`.
+Malformed or unsupported usage fact messages are dead-lettered; transient storage failures are abandoned for retry.
+Messages are completed only after SQL processing succeeds or the durable usage fact identity is already present.
+
 ### Redis
 
 - `grace__redis__host`: Redis host.

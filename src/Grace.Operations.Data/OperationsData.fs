@@ -78,6 +78,17 @@ module OperationsUsageSql =
     [<Literal>]
     let CreateSchema = "IF SCHEMA_ID(N'ops') IS NULL EXEC(N'CREATE SCHEMA ops');"
 
+    /// Creates the configured operations database when SQL Server does not already contain it.
+    [<Literal>]
+    let CreateDatabaseIfMissing =
+        """
+IF DB_ID(@DatabaseName) IS NULL
+BEGIN
+    DECLARE @CreateDatabaseSql nvarchar(max) = N'CREATE DATABASE ' + QUOTENAME(@DatabaseName);
+    EXEC(@CreateDatabaseSql);
+END;
+"""
+
     /// Creates `ops.RawUsageFact` with `UsageFactId` as the durable dedupe key.
     [<Literal>]
     let CreateRawUsageFactTable =
@@ -374,6 +385,70 @@ type SqlOperationsUsageTransactionScope(connectionString: string) =
                     do! rollbackIgnoringFailuresAsync transaction
                     return raise ex
             }
+
+/// Ensures the operations usage SQL schema exists before ingestion starts consuming durable messages.
+type OperationsUsageSchema(connectionString: string) =
+
+    /// Parses the configured SQL connection string so database bootstrap can run against `master` first.
+    let connectionStringBuilder = SqlConnectionStringBuilder(connectionString)
+
+    /// Identifies the target operations database when the connection string names one.
+    let targetDatabaseName =
+        if String.IsNullOrWhiteSpace connectionStringBuilder.InitialCatalog then
+            None
+        else
+            Some connectionStringBuilder.InitialCatalog
+
+    /// Builds a master-database connection string used to create the target operations database when needed.
+    let masterConnectionString =
+        let builder = SqlConnectionStringBuilder(connectionString)
+        builder.InitialCatalog <- "master"
+        builder.ConnectionString
+
+    /// Opens the SQL connection used for one schema initialization pass.
+    let openConnectionAsync databaseConnectionString cancellationToken =
+        task {
+            let connection = new SqlConnection(databaseConnectionString)
+            do! connection.OpenAsync cancellationToken
+            return connection
+        }
+
+    /// Executes a schema command against the operations database.
+    let executeCommandAsync (connection: SqlConnection) commandText cancellationToken =
+        task {
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- commandText
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
+    /// Creates the configured operations database when the connection string points at a database that is absent.
+    let ensureDatabaseCreatedAsync cancellationToken =
+        task {
+            match targetDatabaseName with
+            | Some databaseName ->
+                use! connection = openConnectionAsync masterConnectionString cancellationToken
+                use command = connection.CreateCommand()
+                command.CommandType <- CommandType.Text
+                command.CommandText <- OperationsUsageSql.CreateDatabaseIfMissing
+
+                let parameter = command.Parameters.Add("@DatabaseName", SqlDbType.NVarChar, 128)
+                parameter.Value <- databaseName
+                let! _ = command.ExecuteNonQueryAsync cancellationToken
+                return ()
+            | None -> return ()
+        }
+
+    /// Creates the operations usage schema, raw fact table, and minute aggregate table when they are absent.
+    member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
+        task {
+            do! ensureDatabaseCreatedAsync cancellationToken
+            use! connection = openConnectionAsync connectionString cancellationToken
+            do! executeCommandAsync connection OperationsUsageSql.CreateSchema cancellationToken
+            do! executeCommandAsync connection OperationsUsageSql.CreateRawUsageFactTable cancellationToken
+            do! executeCommandAsync connection OperationsUsageSql.CreateUsageAggregateMinuteTable cancellationToken
+        }
 
 /// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
 type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =

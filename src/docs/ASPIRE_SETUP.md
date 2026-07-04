@@ -64,14 +64,24 @@ Open `http://localhost:18888` and confirm the following resources show
 - `redis` – Redis cache on port `6379`
 - `cosmos` – Cosmos DB emulator on port `8081`
 - `servicebus-sql` – SQL Server container required by the Service Bus emulator
+  and used locally for the `GraceOperations` SQL database
 - `servicebus-emulator` – Service Bus emulator (AMQP on `5672`, management
   endpoint on `5300`)
 - `grace-server` – HTTP `5000` / HTTPS `5001`
+- `grace-operations-worker` – operational usage fact ingestion worker for the
+  `grace-operational-facts` topic and durable `operational-facts-processor`
+  subscription
 
 Redis is provisioned by AppHost and its host/port are forwarded to
 `Grace.Server`. Current startup code does not enable Redis-backed SignalR, so
 Redis remains an explicit AppHost dependency pending a follow-up runtime
 decision rather than a prerequisite proven by the integration tests.
+
+The local operations worker creates the `ops` SQL schema and usage fact tables
+inside a `GraceOperations` database on the local SQL Server container before it
+starts the Service Bus processor. It completes a Service Bus message only after
+the operations data layer accepts the raw fact or reports that the fact was
+already processed.
 
 ## Smoke Tests
 
@@ -87,6 +97,9 @@ decision rather than a prerequisite proven by the integration tests.
    exporter.
 3. **Logs** – Within the same resource view, confirm log entries for Orleans
    startup and Aspire instrumentation.
+4. **Operations worker** – In the `grace-operations-worker` logs, confirm the
+   startup line for topic `grace-operational-facts` and subscription
+   `operational-facts-processor`.
 
 ## Service Bus Emulator Connection String
 

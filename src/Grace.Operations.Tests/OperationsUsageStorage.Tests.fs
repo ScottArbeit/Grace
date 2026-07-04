@@ -157,6 +157,8 @@ type OperationsUsageStorageTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(OperationsUsageSql.CreateSchema, Does.Contain("CREATE SCHEMA ops"))
+                Assert.That(OperationsUsageSql.CreateDatabaseIfMissing, Does.Contain("DB_ID(@DatabaseName) IS NULL"))
+                Assert.That(OperationsUsageSql.CreateDatabaseIfMissing, Does.Contain("QUOTENAME(@DatabaseName)"))
                 Assert.That(OperationsUsageSql.CreateRawUsageFactTable, Does.Contain("ops.RawUsageFact"))
                 Assert.That(OperationsUsageSql.CreateRawUsageFactTable, Does.Contain("PRIMARY KEY CLUSTERED (UsageFactId)"))
                 Assert.That(OperationsUsageSql.TryInsertRawUsageFact, Does.Contain("WITH (UPDLOCK, HOLDLOCK)"))
