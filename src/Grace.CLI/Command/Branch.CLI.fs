@@ -4029,7 +4029,7 @@ module Branch =
 
                                             let! result = uploadNewDirectoryVersions branchDto newDirectoryVersions
                                             do! writeGraceStatusFile updatedGraceStatus
-                                            do! updateGraceWatchInterprocessFile updatedGraceStatus None
+                                            do! updateGraceWatchInterprocessFilePreservingLiveWorkState updatedGraceStatus None
                                             newGraceStatus <- updatedGraceStatus
 
                                         | Error error -> logToAnsiConsole Colors.Error (Markup.Escape($"{error}"))

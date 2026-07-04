@@ -788,6 +788,13 @@ module CurrentStateCaptureCliTests =
             {
                 UpdatedAt = Grace.Shared.Utilities.getCurrentInstant ()
                 IsStartupClaim = false
+                RepositoryId = RepositoryId.Empty
+                RepositoryName = RepositoryName String.Empty
+                BranchId = BranchId.Empty
+                BranchName = BranchName String.Empty
+                RootDirectory = Environment.CurrentDirectory
+                HasPendingWatchWork = false
+                IsWorkingTreeClean = true
                 RootDirectoryId = rootDirectoryId
                 RootDirectorySha256Hash = rootSha
                 RootDirectoryBlake3Hash = rootBlake3
