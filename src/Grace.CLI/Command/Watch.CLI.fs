@@ -563,6 +563,8 @@ module Watch =
     let mutable private rebindUpdateMarkerWatcherForTransitionCompletion = ignore
     let private branchTransitionCompletionProbeLock = obj ()
     let mutable private branchTransitionCompletionAfterRetireProbe = ignore
+    let private previousBranchIpcDowngradeRetryProbeLock = obj ()
+    let mutable private previousBranchIpcDowngradeRetryProbe = ignore
 
     /// Installs the active update-marker watcher retarget operation used after branch identity changes.
     let private registerUpdateMarkerWatcherRebind rebind =
@@ -597,6 +599,19 @@ module Watch =
     /// Restores the transition-boundary probe to the production no-op behavior after Watch tests.
     let internal resetBranchTransitionCompletionAfterRetireProbeForWatchTests () =
         lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- ignore)
+
+    /// Runs the current previous-branch IPC downgrade retry probe after a failed verification.
+    let private runPreviousBranchIpcDowngradeRetryProbe () =
+        let probe = lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe)
+        probe ()
+
+    /// Installs a retry probe used to make previous-branch IPC downgrade verification deterministic in tests.
+    let internal setPreviousBranchIpcDowngradeRetryProbeForWatchTests probe =
+        lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe <- probe)
+
+    /// Restores the previous-branch IPC downgrade retry probe to the production no-op behavior after Watch tests.
+    let internal resetPreviousBranchIpcDowngradeRetryProbeForWatchTests () =
+        lock previousBranchIpcDowngradeRetryProbeLock (fun () -> previousBranchIpcDowngradeRetryProbe <- ignore)
 
     /// Removes stale source-branch Watch IPC before transition completion publishes under the target identity.
     let mutable private retirePreviousBranchWatchIpcForTransitionCompletion = fun previousIpcFileName -> File.Delete(previousIpcFileName)
@@ -2008,23 +2023,73 @@ module Watch =
 
             logToAnsiConsole Colors.Important $"Grace Watch retired previous branch IPC before completing branch transition: {previousIpcFileName}."
 
+        not (File.Exists(previousIpcFileName))
+
+    /// Verifies that the previous branch IPC no longer exposes a healthy incremental shortcut.
+    let private previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName =
+        if not (File.Exists(previousIpcFileName)) then
+            true
+        else
+            try
+                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                String.Equals(IpcFileName(), previousIpcFileName, StringComparison.OrdinalIgnoreCase)
+                && isGraceWatchResyncRequiredStatusPublished inspection
+            with
+            | _ -> false
+
+    /// Retries deletion or downgrades the previous branch IPC before Watch abandons that branch identity.
+    let private retryOrDowngradePreviousBranchWatchIpc previousIpcFileName failure =
+        requestGraceWatchExplicitResync $"previous branch IPC retirement failed: {failure}"
+
+        let maxAttempts = 3
+        let mutable attempt = 1
+        let mutable verified = previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName
+
+        while not verified && attempt < maxAttempts do
+            runPreviousBranchIpcDowngradeRetryProbe ()
+
+            Thread.Sleep(TimeSpan.FromMilliseconds(float (attempt * 25)))
+            attempt <- attempt + 1
+
+            try
+                retirePreviousBranchWatchIpc previousIpcFileName
+                |> ignore
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch retry {attempt} could not retire previous branch IPC before transition completion: {Markup.Escape(ex.Message)}."
+
+            if File.Exists(previousIpcFileName) then publishGraceWatchResyncRequired ()
+
+            verified <- previousBranchWatchIpcRetiredOrNonIncremental previousIpcFileName
+
+        if not verified then
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch could not verify previous branch IPC was retired or downgraded after {attempt} attempts; target branch IPC publication is deferred."
+
+        verified
+
     /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
     let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
-        requestGraceWatchExplicitResync $"previous branch IPC retirement failed: {failure}"
+        let previousIpcFileName = IpcFileName()
 
         logToAnsiConsole
             Colors.Error
-            $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; publishing target branch resync IPC instead: {Markup.Escape(failure)}."
+            $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; verifying old IPC downgrade before target publication: {Markup.Escape(failure)}."
 
-        try
-            reloadConfigurationForTransitionCompletion ()
-            rebindUpdateMarkerWatcherAfterTransitionCompletion ()
-            publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
-        with
-        | ex ->
-            logToAnsiConsole
-                Colors.Error
-                $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
+        if retryOrDowngradePreviousBranchWatchIpc previousIpcFileName failure then
+            try
+                reloadConfigurationForTransitionCompletion ()
+                rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
+            with
+            | ex ->
+                logToAnsiConsole
+                    Colors.Error
+                    $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
 
     /// Completes a Grace-owned branch transition inside the serialized Watch publication boundary.
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
@@ -2034,8 +2099,12 @@ module Watch =
 
             let previousIpcRetired =
                 try
-                    retirePreviousBranchWatchIpc previousIpcFileName
-                    true
+                    let retired = retirePreviousBranchWatchIpc previousIpcFileName
+
+                    if not retired then
+                        publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc "previous branch IPC still existed after delete"
+
+                    retired
                 with
                 | ex ->
                     publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
