@@ -301,7 +301,7 @@ module Services =
         /// Reports whether the IPC snapshot belongs to the current repository identity before trust checks.
         member this.HasCurrentRepositoryIdentity =
             match this.Status, this.EffectiveMode with
-            | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+            | Some status, Some _ ->
                 let current = Current()
 
                 let rootDirectoryMatchesCurrent =
@@ -316,12 +316,23 @@ module Services =
                         with
                         | _ -> false
 
-                status.Mode = GraceWatchRuntimeMode.HealthyIncremental
-                && (status.RepositoryId = RepositoryId.Empty
-                    || status.RepositoryId = current.RepositoryId)
+                (status.RepositoryId = RepositoryId.Empty
+                 || status.RepositoryId = current.RepositoryId)
+                && (String.IsNullOrWhiteSpace(string status.RepositoryName)
+                    || String.Equals(string status.RepositoryName, current.RepositoryName, StringComparison.OrdinalIgnoreCase))
                 && (status.BranchId = BranchId.Empty
                     || status.BranchId = current.BranchId)
+                && (String.IsNullOrWhiteSpace(string status.BranchName)
+                    || String.Equals(string status.BranchName, current.BranchName, StringComparison.OrdinalIgnoreCase))
                 && rootDirectoryMatchesCurrent
+            | _ -> false
+
+        /// Reports whether live Watch state has enough persisted identity to be preserved by another command.
+        member this.HasCurrentLiveWatchStateIdentity =
+            match this.Status, this.EffectiveMode with
+            | Some status, Some _ ->
+                not (String.IsNullOrWhiteSpace(status.RootDirectory))
+                && this.HasCurrentRepositoryIdentity
             | _ -> false
 
         /// Reports whether the IPC snapshot can serve trusted incremental shortcuts.
@@ -2624,7 +2635,11 @@ module Services =
                 inspection.IsLiveProcess
                 && match inspection.EffectiveMode with
                    | Some GraceWatchRuntimeMode.HealthyIncremental -> inspection.HasCurrentRepositoryIdentity
-                   | Some _ -> true
+                   | Some GraceWatchRuntimeMode.StartingUp
+                   | Some GraceWatchRuntimeMode.Suspended
+                   | Some GraceWatchRuntimeMode.Resynchronizing
+                   | Some GraceWatchRuntimeMode.Stopping -> inspection.HasCurrentLiveWatchStateIdentity
+                   | Some _ -> inspection.HasCurrentLiveWatchStateIdentity
                    | None -> false
 
             let pendingWorkOverride =

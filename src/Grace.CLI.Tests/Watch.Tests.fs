@@ -5967,6 +5967,47 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
+    /// Verifies that Watch publication rechecks queued work before leaving a clean IPC snapshot on disk.
+    [<Test>]
+    let ``watch refresh rewrites clean ipc when pending work arrives during publish`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let filePath = Path.Combine(root, "queued-during-clean-publish.txt")
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            /// Simulates a stale clean writer losing a race to a FileSystemWatcher callback at the write boundary.
+            let mutable writerCalls = 0
+
+            let racingWriter status directoryIds =
+                writerCalls <- writerCalls + 1
+
+                if writerCalls = 1 then
+                    File.WriteAllText(filePath, "queued while clean status is publishing")
+                    Watch.OnChanged(changedEvent filePath)
+                    Services.setGraceWatchHasPendingWorkForStatus false
+
+                Services.updateGraceWatchInterprocessFile status directoryIds
+
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests status racingWriter)
+                .GetAwaiter()
+                .GetResult()
+
+            writerCalls |> should equal 2
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal true)
+
     /// Verifies that non-Watch status refreshes preserve a live dirty Watch IPC state.
     [<Test>]
     let ``watch ipc non-watch update preserves live dirty work state`` () =
@@ -6005,6 +6046,133 @@ module WatchTests =
 
             Services.getGraceWatchStatus().Result
             |> should equal None)
+
+    /// Verifies that non-Watch status refreshes preserve same-repository non-incremental Watch state.
+    [<Test>]
+    let ``watch ipc non-watch update preserves current live recovery state`` () =
+        withTempRepo (fun root ->
+            let configuration = Current()
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            configuration.RepositoryId <- repositoryId
+            configuration.RepositoryName <- "current-recovery-repo"
+            configuration.BranchId <- branchId
+            configuration.BranchName <- "current-recovery-branch"
+            configuration.RootDirectory <- root
+
+            let liveRootDirectoryId = Guid.NewGuid()
+
+            for mode, modeText in
+                [|
+                    Services.GraceWatchRuntimeMode.StartingUp, "startingUp"
+                    Services.GraceWatchRuntimeMode.Suspended, "suspended"
+                    Services.GraceWatchRuntimeMode.Resynchronizing, "resynchronizing"
+                |] do
+                let liveRecoveryStatus =
+                    { liveWatchStatus liveRootDirectoryId with
+                        RepositoryId = repositoryId
+                        RepositoryName = RepositoryName "current-recovery-repo"
+                        BranchId = branchId
+                        BranchName = BranchName "current-recovery-branch"
+                        RootDirectory = root
+                        HasPendingWatchWork = true
+                        IsWorkingTreeClean = false
+                    }
+
+                writeWatchStatusJsonWithPersistedMode mode liveRecoveryStatus
+                |> ignore
+
+                let cleanStatusFromNonWatch =
+                    { graceStatusTracking Array.empty<string> Array.empty<string> with
+                        RootDirectorySha256Hash = Sha256Hash $"current-non-watch-root-{modeText}"
+                    }
+
+                let cleanDirectoryIdsFromNonWatch = HashSet<DirectoryVersionId>(cleanStatusFromNonWatch.Index.Keys)
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFilePreservingLiveWorkState cleanStatusFromNonWatch (Some cleanDirectoryIdsFromNonWatch))
+                    .GetAwaiter()
+                    .GetResult()
+
+                readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                |> should equal true
+
+                readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+                |> should equal false
+
+                readWatchStatusJsonStringProperty "Mode"
+                |> should equal modeText
+
+                readWatchStatusJsonStringProperty "RootDirectoryId"
+                |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}")
+
+    /// Verifies that non-Watch status refreshes do not preserve live Watch state from another repo or root.
+    [<Test>]
+    let ``watch ipc non-watch update skips foreign live recovery state`` () =
+        withTempRepo (fun root ->
+            let configuration = Current()
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            configuration.RepositoryId <- repositoryId
+            configuration.RepositoryName <- "current-foreign-guard-repo"
+            configuration.BranchId <- branchId
+            configuration.BranchName <- "current-foreign-guard-branch"
+            configuration.RootDirectory <- root
+
+            let foreignRoot = Path.Combine(Path.GetTempPath(), $"grace-watch-foreign-{Guid.NewGuid():N}")
+
+            for mode in
+                [|
+                    Services.GraceWatchRuntimeMode.StartingUp
+                    Services.GraceWatchRuntimeMode.Suspended
+                    Services.GraceWatchRuntimeMode.Resynchronizing
+                |] do
+                let foreignRecoveryStatus =
+                    { liveWatchStatus (Guid.NewGuid()) with
+                        RepositoryId = Guid.NewGuid()
+                        RepositoryName = RepositoryName "foreign-repo"
+                        BranchId = Guid.NewGuid()
+                        BranchName = BranchName "current-foreign-guard-branch"
+                        RootDirectory = foreignRoot
+                        HasPendingWatchWork = true
+                        IsWorkingTreeClean = false
+                    }
+
+                writeWatchStatusJsonWithPersistedMode mode foreignRecoveryStatus
+                |> ignore
+
+                let cleanStatusFromNonWatch =
+                    { graceStatusTracking Array.empty<string> Array.empty<string> with RootDirectorySha256Hash = Sha256Hash $"foreign-guard-root-{mode}" }
+
+                let cleanDirectoryIdsFromNonWatch = HashSet<DirectoryVersionId>(cleanStatusFromNonWatch.Index.Keys)
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFilePreservingLiveWorkState cleanStatusFromNonWatch (Some cleanDirectoryIdsFromNonWatch))
+                    .GetAwaiter()
+                    .GetResult()
+
+                readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                |> should equal false
+
+                readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+                |> should equal true
+
+                tryReadWatchStatusJsonStringProperty "Mode"
+                |> should equal None
+
+                readWatchStatusJsonStringProperty "RepositoryId"
+                |> should equal $"{repositoryId}"
+
+                readWatchStatusJsonStringProperty "BranchId"
+                |> should equal $"{branchId}"
+
+                readWatchStatusJsonStringProperty "RootDirectory"
+                |> should equal root
+
+                readWatchStatusJsonStringProperty "RootDirectoryId"
+                |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}")
 
     /// Verifies that a pending GraceStatus artifact refresh publishes dirty IPC before the timer reloads status.
     [<Test>]

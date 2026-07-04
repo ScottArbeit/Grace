@@ -1400,6 +1400,28 @@ module Watch =
 
         transitionWasPublished |> ignore
 
+    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
+    let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+        lock watchStatusPublishLock (fun () ->
+            let mutable attempts = 0
+            let mutable pendingWorkChangedDuringWrite = true
+
+            while pendingWorkChangedDuringWrite && attempts < 2 do
+                attempts <- attempts + 1
+                let hasPendingWork = hasPendingWatchWork ()
+                setGraceWatchHasPendingWorkForStatus hasPendingWork
+                let publicationStartedAt = getCurrentInstant ()
+
+                try
+                    writeSnapshot().GetAwaiter().GetResult()
+                    cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt
+                with
+                | ex ->
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
+
+                pendingWorkChangedDuringWrite <- hasPendingWatchWork () <> hasPendingWork)
+
     /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
     let private publishPendingWatchWorkTransitionIfNeeded () =
         lock watchStatusPublishLock (fun () ->
@@ -2421,21 +2443,18 @@ module Watch =
     let private publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =
         task {
             let runtimeMode = currentGraceWatchRuntimeMode ()
-            let hasPendingWork = hasPendingWatchWork ()
-            setGraceWatchPendingWorkStatusFlag hasPendingWork
 
             if
                 runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                 && not (isGraceWatchResyncPending ())
             then
-                let publicationStartedAt = getCurrentInstant ()
-                do! updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds)
-                cachePendingWatchWorkPublicationIfVerified trustedStatus directoryIds hasPendingWork publicationStartedAt
+                publishWatchIpcWithFreshPendingWorkProbe trustedStatus directoryIds (fun () ->
+                    updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds))
             else
-                let publicationStartedAt = getCurrentInstant ()
                 let emptyDirectoryIds = HashSet<DirectoryVersionId>()
-                do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds)
-                cachePendingWatchWorkPublicationIfVerified GraceStatus.Default emptyDirectoryIds hasPendingWork publicationStartedAt
+
+                publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                    updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
 
                 logToAnsiConsole
                     Colors.Important
@@ -2660,11 +2679,8 @@ module Watch =
                             let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
 
                             if clearedResyncAttempt then
-                                let hasPendingWork = hasPendingWatchWork ()
-                                setGraceWatchPendingWorkStatusFlag hasPendingWork
-                                let publicationStartedAt = getCurrentInstant ()
-                                do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
-                                cachePendingWatchWorkPublicationIfVerified graceStatus graceStatusDirectoryIds hasPendingWork publicationStartedAt
+                                publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                    updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
                                 logToAnsiConsole
                                     Colors.Important
@@ -2847,19 +2863,15 @@ module Watch =
                         runtimeModeAfterProcessing = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
                     then
-                        let hasPendingWork = hasPendingWatchWork ()
-                        setGraceWatchPendingWorkStatusFlag hasPendingWork
                         updateGraceStatusDirectoryIds graceStatus
-                        let publicationStartedAt = getCurrentInstant ()
-                        do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
-                        cachePendingWatchWorkPublicationIfVerified graceStatus graceStatusDirectoryIds hasPendingWork publicationStartedAt
+
+                        publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
                     else
-                        let hasPendingWork = hasPendingWatchWork ()
-                        setGraceWatchPendingWorkStatusFlag hasPendingWork
-                        let publicationStartedAt = getCurrentInstant ()
                         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
-                        do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds)
-                        cachePendingWatchWorkPublicationIfVerified GraceStatus.Default emptyDirectoryIds hasPendingWork publicationStartedAt
+
+                        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
 
                         logToAnsiConsole
                             Colors.Important
@@ -2884,26 +2896,20 @@ module Watch =
                     runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                     && not (isGraceWatchResyncPending ())
                 then
-                    let hasPendingWork = hasPendingWatchWork ()
-                    setGraceWatchPendingWorkStatusFlag hasPendingWork
                     let! graceStatusFromDisk = readGraceStatusMetaClient ()
-                    let publicationStartedAt = getCurrentInstant ()
-                    do! updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds)
-                    cachePendingWatchWorkPublicationIfVerified graceStatusFromDisk graceStatusDirectoryIds hasPendingWork publicationStartedAt
+
+                    publishWatchIpcWithFreshPendingWorkProbe graceStatusFromDisk graceStatusDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds))
                 elif runtimeMode = GraceWatchRuntimeMode.Suspended then
-                    let hasPendingWork = hasPendingWatchWork ()
-                    setGraceWatchPendingWorkStatusFlag hasPendingWork
-                    let publicationStartedAt = getCurrentInstant ()
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
-                    do! updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
-                    cachePendingWatchWorkPublicationIfVerified GraceStatus.Default emptyDirectoryIds hasPendingWork publicationStartedAt
+
+                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds))
                 else
-                    let hasPendingWork = hasPendingWatchWork ()
-                    setGraceWatchPendingWorkStatusFlag hasPendingWork
-                    let publicationStartedAt = getCurrentInstant ()
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
-                    do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds)
-                    cachePendingWatchWorkPublicationIfVerified GraceStatus.Default emptyDirectoryIds hasPendingWork publicationStartedAt
+
+                    publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+                        updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
 
                     logToAnsiConsole
                         Colors.Important
