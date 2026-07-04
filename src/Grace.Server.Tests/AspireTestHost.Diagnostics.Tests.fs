@@ -98,6 +98,7 @@ type AspireTestHostDiagnosticsTests() =
             [|
                 Constants.EnvironmentVariables.AzureCosmosDBContainerName
                 Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
                 Constants.EnvironmentVariables.AzureServiceBusSubscription
             |]
 

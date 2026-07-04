@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Server
 open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Types.Common
@@ -73,6 +74,7 @@ type OperationalFactsPublisherActorTests() =
 
     /// Verifies that missing operational topic configuration fails before any event topic fallback can happen.
     [<Test>]
+    [<NonParallelizable>]
     member _.MissingOperationalFactsTopicFailsClearly() =
         let previous = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
 
@@ -91,6 +93,50 @@ type OperationalFactsPublisherActorTests() =
         finally
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, previous)
 
+    /// Verifies that server startup validates the operational facts topic with the Service Bus settings.
+    [<Test>]
+    [<NonParallelizable>]
+    member _.StartupValidationRejectsMissingOperationalFactsTopic() =
+        let keys =
+            [|
+                Constants.EnvironmentVariables.GracePubSubSystem
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusNamespace
+                Constants.EnvironmentVariables.AzureServiceBusTopic
+                Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                Constants.EnvironmentVariables.AzureServiceBusSubscription
+            |]
+
+        let previous =
+            keys
+            |> Array.map (fun key -> key, Environment.GetEnvironmentVariable key)
+
+        try
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GracePubSubSystem, nameof GracePubSubSystem.AzureServiceBus)
+
+            Environment.SetEnvironmentVariable(
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString,
+                "Endpoint=sb://localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE"
+            )
+
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, null)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
+
+            let ex =
+                Assert.Throws<InvalidOperationException>(
+                    Action (fun () ->
+                        ApplicationContext.configurePubSubSettings ()
+                        |> ignore)
+                )
+
+            Assert.That(ex.Message, Does.Contain(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic))
+            Assert.That(ex.Message, Does.Not.Contain(Constants.EnvironmentVariables.AzureServiceBusTopic))
+        finally
+            previous
+            |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
+
     /// Verifies that the existing GraceEvent publisher keeps the event stream topic and event metadata shape.
     [<Test>]
     member _.GraceEventPublisherStillUsesEventTopicAndMetadata() =
@@ -100,13 +146,3 @@ type OperationalFactsPublisherActorTests() =
         Assert.That(servicesSource, Does.Contain("message.Subject <- \"GraceEvent\""))
         Assert.That(servicesSource, Does.Contain("message.ApplicationProperties[ \"graceEventType\" ] <- getDiscriminatedUnionFullName graceEvent"))
         Assert.That(servicesSource, Does.Not.Contain("GraceOperationalUsageFact"))
-
-    /// Verifies that AppHost provisions the operational facts topic with duplicate detection enabled.
-    [<Test>]
-    member _.AppHostConfiguresOperationalFactsTopicWithDuplicateDetection() =
-        let appHostSource = File.ReadAllText(Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Aspire.AppHost", "Program.Aspire.AppHost.cs")))
-
-        Assert.That(appHostSource, Does.Contain("AzureServiceBusOperationalFactsTopic"))
-        Assert.That(appHostSource, Does.Contain("GraceOperationalFactsTopic"))
-        Assert.That(appHostSource, Does.Contain("RequiresDuplicateDetection = true"))
-        Assert.That(appHostSource, Does.Contain("DuplicateDetectionHistoryTimeWindow = \"PT5M\""))

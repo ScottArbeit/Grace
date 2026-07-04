@@ -164,6 +164,16 @@ public partial class Program
                 Directory.CreateDirectory(cosmosCertPath);
                 Directory.CreateDirectory(serviceBusConfigPath);
 
+                var serviceBusTopicName =
+                    ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusTopic)
+                    ?? Constants.GraceEventStreamTopic;
+                var operationalFactsTopicName =
+                    ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
+                    ?? Constants.GraceOperationalFactsTopic;
+                var serviceBusSubscriptionName =
+                    ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription)
+                    ?? "grace-server";
+
                 // Create Service Bus emulator config (when enabled for tests)
                 string? serviceBusConfigFile = null;
                 if (!skipServiceBus)
@@ -310,9 +320,9 @@ public partial class Program
                                 )
                             )
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
-                            .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
-                            .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, Constants.GraceOperationalFactsTopic)
-                            .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, "grace-server");
+                            .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
+                            .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
+                            .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscriptionName);
                     }
                     else
                     {
@@ -611,11 +621,16 @@ public partial class Program
     /// </summary>
     private static void CreateServiceBusConfiguration(string configFilePath, IConfiguration configuration)
     {
-        var topicName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic) ?? "graceeventstream";
+        var topicName =
+            ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusTopic)
+            ?? Constants.GraceEventStreamTopic;
         var operationalFactsTopicName =
-            Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic) ?? Constants.GraceOperationalFactsTopic;
+            ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
+            ?? Constants.GraceOperationalFactsTopic;
         var operationalFactsSubscriptionName = $"{operationalFactsTopicName}-processor";
-        var subscriptionName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription) ?? "grace-server";
+        var subscriptionName =
+            ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusSubscription)
+            ?? "grace-server";
         var testSubscriptionName = $"{subscriptionName}-tests";
 
         var config = new
