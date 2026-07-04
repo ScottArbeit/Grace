@@ -253,12 +253,20 @@ module Watch =
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     /// Coordinates update not in progress behavior for this CLI command path.
     let updateNotInProgress () = not <| updateInProgress ()
+
+    /// Reports whether the deleted callback path is an update marker path owned by any branch temp directory.
+    let private isUpdateMarkerPath (markerFileName: string) =
+        String.Equals(Path.GetFileName(markerFileName), Constants.UpdateInProgressFileName, StringComparison.OrdinalIgnoreCase)
+
     let private graceUpdateMarkerDeletionLock = obj ()
     let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
     let mutable private lastGraceUpdateMarkerDeletedUtc = DateTime.MinValue
 
     /// Gets the completion sidecar written before the Grace update marker is removed.
     let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
+
+    /// Gets the completion sidecar paired with a specific update marker callback path.
+    let private updateMarkerCompletedFileNameForMarker markerFileName = markerFileName + ".completed"
 
     /// Records the completed Grace-owned update instant so delayed callbacks can be classified by switch authority.
     let private recordGraceUpdateMarkerCompletedUtc completedUtc =
@@ -276,14 +284,15 @@ module Watch =
         | :? IOException -> ()
         | :? UnauthorizedAccessException -> ()
 
+    /// Clears delayed-observation authority without deleting any branch-specific marker sidecar.
+    let private clearGraceUpdateMarkerDeletedObservation () = recordGraceUpdateMarkerCompletedUtc DateTime.MinValue
+
     /// Sets the recent Grace update marker deletion instant for deterministic Watch callback tests.
     let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc = recordGraceUpdateMarkerCompletedUtc deletedUtc
 
-    /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
-    let private tryReadGraceUpdateMarkerCompletedUtc () =
+    /// Reads a marker completion sidecar for the specific marker path that produced the callback.
+    let private tryReadGraceUpdateMarkerCompletedUtcFrom completedFileName =
         try
-            let completedFileName = updateMarkerCompletedFileName ()
-
             if File.Exists(completedFileName) then
                 match DateTime.TryParse(File.ReadAllText(completedFileName), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
                 | true, completedUtc -> Some completedUtc
@@ -293,6 +302,17 @@ module Watch =
         with
         | :? IOException -> None
         | :? UnauthorizedAccessException -> None
+
+    /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
+    let private tryReadGraceUpdateMarkerCompletedUtc () =
+        updateMarkerCompletedFileName ()
+        |> tryReadGraceUpdateMarkerCompletedUtcFrom
+
+    /// Reads the completion instant for the marker whose deletion callback is being processed.
+    let private tryReadGraceUpdateMarkerCompletedUtcForMarker markerFileName =
+        markerFileName
+        |> updateMarkerCompletedFileNameForMarker
+        |> tryReadGraceUpdateMarkerCompletedUtcFrom
 
     /// Reports whether the completed sidecar was written for the marker that is currently still present.
     let private currentUpdateMarkerMatchesCompletedSidecar completedUtc =
@@ -504,6 +524,7 @@ module Watch =
     /// Reloads repository configuration after another Grace process changes the current branch.
     let private reloadConfigurationForTransitionCompletion () =
         resetConfiguration ()
+        clearShouldIgnoreCache ()
         Current() |> ignore
         configureWatchPathComparisonForCurrentRepository ()
 
@@ -1876,6 +1897,27 @@ module Watch =
 
             logToAnsiConsole Colors.Important $"Grace Watch retired previous branch IPC before completing branch transition: {previousIpcFileName}."
 
+    /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
+    let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
+        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+        graceStatusHasChanged <- true
+
+        lastPublishedHasPendingWatchWork <- None
+
+        logToAnsiConsole
+            Colors.Error
+            $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; publishing target branch resync IPC instead: {Markup.Escape(failure)}."
+
+        try
+            reloadConfigurationForTransitionCompletion ()
+            rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+            publishNonIncrementalTransitionCompletionStatus $"previous branch IPC retirement failed: {failure}"
+        with
+        | ex ->
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch could not publish target branch resync IPC after previous branch IPC retirement failed at {completedUtc:O}: {Markup.Escape(ex.Message)}."
+
     /// Completes a Grace-owned branch transition inside the serialized Watch publication boundary.
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
         lock watchStatusPublishLock (fun () ->
@@ -1888,15 +1930,7 @@ module Watch =
                     true
                 with
                 | ex ->
-                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-                    graceStatusHasChanged <- true
-
-                    lastPublishedHasPendingWatchWork <- None
-
-                    logToAnsiConsole
-                        Colors.Error
-                        $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; incremental observations will not resume: {Markup.Escape(ex.Message)}."
-
+                    publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc ex.Message
                     false
 
             if previousIpcRetired then
@@ -2056,6 +2090,7 @@ module Watch =
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
         readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
+        clearShouldIgnoreCache ()
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
@@ -2527,14 +2562,14 @@ module Watch =
 
     /// Coordinates on grace update in progress deleted behavior for this CLI command path.
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
-        if args.FullPath = updateInProgressFileName () then
-            if updateNotInProgress () then
-                match tryReadGraceUpdateMarkerCompletedUtc () with
+        if isUpdateMarkerPath args.FullPath then
+            if not (File.Exists(args.FullPath)) then
+                match tryReadGraceUpdateMarkerCompletedUtcForMarker args.FullPath with
                 | Some completedUtc ->
                     completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
                     logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
                 | None ->
-                    clearGraceUpdateMarkerDeletedUtc ()
+                    clearGraceUpdateMarkerDeletedObservation ()
                     logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
