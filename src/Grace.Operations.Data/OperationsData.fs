@@ -54,6 +54,51 @@ type UsageFactPersistenceStatus =
 /// Reports the outcome of transactionally storing a usage fact.
 type UsageFactPersistenceResult = { Status: UsageFactPersistenceStatus; UsageFactId: UsageFactId; Aggregate: UsageAggregateMinute option }
 
+/// Chooses whether schema initialization may connect to `master` to create the operations database.
+type OperationsUsageSchemaBootstrapMode =
+
+    /// Opens only the configured target database, which supports least-privilege users without `master` access.
+    | TargetDatabaseOnly = 1
+
+    /// Opens `master` first to create the configured target database when an admin bootstrap caller opts in.
+    | CreateDatabaseIfMissing = 2
+
+/// Describes the SQL connections needed for an operations usage schema initialization pass.
+type internal OperationsUsageSchemaBootstrapPlan =
+    {
+        TargetDatabaseName: string option
+        SchemaConnectionString: string
+        DatabaseCreationConnectionString: string option
+    }
+
+/// Builds schema initialization plans without opening SQL connections.
+[<RequireQualifiedAccess>]
+module internal OperationsUsageSchemaBootstrapPlan =
+
+    /// Creates a plan that uses the target database by default and connects to `master` only for explicit bootstrap.
+    let create connectionString mode =
+        let builder = SqlConnectionStringBuilder(connectionString)
+
+        let targetDatabaseName =
+            if String.IsNullOrWhiteSpace builder.InitialCatalog then
+                None
+            else
+                Some builder.InitialCatalog
+
+        let databaseCreationConnectionString =
+            match mode, targetDatabaseName with
+            | OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing, Some _ ->
+                let masterBuilder = SqlConnectionStringBuilder(connectionString)
+                masterBuilder.InitialCatalog <- "master"
+                Some masterBuilder.ConnectionString
+            | _ -> None
+
+        {
+            TargetDatabaseName = targetDatabaseName
+            SchemaConnectionString = connectionString
+            DatabaseCreationConnectionString = databaseCreationConnectionString
+        }
+
 /// Provides SQL Server schema and command text for the operations usage fact tables.
 [<RequireQualifiedAccess>]
 module OperationsUsageSql =
@@ -387,23 +432,13 @@ type SqlOperationsUsageTransactionScope(connectionString: string) =
             }
 
 /// Ensures the operations usage SQL schema exists before ingestion starts consuming durable messages.
-type OperationsUsageSchema(connectionString: string) =
+type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsUsageSchemaBootstrapMode) =
 
-    /// Parses the configured SQL connection string so database bootstrap can run against `master` first.
-    let connectionStringBuilder = SqlConnectionStringBuilder(connectionString)
+    /// Describes whether this schema pass is target-only or explicit admin bootstrap.
+    let bootstrapMode = defaultArg bootstrapMode OperationsUsageSchemaBootstrapMode.TargetDatabaseOnly
 
-    /// Identifies the target operations database when the connection string names one.
-    let targetDatabaseName =
-        if String.IsNullOrWhiteSpace connectionStringBuilder.InitialCatalog then
-            None
-        else
-            Some connectionStringBuilder.InitialCatalog
-
-    /// Builds a master-database connection string used to create the target operations database when needed.
-    let masterConnectionString =
-        let builder = SqlConnectionStringBuilder(connectionString)
-        builder.InitialCatalog <- "master"
-        builder.ConnectionString
+    /// Captures the connection strings used by this schema pass without opening SQL connections.
+    let bootstrapPlan = OperationsUsageSchemaBootstrapPlan.create connectionString bootstrapMode
 
     /// Opens the SQL connection used for one schema initialization pass.
     let openConnectionAsync databaseConnectionString cancellationToken =
@@ -426,9 +461,9 @@ type OperationsUsageSchema(connectionString: string) =
     /// Creates the configured operations database when the connection string points at a database that is absent.
     let ensureDatabaseCreatedAsync cancellationToken =
         task {
-            match targetDatabaseName with
-            | Some databaseName ->
-                use! connection = openConnectionAsync masterConnectionString cancellationToken
+            match bootstrapPlan.DatabaseCreationConnectionString, bootstrapPlan.TargetDatabaseName with
+            | Some databaseCreationConnectionString, Some databaseName ->
+                use! connection = openConnectionAsync databaseCreationConnectionString cancellationToken
                 use command = connection.CreateCommand()
                 command.CommandType <- CommandType.Text
                 command.CommandText <- OperationsUsageSql.CreateDatabaseIfMissing
@@ -437,14 +472,14 @@ type OperationsUsageSchema(connectionString: string) =
                 parameter.Value <- databaseName
                 let! _ = command.ExecuteNonQueryAsync cancellationToken
                 return ()
-            | None -> return ()
+            | _ -> return ()
         }
 
     /// Creates the operations usage schema, raw fact table, and minute aggregate table when they are absent.
     member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
         task {
             do! ensureDatabaseCreatedAsync cancellationToken
-            use! connection = openConnectionAsync connectionString cancellationToken
+            use! connection = openConnectionAsync bootstrapPlan.SchemaConnectionString cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateSchema cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateRawUsageFactTable cancellationToken
             do! executeCommandAsync connection OperationsUsageSql.CreateUsageAggregateMinuteTable cancellationToken

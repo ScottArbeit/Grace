@@ -5,6 +5,7 @@ open Azure.Identity
 open Azure.Messaging.ServiceBus
 open Grace.Operations.Data
 open Grace.Shared
+open Grace.Shared.Utilities
 open Grace.Types.Usage
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Hosting
@@ -117,9 +118,12 @@ module OperationsWorkerSettings =
 
     /// Returns a trimmed setting value when configuration contains a non-empty entry.
     let private optionalSetting (configuration: IConfiguration) name =
-        let value = configuration[name]
-
-        if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
+        [
+            configuration[getConfigKey name]
+            configuration[name]
+            Environment.GetEnvironmentVariable name
+        ]
+        |> List.tryPick (fun value -> if String.IsNullOrWhiteSpace value then None else Some(value.Trim()))
 
     /// Reads a setting or returns the supplied default.
     let private settingOrDefault configuration name defaultValue =
@@ -134,6 +138,14 @@ module OperationsWorkerSettings =
             | true, parsed when parsed > 0 -> parsed
             | _ -> defaultValue
         | None -> defaultValue
+
+    /// Attempts managed-identity Service Bus discovery without letting unrelated Azure environment gaps abort validation.
+    let private serviceBusNamespaceFromAzureEnvironment () =
+        try
+            AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
+        with
+        | :? InvalidOperationException
+        | :? TypeInitializationException -> None
 
     /// Builds validated worker settings from configuration.
     let fromConfiguration (configuration: IConfiguration) =
@@ -163,9 +175,7 @@ module OperationsWorkerSettings =
 
         if serviceBusConnectionString.IsNone
            && serviceBusNamespace.IsNone
-           && AzureEnvironment
-               .tryGetServiceBusFullyQualifiedNamespace()
-               .IsNone then
+           && serviceBusNamespaceFromAzureEnvironment().IsNone then
             errors.Add(
                 $"{Constants.EnvironmentVariables.AzureServiceBusConnectionString} or {Constants.EnvironmentVariables.AzureServiceBusNamespace} is required."
             )
@@ -180,8 +190,11 @@ module OperationsWorkerSettings =
                     SqlConnectionString = sqlConnectionString.Value
                     ServiceBusConnectionString = serviceBusConnectionString
                     ServiceBusFullyQualifiedNamespace =
-                        serviceBusNamespace
-                        |> Option.orElse (AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ())
+                        match serviceBusConnectionString with
+                        | Some _ -> serviceBusNamespace
+                        | None ->
+                            serviceBusNamespace
+                            |> Option.orElseWith serviceBusNamespaceFromAzureEnvironment
                     MaxConcurrentCalls = positiveIntSetting configuration MaxConcurrentCallsEnvironmentVariable 4
                     PrefetchCount = positiveIntSetting configuration PrefetchCountEnvironmentVariable 16
                 }

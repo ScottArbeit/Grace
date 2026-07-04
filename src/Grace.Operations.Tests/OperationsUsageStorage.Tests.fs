@@ -222,6 +222,42 @@ type OperationsUsageStorageTests() =
 
         Assert.That(transactionScope, Is.InstanceOf<IOperationsUsageTransactionScope>())
 
+    /// Verifies default schema initialization uses the configured target database without requiring `master`.
+    [<Test>]
+    member _.DefaultSchemaBootstrapUsesTargetDatabaseConnectionOnly() =
+        let plan =
+            OperationsUsageSchemaBootstrapPlan.create
+                "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                OperationsUsageSchemaBootstrapMode.TargetDatabaseOnly
+
+        let schemaBuilder = Microsoft.Data.SqlClient.SqlConnectionStringBuilder(plan.SchemaConnectionString)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(plan.TargetDatabaseName, Is.EqualTo(Some "GraceOperations"))
+                Assert.That(schemaBuilder.InitialCatalog, Is.EqualTo("GraceOperations"))
+                Assert.That(plan.DatabaseCreationConnectionString, Is.EqualTo(None)))
+        )
+
+    /// Verifies database creation remains available only when an admin bootstrap mode is explicitly selected.
+    [<Test>]
+    member _.ExplicitSchemaBootstrapUsesMasterConnectionForDatabaseCreation() =
+        let plan =
+            OperationsUsageSchemaBootstrapPlan.create
+                "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing
+
+        let creationBuilder = Microsoft.Data.SqlClient.SqlConnectionStringBuilder(plan.DatabaseCreationConnectionString.Value)
+
+        let schemaBuilder = Microsoft.Data.SqlClient.SqlConnectionStringBuilder(plan.SchemaConnectionString)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(plan.TargetDatabaseName, Is.EqualTo(Some "GraceOperations"))
+                Assert.That(creationBuilder.InitialCatalog, Is.EqualTo("master"))
+                Assert.That(schemaBuilder.InitialCatalog, Is.EqualTo("GraceOperations")))
+        )
+
     /// Verifies a first usage fact inserts a raw row and increments the expected aggregate minute.
     [<Test>]
     member _.FirstFactStoresRawFactAndIncrementsMinuteAggregate() =

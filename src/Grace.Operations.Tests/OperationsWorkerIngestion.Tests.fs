@@ -3,8 +3,10 @@ namespace Grace.Operations.Tests
 open Grace.Operations.Data
 open Grace.Operations.Worker
 open Grace.Shared
+open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Usage
+open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Logging.Abstractions
 open NodaTime
 open NUnit.Framework
@@ -112,6 +114,12 @@ type private StubUsageFactStore(storeAsync: UsageFact -> CancellationToken -> Ta
 [<TestFixture>]
 type OperationsWorkerIngestionTests() =
 
+    /// Builds host configuration from explicit keys so tests can model normalized environment variables.
+    let configurationFromPairs pairs =
+        ConfigurationBuilder()
+            .AddInMemoryCollection(pairs)
+            .Build()
+
     /// Creates a processor with deterministic fake dependencies.
     let createProcessor storeAsync =
         let events = List<string>()
@@ -141,6 +149,48 @@ type OperationsWorkerIngestionTests() =
 
     /// Creates an already-processed persistence result for a fact.
     let alreadyProcessed fact = { Status = UsageFactPersistenceStatus.AlreadyProcessed; UsageFactId = fact.UsageFactId; Aggregate = None }
+
+    /// Verifies AppHost-style environment names resolve after Host configuration normalizes `__` to `:`.
+    [<Test>]
+    member _.WorkerSettingsReadNormalizedConfigurationKeys() =
+        let configuration =
+            configurationFromPairs [ KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic,
+                                         "operations-topic"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.ProcessorSubscriptionEnvironmentVariable,
+                                         OperationsWorkerSettings.DefaultProcessorSubscriptionName
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.SqlConnectionStringEnvironmentVariable,
+                                         "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusConnectionString,
+                                         "Endpoint=sb://operations.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=fake"
+                                     )
+                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.MaxConcurrentCallsEnvironmentVariable, "7")
+                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.PrefetchCountEnvironmentVariable, "29") ]
+
+        let settings = OperationsWorkerSettings.fromConfiguration configuration
+
+        match settings with
+        | Ok value ->
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(value.TopicName, Is.EqualTo("operations-topic"))
+                    Assert.That(value.SubscriptionName, Is.EqualTo(OperationsWorkerSettings.DefaultProcessorSubscriptionName))
+
+                    Assert.That(
+                        value.SqlConnectionString,
+                        Is.EqualTo("Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;")
+                    )
+
+                    Assert.That(value.MaxConcurrentCalls, Is.EqualTo(7))
+                    Assert.That(value.PrefetchCount, Is.EqualTo(29)))
+            )
+        | Error errors -> Assert.Fail(String.Join("; ", errors))
 
     /// Verifies valid messages complete only after the data layer reports durable persistence.
     [<Test>]
