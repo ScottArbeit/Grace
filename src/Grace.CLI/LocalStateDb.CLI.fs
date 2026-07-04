@@ -737,7 +737,10 @@ module LocalStateDb =
                                 | Some allocatedSequence -> sequence <= allocatedSequence
                                 | None -> false
                             | None -> false
-                        | None -> not (hasWatchJournalRows connection)
+                        | None ->
+                            not (hasWatchJournalRows connection)
+                            && tryReadConsistentAllocatedWatchJournalSequence connection
+                               |> Option.isSome
                     with
                     | _ -> false
                 else
@@ -867,7 +870,10 @@ module LocalStateDb =
                 | Some allocatedSequence -> sequence <= allocatedSequence
                 | None -> false
             | None -> false
-        | None -> not (hasWatchJournalRows connection)
+        | None ->
+            not (hasWatchJournalRows connection)
+            && tryReadConsistentAllocatedWatchJournalSequence connection
+               |> Option.isSome
 
     /// Reads the applied-through journal sequence used by future Watch recovery work.
     let private readWatchJournalAppliedThroughSequenceInternal (connection: SqliteConnection) =

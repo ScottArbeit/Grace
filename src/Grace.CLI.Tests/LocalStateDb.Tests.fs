@@ -987,6 +987,46 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that empty schema v5 databases still reject malformed SQLite journal allocation metadata.
+    [<TestCase("not-a-number")>]
+    [<TestCase("-1")>]
+    let ``ensureDbInitialized recreates DB when schema v5 empty journal has invalid allocation row`` (allocatedSequence: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
+                    executeNonQuery connection $"INSERT INTO sqlite_sequence (name, seq) VALUES ('watch_journal', '{allocatedSequence}');"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+                let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+                allocationRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
     /// Verifies that schema acceptance rejects missing SQLite journal allocation metadata when rows exist.
     [<Test>]
     let ``ensureDbInitialized recreates DB when schema v5 journal rows have no allocation row`` () =

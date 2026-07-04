@@ -2692,6 +2692,48 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor reports malformed Watch journal allocation without repairing local state.
+    [<Test>]
+    let ``doctor local-state reports malformed watch journal allocation without rows`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let dbPath = localStateDbPath root
+
+                do
+                    use connection = openRawConnection dbPath
+                    executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
+                    executeNonQuery connection "INSERT INTO sqlite_sequence (name, seq) VALUES ('watch_journal', 'not-a-number');"
+
+                let beforeRoot = snapshotFiles root
+
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.watch-journal" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "malformed"
+
+                snapshotFiles root |> should equal beforeRoot))
+
     /// Verifies that doctor reports stale Watch journal allocation without repairing local state.
     [<Test>]
     let ``doctor local-state reports stale watch journal allocation with rows`` () =
