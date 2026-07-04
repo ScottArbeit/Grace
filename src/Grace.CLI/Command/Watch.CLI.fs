@@ -521,6 +521,17 @@ module Watch =
     let internal resetBranchTransitionCompletionAfterRetireProbeForWatchTests () =
         lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- ignore)
 
+    /// Removes stale source-branch Watch IPC before transition completion publishes under the target identity.
+    let mutable private retirePreviousBranchWatchIpcForTransitionCompletion = fun previousIpcFileName -> File.Delete(previousIpcFileName)
+
+    /// Installs the previous-branch IPC retirement operation used by transition-completion tests.
+    let internal setRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests retirePreviousBranchIpc =
+        retirePreviousBranchWatchIpcForTransitionCompletion <- retirePreviousBranchIpc
+
+    /// Restores previous-branch IPC retirement to the production file-delete behavior after Watch tests.
+    let internal resetRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests () =
+        retirePreviousBranchWatchIpcForTransitionCompletion <- fun previousIpcFileName -> File.Delete(previousIpcFileName)
+
     /// Reloads repository configuration after another Grace process changes the current branch.
     let private reloadConfigurationForTransitionCompletion () =
         resetConfiguration ()
@@ -1893,7 +1904,7 @@ module Watch =
     /// Removes the previous branch IPC snapshot so stale healthy status cannot survive a branch transition.
     let private retirePreviousBranchWatchIpc previousIpcFileName =
         if File.Exists(previousIpcFileName) then
-            File.Delete(previousIpcFileName)
+            retirePreviousBranchWatchIpcForTransitionCompletion previousIpcFileName
 
             logToAnsiConsole Colors.Important $"Grace Watch retired previous branch IPC before completing branch transition: {previousIpcFileName}."
 

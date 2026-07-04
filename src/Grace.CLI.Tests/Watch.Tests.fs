@@ -796,9 +796,9 @@ module WatchTests =
             finally
                 Watch.resetBranchTransitionCompletionAfterRetireProbeForWatchTests ())
 
-    /// Verifies that locked old branch IPC still yields target-branch resync IPC after transition completion.
+    /// Verifies that failed old branch IPC retirement still yields target-branch resync IPC after transition completion.
     [<Test>]
-    let ``update marker deletion publishes target branch resync ipc when old branch ipc is locked`` () =
+    let ``update marker deletion publishes target branch resync ipc when old branch ipc retirement fails`` () =
         withTempRepo (fun root ->
             let repositoryId = Guid.NewGuid()
             let branchAId = Guid.NewGuid()
@@ -829,26 +829,30 @@ module WatchTests =
             writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
             Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
 
-            use lockedBranchAIpc = new FileStream(branchAIpc, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            try
+                Watch.setRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests (fun _ ->
+                    raise (IOException("test-controlled old branch IPC retirement failure")))
 
-            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+                recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
 
-            branchAIpc |> File.Exists |> should equal true
-            branchBIpc |> File.Exists |> should equal true
+                branchAIpc |> File.Exists |> should equal true
+                branchBIpc |> File.Exists |> should equal true
 
-            Watch.currentGraceWatchRuntimeModeForWatchTests ()
-            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
 
-            readWatchStatusJsonStringProperty "BranchId"
-            |> should equal $"{branchBId}"
+                readWatchStatusJsonStringProperty "BranchId"
+                |> should equal $"{branchBId}"
 
-            Services.getGraceWatchStatus().Result
-            |> should equal None
+                Services.getGraceWatchStatus().Result
+                |> should equal None
 
-            let inspection = Services.inspectGraceWatchStatus().Result
+                let inspection = Services.inspectGraceWatchStatus().Result
 
-            inspection.EffectiveMode
-            |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing))
+                inspection.EffectiveMode
+                |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing)
+            finally
+                Watch.resetRetirePreviousBranchWatchIpcForTransitionCompletionForWatchTests ())
 
     /// Verifies that transition reload clears process-wide ignore decisions after `.graceignore` changes.
     [<Test>]
