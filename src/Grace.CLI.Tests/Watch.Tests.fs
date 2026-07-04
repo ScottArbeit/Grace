@@ -165,6 +165,20 @@ module WatchTests =
             DirectoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
         }
 
+    /// Applies the current repository identity used by Watch IPC trust tests.
+    let private configureCurrentWatchIdentity rootDirectory repositoryName branchName =
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+        let configuration = Current()
+
+        configuration.RepositoryId <- repositoryId
+        configuration.RepositoryName <- repositoryName
+        configuration.BranchId <- branchId
+        configuration.BranchName <- branchName
+        configuration.RootDirectory <- rootDirectory
+
+        repositoryId, branchId
+
     /// Removes the compact runtime surface so tests can simulate pre-WS3.1 IPC files.
     let private removeCompactWatchRuntimeSurface (json: string) =
         let statusNode = JsonNode.Parse(json).AsObject()
@@ -5598,6 +5612,109 @@ module WatchTests =
 
                 output
                 |> should not' (contain "Unable to acquire an access token for SignalR")))
+
+    /// Verifies that current-identity startup claims reject duplicate startup attempts.
+    [<Test>]
+    let ``watch startup claim blocks duplicate current identity claim`` () =
+        withTempRepo (fun root ->
+            let repositoryName = "current-startup-repo"
+            let branchName = $"current-startup-branch-{Guid.NewGuid():N}"
+            let repositoryId, branchId = configureCurrentWatchIdentity root repositoryName branchName
+            deleteWatchStatusFileIfExists ()
+
+            let firstClaimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            firstClaimed |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsStartupClaim"
+            |> should equal true
+
+            readWatchStatusJsonStringProperty "RepositoryId"
+            |> should equal $"{repositoryId}"
+
+            readWatchStatusJsonStringProperty "RepositoryName"
+            |> should equal repositoryName
+
+            readWatchStatusJsonStringProperty "BranchId"
+            |> should equal $"{branchId}"
+
+            readWatchStatusJsonStringProperty "BranchName"
+            |> should equal branchName
+
+            readWatchStatusJsonStringProperty "RootDirectory"
+            |> should equal root
+
+            let originalContents = File.ReadAllText(Services.IpcFileName())
+
+            let secondClaimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            secondClaimed |> should equal false
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal originalContents)
+
+    /// Verifies that a startup claim written by another same-branch worktree does not block this repository identity.
+    [<Test>]
+    let ``watch startup claim replaces foreign same branch startup claim`` () =
+        withTempRepo (fun root ->
+            let branchName = $"shared-startup-branch-{Guid.NewGuid():N}"
+            let foreignRoot = Path.Combine(root, "other-worktree")
+            Directory.CreateDirectory(foreignRoot) |> ignore
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-startup-repo" branchName
+            deleteWatchStatusFileIfExists ()
+
+            let foreignStartupClaim =
+                { Services.GraceWatchStatus.Default with
+                    UpdatedAt = getCurrentInstant ()
+                    IsStartupClaim = true
+                    RepositoryId = Guid.NewGuid()
+                    RepositoryName = RepositoryName "foreign-startup-repo"
+                    BranchId = Guid.NewGuid()
+                    BranchName = BranchName branchName
+                    RootDirectory = foreignRoot
+                }
+
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, serialize foreignStartupClaim)
+
+            Services
+                .inspectGraceWatchStatus()
+                .Result
+                .HasCurrentRepositoryIdentity
+            |> should equal false
+
+            let currentClaimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            currentClaimed |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsStartupClaim"
+            |> should equal true
+
+            readWatchStatusJsonStringProperty "RepositoryId"
+            |> should equal $"{currentRepositoryId}"
+
+            readWatchStatusJsonStringProperty "BranchId"
+            |> should equal $"{currentBranchId}"
+
+            readWatchStatusJsonStringProperty "BranchName"
+            |> should equal branchName
+
+            readWatchStatusJsonStringProperty "RootDirectory"
+            |> should equal root)
 
     /// Verifies that startup claim recognizes fresh legacy IPC instead of overwriting a live Watch file.
     [<Test>]

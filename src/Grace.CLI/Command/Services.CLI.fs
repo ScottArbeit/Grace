@@ -2557,8 +2557,19 @@ module Services =
     /// Builds a Watch IPC snapshot using the current process pending-work flag.
     let private createGraceWatchStatus graceStatus directoryIdsOverride = createGraceWatchStatusWithPendingWork None graceStatus directoryIdsOverride
 
-    /// Builds the startup-claim record that prevents duplicate Grace Watch instances.
-    let private createGraceWatchStartupClaim () = { GraceWatchStatus.Default with UpdatedAt = getCurrentInstant (); IsStartupClaim = true }
+    /// Builds the startup-claim record that prevents duplicate Grace Watch instances for the current repository identity.
+    let private createGraceWatchStartupClaim () =
+        let current = Current()
+
+        { GraceWatchStatus.Default with
+            UpdatedAt = getCurrentInstant ()
+            IsStartupClaim = true
+            RepositoryId = current.RepositoryId
+            RepositoryName = current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = current.BranchName
+            RootDirectory = current.RootDirectory
+        }
 
     /// Checks if the Grace Watch status is within the past 5m.
     let private isGraceWatchStatusFresh (graceWatchStatus: GraceWatchStatus) =
