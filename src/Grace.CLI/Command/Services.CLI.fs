@@ -261,7 +261,7 @@ module Services =
         | _ -> false
 
     /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
-    let private toGraceWatchStatusContract (status: GraceWatchStatus) =
+    let private toGraceWatchStatusContractWithPersistedMode persistedModeOverride (status: GraceWatchStatus) =
         {
             UpdatedAt = status.UpdatedAt
             IsStartupClaim = status.IsStartupClaim
@@ -271,12 +271,21 @@ module Services =
             LastFileUploadInstant = status.LastFileUploadInstant
             LastDirectoryVersionInstant = status.LastDirectoryVersionInstant
             DirectoryIds = status.DirectoryIds
-            Mode = modeForGraceWatchStatusContract status
+            Mode =
+                persistedModeOverride
+                |> Option.orElseWith (fun () -> modeForGraceWatchStatusContract status)
             SafetyFlags = safetyFlagsForGraceWatchStatusContract status
         }
 
+    /// Converts the in-memory Watch status model without forcing a runtime mode into IPC JSON.
+    let private toGraceWatchStatusContract status = toGraceWatchStatusContractWithPersistedMode None status
+
     /// Writes the compact Watch IPC JSON contract to the already-open status stream.
     let private writeGraceWatchStatusContractToStream fileStream graceWatchStatus = serializeAsync fileStream (toGraceWatchStatusContract graceWatchStatus)
+
+    /// Writes the compact Watch IPC JSON contract while preserving a known non-incremental runtime mode.
+    let private writeGraceWatchStatusContractWithPersistedModeToStream fileStream mode graceWatchStatus =
+        serializeAsync fileStream (toGraceWatchStatusContractWithPersistedMode (Some mode) graceWatchStatus)
 
     /// Reads the compact persisted Watch runtime mode from IPC JSON written by newer Watch processes.
     let private tryReadGraceWatchPersistedMode (json: string) =
@@ -2274,27 +2283,37 @@ module Services =
         && not graceWatchStatus.IsStartupClaim
         && graceWatchStatus.Mode = GraceWatchRuntimeMode.HealthyIncremental
 
-    /// Writes grace watch status data through the CLI output contract.
-    let private writeGraceWatchStatus fileMode graceWatchStatus =
+    /// Writes grace watch status data through the CLI output contract with an optional runtime-mode override.
+    let private writeGraceWatchStatusWithPersistedMode persistedModeOverride fileMode graceWatchStatus =
         task {
             Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
             |> ignore
 
             use fileStream = new FileStream(IpcFileName(), fileMode, FileAccess.Write, FileShare.None)
 
-            do! writeGraceWatchStatusContractToStream fileStream graceWatchStatus
+            match persistedModeOverride with
+            | Some mode -> do! writeGraceWatchStatusContractWithPersistedModeToStream fileStream mode graceWatchStatus
+            | None -> do! writeGraceWatchStatusContractToStream fileStream graceWatchStatus
+
             graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
         }
 
-    /// Updates the contents of the `grace watch` status inter-process communication file.
-    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+    /// Writes Grace Watch IPC status without forcing a compact runtime mode override.
+    let private writeGraceWatchStatus fileMode graceWatchStatus = writeGraceWatchStatusWithPersistedMode None fileMode graceWatchStatus
+
+    /// Writes Grace Watch IPC content after converting the current Grace status snapshot.
+    let private updateGraceWatchInterprocessFileCore
+        persistedModeOverride
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
         task {
             try
                 let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
                 //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
                 //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
 
-                do! writeGraceWatchStatus FileMode.Create newGraceWatchStatus
+                do! writeGraceWatchStatusWithPersistedMode persistedModeOverride FileMode.Create newGraceWatchStatus
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with
             | ex ->
@@ -2302,6 +2321,14 @@ module Services =
                 logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}{Environment.NewLine}{Environment.NewLine}"
                 logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
         }
+
+    /// Updates the contents of the `grace watch` status inter-process communication file.
+    let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        updateGraceWatchInterprocessFileCore None graceStatus directoryIdsOverride
+
+    /// Updates Watch IPC while preserving the suspended mode that cannot be derived from the compact status payload.
+    let internal updateGraceWatchInterprocessFileForSuspendedMode (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        updateGraceWatchInterprocessFileCore (Some GraceWatchRuntimeMode.Suspended) graceStatus directoryIdsOverride
 
     /// Reads the `grace watch` status inter-process communication file.
     let getGraceWatchStatus () =

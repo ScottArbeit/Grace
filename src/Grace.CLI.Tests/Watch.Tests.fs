@@ -6103,6 +6103,16 @@ module WatchTests =
             Watch.currentGraceWatchRuntimeModeForWatchTests ()
             |> should equal Services.GraceWatchRuntimeMode.Suspended
 
+            readWatchStatusJsonStringProperty "Mode"
+            |> should equal "suspended"
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            inspection.EffectiveMode
+            |> should equal (Some Services.GraceWatchRuntimeMode.Suspended)
+
+            inspection.IsUsable |> should equal false
+
             let ignoredPath = Path.Combine(root, "ignored-after-failed-resync.txt")
             File.WriteAllText(ignoredPath, "ignored after failed resync")
             Watch.OnChanged(changedEvent ignoredPath)

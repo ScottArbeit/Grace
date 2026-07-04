@@ -1352,9 +1352,12 @@ module Watch =
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
         try
-            (updateGraceWatchInterprocessFile GraceStatus.Default (Some(HashSet<DirectoryVersionId>())))
-                .GetAwaiter()
-                .GetResult()
+            let writeTask =
+                match currentGraceWatchRuntimeMode () with
+                | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+                | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+
+            writeTask.GetAwaiter().GetResult()
         with
         | ex -> logToAnsiConsole Colors.Error $"Grace Watch could not publish resync-required status: {Markup.Escape(ex.Message)}."
 
