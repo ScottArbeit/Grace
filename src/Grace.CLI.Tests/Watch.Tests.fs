@@ -6195,6 +6195,46 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
+    /// Verifies that non-Watch status refreshes re-read live IPC before preserving clean state.
+    [<Test>]
+    let ``watch ipc non-watch update rechecks clean live state before write`` () =
+        withTempRepo (fun _ ->
+            let liveRootDirectoryId = Guid.NewGuid()
+            let initialCleanStatus = liveWatchStatus liveRootDirectoryId
+
+            writeWatchStatusJsonWithRuntimeSurface initialCleanStatus
+            |> ignore
+
+            let cleanStatusFromNonWatch = graceStatusTracking Array.empty<string> Array.empty<string>
+            let cleanDirectoryIdsFromNonWatch = HashSet<DirectoryVersionId>(cleanStatusFromNonWatch.Index.Keys)
+
+            let publishDirtyLiveStatus () =
+                let dirtyLiveStatus = { initialCleanStatus with UpdatedAt = getCurrentInstant (); HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+                writeWatchStatusJsonWithRuntimeSurface dirtyLiveStatus
+                |> ignore
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFilePreservingLiveWorkStateAfterInspectionForWatchTests
+                publishDirtyLiveStatus
+                cleanStatusFromNonWatch
+                (Some cleanDirectoryIdsFromNonWatch))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            readWatchStatusJsonStringProperty "RootDirectoryId"
+            |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}"
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
     /// Verifies that non-Watch status refreshes preserve same-repository non-incremental Watch state.
     [<Test>]
     let ``watch ipc non-watch update preserves current live recovery state`` () =
@@ -6234,6 +6274,50 @@ module WatchTests =
                     { graceStatusTracking Array.empty<string> Array.empty<string> with
                         RootDirectorySha256Hash = Sha256Hash $"current-non-watch-root-{modeText}"
                     }
+
+                let cleanDirectoryIdsFromNonWatch = HashSet<DirectoryVersionId>(cleanStatusFromNonWatch.Index.Keys)
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFilePreservingLiveWorkState cleanStatusFromNonWatch (Some cleanDirectoryIdsFromNonWatch))
+                    .GetAwaiter()
+                    .GetResult()
+
+                readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                |> should equal true
+
+                readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+                |> should equal false
+
+                readWatchStatusJsonStringProperty "Mode"
+                |> should equal modeText
+
+                readWatchStatusJsonStringProperty "RootDirectoryId"
+                |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}")
+
+    /// Verifies that non-Watch status refreshes preserve same-branch legacy recovery snapshots.
+    [<Test>]
+    let ``watch ipc non-watch update preserves legacy recovery state with blank root identity`` () =
+        withTempRepo (fun _ ->
+            let liveRootDirectoryId = Guid.NewGuid()
+
+            for mode, modeText in
+                [|
+                    Services.GraceWatchRuntimeMode.Suspended, "suspended"
+                    Services.GraceWatchRuntimeMode.Resynchronizing, "resynchronizing"
+                |] do
+                let liveRecoveryStatus = { liveWatchStatus liveRootDirectoryId with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+                let ipcFileName = writeWatchStatusJsonWithPersistedMode mode liveRecoveryStatus
+
+                let legacyJson =
+                    File.ReadAllText(ipcFileName)
+                    |> removeWatchStatusFieldsAddedForIssue492
+
+                File.WriteAllText(ipcFileName, legacyJson)
+
+                let cleanStatusFromNonWatch =
+                    { graceStatusTracking Array.empty<string> Array.empty<string> with RootDirectorySha256Hash = Sha256Hash $"legacy-recovery-root-{modeText}" }
 
                 let cleanDirectoryIdsFromNonWatch = HashSet<DirectoryVersionId>(cleanStatusFromNonWatch.Index.Keys)
 
@@ -8269,6 +8353,58 @@ module WatchTests =
 
                 Services.getGraceWatchStatus().Result
                 |> should equal None)
+
+    /// Verifies that persisted HealthyIncremental mode cannot override missing derived root and directory data.
+    [<Test>]
+    let ``watch status rejects persisted healthy mode without derived root data`` () =
+        withTempRepo (fun _ ->
+            let emptyRootStatus =
+                { liveWatchStatus Guid.Empty with
+                    RootDirectoryId = Guid.Empty
+                    RootDirectorySha256Hash = Sha256Hash String.Empty
+                    RootDirectoryBlake3Hash = Blake3Hash String.Empty
+                    DirectoryIds = HashSet<DirectoryVersionId>()
+                    HasPendingWatchWork = false
+                    IsWorkingTreeClean = true
+                }
+
+            writeWatchStatusJsonWithPersistedMode Services.GraceWatchRuntimeMode.HealthyIncremental emptyRootStatus
+            |> ignore
+
+            let inspection =
+                Services
+                    .inspectGraceWatchStatus()
+                    .GetAwaiter()
+                    .GetResult()
+
+            inspection.EffectiveMode
+            |> should equal (Some Services.GraceWatchRuntimeMode.HealthyIncremental)
+
+            match inspection.Status with
+            | Some status ->
+                status.Mode
+                |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+            | None -> Assert.Fail("Expected readable Watch IPC status.")
+
+            inspection.IsLiveProcess |> should equal true
+            inspection.IsUsable |> should equal false
+
+            let inspectionSafetyFlags = inspection.SafetyFlags |> Set.ofArray
+
+            inspectionSafetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            inspectionSafetyFlags
+            |> Set.contains "cleanWorkingTree"
+            |> should equal false
+
+            inspectionSafetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
 
     /// Verifies that unusable dirty Watch IPC keeps current-repo pending diagnostics after identity validation.
     [<Test>]

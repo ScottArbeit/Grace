@@ -327,12 +327,24 @@ module Services =
                 && rootDirectoryMatchesCurrent
             | _ -> false
 
+        /// Reports whether a recovery snapshot came from a same-branch legacy Watch writer without root identity fields.
+        member private this.HasLegacyLiveWatchStateIdentity =
+            match this.Status with
+            | Some status ->
+                String.IsNullOrWhiteSpace(status.RootDirectory)
+                && status.RepositoryId = RepositoryId.Empty
+                && String.IsNullOrWhiteSpace(string status.RepositoryName)
+                && status.BranchId = BranchId.Empty
+                && String.IsNullOrWhiteSpace(string status.BranchName)
+            | None -> false
+
         /// Reports whether live Watch state has enough persisted identity to be preserved by another command.
         member this.HasCurrentLiveWatchStateIdentity =
             match this.Status, this.EffectiveMode with
             | Some status, Some _ ->
-                not (String.IsNullOrWhiteSpace(status.RootDirectory))
-                && this.HasCurrentRepositoryIdentity
+                this.HasCurrentRepositoryIdentity
+                && (not (String.IsNullOrWhiteSpace(status.RootDirectory))
+                    || this.HasLegacyLiveWatchStateIdentity)
             | _ -> false
 
         /// Reports whether the IPC snapshot can serve trusted incremental shortcuts.
@@ -341,6 +353,7 @@ module Services =
             | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
                 this.IsFresh
                 && not status.IsStartupClaim
+                && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
                 && status.IsWorkingTreeClean
                 && not status.HasPendingWatchWork
                 && this.HasCurrentRepositoryIdentity
@@ -416,6 +429,7 @@ module Services =
                 | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
                     inspection.IsFresh
                     && not status.IsStartupClaim
+                    && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
                     && inspection.HasCurrentRepositoryIdentity
                     && (status.HasPendingWatchWork
                         || not status.IsWorkingTreeClean)
@@ -2612,22 +2626,26 @@ module Services =
     let private writeGraceWatchStatus fileMode graceWatchStatus = writeGraceWatchStatusWithPersistedMode None fileMode graceWatchStatus
 
     /// Writes Grace Watch IPC content after converting the current Grace status snapshot.
-    let private updateGraceWatchInterprocessFileCore
+    let private writeGraceWatchInterprocessFileSnapshotUnderGate
         persistedModeOverride
         pendingWorkOverride
         (graceStatus: GraceStatus)
         (directoryIdsOverride: HashSet<DirectoryVersionId> option)
         =
+        let newGraceWatchStatus = createGraceWatchStatusWithPendingWork pendingWorkOverride graceStatus directoryIdsOverride
+        //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
+        //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
+
+        writeGraceWatchStatusWithPersistedModeCore persistedModeOverride FileMode.Create newGraceWatchStatus
+
+    /// Writes Grace Watch IPC content after converting the current Grace status snapshot.
+    let private updateGraceWatchInterprocessFileCore persistedModeOverride pendingWorkOverride graceStatus directoryIdsOverride =
         task {
             try
                 do! graceWatchStatusWriteGate.WaitAsync()
 
                 try
-                    let newGraceWatchStatus = createGraceWatchStatusWithPendingWork pendingWorkOverride graceStatus directoryIdsOverride
-                    //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
-                    //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
-
-                    do! writeGraceWatchStatusWithPersistedModeCore persistedModeOverride FileMode.Create newGraceWatchStatus
+                    do! writeGraceWatchInterprocessFileSnapshotUnderGate persistedModeOverride pendingWorkOverride graceStatus directoryIdsOverride
                 finally
                     graceWatchStatusWriteGate.Release() |> ignore
 
@@ -2643,48 +2661,85 @@ module Services =
     let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         updateGraceWatchInterprocessFileCore None None graceStatus directoryIdsOverride
 
+    /// Selects the live Watch pending and mode facts that a non-Watch writer must not erase.
+    let private liveWorkPreservationFromInspection (inspection: GraceWatchStatusInspection) =
+        let shouldPreserveLiveWork =
+            inspection.IsLiveProcess
+            && match inspection.EffectiveMode with
+               | Some GraceWatchRuntimeMode.HealthyIncremental ->
+                   match inspection.Status with
+                   | Some status when status.Mode = GraceWatchRuntimeMode.HealthyIncremental -> inspection.HasCurrentRepositoryIdentity
+                   | _ -> false
+               | Some GraceWatchRuntimeMode.StartingUp
+               | Some GraceWatchRuntimeMode.Suspended
+               | Some GraceWatchRuntimeMode.Resynchronizing
+               | Some GraceWatchRuntimeMode.Stopping -> inspection.HasCurrentLiveWatchStateIdentity
+               | Some _ -> inspection.HasCurrentLiveWatchStateIdentity
+               | None -> false
+
+        let pendingWorkOverride =
+            if shouldPreserveLiveWork then
+                match inspection.Status, inspection.EffectiveMode with
+                | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                    Some(
+                        status.HasPendingWatchWork
+                        || not status.IsWorkingTreeClean
+                    )
+                | Some _, Some _ -> Some true
+                | _ -> None
+            else
+                None
+
+        let persistedModeOverride =
+            if shouldPreserveLiveWork then
+                match inspection.EffectiveMode with
+                | Some GraceWatchRuntimeMode.StartingUp
+                | Some GraceWatchRuntimeMode.Suspended
+                | Some GraceWatchRuntimeMode.Resynchronizing
+                | Some GraceWatchRuntimeMode.Stopping -> inspection.EffectiveMode
+                | _ -> None
+            else
+                None
+
+        persistedModeOverride, pendingWorkOverride
+
+    /// Updates Watch IPC identity fields without turning live Watch pending or recovery state into a clean shortcut.
+    let private updateGraceWatchInterprocessFilePreservingLiveWorkStateCore beforeWriteBoundary graceStatus directoryIdsOverride =
+        task {
+            let! _ = inspectGraceWatchStatus ()
+
+            try
+                do! graceWatchStatusWriteGate.WaitAsync()
+
+                try
+                    beforeWriteBoundary ()
+
+                    let! boundaryInspection = inspectGraceWatchStatus ()
+                    let persistedModeOverride, pendingWorkOverride = liveWorkPreservationFromInspection boundaryInspection
+
+                    do! writeGraceWatchInterprocessFileSnapshotUnderGate persistedModeOverride pendingWorkOverride graceStatus directoryIdsOverride
+                finally
+                    graceWatchStatusWriteGate.Release() |> ignore
+
+                logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
+            with
+            | ex ->
+                logToAnsiConsole Colors.Error $"Exception in updateGraceWatchInterprocessFile."
+                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}{Environment.NewLine}{Environment.NewLine}"
+                logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+        }
+
     /// Updates Watch IPC identity fields without turning live Watch pending or recovery state into a clean shortcut.
     let updateGraceWatchInterprocessFilePreservingLiveWorkState (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
-        task {
-            let! inspection = inspectGraceWatchStatus ()
+        updateGraceWatchInterprocessFilePreservingLiveWorkStateCore ignore graceStatus directoryIdsOverride
 
-            let shouldPreserveLiveWork =
-                inspection.IsLiveProcess
-                && match inspection.EffectiveMode with
-                   | Some GraceWatchRuntimeMode.HealthyIncremental -> inspection.HasCurrentRepositoryIdentity
-                   | Some GraceWatchRuntimeMode.StartingUp
-                   | Some GraceWatchRuntimeMode.Suspended
-                   | Some GraceWatchRuntimeMode.Resynchronizing
-                   | Some GraceWatchRuntimeMode.Stopping -> inspection.HasCurrentLiveWatchStateIdentity
-                   | Some _ -> inspection.HasCurrentLiveWatchStateIdentity
-                   | None -> false
-
-            let pendingWorkOverride =
-                if shouldPreserveLiveWork then
-                    match inspection.Status, inspection.EffectiveMode with
-                    | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
-                        Some(
-                            status.HasPendingWatchWork
-                            || not status.IsWorkingTreeClean
-                        )
-                    | Some _, Some _ -> Some true
-                    | _ -> None
-                else
-                    None
-
-            let persistedModeOverride =
-                if shouldPreserveLiveWork then
-                    match inspection.EffectiveMode with
-                    | Some GraceWatchRuntimeMode.StartingUp
-                    | Some GraceWatchRuntimeMode.Suspended
-                    | Some GraceWatchRuntimeMode.Resynchronizing
-                    | Some GraceWatchRuntimeMode.Stopping -> inspection.EffectiveMode
-                    | _ -> None
-                else
-                    None
-
-            do! updateGraceWatchInterprocessFileCore persistedModeOverride pendingWorkOverride graceStatus directoryIdsOverride
-        }
+    /// Exercises the non-Watch IPC write boundary after a test-controlled live Watch status change.
+    let internal updateGraceWatchInterprocessFilePreservingLiveWorkStateAfterInspectionForWatchTests
+        beforeWriteBoundary
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        updateGraceWatchInterprocessFilePreservingLiveWorkStateCore beforeWriteBoundary graceStatus directoryIdsOverride
 
     /// Exercises the gated Watch IPC write boundary after a test-controlled pending-work state change.
     let internal updateGraceWatchInterprocessFileAfterPendingWorkProbeForWatchTests
