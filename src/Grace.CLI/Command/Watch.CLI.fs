@@ -460,6 +460,13 @@ module Watch =
     let mutable private readGraceStatusFileForDeletedPathClassification = readGraceStatusFile
 
     let mutable private readGraceStatusFileForPendingWorkTransition = readGraceStatusFile
+    let mutable private readGraceStatusFileForTransitionCompletion = readGraceStatusFile
+
+    /// Reloads repository configuration after another Grace process changes the current branch.
+    let private reloadConfigurationForTransitionCompletion () =
+        resetConfiguration ()
+        Current() |> ignore
+        configureWatchPathComparisonForCurrentRepository ()
 
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
@@ -638,6 +645,8 @@ module Watch =
 
     /// Coordinates set grace status for watch tests behavior for this CLI command path.
     let internal setGraceStatusForWatchTests status = graceStatus <- status
+    /// Replaces Watch's cached directory identity set after a trusted GraceStatus reload.
+    let internal updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
     /// Reads the in-memory Grace Status snapshot so transition-publication tests can prove state isolation.
     let internal graceStatusForWatchTests () = graceStatus
     /// Reads the in-memory Grace Status directory identities so transition-publication tests can prove state isolation.
@@ -659,9 +668,14 @@ module Watch =
             graceStatusHasChanged <- false
 
     /// Coordinates set read grace status file for watch tests behavior for this CLI command path.
-    let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
+    let internal setReadGraceStatusFileForWatchTests readStatusFile =
+        readGraceStatusFileForDeletedPathClassification <- readStatusFile
+        readGraceStatusFileForTransitionCompletion <- readStatusFile
+
     /// Sets the Grace Status reader used by pending-work transition tests.
     let internal setReadGraceStatusFileForPendingWorkTransitionForWatchTests readStatusFile = readGraceStatusFileForPendingWorkTransition <- readStatusFile
+    /// Sets the Grace Status reader used by branch-transition completion tests.
+    let internal setReadGraceStatusFileForTransitionCompletionForWatchTests readStatusFile = readGraceStatusFileForTransitionCompletion <- readStatusFile
     /// Reads set enumerate files for directory upload for watch tests data needed by the command workflow without changing remote state.
     let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
 
@@ -1774,6 +1788,98 @@ module Watch =
     /// Counts quarantined observations for tests that verify confidence loss does not replay stale work.
     let internal quarantinedWatchObservationCountForWatchTests () = Volatile.Read(&quarantinedWatchObservationCount)
 
+    /// Verifies a reloaded branch configuration has enough identity to own a branch-scoped Watch IPC file.
+    let private isTransitionCompletionConfigurationCoherent () =
+        let current = Current()
+
+        let hasRepositoryIdentity =
+            current.RepositoryId <> RepositoryId.Empty
+            || not (String.IsNullOrWhiteSpace(string current.RepositoryName))
+
+        let hasBranchIdentity =
+            current.BranchId <> BranchId.Empty
+            || not (String.IsNullOrWhiteSpace(string current.BranchName))
+
+        hasRepositoryIdentity
+        && hasBranchIdentity
+        && not (String.IsNullOrWhiteSpace current.RootDirectory)
+        && Directory.Exists(current.RootDirectory)
+
+    /// Verifies a reloaded GraceStatus can support a trusted incremental Watch snapshot after branch switch.
+    let private isTransitionCompletionGraceStatusCoherent (status: GraceStatus) =
+        let hasRootIdentity =
+            status.RootDirectoryId <> DirectoryVersionId.Empty
+            && not (String.IsNullOrWhiteSpace($"{status.RootDirectorySha256Hash}"))
+            && not (String.IsNullOrWhiteSpace($"{status.RootDirectoryBlake3Hash}"))
+
+        let mutable rootDirectoryVersion = LocalDirectoryVersion.Default
+
+        hasRootIdentity
+        && not (isNull status.Index)
+        && status.Index.TryGetValue(status.RootDirectoryId, &rootDirectoryVersion)
+        && rootDirectoryVersion.Sha256Hash = status.RootDirectorySha256Hash
+        && rootDirectoryVersion.Blake3Hash = status.RootDirectoryBlake3Hash
+
+    /// Publishes a branch-scoped non-incremental transition snapshot when Watch cannot safely resume.
+    let private publishNonIncrementalTransitionCompletionStatus context =
+        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+        publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
+            match currentGraceWatchRuntimeMode () with
+            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
+            | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds))
+
+        logToAnsiConsole Colors.Important $"Grace Watch published non-incremental IPC for branch transition completion: {context}."
+
+    /// Completes a Grace-owned branch transition after the update marker is cleanly deleted.
+    let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
+        let reloadedConfiguration =
+            try
+                reloadConfigurationForTransitionCompletion ()
+                true
+            with
+            | ex ->
+                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+                graceStatusHasChanged <- true
+
+                lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- None)
+
+                logToAnsiConsole
+                    Colors.Error
+                    $"Grace Watch could not reload configuration after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
+
+                false
+
+        if reloadedConfiguration then
+            try
+                let refreshedStatus =
+                    readGraceStatusFileForTransitionCompletion()
+                        .GetAwaiter()
+                        .GetResult()
+
+                graceStatus <- refreshedStatus
+                updateGraceStatusDirectoryIds graceStatus
+
+                if isTransitionCompletionConfigurationCoherent ()
+                   && isTransitionCompletionGraceStatusCoherent graceStatus then
+                    if
+                        currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                        && not (isGraceWatchResyncPending ())
+                    then
+                        publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                            updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                    else
+                        publishNonIncrementalTransitionCompletionStatus
+                            $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
+                else
+                    requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
+            with
+            | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}"
+
     /// Combines status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
         let merged = List<FileSystemDifference>()
@@ -1875,6 +1981,7 @@ module Watch =
 
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
+        readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
         clearGraceUpdateMarkerDeletedUtc ()
@@ -2350,6 +2457,7 @@ module Watch =
                 match tryReadGraceUpdateMarkerCompletedUtc () with
                 | Some completedUtc ->
                     recordGraceUpdateMarkerCompletedUtc completedUtc
+                    completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
                     logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
                 | None ->
                     clearGraceUpdateMarkerDeletedUtc ()
@@ -2660,9 +2768,6 @@ module Watch =
             do! gzStream.DisposeAsync()
             graceStatus <- GraceStatus.Default
         }
-
-    /// Coordinates update grace status directory ids behavior for this CLI command path.
-    let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
 
     /// Publishes a trusted Watch IPC snapshot only when incremental mode is currently safe for other processes.
     let private tryPublishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =

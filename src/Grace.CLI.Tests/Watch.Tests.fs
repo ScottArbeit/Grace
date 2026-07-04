@@ -181,6 +181,17 @@ module WatchTests =
 
         repositoryId, branchId
 
+    /// Writes a repository configuration file without relying on the process-local cached Current() value.
+    let private writeRepositoryConfiguration rootDirectory repositoryId repositoryName branchId branchName =
+        let configuration = GraceConfiguration()
+        configuration.RepositoryId <- repositoryId
+        configuration.RepositoryName <- repositoryName
+        configuration.BranchId <- branchId
+        configuration.BranchName <- branchName
+        configuration.RootDirectory <- rootDirectory
+
+        saveConfigFile (Path.Combine(rootDirectory, Constants.GraceConfigDirectory, Constants.GraceConfigFileName)) configuration
+
     /// Removes the compact runtime surface so tests can simulate pre-WS3.1 IPC files.
     let private removeCompactWatchRuntimeSurface (json: string) =
         let statusNode = JsonNode.Parse(json).AsObject()
@@ -364,6 +375,7 @@ module WatchTests =
             configuration.BranchId <- Guid.NewGuid()
             configuration.BranchName <- "watch-test-branch"
             configuration.RootDirectory <- tempDir
+            saveConfigFile configPath configuration
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
@@ -630,6 +642,164 @@ module WatchTests =
 
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
+
+    /// Verifies that marker deletion completes a same-process branch transition by reloading config and publishing branch B IPC.
+    [<Test>]
+    let ``update marker deletion reloads branch config and publishes new branch ipc`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let statusA = graceStatusTracking Array.empty<string> Array.empty<string>
+            let statusB = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIdsA = HashSet<DirectoryVersionId>(statusA.Index.Keys)
+            let directoryIdsB = HashSet<DirectoryVersionId>(statusB.Index.Keys)
+
+            (Services.updateGraceWatchInterprocessFile statusA (Some directoryIdsA))
+                .GetAwaiter()
+                .GetResult()
+
+            let branchAIpc = Services.IpcFileName()
+
+            branchAIpc |> File.Exists |> should equal true
+
+            let branchBIpc = Services.IpcFileNameForIdentity repositoryId repositoryName root branchBId branchBName
+
+            branchBIpc |> File.Exists |> should equal false
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+            Services.IpcFileName() |> should equal branchBIpc
+
+            branchBIpc |> File.Exists |> should equal true
+
+            readWatchStatusJsonStringProperty "BranchId"
+            |> should equal $"{branchBId}"
+
+            readWatchStatusJsonStringProperty "BranchName"
+            |> should equal branchBName
+
+            readWatchStatusJsonStringProperty "RootDirectoryId"
+            |> should equal $"{statusB.RootDirectoryId}"
+
+            let branchBInspection = Services.inspectGraceWatchStatus().Result
+
+            branchBInspection.IsUsable |> should equal true
+
+            match branchBInspection.Status with
+            | Some watchStatus ->
+                watchStatus.BranchId |> should equal branchBId
+
+                watchStatus.DirectoryIds.SetEquals(directoryIdsB)
+                |> should equal true
+            | None -> Assert.Fail("Expected branch B Watch IPC status after transition completion.")
+
+            let branchAJson = File.ReadAllText(branchAIpc)
+
+            use branchADocument = JsonDocument.Parse(branchAJson)
+
+            branchADocument
+                .RootElement
+                .GetProperty("BranchId")
+                .GetString()
+            |> should equal $"{branchAId}")
+
+    /// Verifies that incoherent refreshed state cannot advertise healthy incremental status after marker deletion.
+    [<Test>]
+    let ``update marker deletion with incoherent status publishes non-incremental new branch ipc`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-incoherent-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let statusA = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIdsA = HashSet<DirectoryVersionId>(statusA.Index.Keys)
+
+            (Services.updateGraceWatchInterprocessFile statusA (Some directoryIdsA))
+                .GetAwaiter()
+                .GetResult()
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(GraceStatus.Default))
+
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+            let branchBIpc = Services.IpcFileNameForIdentity repositoryId repositoryName root branchBId branchBName
+
+            Services.IpcFileName() |> should equal branchBIpc
+
+            branchBIpc |> File.Exists |> should equal true
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            readWatchStatusJsonStringProperty "BranchId"
+            |> should equal $"{branchBId}"
+
+            readWatchStatusJsonStringProperty "BranchName"
+            |> should equal branchBName
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            inspection.EffectiveMode
+            |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing)
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing)
+
+    /// Verifies that startup marker completion cannot skip startup catch-up and publish healthy incremental status.
+    [<Test>]
+    let ``startup update marker deletion keeps startup from entering healthy incremental`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let repositoryName = "startup-transition-repo"
+            let branchName = "startup-branch"
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchId branchName
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(status))
+
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.StartingUp
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            inspection.EffectiveMode
+            |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing))
 
     /// Verifies that user writes after marker deletion still enqueue as local Watch work.
     [<Test>]
