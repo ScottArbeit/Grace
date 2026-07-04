@@ -61,6 +61,8 @@ module Services =
     let mutable serviceBusTopic = String.Empty
     let mutable serviceBusServerSubscription = String.Empty
     let mutable serviceBusTestSubscription = String.Empty
+    let mutable operationalFactsTopic = String.Empty
+    let mutable operationsSqlConnectionString = String.Empty
     let mutable graceServerBaseAddress = String.Empty
     let mutable testUserId = String.Empty
     let mutable testUserClaims: string list = []
@@ -118,6 +120,8 @@ type Setup() =
             serviceBusTopic <- hostState.ServiceBusTopic
             serviceBusServerSubscription <- hostState.ServiceBusServerSubscription
             serviceBusTestSubscription <- hostState.ServiceBusTestSubscription
+            operationalFactsTopic <- hostState.OperationalFactsTopic
+            operationsSqlConnectionString <- hostState.OperationsSqlConnectionString
             testUserClaims <- [ "engineering"; "contributors" ]
 
             Client.DefaultRequestHeaders.Add("x-grace-user-id", testUserId)
@@ -127,6 +131,8 @@ type Setup() =
 
             logToTestConsole
                 $"Service Bus topic: {serviceBusTopic}; subscription: {serviceBusServerSubscription}; test subscription: {serviceBusTestSubscription}"
+
+            logToTestConsole $"Operational facts topic: {operationalFactsTopic}"
 
             let! drained = AspireTestHost.drainServiceBusAsync hostState
 
