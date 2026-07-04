@@ -219,6 +219,10 @@ In general, values may come from:
 - `grace__azure_service_bus__operational_facts_topic`
   - Topic name for operational usage facts. This must differ from the Grace events topic.
 
+- `grace__azure_service_bus__operational_facts_processor_subscription`
+  - DebugAzure acknowledgement that the existing operational facts topic has the durable
+    `operational-facts-processor` subscription.
+
 - `grace__azure_service_bus__subscription`
   - Subscription name for Grace events.
 

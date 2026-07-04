@@ -190,6 +190,8 @@ These capture failure classification, retryability, cleanup notes, and runtime m
 - `grace__azure_service_bus__topic`: Service Bus topic name.
 - `grace__azure_service_bus__operational_facts_topic`: Service Bus topic for operational usage facts. Defaults to
   `grace-operational-facts` in Aspire-managed local and publish configurations.
+- `grace__azure_service_bus__operational_facts_processor_subscription`: DebugAzure preflight acknowledgement that the
+  existing operational facts topic already has the durable `operational-facts-processor` subscription.
 - `grace__azure_service_bus__subscription`: Service Bus subscription name.
 
 ### Redis

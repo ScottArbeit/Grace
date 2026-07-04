@@ -23,7 +23,12 @@ public partial class Program
     private const string AspireResourceModeEnvVar = "ASPIRE_RESOURCE_MODE";
     private const string AspireResourceModeLocal = "Local";
     private const string AspireResourceModeAzure = "Azure";
+    private const string GraceEventTopicResourceName = "grace-event-topic";
+    private const string GraceEventSubscriptionResourceName = "grace-event-subscription";
+    private const string OperationalFactsTopicResourceName = "grace-operational-facts-topic";
     private const string OperationalFactsProcessorSubscriptionName = "operational-facts-processor";
+    private const string OperationalFactsProcessorSubscriptionResourceName = "grace-operational-facts-processor-subscription";
+    private const string OperationalFactsProcessorSubscriptionSettingName = "grace__azure_service_bus__operational_facts_processor_subscription";
 
     private static void Main(string[] args)
     {
@@ -371,6 +376,9 @@ public partial class Program
                     var serviceBusTopic = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusTopic);
                     var operationalFactsTopic = GetRequiredSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic);
                     EnsureDistinctServiceBusTopics(serviceBusTopic, operationalFactsTopic);
+                    var operationalFactsProcessorSubscription =
+                        GetRequiredSetting(configuration, OperationalFactsProcessorSubscriptionSettingName);
+                    EnsureOperationalFactsProcessorSubscription(operationalFactsProcessorSubscription);
                     var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
 
                     graceServer
@@ -390,6 +398,7 @@ public partial class Program
                     Console.WriteLine("  - Azure Storage: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Cosmos: using DefaultAzureCredential.");
                     Console.WriteLine("  - Azure Service Bus: using DefaultAzureCredential.");
+                    Console.WriteLine($"  - Operational facts processor subscription: {operationalFactsProcessorSubscription}.");
                     Console.WriteLine("  - Aspire dashboard at http://localhost:18888");
                     Console.WriteLine($"  - OTLP endpoint {otlpEndpoint}");
                 }
@@ -417,17 +426,22 @@ public partial class Program
                     configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)]
                     ?? Constants.GraceOperationalFactsTopic;
                 EnsureDistinctServiceBusTopics(serviceBusTopicName, operationalFactsTopicName);
-                _ = serviceBus.AddServiceBusTopic(serviceBusTopicName)
-                    .AddServiceBusSubscription(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server");
+                var graceEventSubscriptionName =
+                    configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)]
+                    ?? "grace-server";
+                _ = serviceBus.AddServiceBusTopic(GraceEventTopicResourceName, serviceBusTopicName)
+                    .AddServiceBusSubscription(GraceEventSubscriptionResourceName, graceEventSubscriptionName);
                 _ = serviceBus.AddServiceBusTopic(
-                        "operational-facts",
+                        OperationalFactsTopicResourceName,
                         operationalFactsTopicName)
                     .WithProperties(topic =>
                     {
                         topic.RequiresDuplicateDetection = true;
                         topic.DuplicateDetectionHistoryTimeWindow = TimeSpan.FromMinutes(5);
                     })
-                    .AddServiceBusSubscription(OperationalFactsProcessorSubscriptionName);
+                    .AddServiceBusSubscription(
+                        OperationalFactsProcessorSubscriptionResourceName,
+                        OperationalFactsProcessorSubscriptionName);
 
                 var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
@@ -555,6 +569,15 @@ public partial class Program
         {
             throw new InvalidOperationException(
                 $"Service Bus topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path.");
+        }
+    }
+
+    private static void EnsureOperationalFactsProcessorSubscription(string? subscriptionName)
+    {
+        if (!OperationalFactsProcessorSubscriptionName.Equals(subscriptionName?.Trim(), StringComparison.Ordinal))
+        {
+            throw new InvalidOperationException(
+                $"DebugAzure requires existing Azure Service Bus topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' to contain durable subscription '{OperationalFactsProcessorSubscriptionName}'. Set '{OperationalFactsProcessorSubscriptionSettingName}' to '{OperationalFactsProcessorSubscriptionName}' after creating that subscription.");
         }
     }
 
