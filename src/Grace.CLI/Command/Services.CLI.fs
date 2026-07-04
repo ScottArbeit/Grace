@@ -2944,12 +2944,62 @@ module Services =
 
         newGraceStatus
 
-    /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let updateInProgressFileName () =
-        let directory = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName)
+    /// Computes a stable path segment from repository identity text without leaking local paths into temp directory names.
+    let private updateInProgressScopeSegment (value: string) =
+        let normalizedValue = if String.IsNullOrWhiteSpace(value) then "empty" else value.Trim()
+
+        Convert
+            .ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedValue)))
+            .ToLowerInvariant()
+
+    /// Gets the normalized repository root text used to keep update markers scoped to one local checkout.
+    let private updateInProgressRootScope (rootDirectory: string) =
+        if String.IsNullOrWhiteSpace(rootDirectory) then
+            "empty-root"
+        else
+            let normalizedRoot =
+                Path
+                    .GetFullPath(rootDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+            if runningOnWindows then normalizedRoot.ToUpperInvariant() else normalizedRoot
+
+    /// Gets the repository-scoped update marker path for a specific local repository identity.
+    let internal updateInProgressFileNameForIdentity
+        (repositoryId: Guid)
+        (repositoryName: string)
+        (rootDirectory: string)
+        (branchId: Guid)
+        (branchName: string)
+        =
+        let repositoryScope =
+            if repositoryId <> Guid.Empty then
+                repositoryId.ToString("N")
+            else
+                updateInProgressScopeSegment repositoryName
+
+        let rootScope =
+            rootDirectory
+            |> updateInProgressRootScope
+            |> updateInProgressScopeSegment
+
+        let branchScope =
+            if branchId <> Guid.Empty then
+                branchId.ToString("N")
+            else
+                updateInProgressScopeSegment branchName
+
+        let directory = Path.Combine(Path.GetTempPath(), "Grace", "repositories", repositoryScope, rootScope, "branches", branchScope)
+
         Directory.CreateDirectory(directory) |> ignore
 
-        getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.UpdateInProgressFileName))
+        getNativeFilePath (Path.Combine(directory, Constants.UpdateInProgressFileName))
+
+    /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
+    let updateInProgressFileName () =
+        let current = Current()
+
+        updateInProgressFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///

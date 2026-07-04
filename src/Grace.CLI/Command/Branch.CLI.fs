@@ -2969,17 +2969,45 @@ module Branch =
                             )
         }
 
-    /// Creates the Grace update marker used to keep Watch from observing branch-switch working-tree writes.
-    let private createBranchSwitchUpdateMarker (updateMarkerFileName: string) (markerText: string) =
+    /// Writes branch-switch marker content through an injectable writer so failure cleanup can be tested deterministically.
+    let internal createBranchSwitchUpdateMarkerWithWriter
+        (writeMarkerText: StreamWriter -> string -> Task)
+        (updateMarkerFileName: string)
+        (markerText: string)
+        =
         task {
             Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFileName))
             |> ignore
 
-            use fileStream = new FileStream(updateMarkerFileName, FileMode.CreateNew, FileAccess.Write, FileShare.None)
-            use writer = new StreamWriter(fileStream, Encoding.UTF8)
-            do! writer.WriteAsync(markerText)
-            do! writer.FlushAsync()
+            let mutable markerCreatedByThisInvocation = false
+
+            try
+                use fileStream = new FileStream(updateMarkerFileName, FileMode.CreateNew, FileAccess.Write, FileShare.None)
+                markerCreatedByThisInvocation <- true
+                use writer = new StreamWriter(fileStream, Encoding.UTF8)
+                do! writeMarkerText writer markerText
+            with
+            | ex ->
+                if markerCreatedByThisInvocation then
+                    try
+                        if File.Exists(updateMarkerFileName) then File.Delete(updateMarkerFileName)
+                    with
+                    | :? IOException -> ()
+                    | :? UnauthorizedAccessException -> ()
+
+                return raise ex
         }
+
+    /// Creates the Grace update marker used to keep Watch from observing branch-switch working-tree writes.
+    let private createBranchSwitchUpdateMarker (updateMarkerFileName: string) (markerText: string) =
+        createBranchSwitchUpdateMarkerWithWriter
+            (fun writer markerText ->
+                task {
+                    do! writer.WriteAsync(markerText)
+                    do! writer.FlushAsync()
+                })
+            updateMarkerFileName
+            markerText
 
     /// Removes only the branch-switch marker content written by this command invocation.
     let private deleteBranchSwitchUpdateMarkerIfOwned (updateMarkerFileName: string) (markerText: string) =

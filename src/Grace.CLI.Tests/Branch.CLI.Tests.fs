@@ -163,6 +163,54 @@ module BranchCommandTests =
 
         result, inspected, markerCreated
 
+    /// Verifies that update marker names include repository and root identity before branch-name scoping.
+    [<Test>]
+    let ``branch switch update marker path is scoped by repository root and branch identity`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let current = Current()
+            let originalRepositoryName = current.RepositoryName
+            let originalBranchName = current.BranchName
+            let currentMarkerFile = Services.updateInProgressFileName ()
+            let legacyBranchOnlyMarkerFile = Path.Combine(Path.GetTempPath(), "Grace", originalBranchName, Constants.UpdateInProgressFileName)
+            let foreignRoot = Path.Combine(Path.GetTempPath(), $"grace-branch-switch-foreign-{Guid.NewGuid():N}")
+
+            let foreignMarkerFile =
+                Services.updateInProgressFileNameForIdentity (Guid.NewGuid()) originalRepositoryName foreignRoot (Guid.NewGuid()) originalBranchName
+
+            try
+                Directory.CreateDirectory(Path.GetDirectoryName(foreignMarkerFile))
+                |> ignore
+
+                File.WriteAllText(foreignMarkerFile, "foreign repository marker")
+
+                foreignMarkerFile
+                |> should not' (equal currentMarkerFile)
+
+                currentMarkerFile
+                |> should not' (equal legacyBranchOnlyMarkerFile)
+
+                File.Exists(foreignMarkerFile)
+                |> should equal true
+
+                File.Exists(currentMarkerFile)
+                |> should equal false
+
+                let result, inspected, markerCreated =
+                    branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ())
+                    |> runBranchSwitchPreflight (File.Exists(currentMarkerFile))
+
+                match result with
+                | Ok _ -> ()
+                | Error error -> Assert.Fail($"Expected unrelated repository marker to allow branch switch preflight, got: {error.Error}")
+
+                inspected |> should equal true
+                markerCreated |> should equal true
+
+            finally
+                if File.Exists(foreignMarkerFile) then File.Delete(foreignMarkerFile)
+
+                if Directory.Exists(foreignRoot) then Directory.Delete(foreignRoot, true))
+
     /// Verifies that branch switch accepts matching IDs even when display names in Watch status are stale.
     [<Test>]
     let ``branch switch Watch preflight allows healthy clean status with stale display names`` () =
@@ -184,13 +232,20 @@ module BranchCommandTests =
             inspected |> should equal true
             markerCreated |> should equal true)
 
-    /// Verifies that a pre-existing update marker refuses before Watch inspection or marker mutation.
+    /// Verifies that a pre-existing same-repository update marker refuses before Watch inspection or marker mutation.
     [<Test>]
-    let ``branch switch Watch preflight refuses existing update marker before inspection`` () =
+    let ``branch switch Watch preflight refuses existing same repository update marker before inspection`` () =
         withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "same repository marker")
+
             let result, inspected, markerCreated =
                 branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ())
-                |> runBranchSwitchPreflight true
+                |> runBranchSwitchPreflight (File.Exists(updateMarkerFile))
 
             match result with
             | Error error ->
@@ -203,6 +258,33 @@ module BranchCommandTests =
 
             inspected |> should equal false
             markerCreated |> should equal false)
+
+    /// Verifies that marker write failures remove the partial file created by this preflight.
+    [<Test>]
+    let ``branch switch update marker creation removes partial marker after write failure`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+            let partialText = markerText.Substring(0, 16)
+
+            let operation =
+                Func<Task> (fun () ->
+                    Branch.createBranchSwitchUpdateMarkerWithWriter
+                        (fun writer _ ->
+                            task {
+                                do! writer.WriteAsync(partialText)
+                                do! writer.FlushAsync()
+                                raise (IOException("simulated marker flush failure"))
+                            })
+                        updateMarkerFile
+                        markerText
+                    :> Task)
+
+            Assert.ThrowsAsync<IOException>(operation)
+            |> ignore
+
+            File.Exists(updateMarkerFile)
+            |> should equal false)
 
     /// Verifies that untrusted Watch states refuse before branch switch marker creation.
     [<Test>]
