@@ -328,6 +328,7 @@ public partial class Program
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
+                            .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscriptionName);
                     }
                     else
@@ -390,6 +391,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
+                        .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscription)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
@@ -467,9 +469,10 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.RedisPort, "6379")
                     .WithEnvironment(EnvironmentVariables.OrleansClusterId, configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "production")
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-prod")
-                        .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
+                    .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
+                    .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
                     .WithEnvironment(EnvironmentVariables.GraceAuthOidcAuthority, configuration[EnvironmentVariables.GraceAuthOidcAuthority])

@@ -16,6 +16,14 @@ open System.Text.Json
 [<Parallelizable(ParallelScope.All)>]
 type OperationalFactsPublisherActorTests() =
 
+    /// Server startup acknowledgement that the durable operational facts processor subscription exists.
+    [<Literal>]
+    let OperationalFactsProcessorSubscriptionSettingName = "grace__azure_service_bus__operational_facts_processor_subscription"
+
+    /// Durable Service Bus subscription required before publishing operational usage facts.
+    [<Literal>]
+    let OperationalFactsProcessorSubscriptionName = "operational-facts-processor"
+
     /// Builds a valid repository storage usage fact for publisher envelope assertions.
     let usageFact usageFactId correlationId =
         UsageFact.RepositoryStorageBytesMinute(
@@ -100,10 +108,13 @@ type OperationalFactsPublisherActorTests() =
         let keys =
             [|
                 Constants.EnvironmentVariables.GracePubSubSystem
+                Constants.EnvironmentVariables.DebugEnvironment
+                Constants.EnvironmentVariables.AzureStorageKey
                 Constants.EnvironmentVariables.AzureServiceBusConnectionString
                 Constants.EnvironmentVariables.AzureServiceBusNamespace
                 Constants.EnvironmentVariables.AzureServiceBusTopic
                 Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                OperationalFactsProcessorSubscriptionSettingName
                 Constants.EnvironmentVariables.AzureServiceBusSubscription
             |]
 
@@ -113,6 +124,8 @@ type OperationalFactsPublisherActorTests() =
 
         try
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GracePubSubSystem, nameof GracePubSubSystem.AzureServiceBus)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Local")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey, "Zm9v")
 
             Environment.SetEnvironmentVariable(
                 Constants.EnvironmentVariables.AzureServiceBusConnectionString,
@@ -122,6 +135,7 @@ type OperationalFactsPublisherActorTests() =
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, null)
+            Environment.SetEnvironmentVariable(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
 
             let ex =
@@ -144,10 +158,13 @@ type OperationalFactsPublisherActorTests() =
         let keys =
             [|
                 Constants.EnvironmentVariables.GracePubSubSystem
+                Constants.EnvironmentVariables.DebugEnvironment
+                Constants.EnvironmentVariables.AzureStorageKey
                 Constants.EnvironmentVariables.AzureServiceBusConnectionString
                 Constants.EnvironmentVariables.AzureServiceBusNamespace
                 Constants.EnvironmentVariables.AzureServiceBusTopic
                 Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                OperationalFactsProcessorSubscriptionSettingName
                 Constants.EnvironmentVariables.AzureServiceBusSubscription
             |]
 
@@ -157,6 +174,8 @@ type OperationalFactsPublisherActorTests() =
 
         try
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GracePubSubSystem, nameof GracePubSubSystem.AzureServiceBus)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Local")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey, "Zm9v")
 
             Environment.SetEnvironmentVariable(
                 Constants.EnvironmentVariables.AzureServiceBusConnectionString,
@@ -166,6 +185,7 @@ type OperationalFactsPublisherActorTests() =
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, "GraceEventStream")
+            Environment.SetEnvironmentVariable(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
             Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
 
             let ex =
@@ -178,6 +198,108 @@ type OperationalFactsPublisherActorTests() =
             Assert.That(ex.Message, Does.Contain(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic))
             Assert.That(ex.Message, Does.Contain(Constants.EnvironmentVariables.AzureServiceBusTopic))
             Assert.That(ex.Message, Does.Contain("must differ"))
+        finally
+            previous
+            |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
+
+    /// Verifies that server startup requires acknowledgement of the durable operational facts processor subscription.
+    [<Test>]
+    [<NonParallelizable>]
+    member _.StartupValidationRejectsMissingOperationalFactsProcessorSubscription() =
+        let keys =
+            [|
+                Constants.EnvironmentVariables.GracePubSubSystem
+                Constants.EnvironmentVariables.DebugEnvironment
+                Constants.EnvironmentVariables.AzureStorageKey
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusNamespace
+                Constants.EnvironmentVariables.AzureServiceBusTopic
+                Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                OperationalFactsProcessorSubscriptionSettingName
+                Constants.EnvironmentVariables.AzureServiceBusSubscription
+            |]
+
+        let previous =
+            keys
+            |> Array.map (fun key -> key, Environment.GetEnvironmentVariable key)
+
+        try
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GracePubSubSystem, nameof GracePubSubSystem.AzureServiceBus)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Local")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey, "Zm9v")
+
+            Environment.SetEnvironmentVariable(
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString,
+                "Endpoint=sb://localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE"
+            )
+
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, "grace-operational-facts")
+            Environment.SetEnvironmentVariable(OperationalFactsProcessorSubscriptionSettingName, null)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
+
+            let ex =
+                Assert.Throws<InvalidOperationException>(
+                    Action (fun () ->
+                        ApplicationContext.configurePubSubSettings ()
+                        |> ignore)
+                )
+
+            Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionSettingName))
+            Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionName))
+            Assert.That(ex.Message, Does.Contain("durable subscription"))
+        finally
+            previous
+            |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
+
+    /// Verifies that server startup rejects processor subscription acknowledgements for the wrong durable subscription.
+    [<Test>]
+    [<NonParallelizable>]
+    member _.StartupValidationRejectsInvalidOperationalFactsProcessorSubscription() =
+        let keys =
+            [|
+                Constants.EnvironmentVariables.GracePubSubSystem
+                Constants.EnvironmentVariables.DebugEnvironment
+                Constants.EnvironmentVariables.AzureStorageKey
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusNamespace
+                Constants.EnvironmentVariables.AzureServiceBusTopic
+                Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                OperationalFactsProcessorSubscriptionSettingName
+                Constants.EnvironmentVariables.AzureServiceBusSubscription
+            |]
+
+        let previous =
+            keys
+            |> Array.map (fun key -> key, Environment.GetEnvironmentVariable key)
+
+        try
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GracePubSubSystem, nameof GracePubSubSystem.AzureServiceBus)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Local")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey, "Zm9v")
+
+            Environment.SetEnvironmentVariable(
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString,
+                "Endpoint=sb://localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE"
+            )
+
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, "grace-operational-facts")
+            Environment.SetEnvironmentVariable(OperationalFactsProcessorSubscriptionSettingName, "operational-facts-dev")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
+
+            let ex =
+                Assert.Throws<InvalidOperationException>(
+                    Action (fun () ->
+                        ApplicationContext.configurePubSubSettings ()
+                        |> ignore)
+                )
+
+            Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionSettingName))
+            Assert.That(ex.Message, Does.Contain(OperationalFactsProcessorSubscriptionName))
+            Assert.That(ex.Message, Does.Contain("durable subscription"))
         finally
             previous
             |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))

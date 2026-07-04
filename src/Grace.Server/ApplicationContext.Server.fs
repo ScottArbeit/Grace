@@ -43,6 +43,14 @@ open Microsoft.AspNetCore.SignalR
 /// Contains Grace Server application context behavior and supporting helpers.
 module ApplicationContext =
 
+    /// Environment variable that acknowledges the durable operational facts processor subscription exists.
+    [<Literal>]
+    let private AzureServiceBusOperationalFactsProcessorSubscription = "grace__azure_service_bus__operational_facts_processor_subscription"
+
+    /// Fixed Service Bus subscription that consumes immutable operational usage facts.
+    [<Literal>]
+    let private OperationalFactsProcessorSubscriptionName = "operational-facts-processor"
+
     let mutable private configuration: IConfiguration = null
     let Configuration () : IConfiguration = configuration
     let mutable private log: ILogger = null
@@ -227,6 +235,15 @@ module ApplicationContext =
                 if String.Equals(topic.Trim(), operationalFactsTopic.Trim(), StringComparison.OrdinalIgnoreCase) then
                     invalidOp
                         $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path."
+
+                let operationalFactsProcessorSubscription =
+                    match Environment.GetEnvironmentVariable AzureServiceBusOperationalFactsProcessorSubscription with
+                    | null -> String.Empty
+                    | value -> value.Trim()
+
+                if not (String.Equals(operationalFactsProcessorSubscription, OperationalFactsProcessorSubscriptionName, StringComparison.Ordinal)) then
+                    invalidOp
+                        $"Environment variable '{AzureServiceBusOperationalFactsProcessorSubscription}' must be set to '{OperationalFactsProcessorSubscriptionName}' when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}, after confirming topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' has that durable subscription."
 
                 let subscription = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusSubscription
 
