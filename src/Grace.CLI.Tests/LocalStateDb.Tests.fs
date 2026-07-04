@@ -383,6 +383,46 @@ module LocalStateDbTests =
                 readThrough |> should equal 0L
             })
 
+    /// Verifies that v5 initialization recreates meta tables that ignore the default Watch watermark insert.
+    [<Test>]
+    let ``initialization recreates constrained meta table when default watch watermark insert is ignored`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let now = getCurrentInstant().ToUnixTimeTicks()
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile (Guid.NewGuid()) "root-sha" "root-blake3" now
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "ALTER TABLE meta RENAME TO meta_valid;"
+
+                    executeNonQuery
+                        connection
+                        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, required_marker TEXT NOT NULL CHECK (required_marker = 'seeded'));"
+
+                    executeNonQuery
+                        connection
+                        "INSERT INTO meta (key, value, required_marker) SELECT key, value, 'seeded' FROM meta_valid WHERE key <> 'AppliedThroughSequence';"
+
+                    executeNonQuery connection "DROP TABLE meta_valid;"
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 0L
+
+                use connection = openRawConnection configuration.GraceStatusFile
+
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                appliedThrough |> should equal "0"
+
+                let requiredMarkerColumns = executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('meta') WHERE name = 'required_marker';"
+                requiredMarkerColumns |> should equal 0
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 0L
+
+                getCorruptBackups configuration.GraceStatusFile
+                |> should haveLength 1
+            })
+
     /// Verifies that watch journal retention keeps unapplied rows and a bounded applied tail.
     [<Test>]
     let ``watch journal retention keeps unapplied rows and bounded applied tail`` () =

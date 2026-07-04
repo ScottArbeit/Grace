@@ -436,6 +436,9 @@ module LocalStateDb =
     /// Reports whether SQLite declared a column with INTEGER affinity for a trusted local-state sequence.
     let private isIntegerColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "INTEGER")
 
+    /// Reports whether SQLite declared a column with TEXT affinity for trusted local metadata.
+    let private isTextColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "TEXT")
+
     /// Quotes SQLite identifiers used by schema PRAGMA calls against Grace-owned table and index names.
     let private quoteSqlIdentifier (identifier: string) = "\"" + identifier.Replace("\"", "\"\"") + "\""
 
@@ -494,6 +497,27 @@ module LocalStateDb =
                 match readIndexColumnNames connection indexName with
                 | Some [| columnName |] -> StringComparer.OrdinalIgnoreCase.Equals(columnName, "key")
                 | _ -> false)
+
+    /// Verifies that Grace-owned metadata can accept key/value writes without hidden required columns.
+    let private hasRequiredMetaKeyValueShape (connection: SqliteConnection) =
+        let columns = readTableColumnShapes connection "meta"
+
+        let hasOnlyKeyAndValueColumns =
+            columns.Length = 2
+            && columns
+               |> Array.exists (fun column ->
+                   StringComparer.OrdinalIgnoreCase.Equals(column.Name, "key")
+                   && isTextColumnType column.TypeName
+                   && column.PrimaryKeyOrdinal = 1)
+            && columns
+               |> Array.exists (fun column ->
+                   StringComparer.OrdinalIgnoreCase.Equals(column.Name, "value")
+                   && isTextColumnType column.TypeName
+                   && column.NotNull
+                   && column.PrimaryKeyOrdinal = 0)
+
+        hasOnlyKeyAndValueColumns
+        && hasUniqueMetaKeyConstraint connection
 
     /// Locates the top-level column list inside SQLite's stored CREATE TABLE statement.
     let private tryGetCreateTableColumnList (sql: string) =
@@ -813,7 +837,7 @@ module LocalStateDb =
 
             let metadataValid =
                 if shapeValid
-                   && hasUniqueMetaKeyConstraint connection then
+                   && hasRequiredMetaKeyValueShape connection then
                     try
                         match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
                         | 1 ->
@@ -954,8 +978,8 @@ module LocalStateDb =
         | true, sequence when sequence >= 0L -> Some sequence
         | _ -> None
 
-    /// Verifies that existing Watch recovery metadata can be trusted before accepting schema version 5.
-    let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
+    /// Verifies that the persisted Watch recovery metadata row can be trusted.
+    let private hasPersistedValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
         match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
         | 1 ->
             match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
@@ -967,6 +991,12 @@ module LocalStateDb =
                     | None -> false
                 | None -> false
             | None -> false
+        | _ -> false
+
+    /// Verifies that existing Watch recovery metadata can be trusted before accepting schema version 5.
+    let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
+        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+        | 1 -> hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection
         | count when count > 1 -> false
         | _ ->
             not (hasWatchJournalRows connection)
@@ -1008,7 +1038,7 @@ module LocalStateDb =
     /// Evaluates has required writable schema against parsed options and command state.
     let private hasRequiredWritableSchema (connection: SqliteConnection) =
         columnExists connection "status_meta" "root_directory_blake3_hash"
-        && hasUniqueMetaKeyConstraint connection
+        && hasRequiredMetaKeyValueShape connection
         && columnExists connection "status_directories" "blake3_hash"
         && columnExists connection "status_files" "blake3_hash"
         && columnExists connection "object_cache_directories" "blake3_hash"
@@ -1129,6 +1159,9 @@ module LocalStateDb =
                                                     logTrace "status_meta ensuring default row"
                                                     insertStatusMetaIfMissing connection
                                                     insertWatchJournalAppliedThroughIfMissing connection
+
+                                                    if not (hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection) then
+                                                        recreate <- true
                                             with
                                             | :? SqliteException as ex when ex.SqliteErrorCode = 26 -> recreate <- true
                                         with
@@ -1148,6 +1181,10 @@ module LocalStateDb =
                                         setMetaValue connection "schema_version" SchemaVersion
                                         setMetaValue connection "created_at_unix_ticks" $"{getCurrentInstant().ToUnixTimeTicks()}"
                                         insertWatchJournalAppliedThroughIfMissing connection
+
+                                        if not (hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection) then
+                                            raise (InvalidDataException($"{WatchJournalAppliedThroughSequenceMetaKey} default could not be stored."))
+
                                         logTrace "status_meta ensuring default row"
                                         insertStatusMetaIfMissing connection
                                 })

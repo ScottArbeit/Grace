@@ -2823,6 +2823,57 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor reports meta tables whose hidden constraints would ignore default Watch metadata writes.
+    [<Test>]
+    let ``doctor local-state reports constrained meta default insert shape`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let dbPath = localStateDbPath root
+
+                do
+                    use connection = openRawConnection dbPath
+                    executeNonQuery connection "ALTER TABLE meta RENAME TO meta_valid;"
+
+                    executeNonQuery
+                        connection
+                        "CREATE TABLE meta (key TEXT PRIMARY KEY, value TEXT NOT NULL, required_marker TEXT NOT NULL CHECK (required_marker = 'seeded'));"
+
+                    executeNonQuery
+                        connection
+                        "INSERT INTO meta (key, value, required_marker) SELECT key, value, 'seeded' FROM meta_valid WHERE key <> 'AppliedThroughSequence';"
+
+                    executeNonQuery connection "DROP TABLE meta_valid;"
+
+                let beforeRoot = snapshotFiles root
+
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.watch-journal" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "malformed"
+
+                snapshotFiles root |> should equal beforeRoot))
+
     /// Verifies that doctor reports stale Watch journal allocation without repairing local state.
     [<Test>]
     let ``doctor local-state reports stale watch journal allocation with rows`` () =
