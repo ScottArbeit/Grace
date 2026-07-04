@@ -5986,9 +5986,7 @@ module WatchTests =
             readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
             |> should equal true
 
-            Watch.setGraceStatusHasChangedForWatchTests true
-
-            Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
 
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
             |> should equal true
@@ -5998,6 +5996,31 @@ module WatchTests =
 
             Services.getGraceWatchStatus().Result
             |> should equal None)
+
+    /// Verifies that a consumed GraceStatus refresh can publish clean IPC during the same timer tick.
+    [<Test>]
+    let ``watch grace status refresh clears pending flag before clean ipc publish`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests status Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal false)
 
     /// Verifies that startup catch-up publishes dirty IPC until the startup scan and apply path drains.
     [<Test>]
@@ -7644,6 +7667,12 @@ module WatchTests =
                 |]
 
             for mismatchedStatus in mismatchCases do
+                let statusLevelFlags = safetyFlagSet mismatchedStatus
+
+                statusLevelFlags
+                |> Set.contains "cleanWorkingTree"
+                |> should equal true
+
                 writeWatchStatusJsonWithRuntimeSurface mismatchedStatus
                 |> ignore
 
@@ -7656,6 +7685,20 @@ module WatchTests =
                 inspection.IsLiveProcess |> should equal true
 
                 inspection.IsUsable |> should equal false
+
+                let inspectionSafetyFlags = inspection.SafetyFlags |> Set.ofArray
+
+                inspectionSafetyFlags
+                |> Set.contains "cleanWorkingTree"
+                |> should equal false
+
+                inspectionSafetyFlags
+                |> Set.contains "incrementalSafe"
+                |> should equal false
+
+                inspectionSafetyFlags
+                |> Set.contains "requiresExplicitResync"
+                |> should equal true
 
                 Services.getGraceWatchStatus().Result
                 |> should equal None)

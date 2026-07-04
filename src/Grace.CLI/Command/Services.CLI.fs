@@ -342,6 +342,11 @@ module Services =
         || String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal)
         || String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)
 
+    /// Reports whether a compact Watch safety flag would let a command skip local status verification.
+    let private isCleanShortcutSafetyFlag safetyFlag =
+        String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)
+        || String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal)
+
     /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
     let private safetyFlagsForGraceWatchStatusContract persistedModeOverride (status: GraceWatchStatus) =
         let safetyFlags =
@@ -366,6 +371,25 @@ module Services =
             |> Array.append nonIncrementalFlags
             |> Array.distinct
         | _ -> safetyFlags
+
+    /// Removes clean shortcut claims from inspected IPC when current repository identity makes the snapshot unusable.
+    let private safetyFlagsForGraceWatchStatusInspection (inspection: GraceWatchStatusInspection) =
+        if inspection.IsUsable then
+            inspection.SafetyFlags
+        else
+            let safetyFlags =
+                inspection.SafetyFlags
+                |> Array.filter (isCleanShortcutSafetyFlag >> not)
+
+            if safetyFlags
+               |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "requiresExplicitResync", StringComparison.Ordinal)) then
+                safetyFlags
+            else
+                [|
+                    yield! safetyFlags
+                    "requiresExplicitResync"
+                |]
+                |> Array.distinct
 
     /// Selects only durable compact modes for persisted IPC JSON so liveness must be derived from the raw status data.
     let private modeForGraceWatchStatusContract (status: GraceWatchStatus) =
@@ -2400,7 +2424,7 @@ module Services =
 
                     let status = deserializeNormalizedGraceWatchStatus json
 
-                    return
+                    let inspection =
                         {
                             Exists = true
                             Status = Some status
@@ -2408,6 +2432,8 @@ module Services =
                             SafetyFlags = status.SafetyFlags
                             ReadError = None
                         }
+
+                    return { inspection with SafetyFlags = safetyFlagsForGraceWatchStatusInspection inspection }
                 with
                 | _ ->
                     return

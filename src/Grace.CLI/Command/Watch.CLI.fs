@@ -1417,6 +1417,12 @@ module Watch =
     /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
     let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
 
+    /// Records that durable Grace Status changed and immediately advertises pending Watch work to other commands.
+    let private markGraceStatusChangedAndPublishPendingWorkTransition () =
+        if not graceStatusHasChanged then
+            graceStatusHasChanged <- true
+            publishPendingWatchWorkTransitionIfNeeded ()
+
     /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
     let private promoteStartupModeIfRecoverySucceeded () =
         if
@@ -1913,7 +1919,7 @@ module Watch =
 
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
-                graceStatusHasChanged <- true
+                markGraceStatusChangedAndPublishPendingWorkTransition ()
 
     /// Coordinates on changed behavior for this CLI command path.
     let OnChanged (args: FileSystemEventArgs) =
@@ -1933,7 +1939,7 @@ module Watch =
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
                 //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
-                graceStatusHasChanged <- true
+                markGraceStatusChangedAndPublishPendingWorkTransition ()
                 logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
@@ -1982,7 +1988,7 @@ module Watch =
 
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
-                graceStatusHasChanged <- true
+                markGraceStatusChangedAndPublishPendingWorkTransition ()
 
     /// Coordinates on renamed behavior for this CLI command path.
     let OnRenamed (args: RenamedEventArgs) =
@@ -2387,6 +2393,28 @@ module Watch =
     /// Publishes Watch IPC for tests that verify confidence-lost states cannot advertise incremental safety.
     let internal publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
         publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient "test refresh"
+
+    /// Publishes a reloaded Grace Status snapshot after clearing the refresh flag consumed by this timer tick.
+    let private publishGraceStatusRefreshSnapshot updatedGraceStatus updateGraceWatchInterprocessFileClient =
+        task {
+            graceStatus <- updatedGraceStatus
+            updateGraceStatusDirectoryIds graceStatus
+
+            // The reloaded snapshot is the durable status change represented by this flag. Clear it before publishing
+            // so the clean IPC heartbeat reflects the already-applied refresh instead of waiting for a later timer tick.
+            graceStatusHasChanged <- false
+
+            do!
+                publishGraceWatchInterprocessFileForCurrentConfidence
+                    graceStatus
+                    graceStatusDirectoryIds
+                    updateGraceWatchInterprocessFileClient
+                    "Grace Status refresh"
+        }
+
+    /// Publishes a Grace Status refresh snapshot for tests that verify clean IPC after refresh consumption.
+    let internal publishGraceStatusRefreshSnapshotForWatchTests updatedGraceStatus updateGraceWatchInterprocessFileClient =
+        publishGraceStatusRefreshSnapshot updatedGraceStatus updateGraceWatchInterprocessFileClient
 
     /// Publishes the startup catch-up boundary as dirty so commands cannot trust pre-scan incremental status.
     let private publishStartupCatchUpPendingStatus trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
@@ -3127,18 +3155,7 @@ module Watch =
                         // Grace Status may have changed from branch switch, or other commands.
                         if graceStatusHasChanged then
                             let! updatedGraceStatus = readGraceStatusFile ()
-                            graceStatus <- updatedGraceStatus
-                            updateGraceStatusDirectoryIds graceStatus
-
-                            do!
-                                publishGraceWatchInterprocessFileForCurrentConfidence
-                                    graceStatus
-                                    graceStatusDirectoryIds
-                                    updateGraceWatchInterprocessFile
-                                    "Grace Status refresh"
-
-                            //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
-                            graceStatusHasChanged <- false
+                            do! publishGraceStatusRefreshSnapshot updatedGraceStatus updateGraceWatchInterprocessFile
 
                         do! processChangedFiles ()
                         let! tick = periodicTimer.WaitForNextTickAsync()
