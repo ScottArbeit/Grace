@@ -131,6 +131,28 @@ type OperationsTracerBulletServerTests() =
                 |> Seq.toList
         }
 
+    /// Peeks message identities from the operations worker subscription without changing delivery state.
+    let peekOperationalMessageIdsAsync subQueue =
+        task {
+            let client = ServiceBusClient(serviceBusConnectionString)
+            use _client = client
+
+            let receiverOptions =
+                match subQueue with
+                | Some queue -> ServiceBusReceiverOptions(SubQueue = queue, ReceiveMode = ServiceBusReceiveMode.PeekLock)
+                | None -> ServiceBusReceiverOptions(ReceiveMode = ServiceBusReceiveMode.PeekLock)
+
+            let receiver = client.CreateReceiver(operationalFactsTopic, operationsProcessorSubscriptionName, receiverOptions)
+
+            use _receiver = receiver
+            let! messages = receiver.PeekMessagesAsync(50)
+
+            return
+                messages
+                |> Seq.map (fun message -> message.MessageId)
+                |> Seq.toList
+        }
+
     /// Captures Service Bus delivery evidence for a failed operations SQL wait.
     let operationsServiceBusDiagnosticsAsync () =
         task {
@@ -162,14 +184,6 @@ type OperationsTracerBulletServerTests() =
             let connection = new SqlConnection(operationsSqlConnectionString)
             do! connection.OpenAsync()
             return connection
-        }
-
-    /// Ensures the dev/test SQL proof database and operations usage tables exist before publishing facts.
-    let ensureOperationsSchemaAsync () =
-        task {
-            let schema = OperationsUsageSchema(operationsSqlConnectionString, OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing)
-
-            do! schema.EnsureCreatedAsync(CancellationToken.None)
         }
 
     /// Adds a SQL parameter to a command without logging the value.
@@ -263,6 +277,48 @@ WHERE FactKind = @FactKind
                 )
         }
 
+    /// Waits until the operations worker has removed one expected message from its durable subscription.
+    let waitForOperationalMessageSettledAsync description messageId =
+        task {
+            let stopwatch = Stopwatch.StartNew()
+            let mutable settled = false
+            let mutable lastActiveMessages = List.empty
+            let mutable lastDeadLetterMessages = List.empty
+
+            while not settled && stopwatch.Elapsed < proofTimeout do
+                let! activeMessageIds = peekOperationalMessageIdsAsync None
+                let! deadLetterMessageIds = peekOperationalMessageIdsAsync (Some SubQueue.DeadLetter)
+
+                lastActiveMessages <- activeMessageIds
+                lastDeadLetterMessages <- deadLetterMessageIds
+
+                let hasMatchingMessage =
+                    activeMessageIds
+                    |> List.append deadLetterMessageIds
+                    |> List.exists (fun activeMessageId -> String.Equals(activeMessageId, messageId, StringComparison.Ordinal))
+
+                if hasMatchingMessage then
+                    do! Task.Delay(TimeSpan.FromSeconds(1.0))
+                else
+                    settled <- true
+
+            if not settled then
+                let format label messages =
+                    if List.isEmpty messages then
+                        $"{label}: <none>"
+                    else
+                        $"{label}:{Environment.NewLine}{String.Join(Environment.NewLine, messages)}"
+
+                let activeDiagnostics = format "Active operational messages" lastActiveMessages
+                let deadLetterDiagnostics = format "Dead-letter operational messages" lastDeadLetterMessages
+
+                raise (
+                    TimeoutException(
+                        $"{description} message '{messageId}' was not settled by the operations worker before timeout.{Environment.NewLine}{activeDiagnostics}{Environment.NewLine}{deadLetterDiagnostics}"
+                    )
+                )
+        }
+
     /// Waits for an invalid operational message to reach the worker's dead-letter queue.
     let waitForDeadLetterReasonAsync expectedReason =
         task {
@@ -311,13 +367,14 @@ WHERE FactKind = @FactKind
 
             Assert.That(fact.CorrelationId, Is.Not.EqualTo(fact.UsageFactId.ToString("D")))
 
-            do! ensureOperationsSchemaAsync ()
             do! sendOperationalMessageAsync (usageFactMessage (fact.UsageFactId.ToString("D")) fact)
             do! waitForUsageStateAsync "Initial published fact" 1L 4096L fact
 
-            let duplicateDelivery = usageFactMessage $"{fact.UsageFactId:D}-redelivery" fact
+            let duplicateMessageId = $"{fact.UsageFactId:D}-redelivery"
+            let duplicateDelivery = usageFactMessage duplicateMessageId fact
 
             do! sendOperationalMessageAsync duplicateDelivery
+            do! waitForOperationalMessageSettledAsync "Duplicate UsageFactId delivery" duplicateMessageId
             do! waitForUsageStateAsync "Duplicate UsageFactId delivery" 1L 4096L fact
 
             let futureFact = usageFact (Guid.Parse("53153153-2531-4531-8531-531531531531")) (CorrelationId "ops6-future-kind-correlation")

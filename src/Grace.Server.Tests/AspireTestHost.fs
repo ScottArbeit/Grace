@@ -1319,7 +1319,9 @@ module AspireTestHost =
 
             if not (shouldSkipServiceBus ()) then
                 do! waitForServiceBusReadyAsync serviceBusEmulatorResourceName serviceBusSqlResourceName state
-                do! waitForResourceHealthyAsync notificationService app operationsWorkerResourceName cts.Token
+
+                use operationsWorkerReadinessCts = new CancellationTokenSource(defaultWaitTimeout)
+                do! waitForResourceHealthyAsync notificationService app operationsWorkerResourceName operationsWorkerReadinessCts.Token
             else
                 Console.WriteLine("Skipping Service Bus functional readiness checks (GRACE_TEST_SKIP_SERVICEBUS=1).")
 
