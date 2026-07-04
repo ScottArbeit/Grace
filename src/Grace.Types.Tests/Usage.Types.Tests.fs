@@ -267,6 +267,17 @@ type UsageFactContractTests() =
 
         assertInvalid "ObservedAt is required." fact
 
+    /// Verifies that null root fact values become validation errors instead of a null dereference.
+    [<Test>]
+    member _.NullRootFactFailsValidationClearly() =
+        let fact = Unchecked.defaultof<UsageFact>
+
+        Assert.DoesNotThrow(Action(fun () -> UsageFact.Validate fact |> ignore))
+
+        match UsageFact.Validate fact with
+        | Ok () -> Assert.Fail("Usage fact should fail validation when the fact root is null.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("UsageFact is required."))
+
     /// Verifies that null nested scope values become validation errors instead of a null dereference.
     [<Test>]
     member _.NullScopeFailsValidationClearly() =

@@ -101,41 +101,44 @@ module Usage =
         static member Validate(fact: UsageFact) =
             let errors = ResizeArray<string>()
 
-            if fact.Class <> nameof UsageFact then errors.Add("Class must be UsageFact.")
-
-            if fact.UsageFactId = UsageFactId.Empty then
-                errors.Add("UsageFactId is required.")
-
-            if String.IsNullOrWhiteSpace fact.CorrelationId then
-                errors.Add("CorrelationId is required.")
-
-            if not (Enum.IsDefined(typeof<UsageFactKind>, fact.FactKind)) then
-                errors.Add($"FactKind '{int fact.FactKind}' is not supported.")
-
-            if isNull (box fact.Scope) then
-                errors.Add("Scope is required.")
+            if isNull (box fact) then
+                errors.Add("UsageFact is required.")
             else
-                if fact.Scope.OwnerId = OwnerId.Empty then
-                    errors.Add("Scope.OwnerId is required.")
+                if fact.Class <> nameof UsageFact then errors.Add("Class must be UsageFact.")
 
-                if fact.Scope.OrganizationId = OrganizationId.Empty then
-                    errors.Add("Scope.OrganizationId is required.")
+                if fact.UsageFactId = UsageFactId.Empty then
+                    errors.Add("UsageFactId is required.")
 
-                if fact.Scope.RepositoryId = RepositoryId.Empty then
-                    errors.Add("Scope.RepositoryId is required.")
+                if String.IsNullOrWhiteSpace fact.CorrelationId then
+                    errors.Add("CorrelationId is required.")
 
-            if isNull (box fact.Resource) then
-                errors.Add("Resource is required.")
-            else if String.IsNullOrWhiteSpace fact.Resource.StoragePoolId then
-                errors.Add("Resource.StoragePoolId is required.")
+                if not (Enum.IsDefined(typeof<UsageFactKind>, fact.FactKind)) then
+                    errors.Add($"FactKind '{int fact.FactKind}' is not supported.")
 
-            if fact.Quantity <= 0L then errors.Add("Quantity must be greater than zero.")
+                if isNull (box fact.Scope) then
+                    errors.Add("Scope is required.")
+                else
+                    if fact.Scope.OwnerId = OwnerId.Empty then
+                        errors.Add("Scope.OwnerId is required.")
 
-            if fact.ObservedAt
-               <> UsageFact.NormalizeObservedAtToMinute fact.ObservedAt then
-                errors.Add("ObservedAt must be normalized to a UTC minute boundary.")
+                    if fact.Scope.OrganizationId = OrganizationId.Empty then
+                        errors.Add("Scope.OrganizationId is required.")
 
-            if fact.ObservedAt = Constants.DefaultTimestamp then
-                errors.Add("ObservedAt is required.")
+                    if fact.Scope.RepositoryId = RepositoryId.Empty then
+                        errors.Add("Scope.RepositoryId is required.")
+
+                if isNull (box fact.Resource) then
+                    errors.Add("Resource is required.")
+                else if String.IsNullOrWhiteSpace fact.Resource.StoragePoolId then
+                    errors.Add("Resource.StoragePoolId is required.")
+
+                if fact.Quantity <= 0L then errors.Add("Quantity must be greater than zero.")
+
+                if fact.ObservedAt
+                   <> UsageFact.NormalizeObservedAtToMinute fact.ObservedAt then
+                    errors.Add("ObservedAt must be normalized to a UTC minute boundary.")
+
+                if fact.ObservedAt = Constants.DefaultTimestamp then
+                    errors.Add("ObservedAt is required.")
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
