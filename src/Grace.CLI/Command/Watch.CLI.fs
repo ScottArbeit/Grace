@@ -359,16 +359,46 @@ module Watch =
         | :? IOException -> false
         | :? UnauthorizedAccessException -> false
 
-    /// Proves a deleted marker sidecar was written for the marker instance Watch observed.
-    let private deletedMarkerMatchesCompletedSidecar markerFileName completedUtc =
+    /// Classifies whether a deleted marker sidecar can be trusted for branch transition authority.
+    type private DeletedMarkerSidecarAuthority =
+        | ObservedCurrentMarker
+        | ObservedStaleMarker
+        | UnobservedMarker
+
+    /// Proves whether a deleted marker sidecar was written for the marker instance Watch observed.
+    let private classifyDeletedMarkerCompletedSidecar markerFileName completedUtc =
         lock graceUpdateMarkerDeletionLock (fun () ->
             match observedGraceUpdateMarkerLastWriteUtc.TryGetValue(markerFileName) with
             | true, markerLastWriteUtc ->
                 observedGraceUpdateMarkerLastWriteUtc.Remove(markerFileName)
                 |> ignore
 
-                markerLastWriteUtc <= completedUtc
-            | false, _ -> false)
+                if markerLastWriteUtc <= completedUtc then
+                    ObservedCurrentMarker
+                else
+                    ObservedStaleMarker
+            | false, _ -> UnobservedMarker)
+
+    /// Reports whether a deleted marker path is the current transition marker Watch was expected to observe.
+    let private deletedMarkerIsCurrentMarker markerFileName = String.Equals(markerFileName, updateInProgressFileName (), StringComparison.OrdinalIgnoreCase)
+
+    /// Reports whether the on-disk repository config has moved beyond Watch's cached branch identity.
+    let private persistedConfigurationChangedSinceWatchCached () =
+        try
+            let cached = Current()
+
+            match tryInspectCurrentDirectoryConfiguration () with
+            | Ok inspection ->
+                let persisted = inspection.Configuration
+
+                cached.RepositoryId <> persisted.RepositoryId
+                || not (String.Equals(cached.RepositoryName, persisted.RepositoryName, StringComparison.OrdinalIgnoreCase))
+                || cached.BranchId <> persisted.BranchId
+                || not (String.Equals(cached.BranchName, persisted.BranchName, StringComparison.OrdinalIgnoreCase))
+                || not (String.Equals(cached.RootDirectory, persisted.RootDirectory, StringComparison.OrdinalIgnoreCase))
+            | Error _ -> false
+        with
+        | _ -> false
 
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
@@ -2655,20 +2685,34 @@ module Watch =
         if isUpdateMarkerPath args.FullPath then
             if not (File.Exists(args.FullPath)) then
                 match tryReadGraceUpdateMarkerCompletedUtcForMarker args.FullPath with
-                | Some completedUtc when deletedMarkerMatchesCompletedSidecar args.FullPath completedUtc ->
-                    if deletedMarkerCanCompleteCurrentTransition args.FullPath then
+                | Some completedUtc ->
+                    match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
+                    | ObservedCurrentMarker ->
+                        if deletedMarkerCanCompleteCurrentTransition args.FullPath then
+                            completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+                            logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                        else
+                            recordGraceUpdateMarkerCompletedUtc completedUtc
+
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Ignored stale update marker deletion for {args.FullPath}; current marker {updateInProgressFileName ()} is still live."
+                    | UnobservedMarker when
+                        deletedMarkerIsCurrentMarker args.FullPath
+                        && isRecentGraceUpdateMarkerCompletion completedUtc
+                        && persistedConfigurationChangedSinceWatchCached ()
+                        ->
+                        requestGraceWatchExplicitResync "branch transition marker deletion had a fresh completion sidecar but no observed marker creation"
                         completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
-                        logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
-                    else
-                        recordGraceUpdateMarkerCompletedUtc completedUtc
 
                         logToAnsiConsole
                             Colors.Important
-                            $"Ignored stale update marker deletion for {args.FullPath}; current marker {updateInProgressFileName ()} is still live."
-                | Some _ ->
-                    logToAnsiConsole
-                        Colors.Important
-                        $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
+                            $"Update marker ended with an unobserved fresh completed sidecar for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
+                    | ObservedStaleMarker
+                    | UnobservedMarker ->
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
                 | None ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
                     logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."

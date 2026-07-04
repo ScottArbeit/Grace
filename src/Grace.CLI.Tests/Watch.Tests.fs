@@ -486,6 +486,17 @@ module WatchTests =
         File.Delete(updateMarkerFile)
         Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
+    /// Records a completed marker deletion when Watch missed the marker-created callback.
+    let private recordUnobservedCompletedUpdateMarkerDeletion (updateMarkerFile: string) (markerCompletedUtc: DateTime) =
+        Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+        |> ignore
+
+        File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+        File.SetLastWriteTimeUtc(updateMarkerFile, markerCompletedUtc.AddSeconds(-1.0))
+        File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
+        File.Delete(updateMarkerFile)
+        Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
     /// Records a marker deletion without the completed sidecar produced by a successful branch switch mutation.
     let private recordIncompleteUpdateMarkerDeletion (updateMarkerFile: string) =
         Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
@@ -726,6 +737,65 @@ module WatchTests =
 
             Services.getGraceWatchStatus().Result
             |> should equal None)
+
+    /// Verifies that a missed marker-created callback cannot leave Watch serving the previous branch indefinitely.
+    [<Test>]
+    let ``unobserved current marker completed sidecar reloads target branch resync ipc`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-unobserved-sidecar-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let statusA = graceStatusTracking Array.empty<string> Array.empty<string>
+            let statusB = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIdsA = HashSet<DirectoryVersionId>(statusA.Index.Keys)
+            let branchAMarker = Services.updateInProgressFileName ()
+            let branchBIpc = Services.IpcFileNameForIdentity repositoryId repositoryName root branchBId branchBName
+
+            (Services.updateGraceWatchInterprocessFile statusA (Some directoryIdsA))
+                .GetAwaiter()
+                .GetResult()
+
+            let branchAIpc = Services.IpcFileName()
+
+            branchAIpc |> File.Exists |> should equal true
+            branchBIpc |> File.Exists |> should equal false
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+
+            recordUnobservedCompletedUpdateMarkerDeletion branchAMarker DateTime.UtcNow
+
+            Services.IpcFileName() |> should equal branchBIpc
+
+            branchAIpc |> File.Exists |> should equal false
+            branchBIpc |> File.Exists |> should equal true
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            readWatchStatusJsonStringProperty "BranchId"
+            |> should equal $"{branchBId}"
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            let branchBInspection = Services.inspectGraceWatchStatus().Result
+
+            branchBInspection.EffectiveMode
+            |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing))
 
     /// Verifies that old branch IPC cannot be recreated while transition completion is retiring and reloading identity.
     [<Test>]
