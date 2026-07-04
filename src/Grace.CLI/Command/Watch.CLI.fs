@@ -1367,7 +1367,6 @@ module Watch =
                    <> Some hasPendingWork
             then
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
-                lastPublishedHasPendingWatchWork <- Some hasPendingWork
 
                 let runtimeMode = currentGraceWatchRuntimeMode ()
 
@@ -1395,7 +1394,24 @@ module Watch =
 
                     writeTask.GetAwaiter().GetResult()
                 with
-                | ex -> logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}")
+                | ex -> logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
+
+                let transitionWasPublished =
+                    try
+                        let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                        inspection.Status
+                        |> Option.exists (fun status ->
+                            status.HasPendingWatchWork = hasPendingWork
+                            && status.IsWorkingTreeClean = not hasPendingWork)
+                    with
+                    | _ -> false
+
+                if transitionWasPublished then
+                    lastPublishedHasPendingWatchWork <- Some hasPendingWork
+                else
+                    lastPublishedHasPendingWatchWork <- None
+                    logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check.")
 
     /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
     let private promoteStartupModeIfRecoverySucceeded () =
@@ -1961,13 +1977,19 @@ module Watch =
 
             if newPathIsDirectory then
                 let directoryStatusAddQueued, directoryStatusEnumerationComplete = tryEnqueueDirectoryStatusAdds args.FullPath
+                queuedPendingWork <- queuedPendingWork || directoryStatusAddQueued
 
                 if directoryStatusAddQueued
                    && not oldPathStatusQueued then
                     logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
 
-                if not (enqueueDirectoryContentsForUpload args.FullPath) then
+                let fileUploadWorkCountBefore = filesToProcess.Count
+                let fileUploadEnumerationComplete = enqueueDirectoryContentsForUpload args.FullPath
+
+                if not fileUploadEnumerationComplete then
                     enqueueDirectoryUploadRetry args.FullPath
+                    queuedPendingWork <- true
+                elif filesToProcess.Count > fileUploadWorkCountBefore then
                     queuedPendingWork <- true
 
                 if not directoryStatusEnumerationComplete then
@@ -2335,6 +2357,17 @@ module Watch =
     /// Publishes Watch IPC for tests that verify confidence-lost states cannot advertise incremental safety.
     let internal publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
         publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient "test refresh"
+
+    /// Publishes the startup catch-up boundary as dirty so commands cannot trust pre-scan incremental status.
+    let private publishStartupCatchUpPendingStatus trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
+        task {
+            setGraceWatchPendingWorkStatusFlag true
+            do! updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds)
+        }
+
+    /// Publishes startup catch-up IPC for tests that verify startup scans do not expose trusted clean state early.
+    let internal publishStartupCatchUpPendingStatusForWatchTests trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
+        publishStartupCatchUpPendingStatus trustedStatus directoryIds updateGraceWatchInterprocessFileClient
 
     /// Uploads pending file content while preserving the confidence boundary for the current Watch mode.
     let private uploadPendingWatchFilesForStatusRetry
@@ -2853,8 +2886,7 @@ module Watch =
                     updateGraceStatusDirectoryIds graceStatus
 
                     // Create the inter-process communication file.
-                    setGraceWatchPendingWorkStatusFlag false
-                    do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
+                    do! publishStartupCatchUpPendingStatus graceStatus graceStatusDirectoryIds updateGraceWatchInterprocessFile
 
                     // Enable the FileSystemWatcher.
                     rootDirectoryFileSystemWatcher.EnableRaisingEvents <- true
@@ -3040,6 +3072,17 @@ module Watch =
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
                     promoteStartupModeIfRecoverySucceeded ()
+
+                    if not (hasPendingWatchWork ()) then
+                        let! startupCatchUpStatus = readGraceStatusFile ()
+                        updateGraceStatusDirectoryIds startupCatchUpStatus
+
+                        do!
+                            publishGraceWatchInterprocessFileForCurrentConfidence
+                                startupCatchUpStatus
+                                graceStatusDirectoryIds
+                                updateGraceWatchInterprocessFile
+                                "startup catch-up"
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.

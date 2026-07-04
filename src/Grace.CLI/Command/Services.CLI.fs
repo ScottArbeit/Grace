@@ -141,25 +141,38 @@ module Services =
                 this.HasPendingWatchWork
                 || not this.IsWorkingTreeClean
 
+            let isTrustedCleanSnapshot =
+                mode = GraceWatchRuntimeMode.HealthyIncremental
+                && isFreshSnapshot
+                && not isStartupClaim
+                && hasUsableRootSnapshot
+                && hasDirectoryIndexSnapshot
+                && not hasPendingWatchWork
+
+            let isLiveDirtySnapshot =
+                mode = GraceWatchRuntimeMode.HealthyIncremental
+                && isFreshSnapshot
+                && not isStartupClaim
+                && hasUsableRootSnapshot
+                && hasDirectoryIndexSnapshot
+                && hasPendingWatchWork
+
             [|
                 if isStartupClaim then "startupClaim"
 
                 if not isFreshSnapshot then "staleStatus"
 
-                if hasPendingWatchWork then "pendingWatchWork" else "cleanWorkingTree"
+                if hasPendingWatchWork then "pendingWatchWork"
+                elif isTrustedCleanSnapshot then "cleanWorkingTree"
+                else "noQueuedWatchWork"
 
                 if hasUsableRootSnapshot then "usableRoot" else "missingRoot"
 
                 if hasDirectoryIndexSnapshot then "directoryIndex" else "missingDirectoryIndex"
 
-                if mode = GraceWatchRuntimeMode.HealthyIncremental
-                   && isFreshSnapshot
-                   && not hasPendingWatchWork then
-                    "incrementalSafe"
-                elif hasPendingWatchWork then
-                    "pendingStatusApply"
-                else
-                    "requiresExplicitResync"
+                if isTrustedCleanSnapshot then "incrementalSafe"
+                elif isLiveDirtySnapshot then "pendingStatusApply"
+                else "requiresExplicitResync"
             |]
 
         /// Defines the empty Grace Watch status used before a live status snapshot is available.
@@ -249,9 +262,32 @@ module Services =
                <> Some GraceWatchRuntimeMode.Stopping
 
     /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
-    let private safetyFlagsForGraceWatchStatusContract (status: GraceWatchStatus) =
-        status.SafetyFlags
-        |> Array.filter (fun safetyFlag -> not (String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)))
+    let private safetyFlagsForGraceWatchStatusContract persistedModeOverride (status: GraceWatchStatus) =
+        let safetyFlags =
+            status.SafetyFlags
+            |> Array.filter (fun safetyFlag -> not (String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)))
+
+        match persistedModeOverride with
+        | Some GraceWatchRuntimeMode.Suspended
+        | Some GraceWatchRuntimeMode.Resynchronizing
+        | Some GraceWatchRuntimeMode.Stopping ->
+            let nonIncrementalFlags =
+                if safetyFlags
+                   |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "pendingWatchWork", StringComparison.Ordinal)) then
+                    [| "requiresExplicitResync" |]
+                else
+                    [|
+                        "noQueuedWatchWork"
+                        "requiresExplicitResync"
+                    |]
+
+            safetyFlags
+            |> Array.filter (fun safetyFlag ->
+                not (String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal))
+                && not (String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)))
+            |> Array.append nonIncrementalFlags
+            |> Array.distinct
+        | _ -> safetyFlags
 
     /// Selects only durable compact modes for persisted IPC JSON so liveness must be derived from the raw status data.
     let private modeForGraceWatchStatusContract (status: GraceWatchStatus) =
@@ -313,7 +349,7 @@ module Services =
             Mode =
                 persistedModeOverride
                 |> Option.orElseWith (fun () -> modeForGraceWatchStatusContract status)
-            SafetyFlags = safetyFlagsForGraceWatchStatusContract status
+            SafetyFlags = safetyFlagsForGraceWatchStatusContract persistedModeOverride status
         }
 
     /// Converts the in-memory Watch status model without forcing a runtime mode into IPC JSON.
