@@ -721,6 +721,76 @@ The review loop is blocking:
 Only after Codex Code Review Bot reports no issues for the latest commit can the task continue toward merge readiness,
 handoff, or any other completion step. Record the final bot no-issues state and validation evidence in the pull request.
 
+### Repeated Review Stabilization
+
+Count substantive Codex Code Review Bot cycles for every Grace pull request. A substantive cycle is:
+
+1. Codex reports one or more behavior, correctness, concurrency, recovery, durability, authority, contract, or
+   maintainability findings.
+2. A worker pushes a fix commit or fix series.
+3. Codex reports another substantive finding on the new head.
+
+Do not count duplicate findings, stale resolved threads, formatting-only comments, administrative comments, CI flakes,
+findings the maintainer explicitly classifies as invalid, or findings the maintainer accepts as deferred to a named
+future issue.
+
+Use these thresholds:
+
+- **Cycle 1:** continue the normal review-fix loop.
+- **Cycle 2:** continue, but add a short prevention note to `Review Status` naming any repeated theme.
+- **Cycle 3:** pause one-off fixing and start a stabilization pass before assigning more routine fix work.
+- **Cycle 4:** hard stop. Do not assign another routine fix worker or request another review until the stabilization
+  ledger is implemented, proven, and self-reviewed.
+
+Start stabilization after **two substantive cycles** when the pull request touches a high-risk surface:
+
+- Watch state, IPC/status contracts, branch-switch safety, local working-tree mutation, or runtime timers
+- storage, CAS, manifests, object placement, cleanup, or reference accounting
+- Orleans actor state, idempotency, replay, retries, or reminders
+- authorization, ownership, tenant or repository scope, secrets, or token authority
+- public DTOs, CLI contracts, OpenAPI, SDK behavior, serialized events, or persisted shapes
+- concurrency, TOCTOU windows, partial failure, recovery, or side-effect ordering
+
+During a stabilization pass, the orchestrator must:
+
+- collect a concise review timeline and group findings by missing invariant, not only by review order;
+- decide whether each fresh finding belongs to the current issue or to a named future leaf issue;
+- post a Review Stabilization Ledger to the issue and pull request;
+- freeze one-off review-fix workers until the ledger is the acceptance target;
+- assign one structural fix worker when code changes are needed;
+- require a final self-review mapping every ledger invariant to code and proof.
+
+If a review finding is clearly owned by a future leaf issue in the same epic, the orchestrator may resolve it without a
+fix worker only when all of these are true:
+
+- the finding is about behavior explicitly out of scope for the current leaf;
+- the future issue already exists or is created before resolution;
+- the future issue body is updated with the exact finding, invariant, and proof obligation;
+- the PR reply names the future issue and explains why the current PR must not implement it;
+- the PR `Review Status` records the deferral.
+
+Do not defer prerequisites that make the current leaf's contract trustworthy. If later leaves consume a fact, authority
+signal, persisted field, status flag, or trust predicate produced by the current leaf, then the current leaf owns making
+that surface reliable.
+
+After stabilization starts, the worker handoff must include a status map:
+
+| Invariant | Status | Code seam | Test/proof seam | Residual risk |
+| --------- | ------ | --------- | --------------- | ------------- |
+| `<ledger invariant>` | `<allowed status>` | `<file/function>` | `<test or validation>` | `<risk or none>` |
+
+Allowed statuses are only:
+
+- `implemented and proven`
+- `implemented but proof incomplete`
+- `waived`, with reason
+- `out of scope`, with reason
+- `not applicable`, with reason
+
+Do not request another Codex review until every unresolved current-head finding is fixed, waived, or explicitly
+deferred to a named future issue; the status map is present; focused tests and the selected validation gate passed; and
+residual risks are recorded in the pull request.
+
 ### Ready For Review Handoff
 
 When the implementation agent is itself a subagent, it must not attempt to satisfy the review gate by running `codex`,

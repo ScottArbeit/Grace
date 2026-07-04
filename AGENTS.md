@@ -170,6 +170,20 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
   and do not broaden the current PR to absorb that future scope. Update the future sibling issue's detail gate before
   assigning it when the finding reveals missing acceptance criteria, adversarial cases, or risk-surface traps.
+- Do not defer a finding to a future leaf issue when it challenges the current leaf's trust contract. If later leaves
+  consume a fact, authority signal, persisted field, status flag, or trust predicate produced by the current leaf, the
+  current leaf owns making that surface reliable before merge.
+- Track substantive Codex Code Review Bot cycles. A substantive cycle is a latest-head behavior, correctness,
+  concurrency, recovery, durability, authority, contract, or maintainability finding, followed by a worker fix, followed
+  by another substantive latest-head finding. Do not count duplicate findings, stale resolved threads, formatting-only
+  comments, administrative comments, CI flakes, invalid findings, or maintainer-accepted deferrals.
+- Use repeated-review stabilization thresholds: after the first substantive cycle, continue the normal fix loop; after
+  the second cycle, add a short repeated-theme prevention note to `Review Status`; after the third cycle, stop one-off
+  patching and post a review stabilization ledger to the issue and PR before assigning more fix work; after the fourth
+  cycle, hard stop until the ledger is implemented, proven, and self-reviewed.
+- Start the stabilization pass after two substantive cycles for high-risk surfaces, including Watch state, IPC/status
+  contracts, branch-switch safety, local working-tree mutation, runtime timers, storage, actors, retries,
+  idempotency, authorization, public contracts, persisted shapes, concurrency, recovery, or side-effect ordering.
 - Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
   fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
   review surface. After a fix worker pushes, reply to and resolve only the fresh findings it addressed, update

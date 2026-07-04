@@ -39,6 +39,7 @@ that were already resolved, or reviewer comments that the orchestrator explicitl
 
 Start the stabilization pass after **2 substantive cycles** when the touched surface includes any of these:
 
+- Watch state, IPC/status contracts, branch-switch safety, local working-tree mutation, or runtime timers
 - storage routing, CAS, object placement, blob reads/writes, cleanup, retention, or compaction
 - Orleans actors, idempotency, replay, retries, reminders, timers, or durable actor state
 - metadata accounting, reference counts, dedupe indexes, or garbage-collection eligibility
@@ -119,13 +120,34 @@ After the ledger is posted, do not ask for another normal review until the curre
 1. resolved or classified every unresolved finding
 1. mapped the implementation to the ledger
 1. added or updated focused proof
-1. posted the required self-review
+1. posted the required status-map self-review
 1. run appropriate validation
+
+### Future leaf deferrals
+
+If the PR targets an epic integration branch, classify each fresh latest-head finding against the current leaf's scope
+before assigning a fix worker. A valid finding may be resolved as future work only when all of these are true:
+
+- the finding is about behavior explicitly out of scope for the current leaf;
+- the future leaf issue already exists or is created before resolution;
+- the future issue body is updated with the exact finding, invariant, and proof obligation;
+- the PR reply names the future issue and explains why the current PR must not implement it;
+- the PR `Review Status` records the deferred disposition.
+
+Do not defer prerequisites that make the current leaf's contract trustworthy. If later leaves consume a fact, authority
+signal, persisted field, status flag, or trust predicate produced by the current leaf, then the current leaf owns making
+that surface reliable.
 
 ### 5. Prove before patching broadly
 
 Use the `tdd` skill when changing code. Prefer behavior-level tests over source-string tests. Source-string tests are a
 last resort for generated/source-shape proof when no stable behavioral seam exists.
+
+Use this status-map shape in the worker handoff or PR evidence:
+
+| Invariant | Status | Code seam | Test/proof seam | Residual risk |
+| --------- | ------ | --------- | --------------- | ------------- |
+| `<ledger invariant>` | `<allowed status>` | `<file/function>` | `<test or validation>` | `<risk or none>` |
 
 For every ledger item, the final self-review must use exactly one status:
 
@@ -226,6 +248,7 @@ The orchestrator must:
 - prevent another routine review request after the hard stop
 - ensure the issue and PR contain the ledger
 - ensure the worker posts the status map
+- ensure any future-leaf deferral names and updates the future issue before resolving the finding
 - require focused validation before review resumes
 - update PR status with residual risks and skipped validation
 
