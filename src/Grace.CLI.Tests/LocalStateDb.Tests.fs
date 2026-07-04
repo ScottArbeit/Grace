@@ -405,6 +405,25 @@ module LocalStateDbTests =
                 readThrough |> should equal 1026L
             })
 
+    /// Verifies that Watch recovery metadata cannot be moved behind the current applied sequence.
+    [<Test>]
+    let ``watch journal applied through sequence cannot rewind`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+                do! LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 5L
+
+                let operation = Func<Task>(fun () -> LocalStateDb.setWatchJournalAppliedThroughSequence configuration.GraceStatusFile 4L :> Task)
+
+                let ex = Assert.ThrowsAsync<InvalidOperationException>(operation)
+
+                ex.Message
+                |> should contain "cannot move backward"
+
+                let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                readThrough |> should equal 5L
+            })
+
     /// Verifies that round trips status snapshot.
     [<Test>]
     let ``round trips status snapshot`` () =
@@ -804,6 +823,43 @@ module LocalStateDbTests =
 
                 let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
                 readThrough |> should equal 0L
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
+    /// Verifies that schema v5 databases with journal rows must carry trustworthy Watch recovery metadata.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 has journal rows without applied through metadata`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (1, 1);"
+                    executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile

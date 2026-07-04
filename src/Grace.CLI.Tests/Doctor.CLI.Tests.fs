@@ -435,6 +435,7 @@ module DoctorCliTests =
             "state.db.required-indexes"
             "state.db.integrity-check"
             "state.db.foreign-key-check"
+            "state.db.watch-journal"
             "object-cache.index-readable"
         |]
 
@@ -535,12 +536,12 @@ module DoctorCliTests =
             |> should equal "Ok"
 
             returnValue.GetProperty("Checks").GetArrayLength()
-            |> should equal 27
+            |> should equal 28
 
             returnValue
                 .GetProperty("Catalog")
                 .GetArrayLength()
-            |> should equal 27
+            |> should equal 28
 
             let catalogIds =
                 returnValue
@@ -581,6 +582,9 @@ module DoctorCliTests =
 
             catalogIds
             |> should contain "state.db.foreign-key-check"
+
+            catalogIds
+            |> should contain "state.db.watch-journal"
 
             catalogIds
             |> should contain "object-cache.index-readable"
@@ -642,7 +646,7 @@ module DoctorCliTests =
                         |> Seq.map (fun check -> check.GetProperty("Id").GetString())
                         |> Set.ofSeq
 
-                    catalogIds.Count |> should equal 27
+                    catalogIds.Count |> should equal 28
 
                     catalogIds |> should contain "config.file.parse"
 
@@ -663,6 +667,9 @@ module DoctorCliTests =
 
                     catalogIds
                     |> should contain "state.db.file-present"
+
+                    catalogIds
+                    |> should contain "state.db.watch-journal"
 
                     catalogIds
                     |> should contain "object-cache.index-readable"
@@ -2600,6 +2607,90 @@ module DoctorCliTests =
                     .GetProperty("Summary")
                     .GetString()
                 |> should contain "without mutation"))
+
+    /// Verifies that doctor reports malformed Watch journal table shape without repairing local state.
+    [<Test>]
+    let ``doctor local-state reports malformed watch journal shape`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let dbPath = localStateDbPath root
+
+                do
+                    use connection = openRawConnection dbPath
+                    executeNonQuery connection "DROP TABLE watch_journal;"
+                    executeNonQuery connection "CREATE TABLE watch_journal (sequence INTEGER PRIMARY KEY, created_at_unix_ticks INTEGER NOT NULL);"
+
+                let beforeRoot = snapshotFiles root
+
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.watch-journal" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "Watch journal table shape is invalid"
+
+                snapshotFiles root |> should equal beforeRoot))
+
+    /// Verifies that doctor reports missing Watch recovery metadata when journal rows exist.
+    [<Test>]
+    let ``doctor local-state reports missing watch journal metadata with rows`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let dbPath = localStateDbPath root
+
+                do
+                    use connection = openRawConnection dbPath
+                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (1, 1);"
+                    executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                let beforeRoot = snapshotFiles root
+
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.watch-journal" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "applied-through metadata is missing"
+
+                snapshotFiles root |> should equal beforeRoot))
 
     /// Verifies that doctor missing local state parent reports check result without creating files.
     [<Test>]

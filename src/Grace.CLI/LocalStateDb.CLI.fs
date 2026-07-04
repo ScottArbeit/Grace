@@ -227,6 +227,8 @@ module LocalStateDb =
             MissingRequiredIndexes: string array
             IntegrityCheckRows: string array
             ForeignKeyViolations: string array
+            WatchJournalShapeValid: bool option
+            WatchJournalAppliedThroughMetadataValid: bool option
             ObjectCacheReadable: bool option
             ObjectCacheError: string option
         }
@@ -245,6 +247,8 @@ module LocalStateDb =
             MissingRequiredIndexes = requiredIndexNames
             IntegrityCheckRows = Array.empty
             ForeignKeyViolations = Array.empty
+            WatchJournalShapeValid = None
+            WatchJournalAppliedThroughMetadataValid = None
             ObjectCacheReadable = None
             ObjectCacheError = None
         }
@@ -477,6 +481,26 @@ module LocalStateDb =
         && hasCreatedAtColumn
         && watchJournalUsesAutoincrement connection
 
+    /// Reports whether the Watch journal contains rows that require trustworthy recovery metadata.
+    let private hasWatchJournalRows (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT EXISTS(SELECT 1 FROM watch_journal LIMIT 1);"
+        Convert.ToInt32(command.ExecuteScalar()) <> 0
+
+    /// Reads local-state metadata for read-only inspection checks without writing default rows.
+    let private tryGetMetaValueReadOnly (connection: SqliteConnection) (key: string) =
+        use cmd = connection.CreateCommand()
+        cmd.CommandText <- "SELECT value FROM meta WHERE key = $key LIMIT 1;"
+        cmd.Parameters.AddWithValue("$key", key) |> ignore
+        use reader = cmd.ExecuteReader()
+        if reader.Read() then Some(reader.GetString(0)) else None
+
+    /// Parses read-only Watch recovery metadata using the same nonnegative sequence contract as writable acceptance.
+    let private tryParseWatchJournalAppliedThroughSequenceReadOnly (value: string) =
+        match Int64.TryParse(value) with
+        | true, sequence when sequence >= 0L -> Some sequence
+        | _ -> None
+
     /// Reads inspect object cache read only data from the local SQLite state database.
     let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
         try
@@ -493,6 +517,32 @@ module LocalStateDb =
             Some true, None
         with
         | ex -> Some false, Some ex.Message
+
+    /// Reads Watch journal schema and recovery metadata health without mutating local state.
+    let private inspectWatchJournalReadOnly (connection: SqliteConnection) =
+        if not (tableExists connection "watch_journal") then
+            Some false, None
+        else
+            let shapeValid =
+                try
+                    hasRequiredWatchJournalShape connection
+                with
+                | _ -> false
+
+            let metadataValid =
+                if shapeValid then
+                    try
+                        match tryGetMetaValueReadOnly connection WatchJournalAppliedThroughSequenceMetaKey with
+                        | Some value ->
+                            tryParseWatchJournalAppliedThroughSequenceReadOnly value
+                            |> Option.isSome
+                        | None -> not (hasWatchJournalRows connection)
+                    with
+                    | _ -> false
+                else
+                    false
+
+            Some shapeValid, Some metadataValid
 
     /// Reads inspect read only data from the local SQLite state database.
     let inspectReadOnly (dbPath: string) =
@@ -558,6 +608,7 @@ module LocalStateDb =
                         | ex -> [| ex.Message |]
 
                     let objectCacheReadable, objectCacheError = inspectObjectCacheReadOnly connection
+                    let watchJournalShapeValid, watchJournalAppliedThroughMetadataValid = inspectWatchJournalReadOnly connection
 
                     {
                         DbPath = normalizedPath
@@ -571,6 +622,8 @@ module LocalStateDb =
                         MissingRequiredIndexes = missingRequiredIndexes
                         IntegrityCheckRows = integrityRows
                         ForeignKeyViolations = foreignKeyViolations
+                        WatchJournalShapeValid = watchJournalShapeValid
+                        WatchJournalAppliedThroughMetadataValid = watchJournalAppliedThroughMetadataValid
                         ObjectCacheReadable = objectCacheReadable
                         ObjectCacheError = objectCacheError
                     }
@@ -609,7 +662,7 @@ module LocalStateDb =
         | Some value ->
             tryParseWatchJournalAppliedThroughSequence value
             |> Option.isSome
-        | None -> true
+        | None -> not (hasWatchJournalRows connection)
 
     /// Reads the applied-through journal sequence used by future Watch recovery work.
     let private readWatchJournalAppliedThroughSequenceInternal (connection: SqliteConnection) =
@@ -814,6 +867,11 @@ module LocalStateDb =
                 executeWithRetry (fun () ->
                     task {
                         use connection = openConnection dbPath
+                        let currentSequence = readWatchJournalAppliedThroughSequenceInternal connection
+
+                        if sequence < currentSequence then
+                            invalidOp $"Applied-through sequence cannot move backward from {currentSequence} to {sequence}."
+
                         setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{sequence}"
                     })
         }
