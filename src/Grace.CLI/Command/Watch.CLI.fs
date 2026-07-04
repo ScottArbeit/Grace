@@ -1293,13 +1293,6 @@ module Watch =
     /// Clears the pending resync request once scan-derived status has reached the durable boundary.
     let private clearGraceWatchResyncPending () = Volatile.Write(&graceWatchResyncPending, 0)
 
-    /// Suspends incremental Watch processing after recovery fails so Grace does not silently continue.
-    let private suspendGraceWatchAfterFailedRecovery reason =
-        quarantinePendingWatchWork reason
-        clearGraceWatchResyncPending ()
-        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
-        logToAnsiConsole Colors.Error $"Grace Watch suspended incremental processing: {reason}."
-
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
         try
@@ -1308,6 +1301,14 @@ module Watch =
                 .GetResult()
         with
         | ex -> logToAnsiConsole Colors.Error $"Grace Watch could not publish resync-required status: {Markup.Escape(ex.Message)}."
+
+    /// Suspends incremental Watch processing after recovery fails so Grace does not silently continue.
+    let private suspendGraceWatchAfterFailedRecovery reason =
+        quarantinePendingWatchWork reason
+        clearGraceWatchResyncPending ()
+        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+        publishGraceWatchResyncRequired ()
+        logToAnsiConsole Colors.Error $"Grace Watch suspended incremental processing: {reason}."
 
     /// Requests a scan-derived resync and quarantines observations captured under the previous root confidence.
     let private requestGraceWatchExplicitResync reason =
@@ -2028,6 +2029,82 @@ module Watch =
     /// Coordinates update grace status directory ids behavior for this CLI command path.
     let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
 
+    /// Uploads pending file content while preserving the confidence boundary for the current Watch mode.
+    let private uploadPendingWatchFilesForStatusRetry
+        readGraceStatusMetaClient
+        copyFileToObjectDirectoryAndUploadToStorageClient
+        applyGraceStatusIncrementalClient
+        correlationId
+        recordProcessedPaths
+        =
+        task {
+            let! graceStatusFromDisk = readGraceStatusMetaClient ()
+            graceStatus <- graceStatusFromDisk
+
+            let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
+            let mutable processedAnyFile = false
+
+            retryPendingDirectoryUploads ()
+
+            let getUploadMetadataForFilesParameters =
+                GetUploadMetadataForFilesParameters(
+                    OwnerId = $"{Current().OwnerId}",
+                    OrganizationId = $"{Current().OrganizationId}",
+                    RepositoryId = $"{Current().RepositoryId}",
+                    CorrelationId = correlationId
+                )
+
+            for pendingFile in
+                filesToProcess
+                    .ToArray()
+                    .Take(50)
+                    .Select(fun entry -> { FullPath = entry.Key; Generation = entry.Value }) do
+                let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile.Generation)
+
+                if (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
+                    .Contains(pendingPair) then
+                    logToAnsiConsole Colors.Verbose $"Processing {pendingFile.FullPath}. filesToProcess.Count: {filesToProcess.Count}."
+                    do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath pendingFile.FullPath)
+
+                    let currentMode = currentGraceWatchRuntimeMode ()
+
+                    let uploadResultStillTrusted =
+                        if recordProcessedPaths then
+                            not (isGraceWatchResyncPending ())
+                            && (isGraceWatchObservationApplicationLegal currentMode
+                                || currentMode = GraceWatchRuntimeMode.Stopping)
+                        else
+                            isGraceWatchResyncPending ()
+                            && currentMode = GraceWatchRuntimeMode.Resynchronizing
+
+                    if
+                        uploadResultStillTrusted
+                        && (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
+                            .Contains(pendingPair)
+                    then
+                        (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
+                            .Remove(pendingPair)
+                        |> ignore
+
+                        if recordProcessedPaths then
+                            match repositoryRelativePath pendingFile.FullPath with
+                            | Some relativePath -> addProcessedFileRelativePathPendingStatus (RelativePath relativePath)
+                            | None -> ()
+
+                        processedAnyFile <- true
+                        lastFileUploadInstant <- getCurrentInstant ()
+                    else
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Grace Watch discarded upload completion for {pendingFile.FullPath} because runtime mode is {currentMode} and resync pending is {isGraceWatchResyncPending ()}."
+
+            if processedAnyFile then
+                graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
+                do! applyGraceStatusIncrementalClient graceStatus Seq.empty Seq.empty
+
+            return processedAnyFile
+        }
+
     /// Processes any changed files since the last timer tick.
     let internal processChangedFilesWithClients
         readGraceStatusMetaClient
@@ -2046,10 +2123,30 @@ module Watch =
             if isGraceWatchResyncPending () then
                 try
                     let correlationId = generateCorrelationId ()
+
+                    let! uploadedRetryContent =
+                        if filesToProcess.IsEmpty then
+                            Task.FromResult(false)
+                        else
+                            uploadPendingWatchFilesForStatusRetry
+                                readGraceStatusMetaClient
+                                copyFileToObjectDirectoryAndUploadToStorageClient
+                                applyGraceStatusIncrementalClient
+                                correlationId
+                                false
+
+                    if uploadedRetryContent then
+                        logToAnsiConsole
+                            Colors.Important
+                            "Grace Watch uploaded file content queued by resync recovery; retrying the scan-derived status boundary."
+
                     let! graceStatusSnapshot = readGraceStatusFileClient ()
                     graceStatus <- graceStatusSnapshot
 
                     let! scanDerivedDifferences = _scanForDifferencesClient graceStatus
+
+                    if not (wasLastScanForDifferencesSuccessful ()) then
+                        failwith "scan-derived resync did not complete successfully"
 
                     let! statusUpdateResult =
                         if scanDerivedDifferences.Count > 0 then
@@ -2068,7 +2165,15 @@ module Watch =
                         logToAnsiConsole
                             Colors.Important
                             $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
-                    | None -> suspendGraceWatchAfterFailedRecovery "scan-derived status update returned no durable status"
+                    | None ->
+                        if filesToProcess.IsEmpty then
+                            suspendGraceWatchAfterFailedRecovery "scan-derived status update returned no durable status"
+                        else
+                            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Grace Watch resync queued file uploads before applying scan-derived status; retry will continue after uploads complete."
 
                     graceStatus <- GraceStatus.Default
                     GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
@@ -2081,53 +2186,15 @@ module Watch =
                         $"Error in processChangedFiles resync: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
             elif hasPendingWatchWork () then
                 try
-                    let runtimeMode = currentGraceWatchRuntimeMode ()
                     let correlationId = generateCorrelationId ()
-                    let! graceStatusFromDisk = readGraceStatusMetaClient ()
-                    graceStatus <- graceStatusFromDisk
 
-                    let mutable lastFileUploadInstant = graceStatus.LastSuccessfulFileUpload
-                    let mutable processedAnyFile = false
-
-                    retryPendingDirectoryUploads ()
-
-                    // Loop through no more than 50 files. Copy them to the objects directory, and upload them to storage.
-                    //   In the incredibly rare event that more than 50 files have changed, we'll get 50-per-timer-tick,
-                    //   and clear the queue quickly without overwhelming the system.
-                    let getUploadMetadataForFilesParameters =
-                        GetUploadMetadataForFilesParameters(
-                            OwnerId = $"{Current().OwnerId}",
-                            OrganizationId = $"{Current().OrganizationId}",
-                            RepositoryId = $"{Current().RepositoryId}",
-                            CorrelationId = correlationId
-                        )
-
-                    for pendingFile in
-                        filesToProcess
-                            .ToArray()
-                            .Take(50)
-                            .Select(fun entry -> { FullPath = entry.Key; Generation = entry.Value }) do
-                        let pendingPair = KeyValuePair(pendingFile.FullPath, pendingFile.Generation)
-
-                        if (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
-                            .Contains(pendingPair) then
-                            logToAnsiConsole Colors.Verbose $"Processing {pendingFile.FullPath}. filesToProcess.Count: {filesToProcess.Count}."
-                            do! copyFileToObjectDirectoryAndUploadToStorageClient getUploadMetadataForFilesParameters (FilePath pendingFile.FullPath)
-
-                            (filesToProcess :> ICollection<KeyValuePair<string, int64>>)
-                                .Remove(pendingPair)
-                            |> ignore
-
-                            match repositoryRelativePath pendingFile.FullPath with
-                            | Some relativePath -> addProcessedFileRelativePathPendingStatus (RelativePath relativePath)
-                            | None -> ()
-
-                            processedAnyFile <- true
-                            lastFileUploadInstant <- getCurrentInstant ()
-
-                    if processedAnyFile then
-                        graceStatus <- { graceStatus with LastSuccessfulFileUpload = lastFileUploadInstant }
-                        do! applyGraceStatusIncrementalClient graceStatus Seq.empty Seq.empty
+                    let! _ =
+                        uploadPendingWatchFilesForStatusRetry
+                            readGraceStatusMetaClient
+                            copyFileToObjectDirectoryAndUploadToStorageClient
+                            applyGraceStatusIncrementalClient
+                            correlationId
+                            true
 
                     // If we've drained all of the files that changed (and we'll almost always have done so), update all the things:
                     //   GraceStatus, directory versions, etc.
@@ -2169,9 +2236,14 @@ module Watch =
                                 (mergeCurrentStatusDifferences processedFileRelativePathsForStatus startupPendingDifferences eventDerivedDifferences)
 
                         let statusApplicationLegal =
-                            if runtimeMode = GraceWatchRuntimeMode.Stopping then false
-                            elif startupPendingDifferences.Count > 0 then true
-                            else isGraceWatchObservationApplicationLegal runtimeMode
+                            let runtimeModeBeforeStatusApplication = currentGraceWatchRuntimeMode ()
+
+                            if runtimeModeBeforeStatusApplication = GraceWatchRuntimeMode.Stopping then
+                                false
+                            elif startupPendingDifferences.Count > 0 then
+                                true
+                            else
+                                isGraceWatchObservationApplicationLegal runtimeModeBeforeStatusApplication
 
                         let! statusUpdateResult =
                             if requeuedResolvedFileDeletePaths.Count > 0 then
@@ -2187,7 +2259,10 @@ module Watch =
 
                                 Task.FromResult(None)
                             elif not statusApplicationLegal then
-                                logToAnsiConsole Colors.Verbose $"Grace Watch deferred status application while runtime mode is {runtimeMode}."
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"Grace Watch deferred status application while runtime mode is {currentGraceWatchRuntimeMode ()}."
+
                                 Task.FromResult(None)
                             elif statusDifferencesForApply.Applicable.Count > 0 then
                                 updateGraceStatusFromDifferencesClient graceStatus statusDifferencesForApply.Applicable correlationId
@@ -2196,9 +2271,14 @@ module Watch =
 
                         match statusUpdateResult with
                         | Some newGraceStatus ->
+                            let commitRuntimeMode = currentGraceWatchRuntimeMode ()
+
                             let statusUpdateCanCommit =
                                 filesToProcess.IsEmpty
                                 && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
+                                && not (isGraceWatchResyncPending ())
+                                && (startupPendingDifferences.Count > 0
+                                    || isGraceWatchObservationApplicationLegal commitRuntimeMode)
 
                             if statusUpdateCanCommit then
                                 graceStatus <- newGraceStatus
@@ -2234,8 +2314,20 @@ module Watch =
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
 
-                    updateGraceStatusDirectoryIds graceStatus
-                    do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
+                    let runtimeModeAfterProcessing = currentGraceWatchRuntimeMode ()
+
+                    if
+                        runtimeModeAfterProcessing = GraceWatchRuntimeMode.HealthyIncremental
+                        && not (isGraceWatchResyncPending ())
+                    then
+                        updateGraceStatusDirectoryIds graceStatus
+                        do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
+                    else
+                        do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Grace Watch published non-incremental IPC after processing ended in runtime mode {runtimeModeAfterProcessing} with resync pending {isGraceWatchResyncPending ()}."
 
                     // Reset the in-memory Grace Status to empty to minimize memory usage.
                     graceStatus <- GraceStatus.Default
@@ -2250,8 +2342,21 @@ module Watch =
                 graceWatchStatusUpdateTime
                 < getCurrentInstant().Minus(Duration.FromMinutes(4.8))
             then
-                let! graceStatusFromDisk = readGraceStatusMeta ()
-                do! updateGraceWatchInterprocessFile graceStatusFromDisk (Some graceStatusDirectoryIds)
+                let runtimeMode = currentGraceWatchRuntimeMode ()
+
+                if
+                    runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                    && not (isGraceWatchResyncPending ())
+                then
+                    let! graceStatusFromDisk = readGraceStatusMetaClient ()
+                    do! updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds)
+                else
+                    do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Watch refreshed non-incremental IPC while runtime mode is {runtimeMode} and resync pending is {isGraceWatchResyncPending ()}."
+
                 GC.Collect(2, GCCollectionMode.Forced, blocking = true, compacting = true)
         }
 
