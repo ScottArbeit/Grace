@@ -389,6 +389,16 @@ module Services =
         if inspection.IsUsable then
             inspection.SafetyFlags
         else
+            let isCurrentRepositoryLiveDirtySnapshot =
+                match inspection.Status, inspection.EffectiveMode with
+                | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                    inspection.IsFresh
+                    && not status.IsStartupClaim
+                    && inspection.HasCurrentRepositoryIdentity
+                    && (status.HasPendingWatchWork
+                        || not status.IsWorkingTreeClean)
+                | _ -> false
+
             let safetyFlags =
                 inspection.SafetyFlags
                 |> Array.filter (
@@ -400,6 +410,8 @@ module Services =
 
             if safetyFlags
                |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "requiresExplicitResync", StringComparison.Ordinal)) then
+                safetyFlags
+            elif isCurrentRepositoryLiveDirtySnapshot then
                 safetyFlags
             else
                 [|

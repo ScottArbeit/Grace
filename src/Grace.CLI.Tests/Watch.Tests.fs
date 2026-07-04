@@ -5997,6 +5997,38 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
+    /// Verifies that a blocked dirty IPC write can retry while the GraceStatus refresh flag is already pending.
+    [<Test>]
+    let ``watch grace status artifact change retries dirty ipc while refresh is pending`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            use blockedIpc = new FileStream(Services.IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile))
+            blockedIpc.Dispose()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            Watch.OnChanged(changedEvent (Current().GraceStatusFile + "-wal"))
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false)
+
     /// Verifies that a consumed GraceStatus refresh can publish clean IPC during the same timer tick.
     [<Test>]
     let ``watch grace status refresh clears pending flag before clean ipc publish`` () =
@@ -6021,6 +6053,42 @@ module WatchTests =
             safetyFlags
             |> Set.contains "pendingWatchWork"
             |> should equal false)
+
+    /// Verifies that a blocked clean IPC refresh does not suppress the next clean transition retry.
+    [<Test>]
+    let ``watch grace status refresh retries clean ipc after blocked write`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus true
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            /// Simulates the production writer swallowing a transient IPC write failure without changing the file.
+            let blockedWriter _ _ = Task.FromResult(())
+
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests status blockedWriter)
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true)
 
     /// Verifies that startup catch-up publishes dirty IPC until the startup scan and apply path drains.
     [<Test>]
@@ -7745,7 +7813,7 @@ module WatchTests =
 
             inspectionSafetyFlags
             |> Set.contains "requiresExplicitResync"
-            |> should equal true)
+            |> should equal false)
 
     /// Verifies that root identity comparisons reject case-only path differences under case-sensitive semantics.
     [<Test>]

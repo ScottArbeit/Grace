@@ -1352,10 +1352,27 @@ module Watch =
         )
 
     /// Records the pending-work flag that the next Watch IPC snapshot should publish.
-    let private setGraceWatchPendingWorkStatusFlag hasPendingWork =
-        lock watchStatusPublishLock (fun () ->
-            setGraceWatchHasPendingWorkForStatus hasPendingWork
-            lastPublishedHasPendingWatchWork <- Some hasPendingWork)
+    let private setGraceWatchPendingWorkStatusFlag hasPendingWork = lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+    /// Advances the pending-work publication cache only after the IPC file proves the requested state reached disk.
+    let private cachePendingWatchWorkPublicationIfVerified hasPendingWork =
+        let transitionWasPublished =
+            try
+                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                inspection.Status
+                |> Option.exists (fun status ->
+                    status.HasPendingWatchWork = hasPendingWork
+                    && status.IsWorkingTreeClean = not hasPendingWork)
+            with
+            | _ -> false
+
+        lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- if transitionWasPublished then Some hasPendingWork else None)
+
+        if not transitionWasPublished then
+            logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check."
+
+        transitionWasPublished |> ignore
 
     /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
     let private publishPendingWatchWorkTransitionIfNeeded () =
@@ -1419,9 +1436,9 @@ module Watch =
 
     /// Records that durable Grace Status changed and immediately advertises pending Watch work to other commands.
     let private markGraceStatusChangedAndPublishPendingWorkTransition () =
-        if not graceStatusHasChanged then
-            graceStatusHasChanged <- true
-            publishPendingWatchWorkTransitionIfNeeded ()
+        if not graceStatusHasChanged then graceStatusHasChanged <- true
+
+        publishPendingWatchWorkTransitionIfNeeded ()
 
     /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
     let private promoteStartupModeIfRecoverySucceeded () =
@@ -1917,8 +1934,7 @@ module Watch =
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
                 publishPendingWatchWorkTransitionIfNeeded ()
 
-            if (isGraceStatusArtifact args.FullPath)
-               && (not <| graceStatusHasChanged) then
+            if isGraceStatusArtifact args.FullPath then
                 markGraceStatusChangedAndPublishPendingWorkTransition ()
 
     /// Coordinates on changed behavior for this CLI command path.
@@ -1936,8 +1952,7 @@ module Watch =
                 publishPendingWatchWorkTransitionIfNeeded ()
 
             // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
-            if (isGraceStatusArtifact args.FullPath)
-               && (not <| graceStatusHasChanged) then
+            if isGraceStatusArtifact args.FullPath then
                 //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
                 markGraceStatusChangedAndPublishPendingWorkTransition ()
                 logToAnsiConsole Colors.Important $"Grace Status file has been updated."
@@ -1986,8 +2001,7 @@ module Watch =
                 logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
                 publishPendingWatchWorkTransitionIfNeeded ()
 
-            if (isGraceStatusArtifact args.FullPath)
-               && (not <| graceStatusHasChanged) then
+            if isGraceStatusArtifact args.FullPath then
                 markGraceStatusChangedAndPublishPendingWorkTransition ()
 
     /// Coordinates on renamed behavior for this CLI command path.
@@ -2375,7 +2389,8 @@ module Watch =
     let private publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =
         task {
             let runtimeMode = currentGraceWatchRuntimeMode ()
-            setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+            let hasPendingWork = hasPendingWatchWork ()
+            setGraceWatchPendingWorkStatusFlag hasPendingWork
 
             if
                 runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
@@ -2388,6 +2403,8 @@ module Watch =
                 logToAnsiConsole
                     Colors.Important
                     $"Grace Watch published non-incremental IPC for {context} while runtime mode is {runtimeMode} and resync pending is {isGraceWatchResyncPending ()}."
+
+            cachePendingWatchWorkPublicationIfVerified hasPendingWork
         }
 
     /// Publishes Watch IPC for tests that verify confidence-lost states cannot advertise incremental safety.
@@ -2421,6 +2438,7 @@ module Watch =
         task {
             setGraceWatchPendingWorkStatusFlag true
             do! updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds)
+            cachePendingWatchWorkPublicationIfVerified true
         }
 
     /// Publishes startup catch-up IPC for tests that verify startup scans do not expose trusted clean state early.
@@ -2606,8 +2624,10 @@ module Watch =
                             let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
 
                             if clearedResyncAttempt then
-                                setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+                                let hasPendingWork = hasPendingWatchWork ()
+                                setGraceWatchPendingWorkStatusFlag hasPendingWork
                                 do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
+                                cachePendingWatchWorkPublicationIfVerified hasPendingWork
 
                                 logToAnsiConsole
                                     Colors.Important
@@ -2790,12 +2810,16 @@ module Watch =
                         runtimeModeAfterProcessing = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
                     then
-                        setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+                        let hasPendingWork = hasPendingWatchWork ()
+                        setGraceWatchPendingWorkStatusFlag hasPendingWork
                         updateGraceStatusDirectoryIds graceStatus
                         do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
+                        cachePendingWatchWorkPublicationIfVerified hasPendingWork
                     else
-                        setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+                        let hasPendingWork = hasPendingWatchWork ()
+                        setGraceWatchPendingWorkStatusFlag hasPendingWork
                         do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+                        cachePendingWatchWorkPublicationIfVerified hasPendingWork
 
                         logToAnsiConsole
                             Colors.Important
@@ -2820,15 +2844,21 @@ module Watch =
                     runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                     && not (isGraceWatchResyncPending ())
                 then
-                    setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+                    let hasPendingWork = hasPendingWatchWork ()
+                    setGraceWatchPendingWorkStatusFlag hasPendingWork
                     let! graceStatusFromDisk = readGraceStatusMetaClient ()
                     do! updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds)
+                    cachePendingWatchWorkPublicationIfVerified hasPendingWork
                 elif runtimeMode = GraceWatchRuntimeMode.Suspended then
-                    setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+                    let hasPendingWork = hasPendingWatchWork ()
+                    setGraceWatchPendingWorkStatusFlag hasPendingWork
                     do! updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+                    cachePendingWatchWorkPublicationIfVerified hasPendingWork
                 else
-                    setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+                    let hasPendingWork = hasPendingWatchWork ()
+                    setGraceWatchPendingWorkStatusFlag hasPendingWork
                     do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+                    cachePendingWatchWorkPublicationIfVerified hasPendingWork
 
                     logToAnsiConsole
                         Colors.Important
