@@ -2692,6 +2692,49 @@ module DoctorCliTests =
 
                 snapshotFiles root |> should equal beforeRoot))
 
+    /// Verifies that doctor reports stale Watch journal allocation without repairing local state.
+    [<Test>]
+    let ``doctor local-state reports stale watch journal allocation with rows`` () =
+        withTempDir (fun root ->
+            withIsolatedHome root (fun _ ->
+                ensureValidLocalStateDb root
+
+                let dbPath = localStateDbPath root
+
+                do
+                    use connection = openRawConnection dbPath
+                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (1, 1);"
+                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (2, 2);"
+                    executeNonQuery connection "UPDATE sqlite_sequence SET seq = 1 WHERE name = 'watch_journal';"
+
+                let beforeRoot = snapshotFiles root
+
+                /// Verifies that the CLI doctor scenario exits with the expected process status.
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "doctor"
+                                                      "--check"
+                                                      "state.db.watch-journal" |]
+
+                exitCode |> should equal 1
+
+                use document = assertCleanJsonOutput standardOut standardError
+
+                let check =
+                    document
+                        .RootElement
+                        .GetProperty("ReturnValue")
+                        .GetProperty("Checks")[0]
+
+                check.GetProperty("Status").GetString()
+                |> should equal "Failed"
+
+                check.GetProperty("Summary").GetString()
+                |> should contain "applied-through metadata is missing"
+
+                snapshotFiles root |> should equal beforeRoot))
+
     /// Verifies that doctor missing local state parent reports check result without creating files.
     [<Test>]
     let ``doctor missing local-state parent reports check result without creating files`` () =
