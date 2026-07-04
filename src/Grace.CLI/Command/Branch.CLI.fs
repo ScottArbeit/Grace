@@ -3133,10 +3133,10 @@ module Branch =
                 | Ok () ->
                     try
                         let! result = operation ()
+                        writeBranchSwitchUpdateMarkerCompleted updateMarkerFileName
                         return Ok result
                     finally
                         if markerCreatedByThisInvocation then
-                            writeBranchSwitchUpdateMarkerCompleted updateMarkerFileName
                             deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
         }
 

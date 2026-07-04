@@ -493,6 +493,9 @@ module BranchCommandTests =
             |> ignore
 
             File.Exists(updateMarkerFile)
+            |> should equal false
+
+            File.Exists(updateMarkerFile + ".completed")
             |> should equal false)
 
     /// Verifies that a raced marker creation failure does not run mutation work.

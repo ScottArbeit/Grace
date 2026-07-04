@@ -260,12 +260,13 @@ module Watch =
     /// Gets the completion sidecar written before the Grace update marker is removed.
     let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
 
-    /// Records when the Grace-owned update marker disappeared so stale changed/created callbacks can be classified.
-    let private recordGraceUpdateMarkerDeletedUtc deletedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc <- deletedUtc)
+    /// Records the completed Grace-owned update instant so delayed callbacks can be classified by switch authority.
+    let private recordGraceUpdateMarkerCompletedUtc completedUtc =
+        lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc <- completedUtc)
 
     /// Clears the recent marker-deletion fact when a new Grace-owned update starts or tests reset Watch state.
     let private clearGraceUpdateMarkerDeletedUtc () =
-        recordGraceUpdateMarkerDeletedUtc DateTime.MinValue
+        recordGraceUpdateMarkerCompletedUtc DateTime.MinValue
 
         try
             let completedFileName = updateMarkerCompletedFileName ()
@@ -276,7 +277,7 @@ module Watch =
         | :? UnauthorizedAccessException -> ()
 
     /// Sets the recent Grace update marker deletion instant for deterministic Watch callback tests.
-    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc = recordGraceUpdateMarkerDeletedUtc deletedUtc
+    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc = recordGraceUpdateMarkerCompletedUtc deletedUtc
 
     /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
     let private tryReadGraceUpdateMarkerCompletedUtc () =
@@ -292,37 +293,6 @@ module Watch =
         with
         | :? IOException -> None
         | :? UnauthorizedAccessException -> None
-
-    /// Identifies delayed file callbacks for writes that completed while a Grace update marker was still present.
-    let private isDelayedGraceOwnedFileObservation fullPath =
-        let markerDeletedUtc =
-            let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
-
-            if recordedUtc <> DateTime.MinValue then
-                Some recordedUtc
-            else
-                tryReadGraceUpdateMarkerCompletedUtc ()
-
-        match markerDeletedUtc with
-        | None -> false
-        | Some markerDeletedUtc when DateTime.UtcNow - markerDeletedUtc > graceUpdateMarkerDeletedObservationWindow -> false
-        | Some _ when
-            not (File.Exists fullPath)
-            && not (Directory.Exists fullPath)
-            ->
-            false
-        | Some markerDeletedUtc ->
-            try
-                let lastWriteTimeUtc =
-                    if File.Exists fullPath then
-                        File.GetLastWriteTimeUtc(fullPath)
-                    else
-                        Directory.GetLastWriteTimeUtc(fullPath)
-
-                lastWriteTimeUtc <= markerDeletedUtc
-            with
-            | :? IOException -> false
-            | :? UnauthorizedAccessException -> false
 
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
@@ -577,6 +547,65 @@ module Watch =
             trackedDeletedPathKind status relativePath
         with
         | _ -> DeletedPathStatusUnavailable
+
+    /// Reads the switch-owned completion instant that should govern delayed Watch callback suppression.
+    let private tryRecentGraceUpdateMarkerCompletedUtc () =
+        let markerCompletedUtc =
+            match tryReadGraceUpdateMarkerCompletedUtc () with
+            | Some completedUtc -> Some completedUtc
+            | None ->
+                let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
+
+                if recordedUtc <> DateTime.MinValue then Some recordedUtc else None
+
+        match markerCompletedUtc with
+        | Some completedUtc when
+            DateTime.UtcNow - completedUtc
+            <= graceUpdateMarkerDeletedObservationWindow
+            ->
+            Some completedUtc
+        | _ -> None
+
+    /// Reports whether a missing path is already absent from the post-switch GraceStatus snapshot.
+    let private completedSwitchRemovedPathFromGraceStatus fullPath =
+        match repositoryRelativePath fullPath with
+        | None -> false
+        | Some relativePath ->
+            try
+                let completedStatus =
+                    readGraceStatusFileForDeletedPathClassification()
+                        .GetAwaiter()
+                        .GetResult()
+
+                match trackedDeletedPathKind completedStatus relativePath with
+                | DeletedPathKindUnknown -> true
+                | DeletedFile
+                | DeletedDirectory
+                | DeletedPathStatusUnavailable -> false
+            with
+            | _ -> false
+
+    /// Identifies delayed callbacks for writes that completed while a Grace update marker was still present.
+    let private isDelayedGraceOwnedFileObservation fullPath =
+        match tryRecentGraceUpdateMarkerCompletedUtc () with
+        | None -> false
+        | Some markerCompletedUtc when
+            not (File.Exists fullPath)
+            && not (Directory.Exists fullPath)
+            ->
+            completedSwitchRemovedPathFromGraceStatus fullPath
+        | Some markerCompletedUtc ->
+            try
+                let lastWriteTimeUtc =
+                    if File.Exists fullPath then
+                        File.GetLastWriteTimeUtc(fullPath)
+                    else
+                        Directory.GetLastWriteTimeUtc(fullPath)
+
+                lastWriteTimeUtc <= markerCompletedUtc
+            with
+            | :? IOException -> false
+            | :? UnauthorizedAccessException -> false
 
     /// Coordinates set grace status for watch tests behavior for this CLI command path.
     let internal setGraceStatusForWatchTests status = graceStatus <- status
@@ -2110,6 +2139,9 @@ module Watch =
     let OnCreated (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
+        elif updateNotInProgress ()
+             && isGraceStatusArtifact args.FullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
         elif isDelayedGraceOwnedFileObservation args.FullPath then
             logObservationSuppressed args.FullPath
         elif
@@ -2140,6 +2172,10 @@ module Watch =
     let OnChanged (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
+        elif updateNotInProgress ()
+             && isGraceStatusArtifact args.FullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+            logToAnsiConsole Colors.Important $"Grace Status file has been updated."
         elif isDelayedGraceOwnedFileObservation args.FullPath then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress ()
@@ -2151,12 +2187,6 @@ module Watch =
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
                 enqueueFileUpload args.FullPath |> ignore
                 publishPendingWatchWorkTransitionIfNeeded ()
-
-            // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
-            if isGraceStatusArtifact args.FullPath then
-                //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
-                markGraceStatusChangedAndPublishPendingWorkTransition ()
-                logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
     let private enqueueDirectoryContentsForUpload directoryPath = tryEnqueueDirectoryContentsForUpload directoryPath
@@ -2177,6 +2207,11 @@ module Watch =
     /// Coordinates on deleted behavior for this CLI command path.
     let OnDeleted (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress ()
+             && isGraceStatusArtifact args.FullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+        elif isDelayedGraceOwnedFileObservation args.FullPath then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
             let canceledFileUpload = cancelPendingUploadsForDeletedPath args.FullPath
@@ -2276,7 +2311,11 @@ module Watch =
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateNotInProgress () then
-                recordGraceUpdateMarkerDeletedUtc DateTime.UtcNow
+                let completedUtc =
+                    tryReadGraceUpdateMarkerCompletedUtc ()
+                    |> Option.defaultValue DateTime.UtcNow
+
+                recordGraceUpdateMarkerCompletedUtc completedUtc
                 logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
