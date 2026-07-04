@@ -2126,6 +2126,7 @@ module Watch =
 
     /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
     let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
+        clearSignalRBranchSubscription ()
         let previousIpcFileName = IpcFileName()
 
         logToAnsiConsole
@@ -2147,6 +2148,7 @@ module Watch =
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
         lock watchStatusPublishLock (fun () ->
             recordGraceUpdateMarkerCompletedUtc completedUtc
+            clearSignalRBranchSubscription ()
             let previousIpcFileName = IpcFileName()
 
             let previousIpcRetired =
@@ -2169,7 +2171,6 @@ module Watch =
                     try
                         reloadConfigurationForTransitionCompletion ()
                         rebindUpdateMarkerWatcherAfterTransitionCompletion ()
-                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
                         true
                     with
                     | ex ->
@@ -2205,9 +2206,18 @@ module Watch =
                                         updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
 
                                 if transitionPublicationVerified then
-                                    logToAnsiConsole
-                                        Colors.Important
-                                        $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                                    try
+                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+
+                                        logToAnsiConsole
+                                            Colors.Important
+                                            $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                                    with
+                                    | ex ->
+                                        clearSignalRBranchSubscription ()
+
+                                        requestGraceWatchExplicitResync
+                                            $"branch transition completion could not refresh SignalR parent subscription: {ex.Message}"
                                 else
                                     requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
                             else
