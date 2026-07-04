@@ -136,6 +136,13 @@ module BranchCommandTests =
     let private branchSwitchWatchInspection persistedMode status =
         { Exists = true; Status = Some status; PersistedMode = persistedMode; SafetyFlags = status.SafetyFlags; ReadError = None }
 
+    /// Writes a Watch IPC status snapshot for branch switch preflight tests.
+    let private writeBranchSwitchWatchStatus (fileName: string) status =
+        Directory.CreateDirectory(Path.GetDirectoryName(fileName))
+        |> ignore
+
+        File.WriteAllText(fileName, serialize status)
+
     /// Runs branch switch preflight with injected side effects and reports which effects occurred.
     let private runBranchSwitchPreflight markerExists inspection =
         let mutable inspected = false
@@ -232,6 +239,84 @@ module BranchCommandTests =
             inspected |> should equal true
             markerCreated |> should equal true)
 
+    /// Verifies that successful branch switch cleanup removes the old branch marker created by preflight.
+    [<Test>]
+    let ``branch switch working tree update preserves preflight marker lease for outer cleanup`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let preflightMarkerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, preflightMarkerText)
+
+            (Branch.runBranchSwitchWorkingTreeUpdateWithMarker updateMarkerFile "`grace switch` is in progress." (fun () ->
+                task {
+                    let configuration = Current()
+                    configuration.BranchId <- Guid.NewGuid()
+                    configuration.BranchName <- "branch-switch-target"
+                }))
+                .GetAwaiter()
+                .GetResult()
+
+            File.Exists(updateMarkerFile) |> should equal true
+
+            File.ReadAllText(updateMarkerFile)
+            |> should equal preflightMarkerText
+
+            Branch.deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFile preflightMarkerText
+
+            File.Exists(updateMarkerFile)
+            |> should equal false)
+
+    /// Verifies that same-branch Watch IPC from another checkout does not override the current repository snapshot.
+    [<Test>]
+    let ``branch switch Watch preflight reads repository scoped IPC for current checkout`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let current = Current()
+            let currentIpcFile = Services.IpcFileName()
+            let foreignRoot = Path.Combine(Path.GetTempPath(), $"grace-branch-switch-foreign-ipc-{Guid.NewGuid():N}")
+
+            let foreignIpcFile = Services.IpcFileNameForIdentity (Guid.NewGuid()) current.RepositoryName foreignRoot (Guid.NewGuid()) current.BranchName
+
+            try
+                let foreignStatus =
+                    { branchSwitchWatchStatus () with
+                        RepositoryId = Guid.NewGuid()
+                        BranchId = Guid.NewGuid()
+                        RootDirectory = foreignRoot
+                        HasPendingWatchWork = true
+                        IsWorkingTreeClean = false
+                    }
+
+                writeBranchSwitchWatchStatus foreignIpcFile foreignStatus
+                writeBranchSwitchWatchStatus currentIpcFile (branchSwitchWatchStatus ())
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                inspection.HasCurrentRepositoryIdentity
+                |> should equal true
+
+                inspection.IsUsable |> should equal true
+
+                let result, inspected, markerCreated = runBranchSwitchPreflight false inspection
+
+                match result with
+                | Ok _ -> ()
+                | Error error -> Assert.Fail($"Expected current repository Watch IPC to allow branch switch, got: {error.Error}")
+
+                inspected |> should equal true
+                markerCreated |> should equal true
+            finally
+                if File.Exists(currentIpcFile) then File.Delete(currentIpcFile)
+
+                if File.Exists(foreignIpcFile) then File.Delete(foreignIpcFile))
+
     /// Verifies that a pre-existing same-repository update marker refuses before Watch inspection or marker mutation.
     [<Test>]
     let ``branch switch Watch preflight refuses existing same repository update marker before inspection`` () =
@@ -285,6 +370,38 @@ module BranchCommandTests =
 
             File.Exists(updateMarkerFile)
             |> should equal false)
+
+    /// Verifies that current-repository untrusted Watch IPC still refuses before marker creation.
+    [<Test>]
+    let ``branch switch Watch preflight refuses dirty current repository IPC before marker creation`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let currentIpcFile = Services.IpcFileName()
+
+            try
+                let dirtyStatus = { branchSwitchWatchStatus () with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+                writeBranchSwitchWatchStatus currentIpcFile dirtyStatus
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                let result, inspected, markerCreated = runBranchSwitchPreflight false inspection
+
+                match result with
+                | Error error ->
+                    error.Error
+                    |> should contain "Branch switch refused before mutation"
+
+                    error.Error |> should contain "dirty working tree"
+                | Ok _ -> Assert.Fail("Expected dirty current-repository Watch IPC to refuse branch switch.")
+
+                inspected |> should equal true
+                markerCreated |> should equal false
+            finally
+                if File.Exists(currentIpcFile) then File.Delete(currentIpcFile))
 
     /// Verifies that untrusted Watch states refuse before branch switch marker creation.
     [<Test>]

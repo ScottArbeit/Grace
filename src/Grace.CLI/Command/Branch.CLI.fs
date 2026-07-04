@@ -3010,7 +3010,7 @@ module Branch =
             markerText
 
     /// Removes only the branch-switch marker content written by this command invocation.
-    let private deleteBranchSwitchUpdateMarkerIfOwned (updateMarkerFileName: string) (markerText: string) =
+    let internal deleteBranchSwitchUpdateMarkerIfOwned (updateMarkerFileName: string) (markerText: string) =
         try
             if
                 File.Exists(updateMarkerFileName)
@@ -3020,6 +3020,23 @@ module Branch =
         with
         | :? IOException -> ()
         | :? UnauthorizedAccessException -> ()
+
+    /// Runs branch-switch working-tree mutation without replacing a preflight marker lease owned by the outer command.
+    let internal runBranchSwitchWorkingTreeUpdateWithMarker (updateMarkerFileName: string) (markerText: string) (operation: unit -> Task<'T>) =
+        task {
+            let mutable markerCreatedByThisInvocation = false
+
+            try
+                if not (File.Exists(updateMarkerFileName)) then
+                    do! createBranchSwitchUpdateMarker updateMarkerFileName markerText
+                    markerCreatedByThisInvocation <- true
+
+                let! result = operation ()
+                return result
+            finally
+                if markerCreatedByThisInvocation then
+                    deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
+        }
 
     /// Executes the switch command by binding ParseResult values to the SDK request and CLI output contract.
     type Switch() =
@@ -3634,35 +3651,32 @@ module Branch =
                                         isError <- true
 
                                 if not <| isError then
-                                    try
-                                        //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
+                                    let workingTreeUpdateMarkerFileName = updateInProgressFileName ()
 
-                                        // Write the UpdatesInProgress file to let grace watch know to ignore these changes.
-                                        // This file is deleted in the finally clause.
-                                        do! File.WriteAllTextAsync(updateInProgressFileName (), "`grace switch` is in progress.")
+                                    do!
+                                        runBranchSwitchWorkingTreeUpdateWithMarker workingTreeUpdateMarkerFileName "`grace switch` is in progress." (fun () ->
+                                            task {
+                                                //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
 
-                                        // Update working directory based on new GraceStatus.Index
-                                        do!
-                                            updateWorkingDirectory
-                                                newGraceStatus
-                                                graceStatusWithNewDirectoryVersionsFromServer
-                                                newDirectoryVersionDtos
-                                                (getCorrelationId parseResult)
-                                        //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
+                                                // Update working directory based on new GraceStatus.Index
+                                                do!
+                                                    updateWorkingDirectory
+                                                        newGraceStatus
+                                                        graceStatusWithNewDirectoryVersionsFromServer
+                                                        newDirectoryVersionDtos
+                                                        (getCorrelationId parseResult)
+                                                //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
-                                        // Save the new Grace Status.
-                                        do! writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer
+                                                // Save the new Grace Status.
+                                                do! writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer
 
-                                        // Update graceconfig.json.
-                                        let configuration = Current()
-                                        configuration.BranchId <- newBranch.BranchId
-                                        configuration.BranchName <- newBranch.BranchName
-                                        updateConfiguration configuration
-                                        t |> setProgressTaskValue showOutput 100.0
-                                    finally
-                                        // Delete the UpdatesInProgress file.
-                                        if File.Exists(updateInProgressFileName ()) then
-                                            File.Delete(updateInProgressFileName ())
+                                                // Update graceconfig.json.
+                                                let configuration = Current()
+                                                configuration.BranchId <- newBranch.BranchId
+                                                configuration.BranchName <- newBranch.BranchName
+                                                updateConfiguration configuration
+                                                t |> setProgressTaskValue showOutput 100.0
+                                            })
 
                                     newGraceStatus <- graceStatusWithNewDirectoryVersionsFromServer
                                     rootDirectoryId <- newGraceStatus.RootDirectoryId
