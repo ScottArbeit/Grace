@@ -560,27 +560,91 @@ module Watch =
     let mutable private readGraceStatusFileForTransitionCompletion = readGraceStatusFile
 
     /// Records the branch-scoped SignalR identity that Watch currently trusts for auto-rebase events.
-    type internal SignalRBranchSubscriptionState = { BranchId: BranchId; ParentBranchId: BranchId }
+    type internal SignalRBranchSubscriptionState = { BranchId: BranchId; ParentBranchId: BranchId; Generation: int64 }
 
-    let private emptySignalRBranchSubscription = { BranchId = BranchId.Empty; ParentBranchId = BranchId.Empty }
+    /// Names the branch and generation that an in-flight SignalR parent refresh is allowed to update.
+    type internal SignalRBranchSubscriptionRefreshAuthority = { BranchId: BranchId; Generation: int64 }
+
+    let private emptySignalRBranchSubscription generation = { BranchId = BranchId.Empty; ParentBranchId = BranchId.Empty; Generation = generation }
 
     let private signalRBranchSubscriptionLock = obj ()
-    let mutable private signalRBranchSubscription = emptySignalRBranchSubscription
+    let mutable private signalRBranchSubscription = emptySignalRBranchSubscription 0L
+    let mutable private signalRBranchSubscriptionRefreshNeededAfterTransition = false
     let private signalRSubscriptionRefreshLock = obj ()
     let mutable private refreshSignalRBranchSubscriptionsForTransitionCompletion = ignore
 
-    /// Replaces the watched SignalR branch identity after registration reaches the current parent branch.
-    let private setSignalRBranchSubscription branchId parentBranchId =
-        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription <- { BranchId = branchId; ParentBranchId = parentBranchId })
+    /// Clears branch-scoped SignalR trust while preserving whether transition recovery still owes a refresh attempt.
+    let private clearSignalRBranchSubscriptionWithRefreshFlag refreshNeededAfterTransition =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let generation = signalRBranchSubscription.Generation + 1L
+            signalRBranchSubscription <- emptySignalRBranchSubscription generation
+            signalRBranchSubscriptionRefreshNeededAfterTransition <- refreshNeededAfterTransition
+            generation)
+
+    /// Captures the exact branch and generation that may commit an in-flight parent refresh.
+    let private beginSignalRBranchSubscriptionRefresh () =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let generation = signalRBranchSubscription.Generation + 1L
+            let currentBranchId = Current().BranchId
+            signalRBranchSubscription <- emptySignalRBranchSubscription generation
+
+            { BranchId = currentBranchId; Generation = generation })
+
+    /// Replaces the watched SignalR branch identity only if the refresh still belongs to the current branch.
+    let private trySetSignalRBranchSubscription refreshAuthority parentBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let currentBranchId = Current().BranchId
+
+            if currentBranchId = refreshAuthority.BranchId
+               && signalRBranchSubscription.Generation = refreshAuthority.Generation then
+                signalRBranchSubscription <- { BranchId = refreshAuthority.BranchId; ParentBranchId = parentBranchId; Generation = refreshAuthority.Generation }
+
+                signalRBranchSubscriptionRefreshNeededAfterTransition <- false
+                true
+            else
+                false)
 
     /// Clears branch-scoped SignalR trust while Watch recalculates the current parent branch.
-    let private clearSignalRBranchSubscription () = lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription <- emptySignalRBranchSubscription)
+    let private clearSignalRBranchSubscription () =
+        clearSignalRBranchSubscriptionWithRefreshFlag false
+        |> ignore
+
+    /// Clears branch-scoped SignalR trust because transition completion invalidated the old parent.
+    let private clearSignalRBranchSubscriptionForTransition () =
+        clearSignalRBranchSubscriptionWithRefreshFlag true
+        |> ignore
+
+    /// Records that a transition parent refresh was attempted and left local parent trust empty.
+    let private completeSignalRBranchSubscriptionRefreshWithoutTrust () =
+        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscriptionRefreshNeededAfterTransition <- false)
+
+    /// Reports whether transition recovery still owes a SignalR parent refresh attempt.
+    let private signalRBranchSubscriptionRefreshNeededForTransition () =
+        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscriptionRefreshNeededAfterTransition)
 
     /// Reads the watched SignalR branch identity without exposing the mutable cell.
     let internal signalRBranchSubscriptionForWatchTests () = lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription)
 
     /// Replaces the watched SignalR branch identity in Watch tests without opening a HubConnection.
-    let internal setSignalRBranchSubscriptionForWatchTests branchId parentBranchId = setSignalRBranchSubscription branchId parentBranchId
+    let internal setSignalRBranchSubscriptionForWatchTests branchId parentBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            let generation = signalRBranchSubscription.Generation + 1L
+
+            signalRBranchSubscription <- { BranchId = branchId; ParentBranchId = parentBranchId; Generation = generation }
+
+            signalRBranchSubscriptionRefreshNeededAfterTransition <- false)
+
+    /// Begins a test-controlled SignalR parent refresh for the current branch.
+    let internal beginSignalRBranchSubscriptionRefreshForWatchTests () = beginSignalRBranchSubscriptionRefresh ()
+
+    /// Attempts to commit a test-controlled SignalR parent refresh.
+    let internal trySetSignalRBranchSubscriptionForWatchTests refreshAuthority parentBranchId = trySetSignalRBranchSubscription refreshAuthority parentBranchId
+
+    /// Clears SignalR parent trust through the same transition path used by branch switch recovery.
+    let internal clearSignalRBranchSubscriptionForTransitionForWatchTests () = clearSignalRBranchSubscriptionForTransition ()
+
+    /// Reports whether transition recovery still owes a SignalR parent refresh attempt.
+    let internal signalRBranchSubscriptionRefreshNeededForTransitionForWatchTests () = signalRBranchSubscriptionRefreshNeededForTransition ()
 
     /// Reports whether a SignalR automation event targets the parent branch Watch currently trusts.
     let internal signalRAutomationEventTargetsWatchedParentBranchForWatchTests targetBranchId =
@@ -2142,7 +2206,7 @@ module Watch =
 
     /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
     let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
-        clearSignalRBranchSubscription ()
+        clearSignalRBranchSubscriptionForTransition ()
         let previousIpcFileName = IpcFileName()
 
         logToAnsiConsole
@@ -2164,7 +2228,7 @@ module Watch =
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
         lock watchStatusPublishLock (fun () ->
             recordGraceUpdateMarkerCompletedUtc completedUtc
-            clearSignalRBranchSubscription ()
+            clearSignalRBranchSubscriptionForTransition ()
             let previousIpcFileName = IpcFileName()
 
             let previousIpcRetired =
@@ -2230,10 +2294,11 @@ module Watch =
                                             $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
                                     with
                                     | ex ->
-                                        clearSignalRBranchSubscription ()
+                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
 
-                                        requestGraceWatchExplicitResync
-                                            $"branch transition completion could not refresh SignalR parent subscription: {ex.Message}"
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"Grace Watch completed branch transition but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
                                 else
                                     requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
                             else
@@ -2705,7 +2770,7 @@ module Watch =
     /// Registers the current repository branch with its parent-branch SignalR group and refreshes local event trust.
     let private registerCurrentSignalRParentBranch (signalRConnection: HubConnection) cancellationToken =
         task {
-            clearSignalRBranchSubscription ()
+            let refreshAuthority = beginSignalRBranchSubscriptionRefresh ()
 
             let current = Current()
 
@@ -2721,16 +2786,22 @@ module Watch =
             | Ok returnValue ->
                 let parentBranchDto = returnValue.ReturnValue
 
-                do! signalRConnection.InvokeAsync("RegisterParentBranch", current.BranchId, parentBranchDto.BranchId, cancellationToken)
-                setSignalRBranchSubscription current.BranchId parentBranchDto.BranchId
+                do! signalRConnection.InvokeAsync("RegisterParentBranch", refreshAuthority.BranchId, parentBranchDto.BranchId, cancellationToken)
 
-                logToAnsiConsole
-                    Colors.Highlighted
-                    $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
+                if trySetSignalRBranchSubscription refreshAuthority parentBranchDto.BranchId then
+                    logToAnsiConsole
+                        Colors.Highlighted
+                        $"SignalR Hub connection state: {signalRConnection.State}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {signalRConnection.ConnectionId}."
 
-                return Ok parentBranchDto
+                    return Ok parentBranchDto
+                else
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Watch ignored stale SignalR parent subscription refresh for branch {refreshAuthority.BranchId}; current branch identity changed before registration completed."
+
+                    return Ok parentBranchDto
             | Error error ->
-                clearSignalRBranchSubscription ()
+                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
                 return Error error
         }
 
@@ -3541,25 +3612,20 @@ module Watch =
                                 publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
                                     updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
-                                try
-                                    refreshSignalRSubscriptionsAfterTransitionCompletion ()
-                                with
-                                | ex ->
-                                    clearSignalRBranchSubscription ()
+                                if signalRBranchSubscriptionRefreshNeededForTransition () then
+                                    try
+                                        refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                    with
+                                    | ex ->
+                                        completeSignalRBranchSubscriptionRefreshWithoutTrust ()
 
-                                    requestGraceWatchExplicitResync $"resync recovery could not refresh SignalR parent subscription: {ex.Message}"
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"Grace Watch resync recovered local status but could not refresh SignalR parent subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
 
-                                if
-                                    currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
-                                    && not (isGraceWatchResyncPending ())
-                                then
-                                    logToAnsiConsole
-                                        Colors.Important
-                                        $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
-                                else
-                                    logToAnsiConsole
-                                        Colors.Important
-                                        $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences, but parent subscription refresh kept resync pending."
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
                             else
                                 setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
@@ -3958,12 +4024,15 @@ module Watch =
                                     with
                                 | Ok _ -> ()
                                 | Error error ->
-                                    requestGraceWatchExplicitResync "branch transition completion could not refresh SignalR parent subscription"
+                                    completeSignalRBranchSubscriptionRefreshWithoutTrust ()
                                     logToAnsiConsole Colors.Error $"Failed to refresh SignalR parent branch subscription: {Markup.Escape(error.ToString())}"
                             with
                             | ex ->
-                                clearSignalRBranchSubscription ()
-                                requestGraceWatchExplicitResync $"branch transition completion could not refresh SignalR parent subscription: {ex.Message}")
+                                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+                                logToAnsiConsole
+                                    Colors.Error
+                                    $"Failed to refresh SignalR parent branch subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}.")
 
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(

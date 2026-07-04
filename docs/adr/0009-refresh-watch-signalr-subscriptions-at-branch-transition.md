@@ -43,8 +43,14 @@ When Watch completes a trusted branch transition:
 - it clears the locally trusted SignalR branch/parent identity before recalculating the new parent;
 - it re-registers the live SignalR connection with `RegisterParentBranch(currentBranchId, currentParentBranchId)`;
 - it replaces the local auto-rebase predicate only after the new parent registration path succeeds;
+- it ignores any in-flight parent refresh completion whose observed branch or refresh generation is no longer current;
 - it rejects promotion events for the old parent after the branch identity has moved to the new branch;
 - it allows promotion events for the new parent to reach the existing auto-rebase path after transition completion.
+
+Parent registration is a local trust enhancer, not a prerequisite for scan-derived Watch recovery. If a transition
+clears parent trust and the refresh cannot complete, Watch keeps the parent predicate empty for the current process so
+parent-triggered auto-rebase remains disabled until a later successful registration. That failure must not move an
+unrelated local resync that has already proven `GraceStatus` coherence back into `Resynchronizing`.
 
 Repository-wide SignalR registration remains outside the refresh work because the current server contract registers that
 group by `RepositoryId` only. A branch switch does not change repository identity, so `RegisterRepository(repositoryId)`
