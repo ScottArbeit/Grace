@@ -948,6 +948,45 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that schema acceptance rejects malformed SQLite journal allocation metadata.
+    [<TestCase("not-a-number")>]
+    [<TestCase("-1")>]
+    let ``ensureDbInitialized recreates DB when schema v5 allocated journal sequence is invalid`` (allocatedSequence: string) =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    executeNonQuery connection "UPDATE meta SET value = '1' WHERE key = 'AppliedThroughSequence';"
+                    executeNonQuery connection $"UPDATE sqlite_sequence SET seq = '{allocatedSequence}' WHERE name = 'watch_journal';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+
+                schemaVersion |> should equal "5"
+                appliedThrough |> should equal "0"
+                journalRows |> should equal 0
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
     /// Verifies that schema acceptance rejects Watch recovery metadata beyond SQLite's allocated journal sequence.
     [<Test>]
     let ``ensureDbInitialized recreates DB when schema v5 applied through metadata exceeds allocated sequence`` () =

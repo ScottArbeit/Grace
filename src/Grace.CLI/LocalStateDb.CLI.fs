@@ -638,16 +638,28 @@ module LocalStateDb =
         command.CommandText <- "SELECT EXISTS(SELECT 1 FROM watch_journal LIMIT 1);"
         Convert.ToInt32(command.ExecuteScalar()) <> 0
 
-    /// Reads SQLite's allocated Watch journal sequence so recovery metadata cannot outrun future row ids.
-    let private readAllocatedWatchJournalSequence (connection: SqliteConnection) =
+    /// Tries to read SQLite's allocated Watch journal sequence without trusting malformed persisted values.
+    let private tryReadAllocatedWatchJournalSequence (connection: SqliteConnection) =
         use command = connection.CreateCommand()
         command.CommandText <- "SELECT seq FROM sqlite_sequence WHERE name = 'watch_journal' LIMIT 1;"
         let value = command.ExecuteScalar()
 
         match value with
         | null
-        | :? DBNull -> 0L
-        | _ -> Convert.ToInt64(value)
+        | :? DBNull -> Some 0L
+        | :? int64 as sequence when sequence >= 0L -> Some sequence
+        | :? int as sequence when sequence >= 0 -> Some(int64 sequence)
+        | :? string as value ->
+            match Int64.TryParse(value) with
+            | true, sequence when sequence >= 0L -> Some sequence
+            | _ -> None
+        | _ -> None
+
+    /// Reads SQLite's allocated Watch journal sequence so recovery metadata cannot outrun future row ids.
+    let private readAllocatedWatchJournalSequence (connection: SqliteConnection) =
+        match tryReadAllocatedWatchJournalSequence connection with
+        | Some sequence -> sequence
+        | None -> raise (InvalidDataException("sqlite_sequence.seq for watch_journal must be a non-negative 64-bit integer."))
 
     /// Reads local-state metadata for read-only inspection checks without writing default rows.
     let private tryGetMetaValueReadOnly (connection: SqliteConnection) (key: string) =
@@ -698,8 +710,9 @@ module LocalStateDb =
                         | Some value ->
                             match tryParseWatchJournalAppliedThroughSequenceReadOnly value with
                             | Some sequence ->
-                                sequence
-                                <= readAllocatedWatchJournalSequence connection
+                                match tryReadAllocatedWatchJournalSequence connection with
+                                | Some allocatedSequence -> sequence <= allocatedSequence
+                                | None -> false
                             | None -> false
                         | None -> not (hasWatchJournalRows connection)
                     with
@@ -827,8 +840,9 @@ module LocalStateDb =
         | Some value ->
             match tryParseWatchJournalAppliedThroughSequence value with
             | Some sequence ->
-                sequence
-                <= readAllocatedWatchJournalSequence connection
+                match tryReadAllocatedWatchJournalSequence connection with
+                | Some allocatedSequence -> sequence <= allocatedSequence
+                | None -> false
             | None -> false
         | None -> not (hasWatchJournalRows connection)
 
