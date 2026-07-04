@@ -5574,6 +5574,39 @@ module WatchTests =
                 output
                 |> should not' (contain "Unable to acquire an access token for SignalR")))
 
+    /// Verifies that startup claim recognizes fresh legacy IPC instead of overwriting a live Watch file.
+    [<Test>]
+    let ``watch startup claim preserves fresh legacy status`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let legacyJson =
+                rootDirectoryId
+                |> liveWatchStatus
+                |> serialize
+                |> removeWatchStatusFieldsAddedForIssue492
+
+            let ipcFileName = Services.IpcFileName()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+            |> ignore
+
+            File.WriteAllText(ipcFileName, legacyJson)
+
+            let claimed =
+                Services
+                    .tryClaimGraceWatchInterprocessFile()
+                    .Result
+
+            claimed |> should equal false
+
+            File.ReadAllText(ipcFileName)
+            |> should equal legacyJson
+
+            Services.getGraceWatchStatus().Result
+            |> Option.isSome
+            |> should equal true)
+
     /// Verifies that watch startup claim replaces malformed stale ipc file.
     [<Test>]
     let ``watch startup claim replaces malformed stale ipc file`` () =
@@ -5899,6 +5932,38 @@ module WatchTests =
                 (Some directoryIds))
                 .GetAwaiter()
                 .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
+    /// Verifies that a pending GraceStatus artifact refresh publishes dirty IPC before the timer reloads status.
+    [<Test>]
+    let ``watch grace status artifact change publishes dirty ipc`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true
+
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
 
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
             |> should equal true
@@ -7538,6 +7603,37 @@ module WatchTests =
                 status.RootDirectoryBlake3Hash
                 |> should equal rootBlake3Hash
             | None -> Assert.Fail("Expected usable watch status with fallback root BLAKE3."))
+
+    /// Verifies that fresh clean Watch IPC must belong to the current repository, branch, and root before reuse.
+    [<Test>]
+    let ``watch status rejects clean non-legacy identity mismatches`` () =
+        withTempRepo (fun tempDir ->
+            let rootDirectoryId = Guid.NewGuid()
+            let baseStatus = liveWatchStatus rootDirectoryId
+
+            let mismatchCases =
+                [|
+                    { baseStatus with RepositoryId = Guid.NewGuid() }
+                    { baseStatus with BranchId = Guid.NewGuid() }
+                    { baseStatus with RootDirectory = Path.Combine(tempDir, "other-worktree") }
+                |]
+
+            for mismatchedStatus in mismatchCases do
+                writeWatchStatusJsonWithRuntimeSurface mismatchedStatus
+                |> ignore
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                inspection.IsLiveProcess |> should equal true
+
+                inspection.IsUsable |> should equal false
+
+                Services.getGraceWatchStatus().Result
+                |> should equal None)
 
     /// Verifies that watch check exits zero when live watcher status exists.
     [<Test>]

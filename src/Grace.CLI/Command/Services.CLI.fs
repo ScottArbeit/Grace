@@ -247,11 +247,36 @@ module Services =
         member this.IsUsable =
             match this.Status, this.EffectiveMode with
             | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
+                let current = Current()
+
+                let rootDirectoryMatchesCurrent =
+                    if String.IsNullOrWhiteSpace(status.RootDirectory) then
+                        true
+                    else
+                        try
+                            let normalizeRootDirectory (rootDirectory: string) =
+                                Path
+                                    .GetFullPath(rootDirectory)
+                                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+                            String.Equals(
+                                normalizeRootDirectory status.RootDirectory,
+                                normalizeRootDirectory current.RootDirectory,
+                                StringComparison.OrdinalIgnoreCase
+                            )
+                        with
+                        | _ -> false
+
                 this.IsFresh
                 && not status.IsStartupClaim
                 && status.IsWorkingTreeClean
                 && not status.HasPendingWatchWork
                 && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
+                && (status.RepositoryId = RepositoryId.Empty
+                    || status.RepositoryId = current.RepositoryId)
+                && (status.BranchId = BranchId.Empty
+                    || status.BranchId = current.BranchId)
+                && rootDirectoryMatchesCurrent
             | _ -> false
 
         /// Reports whether a fresh Watch process appears to own the IPC file even when shortcuts are unavailable.
@@ -431,6 +456,12 @@ module Services =
                 json
         with
         | _ -> json
+
+    /// Reads Watch IPC JSON while backfilling fields omitted by legacy Watch writers.
+    let private deserializeNormalizedGraceWatchStatus (json: string) =
+        json
+        |> normalizeLegacyGraceWatchStatusFields
+        |> deserialize<GraceWatchStatus>
 
     /// Coordinates directory version preimage entries behavior for this CLI command path.
     let private directoryVersionPreimageEntries (directories: seq<LocalDirectoryVersion>) (files: seq<LocalFileVersion>) =
@@ -2318,8 +2349,7 @@ module Services =
                 try
                     let json = System.IO.File.ReadAllText(IpcFileName())
 
-                    let normalizedJson = normalizeLegacyGraceWatchStatusFields json
-                    let status = deserialize<GraceWatchStatus> normalizedJson
+                    let status = deserializeNormalizedGraceWatchStatus json
 
                     return
                         {
@@ -2533,7 +2563,11 @@ module Services =
                     use fileStream = new FileStream(IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
 
                     try
-                        let! existingGraceWatchStatus = deserializeAsync<GraceWatchStatus> fileStream
+                        use reader = new StreamReader(fileStream, Encoding.UTF8, detectEncodingFromByteOrderMarks = true, bufferSize = 4096, leaveOpen = true)
+                        let! json = reader.ReadToEndAsync()
+                        fileStream.Position <- 0L
+
+                        let existingGraceWatchStatus = deserializeNormalizedGraceWatchStatus json
 
                         if isGraceWatchStatusFresh existingGraceWatchStatus then
                             return false

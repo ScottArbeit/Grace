@@ -1343,6 +1343,7 @@ module Watch =
     /// Evaluates has pending watch work against parsed options and command state.
     let private hasPendingWatchWork () =
         isGraceWatchResyncPending ()
+        || graceStatusHasChanged
         || not (
             filesToProcess.IsEmpty
             && directoriesToProcess.IsEmpty
@@ -1412,6 +1413,9 @@ module Watch =
                 else
                     lastPublishedHasPendingWatchWork <- None
                     logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check.")
+
+    /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
+    let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
 
     /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
     let private promoteStartupModeIfRecoverySucceeded () =
