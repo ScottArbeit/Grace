@@ -905,6 +905,58 @@ module WatchTests =
                 Watch.resetUpdateMarkerWatcherRebindForWatchTests ()
                 Watch.resetSignalRSubscriptionRefreshForWatchTests ())
 
+    /// Verifies that an event authorized before a branch reload cannot rebase the reloaded branch.
+    [<Test>]
+    let ``signalr parent event rechecks branch identity before auto rebase`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let parentAId = Guid.NewGuid()
+            let parentBId = Guid.NewGuid()
+            let repositoryName = "transition-signalr-recheck-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+
+            try
+                writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+                resetConfiguration ()
+                Current() |> ignore
+
+                Watch.setSignalRBranchSubscriptionForWatchTests branchAId parentAId
+
+                let statusB = graceStatusTracking Array.empty<string> Array.empty<string>
+                let rebasedUnderReloadedConfig = ResizeArray<BranchId * DirectoryVersionId>()
+
+                let readStatus () =
+                    task {
+                        writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+                        resetConfiguration ()
+                        Current() |> ignore
+                        Watch.setSignalRBranchSubscriptionForWatchTests branchBId parentBId
+                        return statusB
+                    }
+
+                let rebaseCurrentBranch (status: GraceStatus) = task { rebasedUnderReloadedConfig.Add(Current().BranchId, status.RootDirectoryId) }
+
+                (Watch.handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch (promotionAppliedEnvelope parentAId (Guid.NewGuid())))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Current().BranchId |> should equal branchBId
+
+                let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+
+                subscription.BranchId |> should equal branchBId
+
+                subscription.ParentBranchId
+                |> should equal parentBId
+
+                rebasedUnderReloadedConfig.ToArray()
+                |> should equal Array.empty<BranchId * DirectoryVersionId>
+            finally
+                Watch.resetSignalRSubscriptionRefreshForWatchTests ())
+
     /// Verifies that a missed marker-created callback cannot leave Watch serving the previous branch indefinitely.
     [<Test>]
     let ``unobserved current marker completed sidecar reloads target branch resync ipc`` () =
@@ -1139,6 +1191,68 @@ module WatchTests =
 
                 inspection.EffectiveMode
                 |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing)
+
+                /// Records upload calls for the scan-derived recovery pass.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the incremental status helper available without mutating status in this recovery scenario.
+                let updateGraceStatus status _ = Task.FromResult(Some status)
+                /// Produces a clean scan so recovery can republish the target branch IPC boundary.
+                let scanForDifferences _ = Task.FromResult(List<FileSystemDifference>())
+                /// Applies the scan-derived status boundary for the recovered target branch.
+                let updateGraceStatusFromDifferences status _ _ = Task.FromResult(Some status)
+                /// Keeps incremental application available without changing the recovery status.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Writes the target branch Watch IPC after resync recovery proves durable status.
+                let updateIpc status directoryIds = Services.updateGraceWatchInterprocessFile status directoryIds
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scanForDifferences
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal false
+
+                refreshCalls |> should equal 1
+
+                let recoveredSubscription = Watch.signalRBranchSubscriptionForWatchTests ()
+
+                recoveredSubscription.BranchId
+                |> should equal branchBId
+
+                recoveredSubscription.ParentBranchId
+                |> should equal parentBId
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentAId
+                |> should equal false
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentBId
+                |> should equal true
+
+                Services.getGraceWatchStatus().Result
+                |> Option.map (fun status -> status.RootDirectoryId)
+                |> should equal (Some statusB.RootDirectoryId)
+
+                (Watch.handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch (promotionAppliedEnvelope parentBId (Guid.NewGuid())))
+                    .GetAwaiter()
+                    .GetResult()
+
+                (Watch.handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch (promotionAppliedEnvelope parentAId (Guid.NewGuid())))
+                    .GetAwaiter()
+                    .GetResult()
+
+                rebasedStatuses.ToArray()
+                |> should equal [| statusB.RootDirectoryId |]
 
                 writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
                 resetConfiguration ()

@@ -589,6 +589,22 @@ module Watch =
             && signalRBranchSubscription.ParentBranchId
                <> BranchId.Empty)
 
+    /// Returns the current branch-scoped SignalR trust snapshot when the event targets the watched parent.
+    let private signalRBranchSubscriptionForWatchedParentBranch targetBranchId =
+        lock signalRBranchSubscriptionLock (fun () ->
+            if signalRBranchSubscription.ParentBranchId = targetBranchId
+               && signalRBranchSubscription.BranchId
+                  <> BranchId.Empty
+               && signalRBranchSubscription.ParentBranchId
+                  <> BranchId.Empty then
+                Some signalRBranchSubscription
+            else
+                Option.None)
+
+    /// Reports whether the SignalR trust snapshot still belongs to the branch about to mutate its working tree.
+    let private signalRBranchSubscriptionStillTrusted trustedSubscription =
+        lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription = trustedSubscription)
+
     /// Installs the active SignalR parent-branch refresh operation used after branch identity changes.
     let private registerSignalRSubscriptionRefresh refresh =
         lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- refresh)
@@ -2637,36 +2653,47 @@ module Watch =
         with
         | _ -> Option.None
 
-    /// Reports whether an automation envelope is a parent-branch promotion for the current Watch subscription.
-    let private automationEventTargetsWatchedParentBranch (envelope: AutomationEventEnvelope) =
+    /// Returns a trusted SignalR branch snapshot only for promotion events targeting the watched parent.
+    let private trustedSignalRBranchSubscriptionForAutomationEvent (envelope: AutomationEventEnvelope) =
         if envelope.EventType = AutomationEventType.PromotionSetApplied then
             let targetBranchId =
                 tryParseAutomationEventGuidProperty "targetBranchId" envelope.DataJson
                 |> Option.defaultValue BranchId.Empty
 
-            signalRAutomationEventTargetsWatchedParentBranchForWatchTests targetBranchId
+            signalRBranchSubscriptionForWatchedParentBranch targetBranchId
         else
-            false
+            Option.None
 
     /// Handles SignalR automation events that can drive Watch auto-rebase.
     let private handleSignalRAutomationEvent readStatus rebaseCurrentBranch (envelope: AutomationEventEnvelope) =
         task {
             try
-                if automationEventTargetsWatchedParentBranch envelope then
+                match trustedSignalRBranchSubscriptionForAutomationEvent envelope with
+                | Some trustedSubscription ->
                     let terminalReferenceId =
                         tryParseAutomationEventGuidProperty "terminalPromotionReferenceId" envelope.DataJson
                         |> Option.defaultValue ReferenceId.Empty
 
-                    let watchedParentBranchId =
-                        (signalRBranchSubscriptionForWatchTests ())
-                            .ParentBranchId
-
                     logToAnsiConsole
                         Colors.Highlighted
-                        $"Parent branch {watchedParentBranchId} received terminal promotion {terminalReferenceId}; starting auto-rebase."
+                        $"Parent branch {trustedSubscription.ParentBranchId} received terminal promotion {terminalReferenceId}; evaluating auto-rebase."
 
                     let! currentStatus = readStatus ()
-                    do! rebaseCurrentBranch currentStatus
+
+                    let currentBranchId = Current().BranchId
+
+                    if currentBranchId = trustedSubscription.BranchId
+                       && signalRBranchSubscriptionStillTrusted trustedSubscription then
+                        logToAnsiConsole
+                            Colors.Highlighted
+                            $"Parent branch {trustedSubscription.ParentBranchId} still matches branch {trustedSubscription.BranchId}; starting auto-rebase."
+
+                        do! rebaseCurrentBranch currentStatus
+                    else
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Skipped auto-rebase for parent branch {trustedSubscription.ParentBranchId} because Watch branch identity changed before rebase."
+                | None -> ()
             with
             | ex -> logToAnsiConsole Colors.Error $"Failed to process automation event payload for {envelope.EventType}: {Markup.Escape(ex.Message)}."
         }
@@ -3514,9 +3541,25 @@ module Watch =
                                 publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
                                     updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
 
-                                logToAnsiConsole
-                                    Colors.Important
-                                    $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                try
+                                    refreshSignalRSubscriptionsAfterTransitionCompletion ()
+                                with
+                                | ex ->
+                                    clearSignalRBranchSubscription ()
+
+                                    requestGraceWatchExplicitResync $"resync recovery could not refresh SignalR parent subscription: {ex.Message}"
+
+                                if
+                                    currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                                    && not (isGraceWatchResyncPending ())
+                                then
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences; incremental observations may resume."
+                                else
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch resync applied {scanDerivedDifferences.Count} scan-derived differences, but parent subscription refresh kept resync pending."
                             else
                                 setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
 
