@@ -5967,6 +5967,45 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
+    /// Verifies that non-Watch status refreshes preserve a live dirty Watch IPC state.
+    [<Test>]
+    let ``watch ipc non-watch update preserves live dirty work state`` () =
+        withTempRepo (fun _ ->
+            let dirtyStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dirtyDirectoryIds = HashSet<DirectoryVersionId>(dirtyStatus.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus true
+
+            (Services.updateGraceWatchInterprocessFile dirtyStatus (Some dirtyDirectoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            let cleanStatusFromNonWatch =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with RootDirectorySha256Hash = Sha256Hash "non-watch-updated-root" }
+
+            let cleanDirectoryIdsFromNonWatch = HashSet<DirectoryVersionId>(cleanStatusFromNonWatch.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFilePreservingLiveWorkState cleanStatusFromNonWatch (Some cleanDirectoryIdsFromNonWatch))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            readWatchStatusJsonStringProperty "RootDirectoryId"
+            |> should equal $"{cleanStatusFromNonWatch.RootDirectoryId}"
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
     /// Verifies that a pending GraceStatus artifact refresh publishes dirty IPC before the timer reloads status.
     [<Test>]
     let ``watch grace status artifact change publishes dirty ipc`` () =
@@ -6083,6 +6122,78 @@ module WatchTests =
             |> should equal true
 
             Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true)
+
+    /// Verifies that a stale clean IPC file is not accepted when the attempted clean publication never reached disk.
+    [<Test>]
+    let ``watch clean publication verification rejects stale clean snapshot`` () =
+        withTempRepo (fun root ->
+            let staleCleanStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+            let staleDirectoryIds = HashSet<DirectoryVersionId>(staleCleanStatus.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile staleCleanStatus (Some staleDirectoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            let staleCleanJson = File.ReadAllText(Services.IpcFileName())
+            let filePath = Path.Combine(root, "blocked-clean-verification.txt")
+
+            use lockedIpc = new FileStream(Services.IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            File.WriteAllText(filePath, "pending content")
+            Watch.OnChanged(changedEvent filePath)
+            lockedIpc.Dispose()
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal staleCleanJson
+
+            let freshCleanStatus = graceStatusTracking [| "blocked-clean-verification.txt" |] Array.empty<string>
+
+            /// Reads status needed by the stale clean verification scenario.
+            let readStatus () = Task.FromResult(freshCleanStatus)
+
+            /// Builds upload test data used to drain the queued file work.
+            let upload _ pendingFilePath =
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Keeps status unchanged after pending upload work drains in the test scenario.
+            let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+            /// Keeps status unchanged after event-derived differences apply in the test scenario.
+            let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
+
+            /// Keeps incremental local-state side effects out of this IPC verification test.
+            let applyIncremental _ _ _ = Task.FromResult(())
+
+            /// Simulates the production writer swallowing a transient clean IPC write failure.
+            let blockedWriter _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                applyIncremental
+                blockedWriter)
+                .GetAwaiter()
+                .GetResult()
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal staleCleanJson
+
+            Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should not' (equal staleCleanJson)
 
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
             |> should equal false
