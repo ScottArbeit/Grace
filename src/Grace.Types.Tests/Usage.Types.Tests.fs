@@ -1,5 +1,6 @@
 namespace Grace.Types.Tests
 
+open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Usage
@@ -258,3 +259,32 @@ type UsageFactContractTests() =
         let fact = { UsageFactTestData.validFact () with ObservedAt = UsageFactTestData.observedAtWithSeconds }
 
         assertInvalid "ObservedAt must be normalized to a UTC minute boundary." fact
+
+    /// Verifies that default observation timestamps fail validation instead of becoming accepted usage evidence.
+    [<Test>]
+    member _.DefaultObservedAtFailsValidationClearly() =
+        let fact = { UsageFactTestData.validFact () with ObservedAt = Constants.DefaultTimestamp }
+
+        assertInvalid "ObservedAt is required." fact
+
+    /// Verifies that null nested scope values become validation errors instead of a null dereference.
+    [<Test>]
+    member _.NullScopeFailsValidationClearly() =
+        let fact = { UsageFactTestData.validFact () with Scope = Unchecked.defaultof<UsageFactScope> }
+
+        Assert.DoesNotThrow(Action(fun () -> UsageFact.Validate fact |> ignore))
+
+        match UsageFact.Validate fact with
+        | Ok () -> Assert.Fail("Usage fact should fail validation when Scope is null.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("Scope is required."))
+
+    /// Verifies that null nested resource values become validation errors instead of a null dereference.
+    [<Test>]
+    member _.NullResourceFailsValidationClearly() =
+        let fact = { UsageFactTestData.validFact () with Resource = Unchecked.defaultof<UsageFactResource> }
+
+        Assert.DoesNotThrow(Action(fun () -> UsageFact.Validate fact |> ignore))
+
+        match UsageFact.Validate fact with
+        | Ok () -> Assert.Fail("Usage fact should fail validation when Resource is null.")
+        | Error errors -> Assert.That(errors, Has.Some.Contains("Resource is required."))
