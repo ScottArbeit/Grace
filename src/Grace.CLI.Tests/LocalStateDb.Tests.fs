@@ -674,6 +674,53 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that ensure db initialized recreates db when schema v5 has a malformed Watch journal table.
+    [<Test>]
+    let ``ensureDbInitialized recreates DB when schema v5 watch journal shape is malformed`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+
+                let ticks =
+                    Instant
+                        .FromUtc(2026, 1, 2, 3, 4)
+                        .ToUnixTimeTicks()
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_journal;"
+                    executeNonQuery connection "CREATE TABLE watch_journal (sequence TEXT PRIMARY KEY);"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                schemaVersion |> should equal "5"
+
+                let sequencePk = executeScalarInt connection "SELECT pk FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
+                sequencePk |> should equal 1
+
+                let sequenceType = executeScalarString connection "SELECT UPPER(type) FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
+                sequenceType |> should equal "INTEGER"
+
+                let createdAtNotNull =
+                    executeScalarInt connection "SELECT [notnull] FROM pragma_table_info('watch_journal') WHERE name = 'created_at_unix_ticks';"
+
+                createdAtNotNull |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
     /// Verifies that ensure db initialized recovers from a corrupt non sqlite file.
     [<Test>]
     let ``ensureDbInitialized recovers from a corrupt non-sqlite file`` () =

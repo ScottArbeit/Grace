@@ -411,6 +411,51 @@ module LocalStateDb =
         use reader = command.ExecuteReader()
         reader.Read()
 
+    /// Captures the SQLite column shape that writable schema checks must trust before using a table.
+    type private TableColumnShape = { Name: string; TypeName: string; NotNull: bool; PrimaryKeyOrdinal: int }
+
+    /// Reads SQLite table column metadata so schema-version checks can reject partially created local databases.
+    let private readTableColumnShapes (connection: SqliteConnection) tableName =
+        use command = connection.CreateCommand()
+        command.CommandText <- $"PRAGMA table_info({tableName});"
+        use reader = command.ExecuteReader()
+        let columns = ResizeArray<TableColumnShape>()
+
+        while reader.Read() do
+            columns.Add(
+                { Name = reader.GetString(1); TypeName = reader.GetString(2); NotNull = reader.GetInt32(3) <> 0; PrimaryKeyOrdinal = reader.GetInt32(5) }
+            )
+
+        columns |> Seq.toArray
+
+    /// Reports whether SQLite declared a column with INTEGER affinity for a trusted local-state sequence.
+    let private isIntegerColumnType (typeName: string) = StringComparer.OrdinalIgnoreCase.Equals(typeName.Trim(), "INTEGER")
+
+    /// Verifies that the Watch journal table can support ordered local recovery and retention operations.
+    let private hasRequiredWatchJournalShape (connection: SqliteConnection) =
+        let columns = readTableColumnShapes connection "watch_journal"
+
+        let tryFindColumn columnName =
+            columns
+            |> Array.tryFind (fun column -> StringComparer.OrdinalIgnoreCase.Equals(column.Name, columnName))
+
+        let hasSequenceColumn =
+            match tryFindColumn "sequence" with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && column.PrimaryKeyOrdinal = 1
+            | None -> false
+
+        let hasCreatedAtColumn =
+            match tryFindColumn "created_at_unix_ticks" with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+            | None -> false
+
+        hasSequenceColumn && hasCreatedAtColumn
+
     /// Reads inspect object cache read only data from the local SQLite state database.
     let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
         try
@@ -571,6 +616,7 @@ module LocalStateDb =
         && columnExists connection "object_cache_directories" "blake3_hash"
         && columnExists connection "object_cache_directory_files" "blake3_hash"
         && tableExists connection "watch_journal"
+        && hasRequiredWatchJournalShape connection
 
     /// Evaluates has empty writable status blake3 rows against parsed options and command state.
     let private hasEmptyWritableStatusBlake3Rows (connection: SqliteConnection) =
