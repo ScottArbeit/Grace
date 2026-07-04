@@ -270,6 +270,25 @@ module BranchCommandTests =
             File.Exists(updateMarkerFile)
             |> should equal false)
 
+    /// Verifies that cancellation removes the working-tree marker when this invocation created it.
+    [<Test>]
+    let ``branch switch working tree update removes owned marker when operation cancels`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerText = "`grace switch` is in progress."
+
+            let operation =
+                Func<Task> (fun () ->
+                    Branch.runBranchSwitchWorkingTreeUpdateWithMarker updateMarkerFile markerText (fun () ->
+                        task { raise (OperationCanceledException("simulated cancellation")) })
+                    :> Task)
+
+            Assert.ThrowsAsync<OperationCanceledException>(operation)
+            |> ignore
+
+            File.Exists(updateMarkerFile)
+            |> should equal false)
+
     /// Verifies that same-branch Watch IPC from another checkout does not override the current repository snapshot.
     [<Test>]
     let ``branch switch Watch preflight reads repository scoped IPC for current checkout`` () =
