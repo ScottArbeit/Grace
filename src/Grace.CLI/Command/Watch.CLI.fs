@@ -409,6 +409,8 @@ module Watch =
 
     let mutable private readGraceStatusFileForDeletedPathClassification = readGraceStatusFile
 
+    let mutable private readGraceStatusFileForPendingWorkTransition = readGraceStatusFile
+
     let mutable private enumerateFilesForDirectoryUpload = fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
 
     /// Checks whether a directory and each repository-relative ancestor remains eligible for watch indexing.
@@ -511,6 +513,8 @@ module Watch =
     let internal setGraceStatusHasChangedForWatchTests hasChanged = graceStatusHasChanged <- hasChanged
     /// Coordinates set read grace status file for watch tests behavior for this CLI command path.
     let internal setReadGraceStatusFileForWatchTests readStatusFile = readGraceStatusFileForDeletedPathClassification <- readStatusFile
+    /// Sets the Grace Status reader used by pending-work transition tests.
+    let internal setReadGraceStatusFileForPendingWorkTransitionForWatchTests readStatusFile = readGraceStatusFileForPendingWorkTransition <- readStatusFile
     /// Reads set enumerate files for directory upload for watch tests data needed by the command workflow without changing remote state.
     let internal setEnumerateFilesForDirectoryUploadForWatchTests enumerateFiles = enumerateFilesForDirectoryUpload <- enumerateFiles
 
@@ -1436,54 +1440,73 @@ module Watch =
 
                 let runtimeMode = currentGraceWatchRuntimeMode ()
 
-                let statusForPublish, directoryIdsForPublish =
+                let shouldPublish, statusForPublish, directoryIdsForPublish =
                     if
                         runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
                     then
                         try
-                            let status = readGraceStatusFile().GetAwaiter().GetResult()
+                            let status =
+                                readGraceStatusFileForPendingWorkTransition()
+                                    .GetAwaiter()
+                                    .GetResult()
+
                             graceStatus <- status
                             graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
-                            status, Some graceStatusDirectoryIds
+                            true, status, Some graceStatusDirectoryIds
                         with
-                        | _ -> GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                        | ex ->
+                            if hasPendingWork then
+                                logToAnsiConsole
+                                    Colors.Error
+                                    $"Grace Watch could not read Grace Status for pending-work dirty status transition; publishing non-incremental status and retrying later: {ex.Message}"
+
+                                true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                            else
+                                lastPublishedHasPendingWatchWork <- None
+
+                                logToAnsiConsole
+                                    Colors.Error
+                                    $"Grace Watch could not read Grace Status for pending-work clean status transition; retrying later: {ex.Message}"
+
+                                false, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
                     else
-                        GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
 
-                let publicationStartedAt = getCurrentInstant ()
+                if shouldPublish then
+                    let publicationStartedAt = getCurrentInstant ()
 
-                try
-                    let writeTask =
-                        if runtimeMode = GraceWatchRuntimeMode.Suspended then
-                            updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
-                        else
-                            updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
-
-                    writeTask.GetAwaiter().GetResult()
-                with
-                | ex ->
-                    lastPublishedHasPendingWatchWork <- None
-                    logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
-
-                let transitionWasPublished =
                     try
-                        let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+                        let writeTask =
+                            if runtimeMode = GraceWatchRuntimeMode.Suspended then
+                                updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
+                            else
+                                updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
 
-                        let expectedDirectoryIds =
-                            directoryIdsForPublish
-                            |> Option.defaultWith (fun () -> statusForPublish.Index.Keys.ToHashSet())
-
-                        inspection.Status
-                        |> Option.exists (statusMatchesVerifiedPublication statusForPublish expectedDirectoryIds hasPendingWork publicationStartedAt)
+                        writeTask.GetAwaiter().GetResult()
                     with
-                    | _ -> false
+                    | ex ->
+                        lastPublishedHasPendingWatchWork <- None
+                        logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
-                if transitionWasPublished then
-                    lastPublishedHasPendingWatchWork <- Some hasPendingWork
-                else
-                    lastPublishedHasPendingWatchWork <- None
-                    logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check.")
+                    let transitionWasPublished =
+                        try
+                            let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+
+                            let expectedDirectoryIds =
+                                directoryIdsForPublish
+                                |> Option.defaultWith (fun () -> statusForPublish.Index.Keys.ToHashSet())
+
+                            inspection.Status
+                            |> Option.exists (statusMatchesVerifiedPublication statusForPublish expectedDirectoryIds hasPendingWork publicationStartedAt)
+                        with
+                        | _ -> false
+
+                    if transitionWasPublished then
+                        lastPublishedHasPendingWatchWork <- Some hasPendingWork
+                    else
+                        lastPublishedHasPendingWatchWork <- None
+                        logToAnsiConsole Colors.Important $"Grace Watch will retry pending-work status publication on the next transition check.")
 
     /// Publishes a pending-work transition through the normal Watch IPC writer for deterministic Watch tests.
     let internal publishPendingWatchWorkTransitionIfNeededForWatchTests () = publishPendingWatchWorkTransitionIfNeeded ()
@@ -1675,6 +1698,7 @@ module Watch =
             setGraceWatchHasPendingWorkForStatus false)
 
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
+        readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
         watchPathComparison <- defaultWatchPathComparison ()

@@ -370,6 +370,17 @@ module Services =
         isCleanShortcutSafetyFlag safetyFlag
         || String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)
 
+    /// Reports whether a compact Watch safety flag should be kept after inspection trust checks.
+    let private isAllowedInspectedSafetyFlag isCurrentRepositoryLiveDirtySnapshot hasCurrentRepositoryIdentity safetyFlag =
+        if isCleanShortcutSafetyFlag safetyFlag then
+            false
+        elif String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal) then
+            isCurrentRepositoryLiveDirtySnapshot
+        elif hasCurrentRepositoryIdentity then
+            true
+        else
+            not (isIdentitySensitiveSafetyFlag safetyFlag)
+
     /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
     let private safetyFlagsForGraceWatchStatusContract persistedModeOverride (status: GraceWatchStatus) =
         let safetyFlags =
@@ -412,12 +423,7 @@ module Services =
 
             let safetyFlags =
                 inspection.SafetyFlags
-                |> Array.filter (
-                    if inspection.HasCurrentRepositoryIdentity then
-                        isCleanShortcutSafetyFlag >> not
-                    else
-                        isIdentitySensitiveSafetyFlag >> not
-                )
+                |> Array.filter (isAllowedInspectedSafetyFlag isCurrentRepositoryLiveDirtySnapshot inspection.HasCurrentRepositoryIdentity)
 
             if safetyFlags
                |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "requiresExplicitResync", StringComparison.Ordinal)) then
@@ -2738,7 +2744,17 @@ module Services =
 
                         let existingGraceWatchStatus = deserializeNormalizedGraceWatchStatus json
 
-                        if isGraceWatchStatusFresh existingGraceWatchStatus then
+                        let existingGraceWatchInspection =
+                            {
+                                Exists = true
+                                Status = Some existingGraceWatchStatus
+                                PersistedMode = tryReadGraceWatchPersistedMode json
+                                SafetyFlags = existingGraceWatchStatus.SafetyFlags
+                                ReadError = None
+                            }
+
+                        if isGraceWatchStatusFresh existingGraceWatchStatus
+                           && existingGraceWatchInspection.HasCurrentRepositoryIdentity then
                             return false
                         else
                             do! writeClaimToExistingFile fileStream
