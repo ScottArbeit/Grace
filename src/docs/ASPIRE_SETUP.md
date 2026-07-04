@@ -64,14 +64,24 @@ Open `http://localhost:18888` and confirm the following resources show
 - `redis` – Redis cache on port `6379`
 - `cosmos` – Cosmos DB emulator on port `8081`
 - `servicebus-sql` – SQL Server container required by the Service Bus emulator
+  and used locally for the `GraceOperations` SQL database
 - `servicebus-emulator` – Service Bus emulator (AMQP on `5672`, management
   endpoint on `5300`)
 - `grace-server` – HTTP `5000` / HTTPS `5001`
+- `grace-operations-worker` – operational usage fact ingestion worker for the
+  `grace-operational-facts` topic and durable `operational-facts-processor`
+  subscription
 
 Redis is provisioned by AppHost and its host/port are forwarded to
 `Grace.Server`. Current startup code does not enable Redis-backed SignalR, so
 Redis remains an explicit AppHost dependency pending a follow-up runtime
 decision rather than a prerequisite proven by the integration tests.
+
+The local operations worker creates the `ops` SQL schema and usage fact tables
+inside a `GraceOperations` database on the local SQL Server container before it
+starts the Service Bus processor. It completes a Service Bus message only after
+the operations data layer accepts the raw fact or reports that the fact was
+already processed.
 
 ## Smoke Tests
 
@@ -87,6 +97,9 @@ decision rather than a prerequisite proven by the integration tests.
    exporter.
 3. **Logs** – Within the same resource view, confirm log entries for Orleans
    startup and Aspire instrumentation.
+4. **Operations worker** – In the `grace-operations-worker` logs, confirm the
+   startup line for topic `grace-operational-facts` and subscription
+   `operational-facts-processor`.
 
 ## Service Bus Emulator Connection String
 
@@ -127,6 +140,27 @@ and Service Bus readiness before running server integration tests. The
 `GRACE_TEST_SKIP_SERVICEBUS=1` environment variable is not a supported
 `Grace.Server.Tests` profile today because the shared setup drains the Service
 Bus test subscription and verifies the Owner Created event.
+
+### Operations Usage Tracer Bullet
+
+`Grace.Server.Tests` includes a dev/test-only operations tracer bullet that
+publishes one repository-storage `UsageFact` to the dedicated operational facts
+topic, waits for `grace-operations-worker` to consume it, and queries the local
+`GraceOperations` SQL database for the raw fact and UTC minute aggregate. The
+test also injects a duplicate delivery with the same `UsageFactId` and verifies
+that the raw row and aggregate quantity remain single-counted.
+
+The tracer bullet is proof of the local operational usage pipeline only:
+
+- It uses the existing Aspire-local Service Bus emulator and SQL Server
+  container.
+- It keeps `UsageFactId` and `CorrelationId` distinct in the end-to-end
+  evidence.
+- It verifies malformed or unsupported usage payloads are dead-lettered and do
+  not become authoritative SQL usage.
+- It does not add customer-facing usage APIs, pricing, charge ledgers, billing
+  close, invoices, dashboards, Azure Cost Management ingestion, Azure Storage
+  diagnostic ingestion, or a durable outbox.
 
 ## Troubleshooting
 

@@ -26,6 +26,7 @@
         <Compile Include="PersonalAccessToken.Actor.fs" />
         <Compile Include="Timing.Actor.fs" />
         <Compile Include="ActorProxy.Extensions.Actor.fs" />
+        <Compile Include="OperationalFactsPublisher.Actor.fs" />
         <Compile Include="Services.Actor.fs" />
         <Compile Include="GrainRepository.Actor.fs" />
         <Compile Include="GlobalLock.Actor.fs" />
