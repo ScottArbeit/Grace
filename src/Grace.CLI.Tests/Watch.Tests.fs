@@ -403,6 +403,15 @@ module WatchTests =
         File.Delete(updateMarkerFile)
         Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
 
+    /// Records a marker deletion without the completed sidecar produced by a successful branch switch mutation.
+    let private recordIncompleteUpdateMarkerDeletion (updateMarkerFile: string) =
+        Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+        |> ignore
+
+        File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+        File.Delete(updateMarkerFile)
+        Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
     /// Builds renamed event test data used to exercise CLI watch behavior.
     let private renamedEvent (oldFullPath: string) (fullPath: string) =
         RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
@@ -458,6 +467,30 @@ module WatchTests =
 
             pending.FilesToProcess
             |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that marker deletion without a completion sidecar cannot authorize delayed suppression.
+    [<Test>]
+    let ``update marker deletion without completion sidecar does not suppress delayed changed observation`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "partial-switch-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            File.WriteAllText(changedFilePath, "partial branch switch payload")
+            File.SetLastWriteTimeUtc(changedFilePath, DateTime.UtcNow.AddSeconds(-1.0))
+            recordIncompleteUpdateMarkerDeletion updateMarkerFile
+
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| changedFilePath |]
 
             pending.DirectoriesToProcess
             |> should equal Array.empty<string>
@@ -771,6 +804,48 @@ module WatchTests =
             |> should equal Array.empty<string>
 
             pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that post-switch user-created files are drained when deleted inside the completed-marker window.
+    [<Test>]
+    let ``update marker deletion drains post-switch user-created file deleted inside suppression window`` () =
+        withTempRepo (fun root ->
+            let createdFilePath = Path.Combine(root, "post-switch-user-created.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow.AddSeconds(-5.0)
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking Array.empty<string> Array.empty<string>))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            File.WriteAllText(createdFilePath, "user-created payload")
+            File.SetLastWriteTimeUtc(createdFilePath, markerCompletedUtc.AddSeconds(1.0))
+            Watch.OnCreated(createdEvent createdFilePath)
+
+            File.Delete(createdFilePath)
+            Watch.OnDeleted(deletedEvent createdFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "post-switch-user-created.txt" |]
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus (graceStatusTracking Array.empty<string> Array.empty<string>)
+
+            updateCalls |> should equal 0
+            uploadCalls |> should equal 0
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterProcessing.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
     /// Verifies that delayed delete suppression does not hide paths still tracked by completed GraceStatus.

@@ -3027,9 +3027,12 @@ module Branch =
         | :? IOException -> ()
         | :? UnauthorizedAccessException -> ()
 
-    /// Gets the branch-switch workflow lease path that serializes state precomputation without suppressing Watch.
+    /// Gets the repository/worktree-scoped branch-switch workflow lease path without using mutable branch identity.
     let internal branchSwitchWorkflowLeaseFileName (updateMarkerFileName: string) =
-        Path.Combine(Path.GetDirectoryName(updateMarkerFileName), "branch-switch-workflow.lease")
+        let branchDirectory = DirectoryInfo(Path.GetDirectoryName(updateMarkerFileName))
+        let repositoryRootScopeDirectory = branchDirectory.Parent.Parent
+
+        Path.Combine(repositoryRootScopeDirectory.FullName, "branch-switch-workflow.lease")
 
     /// Creates the branch-switch workflow lease through an injectable writer for deterministic race tests.
     let internal createBranchSwitchWorkflowLeaseWithWriter (writeLeaseText: StreamWriter -> string -> Task) (switchLeaseFileName: string) (leaseText: string) =

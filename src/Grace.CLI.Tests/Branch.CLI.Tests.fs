@@ -384,6 +384,69 @@ module BranchCommandTests =
 
             File.Delete(switchLeaseFile))
 
+    /// Verifies that switch workflow leases serialize the same worktree even after branch identity changes.
+    [<Test>]
+    let ``branch switch workflow lease is independent of mutable branch identity`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let current = Current()
+            let sourceUpdateMarkerFile = Services.updateInProgressFileName ()
+            let targetBranchId = Guid.NewGuid()
+            let targetBranchName = "branch-switch-target"
+
+            let targetUpdateMarkerFile =
+                Services.updateInProgressFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory targetBranchId targetBranchName
+
+            let sourceSwitchLeaseFile = Branch.branchSwitchWorkflowLeaseFileName sourceUpdateMarkerFile
+            let targetSwitchLeaseFile = Branch.branchSwitchWorkflowLeaseFileName targetUpdateMarkerFile
+
+            targetSwitchLeaseFile
+            |> should equal sourceSwitchLeaseFile
+
+            let sourceSwitchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+            let targetSwitchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+            let mutable inspected = false
+            let mutable workflowRan = false
+
+            Directory.CreateDirectory(Path.GetDirectoryName(sourceSwitchLeaseFile))
+            |> ignore
+
+            File.WriteAllText(sourceSwitchLeaseFile, sourceSwitchLeaseText)
+
+            current.BranchId <- targetBranchId
+            current.BranchName <- targetBranchName
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(targetUpdateMarkerFile)
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
+            let result =
+                (Branch.runBranchSwitchWorkflowWithLease operations correlationId targetSwitchLeaseFile targetSwitchLeaseText (fun () ->
+                    task {
+                        workflowRan <- true
+                        return ()
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before state precomputation"
+            | Ok _ -> Assert.Fail("Expected same-worktree switch workflow lease to refuse after branch identity changes.")
+
+            inspected |> should equal false
+            workflowRan |> should equal false
+
+            File.ReadAllText(sourceSwitchLeaseFile)
+            |> should equal sourceSwitchLeaseText
+
+            File.Delete(sourceSwitchLeaseFile))
+
     /// Verifies that branch identity is moved before object-cache refresh can fail.
     [<Test>]
     let ``branch switch local state updates config before cache refresh failure`` () =

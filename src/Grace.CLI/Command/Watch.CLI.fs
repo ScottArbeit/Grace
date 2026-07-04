@@ -2211,12 +2211,13 @@ module Watch =
         elif updateNotInProgress ()
              && isGraceStatusArtifact args.FullPath then
             markGraceStatusChangedAndPublishPendingWorkTransition ()
-        elif isDelayedGraceOwnedFileObservation args.FullPath then
-            logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
             let canceledFileUpload = cancelPendingUploadsForDeletedPath args.FullPath
 
-            if enqueueStatusUpdateTrigger args.FullPath then
+            if isDelayedGraceOwnedFileObservation args.FullPath
+               && not canceledFileUpload then
+                logObservationSuppressed args.FullPath
+            elif enqueueStatusUpdateTrigger args.FullPath then
                 match repositoryRelativePath args.FullPath with
                 | Some relativePath ->
                     let invalidatedRelativePath = RelativePath relativePath
@@ -2311,12 +2312,13 @@ module Watch =
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateNotInProgress () then
-                let completedUtc =
-                    tryReadGraceUpdateMarkerCompletedUtc ()
-                    |> Option.defaultValue DateTime.UtcNow
-
-                recordGraceUpdateMarkerCompletedUtc completedUtc
-                logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                match tryReadGraceUpdateMarkerCompletedUtc () with
+                | Some completedUtc ->
+                    recordGraceUpdateMarkerCompletedUtc completedUtc
+                    logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                | None ->
+                    clearGraceUpdateMarkerDeletedUtc ()
+                    logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
 
