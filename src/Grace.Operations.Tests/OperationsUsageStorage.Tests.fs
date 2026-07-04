@@ -157,6 +157,8 @@ type OperationsUsageStorageTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(OperationsUsageSql.CreateSchema, Does.Contain("CREATE SCHEMA ops"))
+                Assert.That(OperationsUsageSql.CreateDatabaseIfMissing, Does.Contain("DB_ID(@DatabaseName) IS NULL"))
+                Assert.That(OperationsUsageSql.CreateDatabaseIfMissing, Does.Contain("QUOTENAME(@DatabaseName)"))
                 Assert.That(OperationsUsageSql.CreateRawUsageFactTable, Does.Contain("ops.RawUsageFact"))
                 Assert.That(OperationsUsageSql.CreateRawUsageFactTable, Does.Contain("PRIMARY KEY CLUSTERED (UsageFactId)"))
                 Assert.That(OperationsUsageSql.TryInsertRawUsageFact, Does.Contain("WITH (UPDLOCK, HOLDLOCK)"))
@@ -213,12 +215,79 @@ type OperationsUsageStorageTests() =
                 Assert.That(lowerPoolPlan.Aggregate.Key, Is.Not.EqualTo(mixedPoolPlan.Aggregate.Key)))
         )
 
+    /// Verifies facts that exceed SQL column widths are rejected before SQL Server can truncate them.
+    [<Test>]
+    member _.PersistencePlanRejectsSqlBoundStringOverflows() =
+        let overlongCorrelationId = CorrelationId(String('c', OperationsUsageSql.CorrelationIdMaxLength + 1))
+
+        let overlongStoragePoolId = StoragePoolId(String('s', OperationsUsageSql.StoragePoolIdMaxLength + 1))
+
+        let fact =
+            UsageFact.RepositoryStorageBytesMinute(
+                Guid.Parse("56565656-5656-5656-5656-565656565656"),
+                overlongCorrelationId,
+                OperationsUsageStorageTestData.ownerId,
+                OperationsUsageStorageTestData.organizationId,
+                OperationsUsageStorageTestData.repositoryId,
+                overlongStoragePoolId,
+                1L,
+                Instant.FromUtc(2026, 7, 4, 12, 37, 0)
+            )
+
+        match UsageFactPersistencePlan.tryCreate fact with
+        | Ok _ -> Assert.Fail("Overlong SQL-bound fact fields should be rejected before persistence.")
+        | Error errors ->
+            let errorText = String.Join("|", errors)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(errorText, Does.Contain($"CorrelationId must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer"))
+
+                    Assert.That(errorText, Does.Contain($"Resource.StoragePoolId must be {OperationsUsageSql.StoragePoolIdMaxLength} characters or fewer")))
+            )
+
     /// Verifies the production SQL transaction scope satisfies the store dependency.
     [<Test>]
     member _.SqlTransactionScopeImplementsOperationsUsageTransactionScope() =
         let transactionScope = SqlOperationsUsageTransactionScope "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsTests;Integrated Security=true;"
 
         Assert.That(transactionScope, Is.InstanceOf<IOperationsUsageTransactionScope>())
+
+    /// Verifies default schema initialization uses the configured target database without requiring `master`.
+    [<Test>]
+    member _.DefaultSchemaBootstrapUsesTargetDatabaseConnectionOnly() =
+        let plan =
+            OperationsUsageSchemaBootstrapPlan.create
+                "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                OperationsUsageSchemaBootstrapMode.TargetDatabaseOnly
+
+        let schemaBuilder = Microsoft.Data.SqlClient.SqlConnectionStringBuilder(plan.SchemaConnectionString)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(plan.TargetDatabaseName, Is.EqualTo(Some "GraceOperations"))
+                Assert.That(schemaBuilder.InitialCatalog, Is.EqualTo("GraceOperations"))
+                Assert.That(plan.DatabaseCreationConnectionString, Is.EqualTo(None)))
+        )
+
+    /// Verifies database creation remains available only when an admin bootstrap mode is explicitly selected.
+    [<Test>]
+    member _.ExplicitSchemaBootstrapUsesMasterConnectionForDatabaseCreation() =
+        let plan =
+            OperationsUsageSchemaBootstrapPlan.create
+                "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing
+
+        let creationBuilder = Microsoft.Data.SqlClient.SqlConnectionStringBuilder(plan.DatabaseCreationConnectionString.Value)
+
+        let schemaBuilder = Microsoft.Data.SqlClient.SqlConnectionStringBuilder(plan.SchemaConnectionString)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(plan.TargetDatabaseName, Is.EqualTo(Some "GraceOperations"))
+                Assert.That(creationBuilder.InitialCatalog, Is.EqualTo("master"))
+                Assert.That(schemaBuilder.InitialCatalog, Is.EqualTo("GraceOperations")))
+        )
 
     /// Verifies a first usage fact inserts a raw row and increments the expected aggregate minute.
     [<Test>]

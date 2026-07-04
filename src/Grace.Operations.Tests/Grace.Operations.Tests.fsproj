@@ -15,6 +15,7 @@
   <ItemGroup>
     <Compile Include="OperationsSkeleton.Tests.fs" />
     <Compile Include="OperationsUsageStorage.Tests.fs" />
+    <Compile Include="OperationsWorkerIngestion.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
@@ -34,9 +35,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <ProjectReference Include="..\Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj" />
     <ProjectReference Include="..\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
     <ProjectReference Include="..\Grace.Operations.Worker\Grace.Operations.Worker.fsproj" />
     <ProjectReference Include="..\Grace.Operations\Grace.Operations.fsproj" />
+    <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
+    <ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

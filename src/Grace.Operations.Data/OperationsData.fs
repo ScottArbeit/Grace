@@ -54,6 +54,51 @@ type UsageFactPersistenceStatus =
 /// Reports the outcome of transactionally storing a usage fact.
 type UsageFactPersistenceResult = { Status: UsageFactPersistenceStatus; UsageFactId: UsageFactId; Aggregate: UsageAggregateMinute option }
 
+/// Chooses whether schema initialization may connect to `master` to create the operations database.
+type OperationsUsageSchemaBootstrapMode =
+
+    /// Opens only the configured target database, which supports least-privilege users without `master` access.
+    | TargetDatabaseOnly = 1
+
+    /// Opens `master` first to create the configured target database when an admin bootstrap caller opts in.
+    | CreateDatabaseIfMissing = 2
+
+/// Describes the SQL connections needed for an operations usage schema initialization pass.
+type internal OperationsUsageSchemaBootstrapPlan =
+    {
+        TargetDatabaseName: string option
+        SchemaConnectionString: string
+        DatabaseCreationConnectionString: string option
+    }
+
+/// Builds schema initialization plans without opening SQL connections.
+[<RequireQualifiedAccess>]
+module internal OperationsUsageSchemaBootstrapPlan =
+
+    /// Creates a plan that uses the target database by default and connects to `master` only for explicit bootstrap.
+    let create connectionString mode =
+        let builder = SqlConnectionStringBuilder(connectionString)
+
+        let targetDatabaseName =
+            if String.IsNullOrWhiteSpace builder.InitialCatalog then
+                None
+            else
+                Some builder.InitialCatalog
+
+        let databaseCreationConnectionString =
+            match mode, targetDatabaseName with
+            | OperationsUsageSchemaBootstrapMode.CreateDatabaseIfMissing, Some _ ->
+                let masterBuilder = SqlConnectionStringBuilder(connectionString)
+                masterBuilder.InitialCatalog <- "master"
+                Some masterBuilder.ConnectionString
+            | _ -> None
+
+        {
+            TargetDatabaseName = targetDatabaseName
+            SchemaConnectionString = connectionString
+            DatabaseCreationConnectionString = databaseCreationConnectionString
+        }
+
 /// Provides SQL Server schema and command text for the operations usage fact tables.
 [<RequireQualifiedAccess>]
 module OperationsUsageSql =
@@ -74,9 +119,28 @@ module OperationsUsageSql =
     [<Literal>]
     let CaseSensitiveStoragePoolIdCollation = "Latin1_General_100_BIN2"
 
+    /// Limits correlation identifiers to the raw fact column width used by the operations store.
+    [<Literal>]
+    let CorrelationIdMaxLength = 200
+
+    /// Limits storage-pool identifiers to the aggregate key column width used by the operations store.
+    [<Literal>]
+    let StoragePoolIdMaxLength = 256
+
     /// Creates the operations schema when it is absent.
     [<Literal>]
     let CreateSchema = "IF SCHEMA_ID(N'ops') IS NULL EXEC(N'CREATE SCHEMA ops');"
+
+    /// Creates the configured operations database when SQL Server does not already contain it.
+    [<Literal>]
+    let CreateDatabaseIfMissing =
+        """
+IF DB_ID(@DatabaseName) IS NULL
+BEGIN
+    DECLARE @CreateDatabaseSql nvarchar(max) = N'CREATE DATABASE ' + QUOTENAME(@DatabaseName);
+    EXEC(@CreateDatabaseSql);
+END;
+"""
 
     /// Creates `ops.RawUsageFact` with `UsageFactId` as the durable dedupe key.
     [<Literal>]
@@ -226,36 +290,47 @@ module UsageFactPersistencePlan =
         match UsageFact.Validate fact with
         | Error errors -> Error errors
         | Ok () ->
-            let bucketStart = bucketObservedAt fact.ObservedAt
+            let errors = ResizeArray<string>()
 
-            let rawFact =
-                {
-                    UsageFactId = fact.UsageFactId
-                    CorrelationId = fact.CorrelationId
-                    FactKind = fact.FactKind
-                    OwnerId = fact.Scope.OwnerId
-                    OrganizationId = fact.Scope.OrganizationId
-                    RepositoryId = fact.Scope.RepositoryId
-                    StoragePoolId = fact.Resource.StoragePoolId
-                    Quantity = fact.Quantity
-                    ObservedAt = bucketStart
-                }
+            if fact.CorrelationId.Length > OperationsUsageSql.CorrelationIdMaxLength then
+                errors.Add($"CorrelationId must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer for operations SQL storage.")
 
-            let aggregate =
-                {
-                    Key =
-                        {
-                            FactKind = fact.FactKind
-                            OwnerId = fact.Scope.OwnerId
-                            OrganizationId = fact.Scope.OrganizationId
-                            RepositoryId = fact.Scope.RepositoryId
-                            StoragePoolId = fact.Resource.StoragePoolId
-                            BucketStart = bucketStart
-                        }
-                    Quantity = fact.Quantity
-                }
+            if fact.Resource.StoragePoolId.Length > OperationsUsageSql.StoragePoolIdMaxLength then
+                errors.Add($"Resource.StoragePoolId must be {OperationsUsageSql.StoragePoolIdMaxLength} characters or fewer for operations SQL storage.")
 
-            Ok { RawFact = rawFact; Aggregate = aggregate }
+            if errors.Count > 0 then
+                Error(List.ofSeq errors)
+            else
+                let bucketStart = bucketObservedAt fact.ObservedAt
+
+                let rawFact =
+                    {
+                        UsageFactId = fact.UsageFactId
+                        CorrelationId = fact.CorrelationId
+                        FactKind = fact.FactKind
+                        OwnerId = fact.Scope.OwnerId
+                        OrganizationId = fact.Scope.OrganizationId
+                        RepositoryId = fact.Scope.RepositoryId
+                        StoragePoolId = fact.Resource.StoragePoolId
+                        Quantity = fact.Quantity
+                        ObservedAt = bucketStart
+                    }
+
+                let aggregate =
+                    {
+                        Key =
+                            {
+                                FactKind = fact.FactKind
+                                OwnerId = fact.Scope.OwnerId
+                                OrganizationId = fact.Scope.OrganizationId
+                                RepositoryId = fact.Scope.RepositoryId
+                                StoragePoolId = fact.Resource.StoragePoolId
+                                BucketStart = bucketStart
+                            }
+                        Quantity = fact.Quantity
+                    }
+
+                Ok { RawFact = rawFact; Aggregate = aggregate }
 
 /// Represents the commands available inside one durable operations usage transaction.
 type IOperationsUsageTransaction =
@@ -299,12 +374,12 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
     /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
     let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
         addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
-        addStringParameter command "@CorrelationId" 200 rawFact.CorrelationId
+        addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
         addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
         addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
         addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
         addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
-        addStringParameter command "@StoragePoolId" 256 rawFact.StoragePoolId
+        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
 
@@ -314,7 +389,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addParameter command "@OwnerId" SqlDbType.UniqueIdentifier aggregate.Key.OwnerId
         addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier aggregate.Key.OrganizationId
         addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier aggregate.Key.RepositoryId
-        addStringParameter command "@StoragePoolId" 256 aggregate.Key.StoragePoolId
+        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength aggregate.Key.StoragePoolId
         addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (toUtcDateTime aggregate.Key.BucketStart)
         addParameter command "@Quantity" SqlDbType.BigInt aggregate.Quantity
 
@@ -374,6 +449,60 @@ type SqlOperationsUsageTransactionScope(connectionString: string) =
                     do! rollbackIgnoringFailuresAsync transaction
                     return raise ex
             }
+
+/// Ensures the operations usage SQL schema exists before ingestion starts consuming durable messages.
+type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsUsageSchemaBootstrapMode) =
+
+    /// Describes whether this schema pass is target-only or explicit admin bootstrap.
+    let bootstrapMode = defaultArg bootstrapMode OperationsUsageSchemaBootstrapMode.TargetDatabaseOnly
+
+    /// Captures the connection strings used by this schema pass without opening SQL connections.
+    let bootstrapPlan = OperationsUsageSchemaBootstrapPlan.create connectionString bootstrapMode
+
+    /// Opens the SQL connection used for one schema initialization pass.
+    let openConnectionAsync databaseConnectionString cancellationToken =
+        task {
+            let connection = new SqlConnection(databaseConnectionString)
+            do! connection.OpenAsync cancellationToken
+            return connection
+        }
+
+    /// Executes a schema command against the operations database.
+    let executeCommandAsync (connection: SqlConnection) commandText cancellationToken =
+        task {
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- commandText
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
+    /// Creates the configured operations database when the connection string points at a database that is absent.
+    let ensureDatabaseCreatedAsync cancellationToken =
+        task {
+            match bootstrapPlan.DatabaseCreationConnectionString, bootstrapPlan.TargetDatabaseName with
+            | Some databaseCreationConnectionString, Some databaseName ->
+                use! connection = openConnectionAsync databaseCreationConnectionString cancellationToken
+                use command = connection.CreateCommand()
+                command.CommandType <- CommandType.Text
+                command.CommandText <- OperationsUsageSql.CreateDatabaseIfMissing
+
+                let parameter = command.Parameters.Add("@DatabaseName", SqlDbType.NVarChar, 128)
+                parameter.Value <- databaseName
+                let! _ = command.ExecuteNonQueryAsync cancellationToken
+                return ()
+            | _ -> return ()
+        }
+
+    /// Creates the operations usage schema, raw fact table, and minute aggregate table when they are absent.
+    member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
+        task {
+            do! ensureDatabaseCreatedAsync cancellationToken
+            use! connection = openConnectionAsync bootstrapPlan.SchemaConnectionString cancellationToken
+            do! executeCommandAsync connection OperationsUsageSql.CreateSchema cancellationToken
+            do! executeCommandAsync connection OperationsUsageSql.CreateRawUsageFactTable cancellationToken
+            do! executeCommandAsync connection OperationsUsageSql.CreateUsageAggregateMinuteTable cancellationToken
+        }
 
 /// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
 type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
