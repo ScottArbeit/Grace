@@ -579,6 +579,7 @@ module AspireTestHost =
                 if not skipServiceBus then
                     Constants.EnvironmentVariables.AzureServiceBusConnectionString
                     Constants.EnvironmentVariables.AzureServiceBusTopic
+                    Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
                     Constants.EnvironmentVariables.AzureServiceBusSubscription
             ]
 

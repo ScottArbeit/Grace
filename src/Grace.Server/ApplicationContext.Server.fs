@@ -43,6 +43,14 @@ open Microsoft.AspNetCore.SignalR
 /// Contains Grace Server application context behavior and supporting helpers.
 module ApplicationContext =
 
+    /// Environment variable that acknowledges the durable operational facts processor subscription exists.
+    [<Literal>]
+    let private AzureServiceBusOperationalFactsProcessorSubscription = "grace__azure_service_bus__operational_facts_processor_subscription"
+
+    /// Fixed Service Bus subscription that consumes immutable operational usage facts.
+    [<Literal>]
+    let private OperationalFactsProcessorSubscriptionName = "operational-facts-processor"
+
     let mutable private configuration: IConfiguration = null
     let Configuration () : IConfiguration = configuration
     let mutable private log: ILogger = null
@@ -206,13 +214,6 @@ module ApplicationContext =
         let azureServiceBusSettings =
             if system = GracePubSubSystem.AzureServiceBus then
                 let serviceBusConnectionString = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusConnectionString
-
-                if not
-                   <| AzureEnvironment.useManagedIdentityForServiceBus then
-                    if String.IsNullOrWhiteSpace(serviceBusConnectionString) then
-                        invalidOp
-                            $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus} and you're not using a managed identity."
-
                 let sb_namespace = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusNamespace
 
                 if String.IsNullOrWhiteSpace(sb_namespace) then
@@ -225,19 +226,45 @@ module ApplicationContext =
                     invalidOp
                         $"Environment variable '{EnvironmentVariables.AzureServiceBusTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
+                let operationalFactsTopic = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+
+                if String.IsNullOrWhiteSpace(operationalFactsTopic) then
+                    invalidOp
+                        $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
+
+                if String.Equals(topic.Trim(), operationalFactsTopic.Trim(), StringComparison.OrdinalIgnoreCase) then
+                    invalidOp
+                        $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path."
+
+                let operationalFactsProcessorSubscription =
+                    match Environment.GetEnvironmentVariable AzureServiceBusOperationalFactsProcessorSubscription with
+                    | null -> String.Empty
+                    | value -> value.Trim()
+
+                if not (String.Equals(operationalFactsProcessorSubscription, OperationalFactsProcessorSubscriptionName, StringComparison.Ordinal)) then
+                    invalidOp
+                        $"Environment variable '{AzureServiceBusOperationalFactsProcessorSubscription}' must be set to '{OperationalFactsProcessorSubscriptionName}' when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}, after confirming topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' has that durable subscription."
+
                 let subscription = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusSubscription
 
                 if String.IsNullOrWhiteSpace(subscription) then
                     invalidOp
                         $"Environment variable '{EnvironmentVariables.AzureServiceBusSubscription}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
+                let useManagedIdentity = AzureEnvironment.useManagedIdentityForServiceBus
+
+                if
+                    not useManagedIdentity
+                    && String.IsNullOrWhiteSpace(serviceBusConnectionString)
+                then
+                    invalidOp
+                        $"Environment variable '{EnvironmentVariables.AzureServiceBusConnectionString}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus} and you're not using a managed identity."
+
                 let fullyQualifiedNamespace =
                     AzureEnvironment.tryGetServiceBusFullyQualifiedNamespace ()
                     |> Option.defaultWith (fun () ->
                         invalidOp
                             $"Environment variable '{EnvironmentVariables.AzureServiceBusNamespace}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}.")
-
-                let useManagedIdentity = AzureEnvironment.useManagedIdentityForServiceBus
 
                 Some
                     {
