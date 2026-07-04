@@ -147,14 +147,16 @@ module WatchTests =
 
     /// Builds a healthy live Watch status snapshot for IPC compatibility tests.
     let private liveWatchStatus rootDirectoryId : Services.GraceWatchStatus =
+        let current = Current()
+
         {
             UpdatedAt = getCurrentInstant ()
             IsStartupClaim = false
-            RepositoryId = RepositoryId.Empty
-            RepositoryName = RepositoryName String.Empty
-            BranchId = BranchId.Empty
-            BranchName = BranchName String.Empty
-            RootDirectory = Environment.CurrentDirectory
+            RepositoryId = current.RepositoryId
+            RepositoryName = RepositoryName current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = BranchName current.BranchName
+            RootDirectory = current.RootDirectory
             HasPendingWatchWork = false
             IsWorkingTreeClean = true
             RootDirectoryId = rootDirectoryId
@@ -356,6 +358,12 @@ module WatchTests =
             Environment.CurrentDirectory <- tempDir
             Services.parseResult <- GraceCommand.rootCommand.Parse(Array.empty<string>)
             resetConfiguration ()
+            let configuration = Current()
+            configuration.RepositoryId <- Guid.NewGuid()
+            configuration.RepositoryName <- "watch-test-repository"
+            configuration.BranchId <- Guid.NewGuid()
+            configuration.BranchName <- "watch-test-branch"
+            configuration.RootDirectory <- tempDir
             Services.graceWatchStatusUpdateTime <- Instant.MinValue
             Services.clearWorkingDirectoryWriteTimesForWatchRescan ()
             deleteWatchStatusFileIfExists ()
@@ -5716,9 +5724,9 @@ module WatchTests =
             readWatchStatusJsonStringProperty "RootDirectory"
             |> should equal root)
 
-    /// Verifies that startup claim recognizes fresh legacy IPC instead of overwriting a live Watch file.
+    /// Verifies that startup claim can replace legacy IPC that lacks current identity authority.
     [<Test>]
-    let ``watch startup claim preserves fresh legacy status`` () =
+    let ``watch startup claim replaces fresh legacy status without current identity`` () =
         withTempRepo (fun _ ->
             let rootDirectoryId = Guid.NewGuid()
 
@@ -5740,14 +5748,13 @@ module WatchTests =
                     .tryClaimGraceWatchInterprocessFile()
                     .Result
 
-            claimed |> should equal false
+            claimed |> should equal true
 
             File.ReadAllText(ipcFileName)
-            |> should equal legacyJson
+            |> should not' (equal legacyJson)
 
             Services.getGraceWatchStatus().Result
-            |> Option.isSome
-            |> should equal true)
+            |> should equal None)
 
     /// Verifies that fresh Watch IPC from another repository identity does not block startup for the current worktree.
     [<Test>]
@@ -6521,7 +6528,9 @@ module WatchTests =
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
             |> should equal true
 
-            Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests status Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
 
             readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
             |> should equal false
@@ -7070,9 +7079,9 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
-    /// Verifies that legacy watch status json without compact runtime or clean fields remains readable.
+    /// Verifies that legacy watch status json without identity remains readable but cannot grant clean authority.
     [<Test>]
-    let ``watch status reads legacy json without runtime mode or clean fields`` () =
+    let ``watch status reads legacy json without identity as non-authoritative`` () =
         withTempRepo (fun _ ->
             let rootDirectoryId = Guid.NewGuid()
 
@@ -7117,22 +7126,21 @@ module WatchTests =
 
             File.WriteAllText(ipcFileName, legacyJson)
 
-            match Services.getGraceWatchStatus().Result with
-            | Some status ->
-                status.RootDirectoryId
-                |> should equal rootDirectoryId
+            let inspection = Services.inspectGraceWatchStatus().Result
 
-                status.Mode
-                |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+            inspection.Status
+            |> Option.isSome
+            |> should equal true
 
-                safetyFlagSet status
-                |> Set.contains "incrementalSafe"
-                |> should equal true
+            inspection.IsUsable |> should equal false
 
-                status.IsWorkingTreeClean |> should equal true
+            inspection.SafetyFlags
+            |> Set.ofArray
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
 
-                status.HasPendingWatchWork |> should equal false
-            | None -> Assert.Fail("Expected legacy watch status JSON to remain usable."))
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
 
     /// Verifies that incomplete watch status requests explicit resync instead of advertising incremental safety.
     [<Test>]
@@ -7887,6 +7895,106 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
+    /// Verifies that a newer Grace Status refresh observed during publication survives for the next timer pass.
+    [<Test>]
+    let ``newer status refresh observed during clean publication remains pending`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            Watch.setGraceStatusHasChangedForWatchTests true
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "refresh-race-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "refresh-race-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            /// Tracks IPC writes so the concurrent refresh can force a dirty retry publication.
+            let mutable updateCalls = 0
+
+            /// Publishes IPC and observes a newer Grace Status DB refresh during the first clean attempt.
+            let updateIpc publishedStatus publishedDirectoryIds =
+                updateCalls <- updateCalls + 1
+
+                if updateCalls = 1 then Watch.setGraceStatusHasChangedForWatchTests true
+
+                Services.updateGraceWatchInterprocessFile publishedStatus publishedDirectoryIds
+
+            (Watch.publishGraceStatusRefreshSnapshotForWatchTests status updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            updateCalls |> should equal 2
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal true
+
+            let persistedStatus = Services.inspectGraceWatchStatus().Result.Status
+
+            match persistedStatus with
+            | Some watchStatus ->
+                watchStatus.HasPendingWatchWork
+                |> should equal true
+
+                watchStatus.IsWorkingTreeClean
+                |> should equal false
+
+                watchStatus.DirectoryIds.SetEquals(directoryIds)
+                |> should equal true
+            | None -> Assert.Fail("Expected dirty retry Watch IPC after concurrent refresh."))
+
+    /// Verifies that clean and dirty transition publication reads do not replace the timer pass's in-flight state.
+    [<Test>]
+    let ``pending work transition publication does not mutate in-flight status`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let inFlightStatus =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "in-flight-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "in-flight-root-blake3"
+                }
+
+            let transitionStatus =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "transition-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "transition-root-blake3"
+                }
+
+            let inFlightRootDirectoryId = inFlightStatus.RootDirectoryId
+            let transitionRootDirectoryId = transitionStatus.RootDirectoryId
+            let inFlightDirectoryIds = HashSet<DirectoryVersionId>(inFlightStatus.Index.Keys)
+
+            Watch.setGraceStatusForWatchTests inFlightStatus
+            Watch.updateGraceStatusDirectoryIds inFlightStatus
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(transitionStatus))
+
+            (Services.updateGraceWatchInterprocessFile inFlightStatus (Some inFlightDirectoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.setGraceStatusHasChangedForWatchTests true
+            Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+            Watch.graceStatusForWatchTests().RootDirectoryId
+            |> should equal inFlightRootDirectoryId
+
+            Watch
+                .graceStatusDirectoryIdsForWatchTests()
+                .SetEquals(inFlightDirectoryIds)
+            |> should equal true
+
+            let persistedStatus = Services.inspectGraceWatchStatus().Result.Status
+
+            match persistedStatus with
+            | Some watchStatus ->
+                watchStatus.RootDirectoryId
+                |> should equal transitionRootDirectoryId
+
+                watchStatus.HasPendingWatchWork
+                |> should equal true
+            | None -> Assert.Fail("Expected transition IPC to publish from the local transition read."))
+
     /// Verifies that overflow during an in-flight upload cancels normal status application.
     [<Test>]
     let ``overflow during upload prevents stale observation commit`` () =
@@ -8353,6 +8461,72 @@ module WatchTests =
 
                 Services.getGraceWatchStatus().Result
                 |> should equal None)
+
+    /// Verifies that persisted repository and branch ids are the authoritative Watch IPC identity.
+    [<Test>]
+    let ``watch status accepts current ids with stale display names`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { liveWatchStatus rootDirectoryId with
+                    RepositoryId = currentRepositoryId
+                    RepositoryName = RepositoryName "stale-repo-name"
+                    BranchId = currentBranchId
+                    BranchName = BranchName "stale-branch-name"
+                    RootDirectory = root
+                }
+
+            writeWatchStatusJsonWithRuntimeSurface status
+            |> ignore
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            inspection.HasCurrentRepositoryIdentity
+            |> should equal true
+
+            inspection.IsUsable |> should equal true
+
+            Services.getGraceWatchStatus().Result
+            |> Option.isSome
+            |> should equal true)
+
+    /// Verifies that stale non-empty ids cannot be rescued by matching display names.
+    [<Test>]
+    let ``watch status rejects mismatched ids even when display names match`` () =
+        withTempRepo (fun root ->
+            configureCurrentWatchIdentity root "current-repo" "current-branch"
+            |> ignore
+
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { liveWatchStatus rootDirectoryId with
+                    RepositoryId = Guid.NewGuid()
+                    RepositoryName = RepositoryName "current-repo"
+                    BranchId = Guid.NewGuid()
+                    BranchName = BranchName "current-branch"
+                    RootDirectory = root
+                }
+
+            writeWatchStatusJsonWithRuntimeSurface status
+            |> ignore
+
+            let inspection = Services.inspectGraceWatchStatus().Result
+
+            inspection.HasCurrentRepositoryIdentity
+            |> should equal false
+
+            inspection.IsUsable |> should equal false
+
+            inspection.SafetyFlags
+            |> Set.ofArray
+            |> Set.contains "cleanWorkingTree"
+            |> should equal false
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
 
     /// Verifies that persisted HealthyIncremental mode cannot override missing derived root and directory data.
     [<Test>]

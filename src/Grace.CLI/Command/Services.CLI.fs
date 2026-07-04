@@ -306,7 +306,7 @@ module Services =
 
                 let rootDirectoryMatchesCurrent =
                     if String.IsNullOrWhiteSpace(status.RootDirectory) then
-                        true
+                        false
                     else
                         try
                             watchRootDirectoriesMatchWithComparison
@@ -316,14 +316,22 @@ module Services =
                         with
                         | _ -> false
 
-                (status.RepositoryId = RepositoryId.Empty
-                 || status.RepositoryId = current.RepositoryId)
-                && (String.IsNullOrWhiteSpace(string status.RepositoryName)
-                    || String.Equals(string status.RepositoryName, current.RepositoryName, StringComparison.OrdinalIgnoreCase))
-                && (status.BranchId = BranchId.Empty
-                    || status.BranchId = current.BranchId)
-                && (String.IsNullOrWhiteSpace(string status.BranchName)
-                    || String.Equals(string status.BranchName, current.BranchName, StringComparison.OrdinalIgnoreCase))
+                let repositoryIdentityMatches =
+                    if status.RepositoryId <> RepositoryId.Empty then
+                        status.RepositoryId = current.RepositoryId
+                    else
+                        not (String.IsNullOrWhiteSpace(string status.RepositoryName))
+                        && String.Equals(string status.RepositoryName, current.RepositoryName, StringComparison.OrdinalIgnoreCase)
+
+                let branchIdentityMatches =
+                    if status.BranchId <> BranchId.Empty then
+                        status.BranchId = current.BranchId
+                    else
+                        not (String.IsNullOrWhiteSpace(string status.BranchName))
+                        && String.Equals(string status.BranchName, current.BranchName, StringComparison.OrdinalIgnoreCase)
+
+                repositoryIdentityMatches
+                && branchIdentityMatches
                 && rootDirectoryMatchesCurrent
             | _ -> false
 
@@ -341,10 +349,11 @@ module Services =
         /// Reports whether live Watch state has enough persisted identity to be preserved by another command.
         member this.HasCurrentLiveWatchStateIdentity =
             match this.Status, this.EffectiveMode with
-            | Some status, Some _ ->
+            | Some _, Some effectiveMode ->
                 this.HasCurrentRepositoryIdentity
-                && (not (String.IsNullOrWhiteSpace(status.RootDirectory))
-                    || this.HasLegacyLiveWatchStateIdentity)
+                || (effectiveMode
+                    <> GraceWatchRuntimeMode.HealthyIncremental
+                    && this.HasLegacyLiveWatchStateIdentity)
             | _ -> false
 
         /// Reports whether the IPC snapshot can serve trusted incremental shortcuts.
