@@ -707,15 +707,83 @@ module WatchTests =
                 |> should equal true
             | None -> Assert.Fail("Expected branch B Watch IPC status after transition completion.")
 
-            let branchAJson = File.ReadAllText(branchAIpc)
+            branchAIpc |> File.Exists |> should equal false
 
-            use branchADocument = JsonDocument.Parse(branchAJson)
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            Current() |> ignore
 
-            branchADocument
-                .RootElement
-                .GetProperty("BranchId")
-                .GetString()
-            |> should equal $"{branchAId}")
+            let branchAInspection = Services.inspectGraceWatchStatus().Result
+
+            branchAInspection.Exists |> should equal false
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
+    /// Verifies that repeated same-process branch transitions rebind marker observation to each refreshed branch.
+    [<Test>]
+    let ``update marker deletion rebinds marker watcher for repeated branch transitions`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let repositoryName = "transition-rebind-repo"
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let branchCId = Guid.NewGuid()
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let branchCName = "branch-c"
+            let statusB = graceStatusTracking Array.empty<string> Array.empty<string>
+            let statusC = graceStatusTracking Array.empty<string> Array.empty<string>
+            let reboundMarkerFiles = ResizeArray<string>()
+
+            try
+                Watch.setUpdateMarkerWatcherRebindForWatchTests (fun () -> reboundMarkerFiles.Add(Services.updateInProgressFileName ()))
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+                writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+                resetConfiguration ()
+                Current() |> ignore
+
+                let statusA = graceStatusTracking Array.empty<string> Array.empty<string>
+                let branchAIpc = Services.IpcFileName()
+
+                (Services.updateGraceWatchInterprocessFile statusA (Some(HashSet<DirectoryVersionId>(statusA.Index.Keys))))
+                    .GetAwaiter()
+                    .GetResult()
+
+                branchAIpc |> File.Exists |> should equal true
+
+                writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+                Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+
+                let branchAMarker = Services.updateInProgressFileName ()
+
+                recordCompletedUpdateMarkerDeletion branchAMarker DateTime.UtcNow
+
+                let branchBMarker = Services.updateInProgressFileName ()
+                let branchBIpc = Services.IpcFileName()
+
+                branchAIpc |> File.Exists |> should equal false
+                branchBIpc |> File.Exists |> should equal true
+
+                reboundMarkerFiles.ToArray()
+                |> should equal [| branchBMarker |]
+
+                writeRepositoryConfiguration root repositoryId repositoryName branchCId branchCName
+                Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusC))
+
+                recordCompletedUpdateMarkerDeletion branchBMarker DateTime.UtcNow
+
+                let branchCMarker = Services.updateInProgressFileName ()
+                let branchCIpc = Services.IpcFileName()
+
+                branchBIpc |> File.Exists |> should equal false
+                branchCIpc |> File.Exists |> should equal true
+
+                reboundMarkerFiles.ToArray()
+                |> should equal [| branchBMarker; branchCMarker |]
+            finally
+                Watch.resetUpdateMarkerWatcherRebindForWatchTests ())
 
     /// Verifies that incoherent refreshed state cannot advertise healthy incremental status after marker deletion.
     [<Test>]
