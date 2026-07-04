@@ -31,6 +31,7 @@ open System.Reflection
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Threading.Tasks
 open System.Reactive.Linq
 open System.Threading
@@ -390,6 +391,7 @@ module Services =
 
     let mutable graceWatchStatusUpdateTime = Instant.MinValue
     let mutable private graceWatchHasPendingWorkForStatus = 0
+    let private graceWatchStatusWriteGate = new SemaphoreSlim(1, 1)
     let mutable parseResult: ParseResult = null
     let mutable private invocationCorrelationId: CorrelationId option = None
 
@@ -402,6 +404,27 @@ module Services =
     let private hasGraceWatchPendingWorkForStatus () =
         Volatile.Read(&graceWatchHasPendingWorkForStatus)
         <> 0
+
+    /// Restores the clean/no-pending JSON fields omitted by Watch IPC snapshots before explicit clean fields existed.
+    let private normalizeLegacyGraceWatchCleanFields (json: string) =
+        try
+            use document = JsonDocument.Parse(json)
+            let mutable pendingElement = Unchecked.defaultof<JsonElement>
+            let mutable cleanElement = Unchecked.defaultof<JsonElement>
+
+            let hasPendingField = document.RootElement.TryGetProperty("HasPendingWatchWork", &pendingElement)
+
+            let hasCleanField = document.RootElement.TryGetProperty("IsWorkingTreeClean", &cleanElement)
+
+            if not hasPendingField && not hasCleanField then
+                let statusNode = JsonNode.Parse(json).AsObject()
+                statusNode["HasPendingWatchWork"] <- JsonValue.Create(false)
+                statusNode["IsWorkingTreeClean"] <- JsonValue.Create(true)
+                statusNode.ToJsonString(Constants.JsonSerializerOptions)
+            else
+                json
+        with
+        | _ -> json
 
     /// Coordinates directory version preimage entries behavior for this CLI command path.
     let private directoryVersionPreimageEntries (directories: seq<LocalDirectoryVersion>) (files: seq<LocalFileVersion>) =
@@ -2288,7 +2311,9 @@ module Services =
             if System.IO.File.Exists(IpcFileName()) then
                 try
                     let json = System.IO.File.ReadAllText(IpcFileName())
-                    let status = deserialize<GraceWatchStatus> json
+
+                    let normalizedJson = normalizeLegacyGraceWatchCleanFields json
+                    let status = deserialize<GraceWatchStatus> normalizedJson
 
                     return
                         {
@@ -2379,8 +2404,8 @@ module Services =
         && not graceWatchStatus.IsStartupClaim
         && graceWatchStatus.Mode = GraceWatchRuntimeMode.HealthyIncremental
 
-    /// Writes grace watch status data through the CLI output contract with an optional runtime-mode override.
-    let private writeGraceWatchStatusWithPersistedMode persistedModeOverride fileMode graceWatchStatus =
+    /// Writes Grace Watch IPC JSON to disk after the caller has acquired the status write gate.
+    let private writeGraceWatchStatusWithPersistedModeCore persistedModeOverride fileMode graceWatchStatus =
         task {
             Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
             |> ignore
@@ -2394,6 +2419,17 @@ module Services =
             graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
         }
 
+    /// Writes grace watch status data through the CLI output contract with an optional runtime-mode override.
+    let private writeGraceWatchStatusWithPersistedMode persistedModeOverride fileMode graceWatchStatus =
+        task {
+            do! graceWatchStatusWriteGate.WaitAsync()
+
+            try
+                do! writeGraceWatchStatusWithPersistedModeCore persistedModeOverride fileMode graceWatchStatus
+            finally
+                graceWatchStatusWriteGate.Release() |> ignore
+        }
+
     /// Writes Grace Watch IPC status without forcing a compact runtime mode override.
     let private writeGraceWatchStatus fileMode graceWatchStatus = writeGraceWatchStatusWithPersistedMode None fileMode graceWatchStatus
 
@@ -2405,11 +2441,17 @@ module Services =
         =
         task {
             try
-                let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
-                //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
-                //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
+                do! graceWatchStatusWriteGate.WaitAsync()
 
-                do! writeGraceWatchStatusWithPersistedMode persistedModeOverride FileMode.Create newGraceWatchStatus
+                try
+                    let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
+                    //logToAnsiConsole Colors.Important $"In updateGraceWatchStatus. newGraceWatchStatus.UpdatedAt: {newGraceWatchStatus.UpdatedAt.ToString(InstantPattern.ExtendedIso.PatternText, CultureInfo.InvariantCulture)}."
+                    //logToAnsiConsole Colors.Highlighted $"{Markup.Escape(EnhancedStackTrace.Current().ToString())}"
+
+                    do! writeGraceWatchStatusWithPersistedModeCore persistedModeOverride FileMode.Create newGraceWatchStatus
+                finally
+                    graceWatchStatusWriteGate.Release() |> ignore
+
                 logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
             with
             | ex ->
@@ -2421,6 +2463,29 @@ module Services =
     /// Updates the contents of the `grace watch` status inter-process communication file.
     let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         updateGraceWatchInterprocessFileCore None graceStatus directoryIdsOverride
+
+    /// Exercises the gated Watch IPC write boundary after a test-controlled pending-work state change.
+    let internal updateGraceWatchInterprocessFileAfterPendingWorkProbeForWatchTests
+        beforeStatusCreation
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        task {
+            try
+                do! graceWatchStatusWriteGate.WaitAsync()
+
+                try
+                    beforeStatusCreation ()
+                    let newGraceWatchStatus = createGraceWatchStatus graceStatus directoryIdsOverride
+                    do! writeGraceWatchStatusWithPersistedModeCore None FileMode.Create newGraceWatchStatus
+                finally
+                    graceWatchStatusWriteGate.Release() |> ignore
+            with
+            | ex ->
+                logToAnsiConsole Colors.Error $"Exception in updateGraceWatchInterprocessFile."
+                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}{Environment.NewLine}{Environment.NewLine}"
+                logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+        }
 
     /// Updates Watch IPC while preserving the suspended mode that cannot be derived from the compact status payload.
     let internal updateGraceWatchInterprocessFileForSuspendedMode (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =

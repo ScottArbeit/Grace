@@ -172,6 +172,13 @@ module WatchTests =
         statusNode.Remove("SafetyFlags") |> ignore
         statusNode.ToJsonString(Constants.JsonSerializerOptions)
 
+    /// Removes the explicit clean/dirty fields so tests can simulate Watch IPC files written before issue #492.
+    let private removeExplicitWatchCleanFields (json: string) =
+        let statusNode = JsonNode.Parse(json).AsObject()
+        statusNode.Remove("HasPendingWatchWork") |> ignore
+        statusNode.Remove("IsWorkingTreeClean") |> ignore
+        statusNode.ToJsonString(Constants.JsonSerializerOptions)
+
     /// Reads safety flags into a deterministic set for assertions.
     let private safetyFlagSet (status: Services.GraceWatchStatus) = status.SafetyFlags |> Set.ofArray
 
@@ -5818,6 +5825,31 @@ module WatchTests =
             readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
             |> should equal false)
 
+    /// Verifies that Watch IPC writes recheck pending work at the serialized write boundary.
+    [<Test>]
+    let ``watch clean ipc write becomes dirty when pending work arrives at write boundary`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFileAfterPendingWorkProbeForWatchTests
+                (fun () -> Services.setGraceWatchHasPendingWorkForStatus true)
+                status
+                (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
     /// Verifies that startup catch-up publishes dirty IPC until the startup scan and apply path drains.
     [<Test>]
     let ``watch startup catch-up status is dirty before startup scan drains`` () =
@@ -6215,9 +6247,9 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
-    /// Verifies that legacy watch status json without compact runtime fields remains readable.
+    /// Verifies that legacy watch status json without compact runtime or clean fields remains readable.
     [<Test>]
-    let ``watch status reads legacy json without runtime mode fields`` () =
+    let ``watch status reads legacy json without runtime mode or clean fields`` () =
         withTempRepo (fun _ ->
             let rootDirectoryId = Guid.NewGuid()
 
@@ -6226,10 +6258,17 @@ module WatchTests =
                 |> liveWatchStatus
                 |> serialize
                 |> removeCompactWatchRuntimeSurface
+                |> removeExplicitWatchCleanFields
 
             legacyJson |> should not' (contain "Mode")
 
             legacyJson |> should not' (contain "SafetyFlags")
+
+            legacyJson
+            |> should not' (contain "HasPendingWatchWork")
+
+            legacyJson
+            |> should not' (contain "IsWorkingTreeClean")
 
             let ipcFileName = Services.IpcFileName()
 
@@ -6249,6 +6288,10 @@ module WatchTests =
                 safetyFlagSet status
                 |> Set.contains "incrementalSafe"
                 |> should equal true
+
+                status.IsWorkingTreeClean |> should equal true
+
+                status.HasPendingWatchWork |> should equal false
             | None -> Assert.Fail("Expected legacy watch status JSON to remain usable."))
 
     /// Verifies that incomplete watch status requests explicit resync instead of advertising incremental safety.
