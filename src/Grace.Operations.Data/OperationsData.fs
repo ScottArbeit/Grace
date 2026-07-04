@@ -2,8 +2,10 @@ namespace Grace.Operations.Data
 
 open Grace.Types.Common
 open Grace.Types.Usage
+open Microsoft.Data.SqlClient
 open NodaTime
 open System
+open System.Data
 open System.Threading
 open System.Threading.Tasks
 
@@ -68,6 +70,10 @@ module OperationsUsageSql =
     [<Literal>]
     let UsageAggregateMinuteTable = "ops.UsageAggregateMinute"
 
+    /// Keeps storage-pool identities case-sensitive even when the database default collation is case-insensitive.
+    [<Literal>]
+    let CaseSensitiveStoragePoolIdCollation = "Latin1_General_100_BIN2"
+
     /// Creates the operations schema when it is absent.
     [<Literal>]
     let CreateSchema = "IF SCHEMA_ID(N'ops') IS NULL EXEC(N'CREATE SCHEMA ops');"
@@ -86,7 +92,7 @@ BEGIN
         OwnerId uniqueidentifier NOT NULL,
         OrganizationId uniqueidentifier NOT NULL,
         RepositoryId uniqueidentifier NOT NULL,
-        StoragePoolId nvarchar(256) NOT NULL,
+        StoragePoolId nvarchar(256) COLLATE Latin1_General_100_BIN2 NOT NULL,
         Quantity bigint NOT NULL,
         ObservedAtUtc datetime2(7) NOT NULL,
         CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_RawUsageFact_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
@@ -107,7 +113,7 @@ BEGIN
         OwnerId uniqueidentifier NOT NULL,
         OrganizationId uniqueidentifier NOT NULL,
         RepositoryId uniqueidentifier NOT NULL,
-        StoragePoolId nvarchar(256) NOT NULL,
+        StoragePoolId nvarchar(256) COLLATE Latin1_General_100_BIN2 NOT NULL,
         BucketStartUtc datetime2(7) NOT NULL,
         Quantity bigint NOT NULL,
         UpdatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_UsageAggregateMinute_UpdatedAtUtc DEFAULT SYSUTCDATETIME(),
@@ -170,7 +176,7 @@ USING
         @OwnerId AS OwnerId,
         @OrganizationId AS OrganizationId,
         @RepositoryId AS RepositoryId,
-        @StoragePoolId AS StoragePoolId,
+        CAST(@StoragePoolId AS nvarchar(256)) COLLATE Latin1_General_100_BIN2 AS StoragePoolId,
         @BucketStartUtc AS BucketStartUtc,
         @Quantity AS Quantity
 ) AS source
@@ -265,6 +271,109 @@ type IOperationsUsageTransactionScope =
 
     /// Executes the supplied operation and commits only when it completes successfully.
     abstract ExecuteAsync<'T> : operation: (IOperationsUsageTransaction -> CancellationToken -> Task<'T>) * cancellationToken: CancellationToken -> Task<'T>
+
+/// Executes operations usage SQL commands through an already-open SQL connection and transaction.
+type private SqlOperationsUsageTransaction(connection: SqlConnection, transaction: SqlTransaction) =
+
+    /// Adds a SQL parameter and assigns either the supplied value or database null.
+    let addParameter (command: SqlCommand) name sqlDbType value =
+        let parameter = command.Parameters.Add(name, sqlDbType)
+        parameter.Value <- value
+
+    /// Adds a SQL parameter for a Grace string alias value.
+    let addStringParameter (command: SqlCommand) name length (value: string) =
+        let parameter = command.Parameters.Add(name, SqlDbType.NVarChar, length)
+        parameter.Value <- value
+
+    /// Creates a command that participates in the current operations usage transaction.
+    let createCommand commandText =
+        let command = connection.CreateCommand()
+        command.Transaction <- transaction
+        command.CommandType <- CommandType.Text
+        command.CommandText <- commandText
+        command
+
+    /// Converts a NodaTime instant to the UTC SQL timestamp shape used by operations usage tables.
+    let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
+
+    /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
+    let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
+        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+        addStringParameter command "@CorrelationId" 200 rawFact.CorrelationId
+        addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
+        addStringParameter command "@StoragePoolId" 256 rawFact.StoragePoolId
+        addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
+        addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+
+    /// Adds the aggregate parameters expected by `OperationsUsageSql.AddToUsageAggregateMinute`.
+    let addUsageAggregateMinuteParameters (command: SqlCommand) (aggregate: UsageAggregateMinute) =
+        addParameter command "@FactKind" SqlDbType.Int (int aggregate.Key.FactKind)
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier aggregate.Key.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier aggregate.Key.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier aggregate.Key.RepositoryId
+        addStringParameter command "@StoragePoolId" 256 aggregate.Key.StoragePoolId
+        addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (toUtcDateTime aggregate.Key.BucketStart)
+        addParameter command "@Quantity" SqlDbType.BigInt aggregate.Quantity
+
+    interface IOperationsUsageTransaction with
+
+        member _.TryInsertRawUsageFactAsync(rawFact, cancellationToken) =
+            task {
+                use command = createCommand OperationsUsageSql.TryInsertRawUsageFact
+                addRawUsageFactParameters command rawFact
+                let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
+                return rowsAffected = 1
+            }
+
+        member _.AddToUsageAggregateMinuteAsync(aggregate, cancellationToken) =
+            task {
+                use command = createCommand OperationsUsageSql.AddToUsageAggregateMinute
+                addUsageAggregateMinuteParameters command aggregate
+                let! _ = command.ExecuteNonQueryAsync cancellationToken
+                return ()
+            }
+
+/// Runs operations usage mutations inside a concrete Azure SQL transaction boundary.
+type SqlOperationsUsageTransactionScope(connectionString: string) =
+
+    /// Opens a SQL connection for one operations usage transaction.
+    let openConnectionAsync cancellationToken =
+        task {
+            let connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync cancellationToken
+            return connection
+        }
+
+    /// Rolls back a failed transaction while preserving the original failure when rollback also fails.
+    let rollbackIgnoringFailuresAsync (transaction: SqlTransaction) =
+        task {
+            try
+                do! transaction.RollbackAsync CancellationToken.None
+            with
+            | _ -> ()
+        }
+
+    interface IOperationsUsageTransactionScope with
+
+        member _.ExecuteAsync(operation, cancellationToken) =
+            task {
+                use! connection = openConnectionAsync cancellationToken
+                let! dbTransaction = connection.BeginTransactionAsync cancellationToken
+                use transaction = dbTransaction :?> SqlTransaction
+                let operationsTransaction = SqlOperationsUsageTransaction(connection, transaction)
+
+                try
+                    let! result = operation operationsTransaction cancellationToken
+                    do! transaction.CommitAsync cancellationToken
+                    return result
+                with
+                | ex ->
+                    do! rollbackIgnoringFailuresAsync transaction
+                    return raise ex
+            }
 
 /// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
 type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =

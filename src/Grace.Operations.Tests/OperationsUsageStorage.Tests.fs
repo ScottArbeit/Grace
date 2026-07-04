@@ -25,8 +25,24 @@ module OperationsUsageStorageTestData =
     /// Provides the storage pool used by all test usage facts.
     let storagePoolId = StoragePoolId "storage-pool-main"
 
+    /// Provides a second storage pool whose value differs only by case.
+    let storagePoolIdWithDifferentCase = StoragePoolId "Storage-Pool-Main"
+
     /// Creates a valid repository storage usage fact with deterministic scope and resource values.
     let fact usageFactId quantity observedAt =
+        UsageFact.RepositoryStorageBytesMinute(
+            usageFactId,
+            CorrelationId $"corr-{usageFactId}",
+            ownerId,
+            organizationId,
+            repositoryId,
+            storagePoolId,
+            quantity,
+            observedAt
+        )
+
+    /// Creates a valid repository storage usage fact with an explicit storage-pool identity.
+    let factForStoragePool usageFactId storagePoolId quantity observedAt =
         UsageFact.RepositoryStorageBytesMinute(
             usageFactId,
             CorrelationId $"corr-{usageFactId}",
@@ -147,6 +163,62 @@ type OperationsUsageStorageTests() =
                 Assert.That(OperationsUsageSql.CreateUsageAggregateMinuteTable, Does.Contain("ops.UsageAggregateMinute"))
                 Assert.That(OperationsUsageSql.AddToUsageAggregateMinute, Does.Contain("MERGE ops.UsageAggregateMinute WITH (HOLDLOCK)")))
         )
+
+    /// Verifies SQL storage-pool keys stay case-sensitive under Azure SQL default collations.
+    [<Test>]
+    member _.SqlSchemaUsesBinaryCollationForStoragePoolAggregateKeys() =
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(OperationsUsageSql.CaseSensitiveStoragePoolIdCollation, Is.EqualTo("Latin1_General_100_BIN2"))
+
+                Assert.That(OperationsUsageSql.CreateRawUsageFactTable, Does.Contain("StoragePoolId nvarchar(256) COLLATE Latin1_General_100_BIN2 NOT NULL"))
+
+                Assert.That(
+                    OperationsUsageSql.CreateUsageAggregateMinuteTable,
+                    Does.Contain("StoragePoolId nvarchar(256) COLLATE Latin1_General_100_BIN2 NOT NULL")
+                )
+
+                Assert.That(
+                    OperationsUsageSql.AddToUsageAggregateMinute,
+                    Does.Contain("CAST(@StoragePoolId AS nvarchar(256)) COLLATE Latin1_General_100_BIN2 AS StoragePoolId")
+                ))
+        )
+
+    /// Verifies storage-pool identities that differ only by case produce separate aggregate keys before SQL persistence.
+    [<Test>]
+    member _.StoragePoolIdsDifferingOnlyByCaseProduceDistinctAggregateKeys() =
+        let observedAt = Instant.FromUtc(2026, 7, 4, 12, 36, 0)
+
+        let lowerPoolPlan =
+            OperationsUsageStorageTestData.factForStoragePool
+                (Guid.Parse("12121212-1212-1212-1212-121212121212"))
+                OperationsUsageStorageTestData.storagePoolId
+                1L
+                observedAt
+            |> UsageFactPersistencePlan.tryCreate
+            |> requirePlan
+
+        let mixedPoolPlan =
+            OperationsUsageStorageTestData.factForStoragePool
+                (Guid.Parse("34343434-3434-3434-3434-343434343434"))
+                OperationsUsageStorageTestData.storagePoolIdWithDifferentCase
+                1L
+                observedAt
+            |> UsageFactPersistencePlan.tryCreate
+            |> requirePlan
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(lowerPoolPlan.Aggregate.Key.StoragePoolId, Is.Not.EqualTo(mixedPoolPlan.Aggregate.Key.StoragePoolId))
+                Assert.That(lowerPoolPlan.Aggregate.Key, Is.Not.EqualTo(mixedPoolPlan.Aggregate.Key)))
+        )
+
+    /// Verifies the production SQL transaction scope satisfies the store dependency.
+    [<Test>]
+    member _.SqlTransactionScopeImplementsOperationsUsageTransactionScope() =
+        let transactionScope = SqlOperationsUsageTransactionScope "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsTests;Integrated Security=true;"
+
+        Assert.That(transactionScope, Is.InstanceOf<IOperationsUsageTransactionScope>())
 
     /// Verifies a first usage fact inserts a raw row and increments the expected aggregate minute.
     [<Test>]
