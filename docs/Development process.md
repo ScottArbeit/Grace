@@ -751,10 +751,15 @@ Start stabilization after **two substantive cycles** when the pull request touch
 - public DTOs, CLI contracts, OpenAPI, SDK behavior, serialized events, or persisted shapes
 - concurrency, TOCTOU windows, partial failure, recovery, or side-effect ordering
 
+Treat each completed Codex Code Review Bot pass on a distinct PR head as a review session, whether the outcome is a
+no-issues 👍🏻 reaction, a top-level finding, inline review-thread findings, or a mix of stale and fresh comments. A
+manual missed-ack trigger that causes the bot to review the same head also counts as a session; repeated status checks,
+CI reruns, or unresolved stale threads without a new completed bot pass do not.
+
 If a pull request has more than three Codex Code Review Bot review sessions, audit the review timeline before assigning
-another routine fix worker even when not every session counts as a substantive cycle. The audit should separate
-stale, duplicate, invalid, deferred, and no-issue sessions from fresh findings, then decide whether the PR needs a
-missing invariant, a sibling-issue deferral, or a structural stabilization ledger before the next review request.
+another routine fix worker even when not every session counts as a substantive cycle. The audit should separate stale,
+duplicate, invalid, deferred, and no-issue sessions from fresh findings, then decide whether the PR needs a missing
+invariant, a sibling-issue deferral, or a structural stabilization ledger before the next review request.
 
 During a stabilization pass, the orchestrator must:
 

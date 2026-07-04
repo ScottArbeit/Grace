@@ -118,6 +118,9 @@ Repeated review cycles need structural handling, not endless one-off fixes:
 - Start stabilization after two substantive cycles for high-risk surfaces such as Watch state, IPC/status contracts,
   branch-switch safety, storage, actors, authorization, public contracts, persisted shapes, concurrency, recovery, or
   side-effect ordering.
+- Count each completed Codex Code Review Bot pass on a distinct PR head as a review session, including no-issues
+  outcomes and finding-producing reviews. Do not count CI reruns, repeated status checks, or unresolved stale threads
+  without a new completed bot pass.
 - If a PR has more than three Codex Code Review Bot review sessions even without three counted substantive cycles,
   audit the timeline before assigning another routine fix worker. Decide whether the issue is missing invariants,
   needs a future leaf deferral, or requires a structural ledger before the next review request.

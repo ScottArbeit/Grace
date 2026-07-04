@@ -25,8 +25,8 @@ Count a **substantive review cycle** as:
 1. A worker pushes a fix commit or fix series.
 1. The next review reports another substantive finding on the new head.
 
-Do not count purely administrative comments, duplicate comments, formatting-only nits, CI flakes, stale review threads
-that were already resolved, or reviewer comments that the orchestrator explicitly classifies as invalid.
+Do not count purely administrative comments, duplicate comments, formatting-only nits, CI flakes, stale review threads,
+maintainer-accepted future-leaf deferrals, or reviewer comments that the orchestrator explicitly classifies as invalid.
 
 ### Default threshold
 
@@ -49,6 +49,19 @@ Start the stabilization pass after **2 substantive cycles** when the touched sur
 - migrations, data reset assumptions, destructive operations, or irreversible state transitions
 
 A fourth substantive cycle is always a hard stop, even outside high-risk areas.
+
+### Review-session threshold
+
+Count each completed Codex Code Review Bot pass on a distinct PR head as a **review session**, including no-issues
+outcomes, top-level findings, inline review-thread findings, or mixed stale and fresh comments. A manual missed-ack
+trigger that causes the bot to review the same head also counts as a session. Do not count repeated status checks, CI
+reruns, or unresolved stale threads without a new completed bot pass.
+
+If a Grace PR has more than three Codex Code Review Bot review sessions, pause before assigning another routine fix
+worker even when fewer than three sessions count as substantive cycles. Build the review timeline, separate stale,
+duplicate, invalid, deferred, and no-issue sessions from fresh findings, then decide whether the issue is missing
+invariants, needs a named future-leaf deferral, or requires a structural stabilization ledger before the next review
+request.
 
 ## Immediate stop signals
 
@@ -231,7 +244,9 @@ Use these examples as patterns, not fixed text.
 
 ## Review request after stabilization
 
-When the stabilization pass is complete, request review with language like:
+When the stabilization pass is complete, resume the normal Grace PR review loop. Do not bypass the manual trigger lock:
+wait for Codex Code Review Bot on the pushed head, and use the documented missed-ack guard only when the bot has not
+acknowledged the current head. If a manual missed-ack trigger is allowed, use language like:
 
 ```markdown
 @codex review this PR against the Review stabilization ledger posted above. Please focus on whether every ledger
