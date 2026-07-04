@@ -311,6 +311,7 @@ public partial class Program
                             )
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
+                            .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, Constants.GraceOperationalFactsTopic)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, "grace-server");
                     }
                     else
@@ -357,6 +358,9 @@ public partial class Program
                     var cosmosContainerName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBContainerName);
                     var serviceBusNamespace = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusNamespace);
                     var serviceBusTopic = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusTopic);
+                    var operationalFactsTopic =
+                        ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
+                        ?? Constants.GraceOperationalFactsTopic;
                     var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
 
                     graceServer
@@ -367,6 +371,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.AzureCosmosDBContainerName, cosmosContainerName)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusNamespace, serviceBusNamespace)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopic)
+                        .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopic)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscription)
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
@@ -397,6 +402,14 @@ public partial class Program
                 var serviceBus = builder.AddAzureServiceBus("servicebus");
                 _ = serviceBus.AddServiceBusTopic(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
                     .AddServiceBusSubscription(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server");
+                _ = serviceBus.AddServiceBusTopic(
+                        "operational-facts",
+                        configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)] ?? Constants.GraceOperationalFactsTopic)
+                    .WithProperties(topic =>
+                    {
+                        topic.RequiresDuplicateDetection = true;
+                        topic.DuplicateDetectionHistoryTimeWindow = TimeSpan.FromMinutes(5);
+                    });
 
                 var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
@@ -424,6 +437,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-prod")
                         .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
+                    .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)] ?? Constants.GraceOperationalFactsTopic)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
                     .WithEnvironment(EnvironmentVariables.GraceAuthOidcAuthority, configuration[EnvironmentVariables.GraceAuthOidcAuthority])
@@ -598,6 +612,9 @@ public partial class Program
     private static void CreateServiceBusConfiguration(string configFilePath, IConfiguration configuration)
     {
         var topicName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic) ?? "graceeventstream";
+        var operationalFactsTopicName =
+            Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic) ?? Constants.GraceOperationalFactsTopic;
+        var operationalFactsSubscriptionName = $"{operationalFactsTopicName}-processor";
         var subscriptionName = Environment.GetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription) ?? "grace-server";
         var testSubscriptionName = $"{subscriptionName}-tests";
 
@@ -611,7 +628,7 @@ public partial class Program
                     {
                         Name = "sbemulatorns",
                         Queues = Array.Empty<object>(),
-                        Topics = new[]
+                        Topics = new object[]
                         {
                             new
                             {
@@ -642,6 +659,34 @@ public partial class Program
                                     new
                                     {
                                         Name = testSubscriptionName,
+                                        Properties = new
+                                        {
+                                            DeadLetteringOnMessageExpiration = false,
+                                            DefaultMessageTimeToLive = "PT1H",
+                                            LockDuration = "PT1M",
+                                            MaxDeliveryCount = 10,
+                                            ForwardDeadLetteredMessagesTo = "",
+                                            ForwardTo = "",
+                                            RequiresSession = false
+                                        },
+                                        Rules = Array.Empty<object>()
+                                    }
+                                }
+                            },
+                            new
+                            {
+                                Name = operationalFactsTopicName,
+                                Properties = new
+                                {
+                                    DefaultMessageTimeToLive = "PT1H",
+                                    DuplicateDetectionHistoryTimeWindow = "PT5M",
+                                    RequiresDuplicateDetection = true
+                                },
+                                Subscriptions = new[]
+                                {
+                                    new
+                                    {
+                                        Name = operationalFactsSubscriptionName,
                                         Properties = new
                                         {
                                             DeadLetteringOnMessageExpiration = false,

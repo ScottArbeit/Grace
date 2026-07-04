@@ -398,6 +398,10 @@ module Constants =
         [<Literal>]
         let AzureServiceBusTopic = "grace__azure_service_bus__topic"
 
+        /// Azure Service Bus topic name for operational usage facts.
+        [<Literal>]
+        let AzureServiceBusOperationalFactsTopic = "grace__azure_service_bus__operational_facts_topic"
+
         /// Azure Service Bus subscription name for Grace events.
         [<Literal>]
         let AzureServiceBusSubscription = "grace__azure_service_bus__subscription"
@@ -569,6 +573,10 @@ module Constants =
 
     /// A special Grace Event Actor Id used for publishing events in Grace.Server. Value: 63097EF4-9D67-4CFB-8010-938484668E4A.
     let GraceEventActorId = Guid("63097EF4-9D67-4CFB-8010-938484668E4A") // There's nothing special about this Guid. I just generated it one day.
+
+    /// The Service Bus topic that carries immutable operational usage facts.
+    [<Literal>]
+    let GraceOperationalFactsTopic = "grace-operational-facts"
 
     /// The name of the inter-process communication file used by grace watch to share status with other invocations of Grace.
     [<Literal>]
