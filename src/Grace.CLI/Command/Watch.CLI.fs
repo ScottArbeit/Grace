@@ -260,7 +260,7 @@ module Watch =
 
     let private graceUpdateMarkerDeletionLock = obj ()
     let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
-    let mutable private lastGraceUpdateMarkerDeletedUtc = DateTime.MinValue
+    let private recentGraceUpdateMarkerCompletedUtc = List<DateTime>()
 
     /// Gets the completion sidecar written before the Grace update marker is removed.
     let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
@@ -270,12 +270,22 @@ module Watch =
 
     /// Records the completed Grace-owned update instant so delayed callbacks can be classified by switch authority.
     let private recordGraceUpdateMarkerCompletedUtc completedUtc =
-        lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc <- completedUtc)
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            if completedUtc <> DateTime.MinValue then
+                let cutoffUtc =
+                    DateTime.UtcNow
+                    - graceUpdateMarkerDeletedObservationWindow
 
-    /// Clears the recent marker-deletion fact when a new Grace-owned update starts or tests reset Watch state.
-    let private clearGraceUpdateMarkerDeletedUtc () =
-        recordGraceUpdateMarkerCompletedUtc DateTime.MinValue
+                recentGraceUpdateMarkerCompletedUtc.RemoveAll(fun recordedUtc -> recordedUtc < cutoffUtc)
+                |> ignore
 
+                recentGraceUpdateMarkerCompletedUtc.Add(completedUtc))
+
+    /// Clears every recent marker-deletion fact when tests reset Watch state.
+    let private clearGraceUpdateMarkerDeletedUtcForReset () = lock graceUpdateMarkerDeletionLock (fun () -> recentGraceUpdateMarkerCompletedUtc.Clear())
+
+    /// Removes the current marker sidecar when a new marker supersedes stale sidecar evidence.
+    let private clearCurrentGraceUpdateMarkerCompletedSidecar () =
         try
             let completedFileName = updateMarkerCompletedFileName ()
 
@@ -284,11 +294,10 @@ module Watch =
         | :? IOException -> ()
         | :? UnauthorizedAccessException -> ()
 
-    /// Clears delayed-observation authority without deleting any branch-specific marker sidecar.
-    let private clearGraceUpdateMarkerDeletedObservation () = recordGraceUpdateMarkerCompletedUtc DateTime.MinValue
-
     /// Sets the recent Grace update marker deletion instant for deterministic Watch callback tests.
-    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc = recordGraceUpdateMarkerCompletedUtc deletedUtc
+    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc =
+        clearGraceUpdateMarkerDeletedUtcForReset ()
+        recordGraceUpdateMarkerCompletedUtc deletedUtc
 
     /// Reads a marker completion sidecar for the specific marker path that produced the callback.
     let private tryReadGraceUpdateMarkerCompletedUtcFrom completedFileName =
@@ -643,11 +652,22 @@ module Watch =
 
     /// Reads the switch-owned completion instant that should govern delayed Watch callback suppression.
     let private tryRecentGraceUpdateMarkerCompletedUtc () =
-        let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
+        let recordedUtc =
+            lock graceUpdateMarkerDeletionLock (fun () ->
+                let cutoffUtc =
+                    DateTime.UtcNow
+                    - graceUpdateMarkerDeletedObservationWindow
 
-        if isRecentGraceUpdateMarkerCompletion recordedUtc then
-            Some recordedUtc
-        else
+                recentGraceUpdateMarkerCompletedUtc.RemoveAll(fun completedUtc -> completedUtc < cutoffUtc)
+                |> ignore
+
+                recentGraceUpdateMarkerCompletedUtc
+                |> Seq.sortDescending
+                |> Seq.tryHead)
+
+        match recordedUtc with
+        | Some completedUtc when isRecentGraceUpdateMarkerCompletion completedUtc -> Some completedUtc
+        | _ ->
             match tryReadGraceUpdateMarkerCompletedUtc () with
             | Some completedUtc when isRecentGraceUpdateMarkerCompletion completedUtc -> Some completedUtc
             | _ -> None
@@ -2105,7 +2125,8 @@ module Watch =
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
-        clearGraceUpdateMarkerDeletedUtc ()
+        clearGraceUpdateMarkerDeletedUtcForReset ()
+        clearCurrentGraceUpdateMarkerCompletedSidecar ()
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None
@@ -2565,11 +2586,19 @@ module Watch =
                     | Some completedUtc -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
                     | None -> false
 
-                if not hasCurrentCompletedSidecar then clearGraceUpdateMarkerDeletedUtc ()
+                if not hasCurrentCompletedSidecar then
+                    clearCurrentGraceUpdateMarkerCompletedSidecar ()
 
                 logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
+
+    /// Reports whether a marker deletion callback still owns branch transition completion authority.
+    let private deletedMarkerCanCompleteCurrentTransition markerFileName =
+        let currentMarkerFileName = updateInProgressFileName ()
+
+        String.Equals(markerFileName, currentMarkerFileName, StringComparison.OrdinalIgnoreCase)
+        || not (File.Exists(currentMarkerFileName))
 
     /// Coordinates on grace update in progress deleted behavior for this CLI command path.
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
@@ -2577,11 +2606,16 @@ module Watch =
             if not (File.Exists(args.FullPath)) then
                 match tryReadGraceUpdateMarkerCompletedUtcForMarker args.FullPath with
                 | Some completedUtc ->
-                    completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
-                    logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
-                | None ->
-                    clearGraceUpdateMarkerDeletedObservation ()
-                    logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
+                    if deletedMarkerCanCompleteCurrentTransition args.FullPath then
+                        completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+                        logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                    else
+                        recordGraceUpdateMarkerCompletedUtc completedUtc
+
+                        logToAnsiConsole
+                            Colors.Important
+                            $"Ignored stale update marker deletion for {args.FullPath}; current marker {updateInProgressFileName ()} is still live."
+                | None -> logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
 

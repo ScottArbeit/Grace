@@ -941,6 +941,83 @@ module WatchTests =
             pending.StatusUpdateTriggers
             |> should equal Array.empty<string>)
 
+    /// Verifies that later marker starts cannot erase delayed callback authority from the completed transition.
+    [<Test>]
+    let ``new update marker created event preserves delayed callback authority from completed transition`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "delayed-after-later-marker-start.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let firstTransitionCompletedUtc = DateTime.UtcNow
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(changedFilePath, "Grace-owned payload from the first transition")
+            File.SetLastWriteTimeUtc(changedFilePath, firstTransitionCompletedUtc.AddSeconds(-1.0))
+
+            Watch.recordGraceUpdateMarkerDeletedUtcForTests firstTransitionCompletedUtc
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () ->
+                Task.FromResult(
+                    graceStatusTracking
+                        [|
+                            "delayed-after-later-marker-start.txt"
+                        |]
+                        Array.empty<string>
+                ))
+
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress again.")
+            Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+            File.Delete(updateMarkerFile)
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that an unrelated marker deletion without sidecar cannot erase delayed callback authority.
+    [<Test>]
+    let ``update marker deletion without sidecar preserves delayed callback authority from completed transition`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "delayed-after-no-sidecar-marker.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let firstTransitionCompletedUtc = DateTime.UtcNow
+
+            File.WriteAllText(changedFilePath, "Grace-owned payload from the completed transition")
+            File.SetLastWriteTimeUtc(changedFilePath, firstTransitionCompletedUtc.AddSeconds(-1.0))
+
+            Watch.recordGraceUpdateMarkerDeletedUtcForTests firstTransitionCompletedUtc
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () ->
+                Task.FromResult(
+                    graceStatusTracking
+                        [|
+                            "delayed-after-no-sidecar-marker.txt"
+                        |]
+                        Array.empty<string>
+                ))
+
+            recordIncompleteUpdateMarkerDeletion updateMarkerFile
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
     /// Verifies that repeated transition deletion uses the just-deleted marker sidecar after configuration advances.
     [<Test>]
     let ``update marker deletion uses deleted marker sidecar after repeated transition advances config`` () =
@@ -1020,6 +1097,46 @@ module WatchTests =
 
             File.Exists(branchCCompletedSidecar)
             |> should equal true)
+
+    /// Verifies that a stale completed marker cannot finish transition work while the current marker is still live.
+    [<Test>]
+    let ``stale marker deletion with sidecar does not complete transition while current marker is live`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-stale-live-marker-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let branchAMarker = Services.updateInProgressFileNameForIdentity repositoryId repositoryName root branchAId branchAName
+            let branchBMarker = Services.updateInProgressFileNameForIdentity repositoryId repositoryName root branchBId branchBName
+            let staleTransitionCompletedUtc = DateTime.UtcNow
+            let mutable completionProbeCalls = 0
+
+            Directory.CreateDirectory(Path.GetDirectoryName(branchAMarker))
+            |> ignore
+
+            Directory.CreateDirectory(Path.GetDirectoryName(branchBMarker))
+            |> ignore
+
+            File.WriteAllText(branchAMarker, "`grace switch` from branch A is finishing late.")
+            File.WriteAllText(branchAMarker + ".completed", staleTransitionCompletedUtc.ToString("O"))
+            File.WriteAllText(branchBMarker, "`grace switch` to branch C is still in progress.")
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            resetConfiguration ()
+            Current() |> ignore
+
+            try
+                Watch.setBranchTransitionCompletionAfterRetireProbeForWatchTests (fun () -> completionProbeCalls <- completionProbeCalls + 1)
+
+                File.Delete(branchAMarker)
+                Watch.OnGraceUpdateInProgressDeleted(deletedEvent branchAMarker)
+
+                completionProbeCalls |> should equal 0
+                File.Exists(branchBMarker) |> should equal true
+            finally
+                Watch.resetBranchTransitionCompletionAfterRetireProbeForWatchTests ())
 
     /// Verifies that transition completion cannot claim healthy incremental mode after an unverified branch IPC publish.
     [<Test>]
