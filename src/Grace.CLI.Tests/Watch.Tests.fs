@@ -397,6 +397,34 @@ module WatchTests =
     let private renamedEvent (oldFullPath: string) (fullPath: string) =
         RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
 
+    /// Verifies that Grace-owned writes under the update marker do not enqueue Save-producing Watch work.
+    [<Test>]
+    let ``update marker suppresses changed file observation without local save work`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "grace-owned-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            try
+                File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+                File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
+                Watch.OnChanged(changedEvent changedFilePath)
+
+                let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+                pending.FilesToProcess
+                |> should equal Array.empty<string>
+
+                pending.DirectoriesToProcess
+                |> should equal Array.empty<string>
+
+                pending.StatusUpdateTriggers
+                |> should equal Array.empty<string>
+            finally
+                if File.Exists(updateMarkerFile) then File.Delete(updateMarkerFile))
+
     /// Produces an empty difference list for watch tests that do not exercise a scan path.
     let private scanForNoDifferences _ = Task.FromResult(List<FileSystemDifference>())
 
