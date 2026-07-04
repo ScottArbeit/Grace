@@ -464,6 +464,8 @@ module Watch =
 
     let private updateMarkerWatcherRebindLock = obj ()
     let mutable private rebindUpdateMarkerWatcherForTransitionCompletion = ignore
+    let private branchTransitionCompletionProbeLock = obj ()
+    let mutable private branchTransitionCompletionAfterRetireProbe = ignore
 
     /// Installs the active update-marker watcher retarget operation used after branch identity changes.
     let private registerUpdateMarkerWatcherRebind rebind =
@@ -485,6 +487,19 @@ module Watch =
     /// Restores the default no-op update-marker watcher retarget operation after transition-completion tests.
     let internal resetUpdateMarkerWatcherRebindForWatchTests () =
         lock updateMarkerWatcherRebindLock (fun () -> rebindUpdateMarkerWatcherForTransitionCompletion <- ignore)
+
+    /// Runs the transition-boundary probe after old branch IPC retirement but before branch identity reload.
+    let private runBranchTransitionCompletionAfterRetireProbe () =
+        let probe = lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe)
+        probe ()
+
+    /// Installs a transition-boundary probe used to prove publishers cannot race old branch IPC retirement.
+    let internal setBranchTransitionCompletionAfterRetireProbeForWatchTests probe =
+        lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- probe)
+
+    /// Restores the transition-boundary probe to the production no-op behavior after Watch tests.
+    let internal resetBranchTransitionCompletionAfterRetireProbeForWatchTests () =
+        lock branchTransitionCompletionProbeLock (fun () -> branchTransitionCompletionAfterRetireProbe <- ignore)
 
     /// Reloads repository configuration after another Grace process changes the current branch.
     let private reloadConfigurationForTransitionCompletion () =
@@ -588,23 +603,22 @@ module Watch =
         with
         | _ -> DeletedPathStatusUnavailable
 
+    /// Reports whether a marker completion instant is recent enough to suppress delayed Watch callbacks.
+    let private isRecentGraceUpdateMarkerCompletion completedUtc =
+        completedUtc <> DateTime.MinValue
+        && DateTime.UtcNow - completedUtc
+           <= graceUpdateMarkerDeletedObservationWindow
+
     /// Reads the switch-owned completion instant that should govern delayed Watch callback suppression.
     let private tryRecentGraceUpdateMarkerCompletedUtc () =
-        let markerCompletedUtc =
+        let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
+
+        if isRecentGraceUpdateMarkerCompletion recordedUtc then
+            Some recordedUtc
+        else
             match tryReadGraceUpdateMarkerCompletedUtc () with
-            | Some completedUtc -> Some completedUtc
-            | None ->
-                let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
-
-                if recordedUtc <> DateTime.MinValue then Some recordedUtc else None
-
-        match markerCompletedUtc with
-        | Some completedUtc when
-            DateTime.UtcNow - completedUtc
-            <= graceUpdateMarkerDeletedObservationWindow
-            ->
-            Some completedUtc
-        | _ -> None
+            | Some completedUtc when isRecentGraceUpdateMarkerCompletion completedUtc -> Some completedUtc
+            | _ -> None
 
     /// Reports whether a missing path is already absent from the post-switch GraceStatus snapshot.
     let private completedSwitchRemovedPathFromGraceStatus fullPath =
@@ -1862,75 +1876,83 @@ module Watch =
 
             logToAnsiConsole Colors.Important $"Grace Watch retired previous branch IPC before completing branch transition: {previousIpcFileName}."
 
-    /// Completes a Grace-owned branch transition after the update marker is cleanly deleted.
+    /// Completes a Grace-owned branch transition inside the serialized Watch publication boundary.
     let private completeGraceUpdateTransitionAfterMarkerDeletion completedUtc =
-        let previousIpcFileName = IpcFileName()
+        lock watchStatusPublishLock (fun () ->
+            recordGraceUpdateMarkerCompletedUtc completedUtc
+            let previousIpcFileName = IpcFileName()
 
-        let previousIpcRetired =
-            try
-                retirePreviousBranchWatchIpc previousIpcFileName
-                true
-            with
-            | ex ->
-                setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-                graceStatusHasChanged <- true
-
-                lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- None)
-
-                logToAnsiConsole
-                    Colors.Error
-                    $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; incremental observations will not resume: {Markup.Escape(ex.Message)}."
-
-                false
-
-        if previousIpcRetired then
-            let reloadedConfiguration =
+            let previousIpcRetired =
                 try
-                    reloadConfigurationForTransitionCompletion ()
-                    rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                    retirePreviousBranchWatchIpc previousIpcFileName
                     true
                 with
                 | ex ->
                     setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
                     graceStatusHasChanged <- true
 
-                    lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- None)
+                    lastPublishedHasPendingWatchWork <- None
 
                     logToAnsiConsole
                         Colors.Error
-                        $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
+                        $"Grace Watch could not retire previous branch IPC after transition marker deletion at {completedUtc:O}; incremental observations will not resume: {Markup.Escape(ex.Message)}."
 
                     false
 
-            if reloadedConfiguration then
-                try
-                    let refreshedStatus =
-                        readGraceStatusFileForTransitionCompletion()
-                            .GetAwaiter()
-                            .GetResult()
+            if previousIpcRetired then
+                runBranchTransitionCompletionAfterRetireProbe ()
 
-                    graceStatus <- refreshedStatus
-                    updateGraceStatusDirectoryIds graceStatus
+                let reloadedConfiguration =
+                    try
+                        reloadConfigurationForTransitionCompletion ()
+                        rebindUpdateMarkerWatcherAfterTransitionCompletion ()
+                        true
+                    with
+                    | ex ->
+                        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+                        graceStatusHasChanged <- true
 
-                    if isTransitionCompletionConfigurationCoherent ()
-                       && isTransitionCompletionGraceStatusCoherent graceStatus then
-                        if
-                            currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
-                            && not (isGraceWatchResyncPending ())
-                        then
-                            publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
-                                updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+                        lastPublishedHasPendingWatchWork <- None
 
-                            logToAnsiConsole
-                                Colors.Important
-                                $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                        logToAnsiConsole
+                            Colors.Error
+                            $"Grace Watch could not reload configuration or rebind marker watcher after transition marker deletion at {completedUtc:O}; old branch IPC will not be republished: {Markup.Escape(ex.Message)}."
+
+                        false
+
+                if reloadedConfiguration then
+                    try
+                        let refreshedStatus =
+                            readGraceStatusFileForTransitionCompletion()
+                                .GetAwaiter()
+                                .GetResult()
+
+                        graceStatus <- refreshedStatus
+                        updateGraceStatusDirectoryIds graceStatus
+
+                        if isTransitionCompletionConfigurationCoherent ()
+                           && isTransitionCompletionGraceStatusCoherent graceStatus then
+                            if
+                                currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.HealthyIncremental
+                                && not (isGraceWatchResyncPending ())
+                            then
+                                let transitionPublicationVerified =
+                                    tryPublishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
+                                        updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds))
+
+                                if transitionPublicationVerified then
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch completed branch transition from marker deletion at {completedUtc:O}; incremental observations may resume for {Current().BranchName}."
+                                else
+                                    requestGraceWatchExplicitResync "branch transition completion could not verify new branch IPC publication"
+                            else
+                                publishNonIncrementalTransitionCompletionStatus
+                                    $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
                         else
-                            publishNonIncrementalTransitionCompletionStatus
-                                $"runtime mode is {currentGraceWatchRuntimeMode ()} and resync pending is {isGraceWatchResyncPending ()}"
-                    else
-                        requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
-                with
-                | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}"
+                            requestGraceWatchExplicitResync "branch transition completion reloaded incoherent configuration or GraceStatus"
+                    with
+                    | ex -> requestGraceWatchExplicitResync $"branch transition completion could not reload GraceStatus: {ex.Message}")
 
     /// Combines status differences without applying the same filesystem observation twice.
     let private mergeStatusDifferences (first: List<FileSystemDifference>) (second: List<FileSystemDifference>) =
@@ -2034,6 +2056,7 @@ module Watch =
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
         readGraceStatusFileForTransitionCompletion <- readGraceStatusFile
+        resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
         clearGraceUpdateMarkerDeletedUtc ()
@@ -2508,7 +2531,6 @@ module Watch =
             if updateNotInProgress () then
                 match tryReadGraceUpdateMarkerCompletedUtc () with
                 | Some completedUtc ->
-                    recordGraceUpdateMarkerCompletedUtc completedUtc
                     completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
                     logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
                 | None ->

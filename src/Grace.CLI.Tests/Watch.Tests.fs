@@ -17,6 +17,7 @@ open System.Diagnostics
 open System.IO
 open System.Text.Json
 open System.Text.Json.Nodes
+open System.Threading
 open System.Threading.Tasks
 
 /// Groups watch coverage for the CLI test project.
@@ -716,6 +717,175 @@ module WatchTests =
             let branchAInspection = Services.inspectGraceWatchStatus().Result
 
             branchAInspection.Exists |> should equal false
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
+    /// Verifies that old branch IPC cannot be recreated while transition completion is retiring and reloading identity.
+    [<Test>]
+    let ``update marker deletion serializes old branch ipc retirement against pending publication`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-serialized-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            let statusA = graceStatusTracking Array.empty<string> Array.empty<string>
+            let statusB = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIdsA = HashSet<DirectoryVersionId>(statusA.Index.Keys)
+
+            (Services.updateGraceWatchInterprocessFile statusA (Some directoryIdsA))
+                .GetAwaiter()
+                .GetResult()
+
+            let branchAIpc = Services.IpcFileName()
+
+            branchAIpc |> File.Exists |> should equal true
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(statusB))
+
+            use publisherStarted = new ManualResetEventSlim(false)
+            use publisherCompleted = new ManualResetEventSlim(false)
+            let mutable publisherTask = Task.CompletedTask
+
+            try
+                Watch.setBranchTransitionCompletionAfterRetireProbeForWatchTests (fun () ->
+                    Services.setGraceWatchHasPendingWorkForStatus true
+
+                    publisherTask <-
+                        Task.Run(
+                            Action (fun () ->
+                                publisherStarted.Set()
+                                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+                                publisherCompleted.Set())
+                        )
+
+                    publisherStarted.Wait(TimeSpan.FromSeconds(5.0))
+                    |> should equal true
+
+                    publisherCompleted.Wait(TimeSpan.FromMilliseconds(100.0))
+                    |> should equal false
+
+                    branchAIpc |> File.Exists |> should equal false)
+
+                recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+                publisherTask.Wait(TimeSpan.FromSeconds(5.0))
+                |> should equal true
+
+                let branchBIpc = Services.IpcFileName()
+
+                branchAIpc |> File.Exists |> should equal false
+                branchBIpc |> File.Exists |> should equal true
+
+                readWatchStatusJsonStringProperty "BranchId"
+                |> should equal $"{branchBId}"
+            finally
+                Watch.resetBranchTransitionCompletionAfterRetireProbeForWatchTests ())
+
+    /// Verifies that current transition completion authority wins over stale sidecars in the target branch directory.
+    [<Test>]
+    let ``update marker deletion prefers current deletion over stale target branch sidecar`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-stale-sidecar-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+            let relativePath = "grace-owned-after-switch.txt"
+            let changedFilePath = Path.Combine(root, relativePath)
+            let staleTargetBranchCompletedUtc = DateTime.UtcNow.AddSeconds(-20.0)
+            let currentTransitionCompletedUtc = DateTime.UtcNow
+            let statusB = graceStatusTracking [| relativePath |] Array.empty<string>
+            let branchBMarker = Services.updateInProgressFileNameForIdentity repositoryId repositoryName root branchBId branchBName
+
+            Directory.CreateDirectory(Path.GetDirectoryName(branchBMarker))
+            |> ignore
+
+            File.WriteAllText(branchBMarker + ".completed", staleTargetBranchCompletedUtc.ToString("O"))
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(statusB))
+
+            File.WriteAllText(changedFilePath, "Grace-owned payload from the current transition")
+            File.SetLastWriteTimeUtc(changedFilePath, currentTransitionCompletedUtc.AddSeconds(-1.0))
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) currentTransitionCompletedUtc
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that transition completion cannot claim healthy incremental mode after an unverified branch IPC publish.
+    [<Test>]
+    let ``update marker deletion requests resync when new branch ipc publication is not verified`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let repositoryName = "transition-unverified-repo"
+            let branchAName = "branch-a"
+            let branchBName = "branch-b"
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchAId branchAName
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let statusA = graceStatusTracking Array.empty<string> Array.empty<string>
+            let statusB = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIdsA = HashSet<DirectoryVersionId>(statusA.Index.Keys)
+
+            (Services.updateGraceWatchInterprocessFile statusA (Some directoryIdsA))
+                .GetAwaiter()
+                .GetResult()
+
+            let branchAIpc = Services.IpcFileName()
+            let branchBIpc = Services.IpcFileNameForIdentity repositoryId repositoryName root branchBId branchBName
+
+            Directory.CreateDirectory(Path.GetDirectoryName(branchBIpc))
+            |> ignore
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchBId branchBName
+            Watch.setReadGraceStatusFileForTransitionCompletionForWatchTests (fun () -> Task.FromResult(statusB))
+
+            use lockedBranchBIpc = new FileStream(branchBIpc, FileMode.Create, FileAccess.ReadWrite, FileShare.None)
+
+            recordCompletedUpdateMarkerDeletion (Services.updateInProgressFileName ()) DateTime.UtcNow
+
+            lockedBranchBIpc.Dispose()
+
+            branchAIpc |> File.Exists |> should equal false
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
 
             Services.getGraceWatchStatus().Result
             |> should equal None)
