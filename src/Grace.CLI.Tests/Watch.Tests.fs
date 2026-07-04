@@ -150,6 +150,13 @@ module WatchTests =
         {
             UpdatedAt = getCurrentInstant ()
             IsStartupClaim = false
+            RepositoryId = RepositoryId.Empty
+            RepositoryName = RepositoryName String.Empty
+            BranchId = BranchId.Empty
+            BranchName = BranchName String.Empty
+            RootDirectory = Environment.CurrentDirectory
+            HasPendingWatchWork = false
+            IsWorkingTreeClean = true
             RootDirectoryId = rootDirectoryId
             RootDirectorySha256Hash = Sha256Hash "live-watch-root"
             RootDirectoryBlake3Hash = Blake3Hash "live-watch-root-blake3"
@@ -188,6 +195,17 @@ module WatchTests =
         | true, property when property.ValueKind <> JsonValueKind.Null -> Some(property.GetString())
         | false, _ -> None
         | true, _ -> None
+
+    /// Reads a boolean property from the persisted Watch IPC JSON contract.
+    let private readWatchStatusJsonBooleanProperty (propertyName: string) =
+        let json = File.ReadAllText(Services.IpcFileName())
+        use document = JsonDocument.Parse(json)
+
+        match document.RootElement.TryGetProperty(propertyName) with
+        | true, property -> property.GetBoolean()
+        | false, _ ->
+            Assert.Fail($"Expected Watch IPC JSON property '{propertyName}'. JSON:{Environment.NewLine}{json}")
+            false
 
     /// Reads the persisted Watch IPC safety flags into a deterministic set for assertions.
     let private readWatchStatusJsonSafetyFlags () =
@@ -5615,6 +5633,184 @@ module WatchTests =
             derivedSafetyFlags
             |> Set.contains "requiresExplicitResync"
             |> should equal true)
+
+    /// Verifies that watch status serializes the factual identity and clean fields branch-switch safety needs.
+    [<Test>]
+    let ``watch status serializes branch repository root identity and clean flags`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let configuration = Current()
+            configuration.RepositoryId <- repositoryId
+            configuration.RepositoryName <- "status-repo"
+            configuration.BranchId <- branchId
+            configuration.BranchName <- "status-branch"
+            configuration.RootDirectory <- root
+
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonStringProperty "RepositoryId"
+            |> should equal $"{repositoryId}"
+
+            readWatchStatusJsonStringProperty "RepositoryName"
+            |> should equal "status-repo"
+
+            readWatchStatusJsonStringProperty "BranchId"
+            |> should equal $"{branchId}"
+
+            readWatchStatusJsonStringProperty "BranchName"
+            |> should equal "status-branch"
+
+            readWatchStatusJsonStringProperty "RootDirectory"
+            |> should equal root
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "cleanWorkingTree"
+            |> should equal true
+
+            match Services.getGraceWatchStatus().Result with
+            | Some watchStatus ->
+                watchStatus.RepositoryId
+                |> should equal repositoryId
+
+                watchStatus.RepositoryName
+                |> should equal "status-repo"
+
+                watchStatus.BranchId |> should equal branchId
+
+                watchStatus.BranchName
+                |> should equal "status-branch"
+
+                watchStatus.RootDirectory |> should equal root
+
+                watchStatus.IsWorkingTreeClean
+                |> should equal true
+
+                watchStatus.HasPendingWatchWork
+                |> should equal false
+            | None -> Assert.Fail("Expected clean status to remain usable."))
+
+    /// Verifies that repeated raw events while already dirty do not rewrite Watch IPC status.
+    [<Test>]
+    let ``watch dirty status transition is not rewritten for repeated raw events`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            let filePath = Path.Combine(root, "dirty-once.txt")
+            File.WriteAllText(filePath, "first content")
+
+            Watch.OnChanged(changedEvent filePath)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal true
+
+            let dirtyJson = File.ReadAllText(Services.IpcFileName())
+
+            File.WriteAllText(filePath, "second content")
+            Watch.OnChanged(changedEvent filePath)
+
+            File.ReadAllText(Services.IpcFileName())
+            |> should equal dirtyJson)
+
+    /// Verifies that processing pending Watch work publishes the dirty-to-clean IPC transition.
+    [<Test>]
+    let ``watch clean status transition is published after pending work drains`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            let filePath = Path.Combine(root, "clean-after-process.txt")
+            File.WriteAllText(filePath, "pending content")
+            Watch.OnChanged(changedEvent filePath)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            /// Reads status needed by the test scenario.
+            let readStatus () = Task.FromResult(status)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ filePath =
+                recordUploadedFileVersion $"{filePath}"
+                Task.FromResult(())
+
+            /// Builds update grace status test data used to exercise CLI watch behavior.
+            let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+            /// Builds update grace status from differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences currentStatus _ _ = Task.FromResult(Some currentStatus)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                applyIncremental
+                Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "cleanWorkingTree"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal false
+
+            (Watch.pendingWatchWorkSnapshotForTests ())
+                .FilesToProcess
+            |> should equal Array.empty<string>)
 
     /// Verifies that watch status serializes compact safety flags without durable liveness-sensitive mode.
     [<Test>]

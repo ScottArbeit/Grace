@@ -240,6 +240,8 @@ module Watch =
     let mutable private graceStatusDirectoryIds = HashSet<DirectoryVersionId>()
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
+    let private watchStatusPublishLock = obj ()
+    let mutable private lastPublishedHasPendingWatchWork: bool option = None
 
     /// Coordinates file deleted behavior for this CLI command path.
     let fileDeleted filePath = logToConsole $"In Delete: filePath: {filePath}"
@@ -1338,6 +1340,63 @@ module Watch =
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
+    /// Evaluates has pending watch work against parsed options and command state.
+    let private hasPendingWatchWork () =
+        isGraceWatchResyncPending ()
+        || not (
+            filesToProcess.IsEmpty
+            && directoriesToProcess.IsEmpty
+            && statusUpdateTriggers.IsEmpty
+            && not (hasPendingStatusDifferences ())
+        )
+
+    /// Records the pending-work flag that the next Watch IPC snapshot should publish.
+    let private setGraceWatchPendingWorkStatusFlag hasPendingWork =
+        lock watchStatusPublishLock (fun () ->
+            setGraceWatchHasPendingWorkForStatus hasPendingWork
+            lastPublishedHasPendingWatchWork <- Some hasPendingWork)
+
+    /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
+    let private publishPendingWatchWorkTransitionIfNeeded () =
+        lock watchStatusPublishLock (fun () ->
+            let hasPendingWork = hasPendingWatchWork ()
+
+            if
+                File.Exists(IpcFileName())
+                && lastPublishedHasPendingWatchWork
+                   <> Some hasPendingWork
+            then
+                setGraceWatchHasPendingWorkForStatus hasPendingWork
+                lastPublishedHasPendingWatchWork <- Some hasPendingWork
+
+                let runtimeMode = currentGraceWatchRuntimeMode ()
+
+                let statusForPublish, directoryIdsForPublish =
+                    if
+                        runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                        && not (isGraceWatchResyncPending ())
+                    then
+                        try
+                            let status = readGraceStatusFile().GetAwaiter().GetResult()
+                            graceStatus <- status
+                            graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
+                            status, Some graceStatusDirectoryIds
+                        with
+                        | _ -> GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                    else
+                        GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+
+                try
+                    let writeTask =
+                        if runtimeMode = GraceWatchRuntimeMode.Suspended then
+                            updateGraceWatchInterprocessFileForSuspendedMode statusForPublish directoryIdsForPublish
+                        else
+                            updateGraceWatchInterprocessFile statusForPublish directoryIdsForPublish
+
+                    writeTask.GetAwaiter().GetResult()
+                with
+                | ex -> logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}")
+
     /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
     let private promoteStartupModeIfRecoverySucceeded () =
         if
@@ -1352,6 +1411,8 @@ module Watch =
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
         try
+            setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+
             let writeTask =
                 match currentGraceWatchRuntimeMode () with
                 | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
@@ -1485,6 +1546,11 @@ module Watch =
 
         graceStatus <- GraceStatus.Default
         graceStatusHasChanged <- false
+
+        lock watchStatusPublishLock (fun () ->
+            lastPublishedHasPendingWatchWork <- None
+            setGraceWatchHasPendingWorkForStatus false)
+
         readGraceStatusFileForDeletedPathClassification <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
@@ -1512,16 +1578,6 @@ module Watch =
         |> Seq.map string
         |> Seq.sort
         |> Seq.toArray
-
-    /// Evaluates has pending watch work against parsed options and command state.
-    let private hasPendingWatchWork () =
-        isGraceWatchResyncPending ()
-        || not (
-            filesToProcess.IsEmpty
-            && directoriesToProcess.IsEmpty
-            && statusUpdateTriggers.IsEmpty
-            && not (hasPendingStatusDifferences ())
-        )
 
     /// Coordinates status only trigger snapshot behavior for this CLI command path.
     let private statusOnlyTriggerSnapshot () =
@@ -1639,7 +1695,9 @@ module Watch =
 
         if not inspection.IsUsable then
             flags.Remove("incrementalSafe") |> ignore
-            flags.Add("requiresExplicitResync") |> ignore
+
+            if not (flags.Contains("pendingWatchWork")) then
+                flags.Add("requiresExplicitResync") |> ignore
 
         flags |> Seq.sort |> Seq.toArray
 
@@ -1797,10 +1855,15 @@ module Watch =
 
             if not directoryStatusEnumerationComplete then
                 enqueueDirectoryUploadRetry args.FullPath
+
+            if directoryStatusAddQueued
+               || not directoryStatusEnumerationComplete then
+                publishPendingWatchWorkTransitionIfNeeded ()
         elif updateNotInProgress ()
              && isNotDirectory args.FullPath then
             if enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Added $"I saw that {args.FullPath} was created."
+                publishPendingWatchWorkTransitionIfNeeded ()
 
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
@@ -1818,6 +1881,7 @@ module Watch =
             if not <| shouldIgnore then
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
                 enqueueFileUpload args.FullPath |> ignore
+                publishPendingWatchWorkTransitionIfNeeded ()
 
             // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
             if (isGraceStatusArtifact args.FullPath)
@@ -1868,6 +1932,7 @@ module Watch =
                     | None -> ()
 
                 logToAnsiConsole Colors.Deleted $"I saw that {args.FullPath} was deleted."
+                publishPendingWatchWorkTransitionIfNeeded ()
 
             if (isGraceStatusArtifact args.FullPath)
                && (not <| graceStatusHasChanged) then
@@ -1878,11 +1943,13 @@ module Watch =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress () then
+            let mutable queuedPendingWork = false
             let newPathIsDirectory = Directory.Exists(args.FullPath)
 
             let canceledFileUpload = cancelPendingUploadsForDeletedPath args.OldFullPath
 
             let oldPathStatusQueued = enqueueStatusUpdateTrigger args.OldFullPath
+            queuedPendingWork <- queuedPendingWork || oldPathStatusQueued
 
             if oldPathStatusQueued then
                 if canceledFileUpload then
@@ -1901,11 +1968,16 @@ module Watch =
 
                 if not (enqueueDirectoryContentsForUpload args.FullPath) then
                     enqueueDirectoryUploadRetry args.FullPath
+                    queuedPendingWork <- true
 
                 if not directoryStatusEnumerationComplete then
                     enqueueDirectoryUploadRetry args.FullPath
+                    queuedPendingWork <- true
             elif enqueueFileUpload args.FullPath then
                 logToAnsiConsole Colors.Changed $"I saw that {args.OldFullPath} was renamed to {args.FullPath}."
+                queuedPendingWork <- true
+
+            if queuedPendingWork then publishPendingWatchWorkTransitionIfNeeded ()
 
     /// Coordinates on error behavior for this CLI command path.
     let OnError (args: ErrorEventArgs) =
@@ -2245,6 +2317,7 @@ module Watch =
     let private publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =
         task {
             let runtimeMode = currentGraceWatchRuntimeMode ()
+            setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
 
             if
                 runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
@@ -2442,6 +2515,7 @@ module Watch =
                             let clearedResyncAttempt = tryClearGraceWatchResyncAttempt resyncAttempt
 
                             if clearedResyncAttempt then
+                                setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
                                 do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
 
                                 logToAnsiConsole
@@ -2625,9 +2699,11 @@ module Watch =
                         runtimeModeAfterProcessing = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
                     then
+                        setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
                         updateGraceStatusDirectoryIds graceStatus
                         do! updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds)
                     else
+                        setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
                         do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
 
                         logToAnsiConsole
@@ -2653,11 +2729,14 @@ module Watch =
                     runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                     && not (isGraceWatchResyncPending ())
                 then
+                    setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
                     let! graceStatusFromDisk = readGraceStatusMetaClient ()
                     do! updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds)
                 elif runtimeMode = GraceWatchRuntimeMode.Suspended then
+                    setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
                     do! updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
                 else
+                    setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
                     do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
 
                     logToAnsiConsole
@@ -2774,6 +2853,7 @@ module Watch =
                     updateGraceStatusDirectoryIds graceStatus
 
                     // Create the inter-process communication file.
+                    setGraceWatchPendingWorkStatusFlag false
                     do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
 
                     // Enable the FileSystemWatcher.

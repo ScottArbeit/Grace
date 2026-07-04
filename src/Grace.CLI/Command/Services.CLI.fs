@@ -88,6 +88,13 @@ module Services =
         {
             UpdatedAt: Instant
             IsStartupClaim: bool
+            RepositoryId: RepositoryId
+            RepositoryName: RepositoryName
+            BranchId: BranchId
+            BranchName: BranchName
+            RootDirectory: string
+            HasPendingWatchWork: bool
+            IsWorkingTreeClean: bool
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
             RootDirectoryBlake3Hash: Blake3Hash
@@ -130,18 +137,27 @@ module Services =
             let isFreshSnapshot = this.IsFreshSnapshot
             let mode = this.Mode
 
+            let hasPendingWatchWork =
+                this.HasPendingWatchWork
+                || not this.IsWorkingTreeClean
+
             [|
                 if isStartupClaim then "startupClaim"
 
                 if not isFreshSnapshot then "staleStatus"
+
+                if hasPendingWatchWork then "pendingWatchWork" else "cleanWorkingTree"
 
                 if hasUsableRootSnapshot then "usableRoot" else "missingRoot"
 
                 if hasDirectoryIndexSnapshot then "directoryIndex" else "missingDirectoryIndex"
 
                 if mode = GraceWatchRuntimeMode.HealthyIncremental
-                   && isFreshSnapshot then
+                   && isFreshSnapshot
+                   && not hasPendingWatchWork then
                     "incrementalSafe"
+                elif hasPendingWatchWork then
+                    "pendingStatusApply"
                 else
                     "requiresExplicitResync"
             |]
@@ -151,6 +167,13 @@ module Services =
             {
                 UpdatedAt = Instant.MinValue
                 IsStartupClaim = false
+                RepositoryId = RepositoryId.Empty
+                RepositoryName = RepositoryName String.Empty
+                BranchId = BranchId.Empty
+                BranchName = BranchName String.Empty
+                RootDirectory = String.Empty
+                HasPendingWatchWork = false
+                IsWorkingTreeClean = true
                 RootDirectoryId = Guid.Empty
                 RootDirectorySha256Hash = Sha256Hash String.Empty
                 RootDirectoryBlake3Hash = Blake3Hash String.Empty
@@ -164,6 +187,13 @@ module Services =
         {
             UpdatedAt: Instant
             IsStartupClaim: bool
+            RepositoryId: RepositoryId
+            RepositoryName: RepositoryName
+            BranchId: BranchId
+            BranchName: BranchName
+            RootDirectory: string
+            HasPendingWatchWork: bool
+            IsWorkingTreeClean: bool
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
             RootDirectoryBlake3Hash: Blake3Hash
@@ -205,6 +235,8 @@ module Services =
             | Some status, Some GraceWatchRuntimeMode.HealthyIncremental ->
                 this.IsFresh
                 && not status.IsStartupClaim
+                && status.IsWorkingTreeClean
+                && not status.HasPendingWatchWork
                 && status.Mode = GraceWatchRuntimeMode.HealthyIncremental
             | _ -> false
 
@@ -265,6 +297,13 @@ module Services =
         {
             UpdatedAt = status.UpdatedAt
             IsStartupClaim = status.IsStartupClaim
+            RepositoryId = status.RepositoryId
+            RepositoryName = status.RepositoryName
+            BranchId = status.BranchId
+            BranchName = status.BranchName
+            RootDirectory = status.RootDirectory
+            HasPendingWatchWork = status.HasPendingWatchWork
+            IsWorkingTreeClean = status.IsWorkingTreeClean
             RootDirectoryId = status.RootDirectoryId
             RootDirectorySha256Hash = status.RootDirectorySha256Hash
             RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
@@ -314,8 +353,19 @@ module Services =
         | _ -> None
 
     let mutable graceWatchStatusUpdateTime = Instant.MinValue
+    let mutable private graceWatchHasPendingWorkForStatus = 0
     let mutable parseResult: ParseResult = null
     let mutable private invocationCorrelationId: CorrelationId option = None
+
+    /// Records whether the next Grace Watch IPC write should advertise unapplied local observations.
+    let internal setGraceWatchHasPendingWorkForStatus hasPendingWork =
+        Interlocked.Exchange(&graceWatchHasPendingWorkForStatus, (if hasPendingWork then 1 else 0))
+        |> ignore
+
+    /// Reads the pending-work fact that is copied into Grace Watch IPC status snapshots.
+    let private hasGraceWatchPendingWorkForStatus () =
+        Volatile.Read(&graceWatchHasPendingWorkForStatus)
+        <> 0
 
     /// Coordinates directory version preimage entries behavior for this CLI command path.
     let private directoryVersionPreimageEntries (directories: seq<LocalDirectoryVersion>) (files: seq<LocalFileVersion>) =
@@ -2243,6 +2293,9 @@ module Services =
 
     /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
     let private createGraceWatchStatus (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
+        let current = Current()
+        let hasPendingWatchWork = hasGraceWatchPendingWorkForStatus ()
+
         let directoryIds =
             match directoryIdsOverride with
             | Some ids -> HashSet<DirectoryVersionId>(ids)
@@ -2261,6 +2314,13 @@ module Services =
         {
             UpdatedAt = getCurrentInstant ()
             IsStartupClaim = false
+            RepositoryId = current.RepositoryId
+            RepositoryName = current.RepositoryName
+            BranchId = current.BranchId
+            BranchName = current.BranchName
+            RootDirectory = current.RootDirectory
+            HasPendingWatchWork = hasPendingWatchWork
+            IsWorkingTreeClean = not hasPendingWatchWork
             RootDirectoryId = graceStatus.RootDirectoryId
             RootDirectorySha256Hash = graceStatus.RootDirectorySha256Hash
             RootDirectoryBlake3Hash = rootDirectoryBlake3Hash
