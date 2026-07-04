@@ -14,6 +14,7 @@
 
   <ItemGroup>
     <Compile Include="OperationsSkeleton.Tests.fs" />
+    <Compile Include="OperationsUsageStorage.Tests.fs" />
     <Compile Include="Program.fs" />
   </ItemGroup>
 
