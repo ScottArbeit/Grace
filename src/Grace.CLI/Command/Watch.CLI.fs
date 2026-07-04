@@ -294,6 +294,15 @@ module Watch =
         | :? IOException -> None
         | :? UnauthorizedAccessException -> None
 
+    /// Reports whether the completed sidecar was written for the marker that is currently still present.
+    let private currentUpdateMarkerMatchesCompletedSidecar completedUtc =
+        try
+            File.GetLastWriteTimeUtc(updateInProgressFileName ())
+            <= completedUtc
+        with
+        | :? IOException -> false
+        | :? UnauthorizedAccessException -> false
+
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
         | DeletedFile
@@ -585,6 +594,25 @@ module Watch =
             with
             | _ -> false
 
+    /// Reports whether an existing path belongs to the post-switch GraceStatus snapshot.
+    let private completedSwitchTracksExistingPathFromGraceStatus fullPath =
+        match repositoryRelativePath fullPath with
+        | None -> false
+        | Some relativePath ->
+            try
+                let completedStatus =
+                    readGraceStatusFileForDeletedPathClassification()
+                        .GetAwaiter()
+                        .GetResult()
+
+                match trackedDeletedPathKind completedStatus relativePath with
+                | DeletedFile -> File.Exists fullPath
+                | DeletedDirectory -> Directory.Exists fullPath
+                | DeletedPathKindUnknown
+                | DeletedPathStatusUnavailable -> false
+            with
+            | _ -> false
+
     /// Identifies delayed callbacks for writes that completed while a Grace update marker was still present.
     let private isDelayedGraceOwnedFileObservation fullPath =
         match tryRecentGraceUpdateMarkerCompletedUtc () with
@@ -595,17 +623,18 @@ module Watch =
             ->
             completedSwitchRemovedPathFromGraceStatus fullPath
         | Some markerCompletedUtc ->
-            try
-                let lastWriteTimeUtc =
-                    if File.Exists fullPath then
-                        File.GetLastWriteTimeUtc(fullPath)
-                    else
-                        Directory.GetLastWriteTimeUtc(fullPath)
+            completedSwitchTracksExistingPathFromGraceStatus fullPath
+            && (try
+                    let lastWriteTimeUtc =
+                        if File.Exists fullPath then
+                            File.GetLastWriteTimeUtc(fullPath)
+                        else
+                            Directory.GetLastWriteTimeUtc(fullPath)
 
-                lastWriteTimeUtc <= markerCompletedUtc
-            with
-            | :? IOException -> false
-            | :? UnauthorizedAccessException -> false
+                    lastWriteTimeUtc <= markerCompletedUtc
+                with
+                | :? IOException -> false
+                | :? UnauthorizedAccessException -> false)
 
     /// Coordinates set grace status for watch tests behavior for this CLI command path.
     let internal setGraceStatusForWatchTests status = graceStatus <- status
@@ -2303,7 +2332,13 @@ module Watch =
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
-                clearGraceUpdateMarkerDeletedUtc ()
+                let hasCurrentCompletedSidecar =
+                    match tryReadGraceUpdateMarkerCompletedUtc () with
+                    | Some completedUtc -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
+                    | None -> false
+
+                if not hasCurrentCompletedSidecar then clearGraceUpdateMarkerDeletedUtc ()
+
                 logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
