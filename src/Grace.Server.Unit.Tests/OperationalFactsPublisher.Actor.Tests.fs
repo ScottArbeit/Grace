@@ -137,6 +137,51 @@ type OperationalFactsPublisherActorTests() =
             previous
             |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
 
+    /// Verifies that usage facts cannot be configured onto the GraceEvent topic/subscriber path.
+    [<Test>]
+    [<NonParallelizable>]
+    member _.StartupValidationRejectsOperationalFactsTopicAlias() =
+        let keys =
+            [|
+                Constants.EnvironmentVariables.GracePubSubSystem
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusNamespace
+                Constants.EnvironmentVariables.AzureServiceBusTopic
+                Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                Constants.EnvironmentVariables.AzureServiceBusSubscription
+            |]
+
+        let previous =
+            keys
+            |> Array.map (fun key -> key, Environment.GetEnvironmentVariable key)
+
+        try
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GracePubSubSystem, nameof GracePubSubSystem.AzureServiceBus)
+
+            Environment.SetEnvironmentVariable(
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString,
+                "Endpoint=sb://localhost/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE"
+            )
+
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, "sbemulatorns")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, "GraceEventStream")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
+
+            let ex =
+                Assert.Throws<InvalidOperationException>(
+                    Action (fun () ->
+                        ApplicationContext.configurePubSubSettings ()
+                        |> ignore)
+                )
+
+            Assert.That(ex.Message, Does.Contain(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic))
+            Assert.That(ex.Message, Does.Contain(Constants.EnvironmentVariables.AzureServiceBusTopic))
+            Assert.That(ex.Message, Does.Contain("must differ"))
+        finally
+            previous
+            |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
+
     /// Verifies that the existing GraceEvent publisher keeps the event stream topic and event metadata shape.
     [<Test>]
     member _.GraceEventPublisherStillUsesEventTopicAndMetadata() =

@@ -224,6 +224,10 @@ module ApplicationContext =
                     invalidOp
                         $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must be set when {EnvironmentVariables.GracePubSubSystem} is {GracePubSubSystem.AzureServiceBus}."
 
+                if String.Equals(topic.Trim(), operationalFactsTopic.Trim(), StringComparison.OrdinalIgnoreCase) then
+                    invalidOp
+                        $"Environment variable '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path."
+
                 let subscription = Environment.GetEnvironmentVariable EnvironmentVariables.AzureServiceBusSubscription
 
                 if String.IsNullOrWhiteSpace(subscription) then

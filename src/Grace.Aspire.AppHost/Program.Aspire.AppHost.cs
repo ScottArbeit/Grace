@@ -368,9 +368,8 @@ public partial class Program
                     var cosmosContainerName = GetRequiredSetting(configuration, EnvironmentVariables.AzureCosmosDBContainerName);
                     var serviceBusNamespace = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusNamespace);
                     var serviceBusTopic = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusTopic);
-                    var operationalFactsTopic =
-                        ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
-                        ?? Constants.GraceOperationalFactsTopic;
+                    var operationalFactsTopic = GetRequiredSetting(configuration, EnvironmentVariables.AzureServiceBusOperationalFactsTopic);
+                    EnsureDistinctServiceBusTopics(serviceBusTopic, operationalFactsTopic);
                     var serviceBusSubscription = ResolveSetting(configuration, EnvironmentVariables.AzureServiceBusSubscription);
 
                     graceServer
@@ -536,6 +535,20 @@ public partial class Program
             $"Missing required setting '{name}' (or '{key}') for DebugAzure.");
     }
 
+    private static void EnsureDistinctServiceBusTopics(string? graceEventTopic, string? operationalFactsTopic)
+    {
+        if (string.IsNullOrWhiteSpace(graceEventTopic) || string.IsNullOrWhiteSpace(operationalFactsTopic))
+        {
+            return;
+        }
+
+        if (graceEventTopic.Trim().Equals(operationalFactsTopic.Trim(), StringComparison.OrdinalIgnoreCase))
+        {
+            throw new InvalidOperationException(
+                $"Service Bus topic '{EnvironmentVariables.AzureServiceBusOperationalFactsTopic}' must differ from '{EnvironmentVariables.AzureServiceBusTopic}' so usage facts cannot enter the GraceEvent topic/subscriber path.");
+        }
+    }
+
     private static void AddOptionalEnvironment(
         IResourceBuilder<ProjectResource> resource,
         IConfiguration configuration,
@@ -627,6 +640,7 @@ public partial class Program
         var operationalFactsTopicName =
             ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
             ?? Constants.GraceOperationalFactsTopic;
+        EnsureDistinctServiceBusTopics(topicName, operationalFactsTopicName);
         var operationalFactsSubscriptionName = $"{operationalFactsTopicName}-processor";
         var subscriptionName =
             ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusSubscription)
