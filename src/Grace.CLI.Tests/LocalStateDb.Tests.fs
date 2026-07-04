@@ -491,6 +491,54 @@ module LocalStateDbTests =
                 readThrough |> should equal 0L
             })
 
+    /// Verifies that the explicit maintenance reset clears only Watch journal state.
+    [<Test>]
+    let ``clear watch journal resets only journal rows allocation and watermark`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                let rootId = Guid.NewGuid()
+                let rootHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                let status = createTestStatus rootId rootHash 123L
+                do! LocalStateDb.replaceStatusSnapshot configuration.GraceStatusFile status
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 3L
+                    executeNonQuery connection "UPDATE meta SET value = '2' WHERE key = 'AppliedThroughSequence';"
+
+                let! result = LocalStateDb.clearWatchJournal configuration.GraceStatusFile
+
+                result.RowsDeleted |> should equal 3L
+
+                result.AppliedThroughSequenceBefore
+                |> should equal 2L
+
+                result.AppliedThroughSequenceAfter
+                |> should equal 0L
+
+                result.AllocatedSequenceBefore |> should equal 3L
+                result.AllocatedSequenceAfter |> should equal 0L
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+                let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let statusMetaRows = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
+
+                journalRows |> should equal 0
+                allocationRows |> should equal 0
+                appliedThrough |> should equal "0"
+                statusMetaRows |> should equal 1
+
+                let! statusAfter = LocalStateDb.readStatusSnapshot configuration.GraceStatusFile
+                statusAfter.RootDirectoryId |> should equal rootId
+
+                statusAfter.RootDirectorySha256Hash
+                |> should equal rootHash
+            })
+
     /// Verifies that concurrent Watch recovery watermark advances cannot let a lower stale write win.
     [<Test>]
     let ``watch journal applied through sequence is atomic under interleaved advances`` () =

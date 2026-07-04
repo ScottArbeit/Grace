@@ -238,16 +238,16 @@ module CommandOutputContractRegistryTests =
     [<Test>]
     let ``registry contains accepted inventory totals`` () =
         CommandOutputContract.entries.Length
-        |> should equal 206
+        |> should equal 208
 
         CommandOutputContract.routedEntries.Length
-        |> should equal 197
+        |> should equal 199
 
         CommandOutputContract.sourceOnlyEntries.Length
         |> should equal 9
 
         countBy CommonRenderOutputEnvelope
-        |> should equal 185
+        |> should equal 187
 
         countBy ImmediateJsonErrorOnly |> should equal 0
 
@@ -298,7 +298,7 @@ module CommandOutputContractRegistryTests =
 
         let deleted = 0
 
-        jsonReady |> should equal 185
+        jsonReady |> should equal 187
         intentionallyHumanOnly |> should equal 0
         conditionalStatus |> should equal 1
         deferredV2 |> should equal 11
@@ -480,7 +480,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 187
 
         for entry in commonEntries do
             match entry.EnvelopeContract with
@@ -498,7 +498,7 @@ module CommandOutputContractRegistryTests =
             CommandOutputContract.entries
             |> List.filter (fun entry -> entry.CurrentJsonBehavior = CommonRenderOutputEnvelope)
 
-        commonEntries.Length |> should equal 185
+        commonEntries.Length |> should equal 187
 
         let parserInvalidEntries =
             commonEntries
@@ -862,8 +862,10 @@ module CommandOutputContractRegistryTests =
         let cases =
             [
                 CommandOutputContract.commandIdentity [ "maintenance" ] "check-ignore-entries", "MaintenanceIgnoreEntriesDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "clear-journal", "MaintenanceClearJournalDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "list-contents", "MaintenanceListContentsDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "scan", "MaintenanceScanDto"
+                CommandOutputContract.commandIdentity [ "maintenance" ] "show-journal", "MaintenanceShowJournalDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "stats", "MaintenanceStatsDto"
                 CommandOutputContract.commandIdentity [ "maintenance" ] "update-index", "MaintenanceStatsDto"
             ]

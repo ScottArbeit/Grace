@@ -151,6 +151,34 @@ module Common =
                 NewDirectoryVersions: MaintenanceScanDirectoryVersionDto array
             }
 
+        /// Models one durable Watch journal row emitted by maintenance show-journal.
+        type MaintenanceJournalRowDto = { Sequence: int64; CreatedAtUnixTicks: int64; State: string; RelativePath: string option }
+
+        /// Models filtered durable Watch journal diagnostics for maintenance show-journal.
+        type MaintenanceShowJournalDto =
+            {
+                DbPath: string
+                AppliedThroughSequence: int64
+                AllocatedSequence: int64
+                TotalRows: int64
+                RowCount: int
+                StateFilter: string
+                PathFilter: string option
+                Limit: int
+                Rows: MaintenanceJournalRowDto array
+            }
+
+        /// Models the scoped durable Watch journal reset result for maintenance clear-journal.
+        type MaintenanceClearJournalDto =
+            {
+                DbPath: string
+                RowsDeleted: int64
+                AppliedThroughSequenceBefore: int64
+                AppliedThroughSequenceAfter: int64
+                AllocatedSequenceBefore: int64
+                AllocatedSequenceAfter: int64
+            }
+
         /// Defines structured data exchanged by CLI helpers.
         type DoctorCheckDto = { Id: string; Category: string; Title: string; Description: string; DefaultEnabled: bool; SupportsOffline: bool }
 
