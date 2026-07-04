@@ -1424,10 +1424,22 @@ module Watch =
     /// Completes startup for tests that verify failed recovery does not resume incremental mode.
     let internal promoteStartupModeIfRecoverySucceededForWatchTests () = promoteStartupModeIfRecoverySucceeded ()
 
+    /// Verifies that the persisted IPC snapshot forces readers away from incremental shortcuts during resync.
+    let private isGraceWatchResyncRequiredStatusPublished (inspection: GraceWatchStatusInspection) =
+        inspection.Status
+        |> Option.exists (fun status ->
+            status.HasPendingWatchWork
+            && not status.IsWorkingTreeClean
+            && not inspection.IsUsable
+            && inspection.EffectiveMode
+               <> Some GraceWatchRuntimeMode.HealthyIncremental)
+
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
+        let hasPendingWork = hasPendingWatchWork ()
+
         try
-            setGraceWatchPendingWorkStatusFlag (hasPendingWatchWork ())
+            lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
 
             let writeTask =
                 match currentGraceWatchRuntimeMode () with
@@ -1435,8 +1447,22 @@ module Watch =
                 | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
 
             writeTask.GetAwaiter().GetResult()
+
+            let resyncRequiredWasPublished =
+                try
+                    inspectGraceWatchStatus().GetAwaiter().GetResult()
+                    |> isGraceWatchResyncRequiredStatusPublished
+                with
+                | _ -> false
+
+            lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- if resyncRequiredWasPublished then Some hasPendingWork else None)
+
+            if not resyncRequiredWasPublished then
+                logToAnsiConsole Colors.Important $"Grace Watch will retry resync-required status publication on the next transition check."
         with
-        | ex -> logToAnsiConsole Colors.Error $"Grace Watch could not publish resync-required status: {Markup.Escape(ex.Message)}."
+        | ex ->
+            lock watchStatusPublishLock (fun () -> lastPublishedHasPendingWatchWork <- None)
+            logToAnsiConsole Colors.Error $"Grace Watch could not publish resync-required status: {Markup.Escape(ex.Message)}."
 
     /// Suspends only the resync attempt that observed the failure, preserving newer overflow requests.
     let private suspendGraceWatchAttemptAfterFailedRecovery attempt reason =

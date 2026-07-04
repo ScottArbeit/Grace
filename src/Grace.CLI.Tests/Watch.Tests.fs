@@ -172,15 +172,26 @@ module WatchTests =
         statusNode.Remove("SafetyFlags") |> ignore
         statusNode.ToJsonString(Constants.JsonSerializerOptions)
 
-    /// Removes the explicit clean/dirty fields so tests can simulate Watch IPC files written before issue #492.
-    let private removeExplicitWatchCleanFields (json: string) =
+    /// Removes issue #492 fields so tests can simulate Watch IPC files written by the previous CLI.
+    let private removeWatchStatusFieldsAddedForIssue492 (json: string) =
         let statusNode = JsonNode.Parse(json).AsObject()
+        statusNode.Remove("RepositoryId") |> ignore
+        statusNode.Remove("RepositoryName") |> ignore
+        statusNode.Remove("BranchId") |> ignore
+        statusNode.Remove("BranchName") |> ignore
+        statusNode.Remove("RootDirectory") |> ignore
         statusNode.Remove("HasPendingWatchWork") |> ignore
         statusNode.Remove("IsWorkingTreeClean") |> ignore
         statusNode.ToJsonString(Constants.JsonSerializerOptions)
 
     /// Reads safety flags into a deterministic set for assertions.
     let private safetyFlagSet (status: Services.GraceWatchStatus) = status.SafetyFlags |> Set.ofArray
+
+    /// Reports whether a persisted JSON snapshot contains the supplied top-level property.
+    let private jsonHasProperty (propertyName: string) (json: string) =
+        use document = JsonDocument.Parse(json)
+        let mutable property = Unchecked.defaultof<JsonElement>
+        document.RootElement.TryGetProperty(propertyName, &property)
 
     /// Reads a scalar property from the persisted Watch IPC JSON contract.
     let private readWatchStatusJsonStringProperty (propertyName: string) =
@@ -5727,7 +5738,7 @@ module WatchTests =
 
             safetyFlags
             |> Set.contains "cleanWorkingTree"
-            |> should equal true
+            |> should equal false
 
             match Services.getGraceWatchStatus().Result with
             | Some watchStatus ->
@@ -5781,6 +5792,10 @@ module WatchTests =
             |> Set.contains "pendingWatchWork"
             |> should equal true
 
+            safetyFlags
+            |> Set.contains "pendingStatusApply"
+            |> should equal false
+
             let dirtyJson = File.ReadAllText(Services.IpcFileName())
 
             File.WriteAllText(filePath, "second content")
@@ -5824,6 +5839,50 @@ module WatchTests =
 
             readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
             |> should equal false)
+
+    /// Verifies that resync-required publication retries after a swallowed IPC write failure.
+    [<Test>]
+    let ``watch resync-required status transition retries after ipc write failure`` () =
+        withTempRepo (fun root ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Services.getGraceWatchStatus().Result
+            |> Option.isSome
+            |> should equal true
+
+            use lockedIpc = new FileStream(Services.IpcFileName(), FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            Watch.requestGraceWatchExplicitResyncForWatchTests "locked resync-required publication"
+            lockedIpc.Dispose()
+
+            Services.getGraceWatchStatus().Result
+            |> Option.isSome
+            |> should equal true
+
+            let filePath = Path.Combine(root, "resync-retry.txt")
+            File.WriteAllText(filePath, "retry resync publication")
+            Watch.OnChanged(changedEvent filePath)
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true)
 
     /// Verifies that Watch IPC writes recheck pending work at the serialized write boundary.
     [<Test>]
@@ -5941,7 +6000,7 @@ module WatchTests =
 
             safetyFlags
             |> Set.contains "cleanWorkingTree"
-            |> should equal true
+            |> should equal false
 
             safetyFlags
             |> Set.contains "pendingWatchWork"
@@ -6258,17 +6317,34 @@ module WatchTests =
                 |> liveWatchStatus
                 |> serialize
                 |> removeCompactWatchRuntimeSurface
-                |> removeExplicitWatchCleanFields
+                |> removeWatchStatusFieldsAddedForIssue492
 
-            legacyJson |> should not' (contain "Mode")
+            jsonHasProperty "Mode" legacyJson
+            |> should equal false
 
-            legacyJson |> should not' (contain "SafetyFlags")
+            jsonHasProperty "SafetyFlags" legacyJson
+            |> should equal false
 
-            legacyJson
-            |> should not' (contain "HasPendingWatchWork")
+            jsonHasProperty "HasPendingWatchWork" legacyJson
+            |> should equal false
 
-            legacyJson
-            |> should not' (contain "IsWorkingTreeClean")
+            jsonHasProperty "IsWorkingTreeClean" legacyJson
+            |> should equal false
+
+            jsonHasProperty "RepositoryId" legacyJson
+            |> should equal false
+
+            jsonHasProperty "RepositoryName" legacyJson
+            |> should equal false
+
+            jsonHasProperty "BranchId" legacyJson
+            |> should equal false
+
+            jsonHasProperty "BranchName" legacyJson
+            |> should equal false
+
+            jsonHasProperty "RootDirectory" legacyJson
+            |> should equal false
 
             let ipcFileName = Services.IpcFileName()
 

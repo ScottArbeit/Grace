@@ -262,11 +262,17 @@ module Services =
             && this.EffectiveMode
                <> Some GraceWatchRuntimeMode.Stopping
 
+    /// Reports whether a compact Watch safety flag must be recomputed from a fresh heartbeat before consumers trust it.
+    let private isRawGraceWatchSafetyFlagLivenessSensitive safetyFlag =
+        String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)
+        || String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal)
+        || String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)
+
     /// Removes liveness-sensitive safety claims from persisted IPC JSON so raw readers never trust a dead Watch process.
     let private safetyFlagsForGraceWatchStatusContract persistedModeOverride (status: GraceWatchStatus) =
         let safetyFlags =
             status.SafetyFlags
-            |> Array.filter (fun safetyFlag -> not (String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal)))
+            |> Array.filter (isRawGraceWatchSafetyFlagLivenessSensitive >> not)
 
         match persistedModeOverride with
         | Some GraceWatchRuntimeMode.Suspended
@@ -283,9 +289,6 @@ module Services =
                     |]
 
             safetyFlags
-            |> Array.filter (fun safetyFlag ->
-                not (String.Equals(safetyFlag, "cleanWorkingTree", StringComparison.Ordinal))
-                && not (String.Equals(safetyFlag, "pendingStatusApply", StringComparison.Ordinal)))
             |> Array.append nonIncrementalFlags
             |> Array.distinct
         | _ -> safetyFlags
@@ -405,21 +408,24 @@ module Services =
         Volatile.Read(&graceWatchHasPendingWorkForStatus)
         <> 0
 
-    /// Restores the clean/no-pending JSON fields omitted by Watch IPC snapshots before explicit clean fields existed.
-    let private normalizeLegacyGraceWatchCleanFields (json: string) =
+    /// Restores fields omitted by Watch IPC snapshots written before the current status identity and clean contract.
+    let private normalizeLegacyGraceWatchStatusFields (json: string) =
         try
-            use document = JsonDocument.Parse(json)
-            let mutable pendingElement = Unchecked.defaultof<JsonElement>
-            let mutable cleanElement = Unchecked.defaultof<JsonElement>
+            let statusNode = JsonNode.Parse(json).AsObject()
 
-            let hasPendingField = document.RootElement.TryGetProperty("HasPendingWatchWork", &pendingElement)
+            let defaultStatusNode =
+                JsonNode
+                    .Parse(serialize GraceWatchStatus.Default)
+                    .AsObject()
 
-            let hasCleanField = document.RootElement.TryGetProperty("IsWorkingTreeClean", &cleanElement)
+            let mutable addedLegacyField = false
 
-            if not hasPendingField && not hasCleanField then
-                let statusNode = JsonNode.Parse(json).AsObject()
-                statusNode["HasPendingWatchWork"] <- JsonValue.Create(false)
-                statusNode["IsWorkingTreeClean"] <- JsonValue.Create(true)
+            for defaultProperty in defaultStatusNode do
+                if not (statusNode.ContainsKey(defaultProperty.Key)) then
+                    statusNode[defaultProperty.Key] <- defaultProperty.Value.DeepClone()
+                    addedLegacyField <- true
+
+            if addedLegacyField then
                 statusNode.ToJsonString(Constants.JsonSerializerOptions)
             else
                 json
@@ -2312,7 +2318,7 @@ module Services =
                 try
                     let json = System.IO.File.ReadAllText(IpcFileName())
 
-                    let normalizedJson = normalizeLegacyGraceWatchCleanFields json
+                    let normalizedJson = normalizeLegacyGraceWatchStatusFields json
                     let status = deserialize<GraceWatchStatus> normalizedJson
 
                     return
