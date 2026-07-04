@@ -1290,8 +1290,48 @@ module Watch =
     /// Reports whether an explicit resync scan must run before incremental observation application resumes.
     let private isGraceWatchResyncPending () = Volatile.Read(&graceWatchResyncPending) <> 0
 
+    let mutable private statusSideEffectTrustPredicate = fun () -> true
+
+    /// Reports whether Watch still trusts the current status update enough to write remote or local side effects.
+    let private statusSideEffectsStillTrusted () = statusSideEffectTrustPredicate ()
+
+    /// Reports the active status side-effect trust state for Watch confidence-boundary tests.
+    let internal statusSideEffectsStillTrustedForWatchTests () = statusSideEffectsStillTrusted ()
+
+    /// Runs status application with a confidence predicate that can be rechecked between side effects.
+    let private runWithStatusSideEffectTrustPredicate predicate operation =
+        task {
+            let previousPredicate = statusSideEffectTrustPredicate
+            statusSideEffectTrustPredicate <- predicate
+
+            try
+                return! operation ()
+            finally
+                statusSideEffectTrustPredicate <- previousPredicate
+        }
+
+    /// Stops status application before a side effect when Watch lost the confidence boundary for this update.
+    let private statusSideEffectStillAllowed sideEffectName =
+        let allowed = statusSideEffectsStillTrusted ()
+
+        if not allowed then
+            logToAnsiConsole Colors.Important $"Grace Watch skipped {sideEffectName} because confidence was lost before status side effects completed."
+
+        allowed
+
     /// Clears the pending resync request once scan-derived status has reached the durable boundary.
     let private clearGraceWatchResyncPending () = Volatile.Write(&graceWatchResyncPending, 0)
+
+    /// Completes startup only when recovery did not leave Watch in another runtime mode or with pending resync work.
+    let private promoteStartupModeIfRecoverySucceeded () =
+        if
+            currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
+            && not (isGraceWatchResyncPending ())
+        then
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
+
+    /// Completes startup for tests that verify failed recovery does not resume incremental mode.
+    let internal promoteStartupModeIfRecoverySucceededForWatchTests () = promoteStartupModeIfRecoverySucceeded ()
 
     /// Publishes a non-incremental IPC snapshot so other Grace processes do not trust stale Watch status during resync.
     let private publishGraceWatchResyncRequired () =
@@ -1820,14 +1860,15 @@ module Watch =
                     .ToList()
 
             if unuploadedFileDifferences.Count > 0 then
-                for fileDifference in unuploadedFileDifferences do
-                    let fullPath = Path.Combine(Current().RootDirectory, string fileDifference.RelativePath)
+                if statusSideEffectStillAllowed "missing-upload retry queueing" then
+                    for fileDifference in unuploadedFileDifferences do
+                        let fullPath = Path.Combine(Current().RootDirectory, string fileDifference.RelativePath)
 
-                    enqueueFileUpload fullPath |> ignore
+                        enqueueFileUpload fullPath |> ignore
 
-                logToAnsiConsole
-                    Colors.Important
-                    $"Grace Status update found {unuploadedFileDifferences.Count} file add/change differences without uploaded file content; file uploads will run before retrying the status update."
+                    logToAnsiConsole
+                        Colors.Important
+                        $"Grace Status update found {unuploadedFileDifferences.Count} file add/change differences without uploaded file content; file uploads will run before retrying the status update."
 
                 return None
             else
@@ -1845,68 +1886,85 @@ module Watch =
                             savedDirectoryVersions
                             newDirectoryVersions
 
-                    let! result = saveDirectoryVersions directoryVersionsToSave correlationId
+                    let! result =
+                        if statusSideEffectStillAllowed "directory-version upload" then
+                            saveDirectoryVersions directoryVersionsToSave correlationId
+                        else
+                            Task.FromResult(Error(GraceError.Create "Watch confidence lost before directory-version upload." correlationId))
 
                     match result with
                     | Ok returnValue ->
                         let newGraceStatus = syncGraceStatusRootDirectoryHash newGraceStatus
 
-                        do! updateObjectCacheFile newDirectoryVersions
-
-                        let fileDifferences =
-                            differences
-                                .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
-                                .ToList()
-
-                        let message =
-                            if fileDifferences |> Seq.isEmpty then
-                                String.Empty
-                            else
-                                let sb = stringBuilderPool.Get()
-
-                                try
-                                    for fileDifference in fileDifferences do
-                                        //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
-                                        match fileDifference.DifferenceType with
-                                        | Change ->
-                                            sb.AppendLine($"{fileDifference.RelativePath}")
-                                            |> ignore
-                                        | Add ->
-                                            sb.AppendLine($"Add {fileDifference.RelativePath}")
-                                            |> ignore
-                                        | Delete ->
-                                            sb.AppendLine($"Delete {fileDifference.RelativePath}")
-                                            |> ignore
-
-                                    let saveMessage = sb.ToString()
-                                    saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
-                                finally
-                                    stringBuilderPool.Return(sb)
-
-                        // If there are changes either to files or just to directories, create a save reference.
-                        if (differences.Count > 0) then
-                            match! createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId with
-                            | Ok returnValue ->
-                                let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
-                                // Apply incremental changes to the Grace Status DB.
-                                do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
-
-                                for fileVersion in directoryUploadedFileVersions do
-                                    let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
-
-                                    uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
-                                    |> ignore
-
-                                //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
-                                graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
-                                return Some newGraceStatusWithUpdatedTime
-                            | Error error ->
-                                logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
-                                return None
+                        if not (statusSideEffectStillAllowed "object-cache update") then
+                            return None
                         else
-                            // There were no changes to process, so just return the existing GraceStatus.
-                            //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
-                            return Some graceStatus
+                            do! updateObjectCacheFile newDirectoryVersions
+
+                            let fileDifferences =
+                                differences
+                                    .Where(fun diff -> diff.FileSystemEntryType = FileSystemEntryType.File)
+                                    .ToList()
+
+                            let message =
+                                if fileDifferences |> Seq.isEmpty then
+                                    String.Empty
+                                else
+                                    let sb = stringBuilderPool.Get()
+
+                                    try
+                                        for fileDifference in fileDifferences do
+                                            //sb.AppendLine($"{(getDiscriminatedUnionCaseNameToString fileDifference.DifferenceType)}: {fileDifference.RelativePath}") |> ignore
+                                            match fileDifference.DifferenceType with
+                                            | Change ->
+                                                sb.AppendLine($"{fileDifference.RelativePath}")
+                                                |> ignore
+                                            | Add ->
+                                                sb.AppendLine($"Add {fileDifference.RelativePath}")
+                                                |> ignore
+                                            | Delete ->
+                                                sb.AppendLine($"Delete {fileDifference.RelativePath}")
+                                                |> ignore
+
+                                        let saveMessage = sb.ToString()
+                                        saveMessage.Remove(saveMessage.LastIndexOf(Environment.NewLine), Environment.NewLine.Length)
+                                    finally
+                                        stringBuilderPool.Return(sb)
+
+                            // If there are changes either to files or just to directories, create a save reference.
+                            if (differences.Count > 0) then
+                                let! saveReferenceResult =
+                                    if statusSideEffectStillAllowed "save reference creation" then
+                                        createSaveReference (getRootDirectoryVersion newGraceStatus) message correlationId
+                                    else
+                                        Task.FromResult(Error(GraceError.Create "Watch confidence lost before save reference creation." correlationId))
+
+                                match saveReferenceResult with
+                                | Ok returnValue ->
+                                    let newGraceStatusWithUpdatedTime = { newGraceStatus with LastSuccessfulDirectoryVersionUpload = getCurrentInstant () }
+
+                                    if statusSideEffectStillAllowed "local status application" then
+                                        // Apply incremental changes to the Grace Status DB.
+                                        do! applyGraceStatusIncremental newGraceStatusWithUpdatedTime newDirectoryVersions differences
+
+                                        for fileVersion in directoryUploadedFileVersions do
+                                            let mutable removedFileVersion = Unchecked.defaultof<FileVersion>
+
+                                            uploadedFileVersions.TryRemove(uploadedFileVersionIdentity fileVersion, &removedFileVersion)
+                                            |> ignore
+
+                                        //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in updateGraceStatus(). Current value: {graceStatusHasChanged}."
+                                        graceStatusHasChanged <- false // We *just* changed it ourselves, so we don't have to re-process it in the timer loop.
+                                        return Some newGraceStatusWithUpdatedTime
+                                    else
+                                        return None
+                                | Error error ->
+                                    logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                                    return None
+                            else
+                                // There were no changes to process, so just return the existing GraceStatus.
+                                //logToAnsiConsole Colors.Verbose "No fileDifferences or newDirectoryVersions to process; not updating GraceStatus."
+                                return Some graceStatus
                     | Error error ->
                         logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                         return None
@@ -2029,6 +2087,28 @@ module Watch =
     /// Coordinates update grace status directory ids behavior for this CLI command path.
     let updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
 
+    /// Publishes a trusted Watch IPC snapshot only when incremental mode is currently safe for other processes.
+    let private publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient context =
+        task {
+            let runtimeMode = currentGraceWatchRuntimeMode ()
+
+            if
+                runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+                && not (isGraceWatchResyncPending ())
+            then
+                do! updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds)
+            else
+                do! updateGraceWatchInterprocessFileClient GraceStatus.Default (Some(HashSet<DirectoryVersionId>()))
+
+                logToAnsiConsole
+                    Colors.Important
+                    $"Grace Watch published non-incremental IPC for {context} while runtime mode is {runtimeMode} and resync pending is {isGraceWatchResyncPending ()}."
+        }
+
+    /// Publishes Watch IPC for tests that verify confidence-lost states cannot advertise incremental safety.
+    let internal publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests trustedStatus directoryIds updateGraceWatchInterprocessFileClient =
+        publishGraceWatchInterprocessFileForCurrentConfidence trustedStatus directoryIds updateGraceWatchInterprocessFileClient "test refresh"
+
     /// Uploads pending file content while preserving the confidence boundary for the current Watch mode.
     let private uploadPendingWatchFilesForStatusRetry
         readGraceStatusMetaClient
@@ -2072,6 +2152,7 @@ module Watch =
                         if recordProcessedPaths then
                             not (isGraceWatchResyncPending ())
                             && (isGraceWatchObservationApplicationLegal currentMode
+                                || currentMode = GraceWatchRuntimeMode.StartingUp
                                 || currentMode = GraceWatchRuntimeMode.Stopping)
                         else
                             isGraceWatchResyncPending ()
@@ -2103,6 +2184,17 @@ module Watch =
                 do! applyGraceStatusIncrementalClient graceStatus Seq.empty Seq.empty
 
             return processedAnyFile
+        }
+
+    /// Invokes status application only while the caller's confidence boundary still holds.
+    let private updateGraceStatusFromDifferencesWhenTrusted trustPredicate updateGraceStatusFromDifferencesClient graceStatus differences correlationId =
+        task {
+            if trustPredicate () then
+                return!
+                    runWithStatusSideEffectTrustPredicate trustPredicate (fun () -> updateGraceStatusFromDifferencesClient graceStatus differences correlationId)
+            else
+                logToAnsiConsole Colors.Important "Grace Watch skipped status application because confidence was lost before status side effects started."
+                return None
         }
 
     /// Processes any changed files since the last timer tick.
@@ -2148,9 +2240,18 @@ module Watch =
                     if not (wasLastScanForDifferencesSuccessful ()) then
                         failwith "scan-derived resync did not complete successfully"
 
+                    let resyncStatusUpdateStillTrusted () =
+                        isGraceWatchResyncPending ()
+                        && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.Resynchronizing
+
                     let! statusUpdateResult =
                         if scanDerivedDifferences.Count > 0 then
-                            updateGraceStatusFromDifferencesClient graceStatus scanDerivedDifferences correlationId
+                            updateGraceStatusFromDifferencesWhenTrusted
+                                resyncStatusUpdateStillTrusted
+                                updateGraceStatusFromDifferencesClient
+                                graceStatus
+                                scanDerivedDifferences
+                                correlationId
                         else
                             Task.FromResult(Some graceStatus)
 
@@ -2235,15 +2336,24 @@ module Watch =
                                 statusTriggerSnapshot
                                 (mergeCurrentStatusDifferences processedFileRelativePathsForStatus startupPendingDifferences eventDerivedDifferences)
 
-                        let statusApplicationLegal =
+                        let statusApplicationModeStillTrusted () =
                             let runtimeModeBeforeStatusApplication = currentGraceWatchRuntimeMode ()
 
                             if runtimeModeBeforeStatusApplication = GraceWatchRuntimeMode.Stopping then
                                 false
                             elif startupPendingDifferences.Count > 0 then
-                                true
+                                runtimeModeBeforeStatusApplication = GraceWatchRuntimeMode.StartingUp
+                                || runtimeModeBeforeStatusApplication = GraceWatchRuntimeMode.HealthyIncremental
                             else
                                 isGraceWatchObservationApplicationLegal runtimeModeBeforeStatusApplication
+
+                        let statusApplicationLegal = statusApplicationModeStillTrusted ()
+
+                        let statusUpdateStillTrusted () =
+                            filesToProcess.IsEmpty
+                            && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
+                            && not (isGraceWatchResyncPending ())
+                            && statusApplicationModeStillTrusted ()
 
                         let! statusUpdateResult =
                             if requeuedResolvedFileDeletePaths.Count > 0 then
@@ -2265,7 +2375,12 @@ module Watch =
 
                                 Task.FromResult(None)
                             elif statusDifferencesForApply.Applicable.Count > 0 then
-                                updateGraceStatusFromDifferencesClient graceStatus statusDifferencesForApply.Applicable correlationId
+                                updateGraceStatusFromDifferencesWhenTrusted
+                                    statusUpdateStillTrusted
+                                    updateGraceStatusFromDifferencesClient
+                                    graceStatus
+                                    statusDifferencesForApply.Applicable
+                                    correlationId
                             else
                                 Task.FromResult(Some graceStatus)
 
@@ -2274,9 +2389,7 @@ module Watch =
                             let commitRuntimeMode = currentGraceWatchRuntimeMode ()
 
                             let statusUpdateCanCommit =
-                                filesToProcess.IsEmpty
-                                && Volatile.Read(&fileUploadWorkGeneration) = fileWorkGenerationBeforeStatusUpdate
-                                && not (isGraceWatchResyncPending ())
+                                statusUpdateStillTrusted ()
                                 && (startupPendingDifferences.Count > 0
                                     || isGraceWatchObservationApplicationLegal commitRuntimeMode)
 
@@ -2658,7 +2771,7 @@ module Watch =
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
-                    setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
+                    promoteStartupModeIfRecoverySucceeded ()
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -2675,7 +2788,14 @@ module Watch =
                             let! updatedGraceStatus = readGraceStatusFile ()
                             graceStatus <- updatedGraceStatus
                             updateGraceStatusDirectoryIds graceStatus
-                            do! updateGraceWatchInterprocessFile graceStatus (Some graceStatusDirectoryIds)
+
+                            do!
+                                publishGraceWatchInterprocessFileForCurrentConfidence
+                                    graceStatus
+                                    graceStatusDirectoryIds
+                                    updateGraceWatchInterprocessFile
+                                    "Grace Status refresh"
+
                             //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to false in OnWatch(). Current value: {graceStatusHasChanged}."
                             graceStatusHasChanged <- false
 

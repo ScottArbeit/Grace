@@ -5916,6 +5916,35 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
+    /// Verifies that resync scans build fresh working-tree maps so stale cache entries cannot hide deletes.
+    [<Test>]
+    let ``scan for differences forgets deleted paths from previous scan`` () =
+        withTempRepo (fun root ->
+            let relativePath = "stale-cache-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "tracked content before delete")
+
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            (Services.scanForDifferences status)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            File.Delete(filePath)
+
+            let differencesAfterDelete =
+                (Services.scanForDifferences status)
+                    .GetAwaiter()
+                    .GetResult()
+
+            differencesAfterDelete
+            |> Seq.exists (fun difference ->
+                difference.DifferenceType = DifferenceType.Delete
+                && difference.FileSystemEntryType = FileSystemEntryType.File
+                && string difference.RelativePath = relativePath)
+            |> should equal true)
+
     /// Verifies that observations captured during resync wait behind the scan-derived status boundary.
     [<Test>]
     let ``resync defers captured observations until scan status applies`` () =
@@ -6208,6 +6237,50 @@ module WatchTests =
             Watch.currentGraceWatchRuntimeModeForWatchTests ()
             |> should equal Services.GraceWatchRuntimeMode.Suspended)
 
+    /// Verifies that startup tail logic preserves a failed resync recovery instead of resuming healthy mode.
+    [<Test>]
+    let ``startup completion preserves suspended recovery state`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+            Watch.requestGraceWatchExplicitResyncForWatchTests "startup resync failure"
+
+            /// Reads status needed by the failed startup recovery scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Fails the startup resync scan before the durable status boundary.
+            let scanForDifferences _ = Task.FromException<List<FileSystemDifference>>(InvalidOperationException("startup scan failed"))
+
+            /// Builds apply-from-differences test data used to exercise CLI watch behavior.
+            let updateGraceStatusFromDifferences status _ _ = Task.FromResult(Some status)
+
+            /// Builds apply incremental test data used to exercise CLI watch behavior.
+            let applyIncremental _ _ _ = Task.FromResult(())
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scanForDifferences
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.promoteStartupModeIfRecoverySucceededForWatchTests ()
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Suspended)
+
     /// Verifies that liveness refresh cannot republish healthy IPC while Watch is suspended.
     [<Test>]
     let ``suspended liveness refresh publishes non-incremental ipc`` () =
@@ -6250,6 +6323,38 @@ module WatchTests =
                 (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
                 (fun _ _ _ -> Task.FromResult(()))
                 Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
+    /// Verifies that Grace Status DB refreshes cannot publish healthy IPC while resync is pending.
+    [<Test>]
+    let ``resync status refresh publishes non-incremental ipc`` () =
+        withTempRepo (fun _ ->
+            let rootDirectoryId = Guid.NewGuid()
+
+            let status =
+                { GraceStatus.Default with
+                    RootDirectoryId = rootDirectoryId
+                    RootDirectorySha256Hash = Sha256Hash "resync-refresh-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "resync-refresh-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>([| rootDirectoryId |])
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Services.getGraceWatchStatus().Result
+            |> Option.isSome
+            |> should equal true
+
+            Watch.requestGraceWatchExplicitResyncForWatchTests "test resync refresh"
+
+            (Watch.publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests status directoryIds Services.updateGraceWatchInterprocessFile)
                 .GetAwaiter()
                 .GetResult()
 
@@ -6311,6 +6416,131 @@ module WatchTests =
 
             Services.getGraceWatchStatus().Result
             |> should equal None)
+
+    /// Verifies that overflow during status application blocks later side effects in the same update.
+    [<Test>]
+    let ``overflow during status application cancels side effects`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let filePath = Path.Combine(root, "overflow-during-status.txt")
+            Watch.OnDeleted(deletedEvent filePath)
+
+            /// Tracks apply-from-differences Calls changes so the in-flight race is explicit.
+            let mutable applyFromDifferencesCalls = 0
+            /// Tracks side effects that should be skipped after overflow changes the trust predicate.
+            let mutable trustedSideEffects = 0
+
+            /// Reads status needed by the overflow race scenario.
+            let readStatus () = Task.FromResult(graceStatusTracking [| "overflow-during-status.txt" |] Array.empty<string>)
+
+            /// Builds upload test data used to exercise CLI watch behavior.
+            let upload _ _ = Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Builds apply-from-differences test data used to exercise overflow during status application.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Watch.OnError(ErrorEventArgs(InternalBufferOverflowException("watch buffer overflow")))
+
+                if Watch.statusSideEffectsStillTrustedForWatchTests () then
+                    trustedSideEffects <- trustedSideEffects + 1
+
+                Task.FromResult(Some status)
+
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc status directoryIds = Services.updateGraceWatchInterprocessFile status directoryIds
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                (fun _ _ _ -> Task.FromResult(()))
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            applyFromDifferencesCalls |> should equal 1
+            trustedSideEffects |> should equal 0
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+            Services.getGraceWatchStatus().Result
+            |> should equal None)
+
+    /// Verifies that startup upload completions are recorded before healthy mode so they are not uploaded again.
+    [<Test>]
+    let ``startup upload completion records processed path before healthy mode`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+            let relativePath = "startup-upload.txt"
+            let filePath = Path.Combine(root, relativePath)
+            File.WriteAllText(filePath, "startup upload content")
+
+            Watch.queueStartupDifferenceForWatch (FileSystemDifference.Create Add FileSystemEntryType.File relativePath)
+
+            /// Tracks upload Calls changes so startup duplicate prevention is explicit.
+            let mutable uploadCalls = 0
+            /// Tracks apply-from-differences Calls changes so the retry remains pending without another upload.
+            let mutable applyFromDifferencesCalls = 0
+
+            /// Reads status needed by the startup upload scenario.
+            let readStatus () = Task.FromResult(GraceStatus.Default)
+
+            /// Records uploaded content while Watch is still in startup mode.
+            let upload _ pendingFilePath =
+                uploadCalls <- uploadCalls + 1
+                recordUploadedFileVersion $"{pendingFilePath}"
+                Task.FromResult(())
+
+            /// Builds scan-oriented update test data used to exercise CLI watch behavior.
+            let updateGraceStatus status _ = Task.FromResult(Some status)
+
+            /// Keeps startup status application retryable so processed upload state remains observable.
+            let updateGraceStatusFromDifferences status _ _ =
+                applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                Task.FromResult(None)
+
+            /// Builds update ipc test data used to exercise CLI watch behavior.
+            let updateIpc _ _ = Task.FromResult(())
+
+            let processPendingWork () =
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    (fun _ _ _ -> Task.FromResult(()))
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 1
+
+            Watch
+                .pendingWatchWorkSnapshotForTests()
+                .FilesToProcess
+            |> should equal Array.empty<string>
+
+            Watch.processedFileRelativePathsPendingStatusForWatchTests ()
+            |> should equal [| relativePath |]
+
+            processPendingWork ()
+
+            uploadCalls |> should equal 1
+            applyFromDifferencesCalls |> should equal 2)
 
     /// Verifies that normal event-derived observations apply only in healthy incremental mode.
     [<Test>]
