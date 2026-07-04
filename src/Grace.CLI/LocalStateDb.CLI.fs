@@ -18,7 +18,15 @@ open SQLitePCL
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let private SchemaVersion = "4"
+    let private SchemaVersion = "5"
+
+    /// Identifies the single local Watch journal metadata row that records applied-through progress.
+    [<Literal>]
+    let WatchJournalAppliedThroughSequenceMetaKey = "AppliedThroughSequence"
+
+    /// Keeps a bounded diagnostic tail of already-applied Watch journal rows.
+    [<Literal>]
+    let WatchJournalRetainedAppliedRows = 1024L
 
     [<Literal>]
     let private BusyTimeoutMs = 30000
@@ -177,6 +185,7 @@ module LocalStateDb =
             "CREATE INDEX IF NOT EXISTS ix_object_cache_children_parent ON object_cache_directory_children(parent_directory_version_id);"
             "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL);"
         |]
 
     let private requiredTableNames =
@@ -188,6 +197,7 @@ module LocalStateDb =
             "object_cache_directories"
             "object_cache_directory_children"
             "object_cache_directory_files"
+            "watch_journal"
         |]
 
     let private requiredIndexNames =
@@ -390,6 +400,17 @@ module LocalStateDb =
 
         found
 
+    /// Reports whether a LocalStateDb table exists before writable operations trust the schema version.
+    let private tableExists (connection: SqliteConnection) tableName =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = $table_name LIMIT 1;"
+
+        command.Parameters.AddWithValue("$table_name", tableName)
+        |> ignore
+
+        use reader = command.ExecuteReader()
+        reader.Read()
+
     /// Reads inspect object cache read only data from the local SQLite state database.
     let private inspectObjectCacheReadOnly (connection: SqliteConnection) =
         try
@@ -504,6 +525,21 @@ module LocalStateDb =
             parameters.AddWithValue("$key", key) |> ignore
             parameters.AddWithValue("$value", value) |> ignore)
 
+    /// Persists the watch journal applied-through metadata default without advancing recovery state.
+    let private insertWatchJournalAppliedThroughIfMissing (connection: SqliteConnection) =
+        executeNonQueryWithParams connection "INSERT OR IGNORE INTO meta (key, value) VALUES ($key, '0');" (fun parameters ->
+            parameters.AddWithValue("$key", WatchJournalAppliedThroughSequenceMetaKey)
+            |> ignore)
+
+    /// Reads the applied-through journal sequence used by future Watch recovery work.
+    let private readWatchJournalAppliedThroughSequenceInternal (connection: SqliteConnection) =
+        match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
+        | Some value ->
+            match Int64.TryParse(value) with
+            | true, sequence when sequence >= 0L -> sequence
+            | _ -> 0L
+        | None -> 0L
+
     /// Persists insert status meta if missing changes in the local SQLite state database.
     let private insertStatusMetaIfMissing (connection: SqliteConnection) =
         let defaultStatus = GraceStatus.Default
@@ -534,6 +570,7 @@ module LocalStateDb =
         && columnExists connection "status_files" "blake3_hash"
         && columnExists connection "object_cache_directories" "blake3_hash"
         && columnExists connection "object_cache_directory_files" "blake3_hash"
+        && tableExists connection "watch_journal"
 
     /// Evaluates has empty writable status blake3 rows against parsed options and command state.
     let private hasEmptyWritableStatusBlake3Rows (connection: SqliteConnection) =
@@ -646,6 +683,7 @@ module LocalStateDb =
                                                 if not recreate then
                                                     logTrace "status_meta ensuring default row"
                                                     insertStatusMetaIfMissing connection
+                                                    insertWatchJournalAppliedThroughIfMissing connection
                                             with
                                             | :? SqliteException as ex when ex.SqliteErrorCode = 26 -> recreate <- true
                                         with
@@ -664,6 +702,7 @@ module LocalStateDb =
                                         ensureJournalMode connection
                                         setMetaValue connection "schema_version" SchemaVersion
                                         setMetaValue connection "created_at_unix_ticks" $"{getCurrentInstant().ToUnixTimeTicks()}"
+                                        insertWatchJournalAppliedThroughIfMissing connection
                                         logTrace "status_meta ensuring default row"
                                         insertStatusMetaIfMissing connection
                                 })
@@ -671,6 +710,54 @@ module LocalStateDb =
                         initializedDbs[normalizedPath] <- true
                 finally
                     semaphore.Release() |> ignore
+        }
+
+    /// Reads the local Watch journal recovery watermark from LocalStateDb metadata.
+    let readWatchJournalAppliedThroughSequence (dbPath: string) =
+        task {
+            do! ensureDbInitialized dbPath
+            use connection = openConnection dbPath
+            return readWatchJournalAppliedThroughSequenceInternal connection
+        }
+
+    /// Persists the local Watch journal recovery watermark without changing journal rows.
+    let setWatchJournalAppliedThroughSequence (dbPath: string) (sequence: int64) =
+        task {
+            if sequence < 0L then
+                invalidArg (nameof sequence) "Applied-through sequence must be greater than or equal to zero."
+
+            do! ensureDbInitialized dbPath
+
+            return!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+                        setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{sequence}"
+                    })
+        }
+
+    /// Prunes applied Watch journal rows while keeping a small diagnostic tail behind the watermark.
+    let pruneWatchJournalRetention (dbPath: string) =
+        task {
+            do! ensureDbInitialized dbPath
+
+            return!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+                        let appliedThroughSequence = readWatchJournalAppliedThroughSequenceInternal connection
+
+                        let pruneThroughSequence =
+                            max
+                                0L
+                                (appliedThroughSequence
+                                 - WatchJournalRetainedAppliedRows)
+
+                        if pruneThroughSequence > 0L then
+                            executeNonQueryWithParams connection "DELETE FROM watch_journal WHERE sequence <= $sequence;" (fun parameters ->
+                                parameters.AddWithValue("$sequence", pruneThroughSequence)
+                                |> ignore)
+                    })
         }
 
     /// Models status meta values passed between the parser and local state db handlers.
