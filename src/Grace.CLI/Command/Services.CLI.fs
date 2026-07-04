@@ -2481,8 +2481,64 @@ module Services =
                 | Error error -> return Error error
         }
 
+    /// Computes a stable path segment from repository identity text without leaking local paths into temp directory names.
+    let private localRepositoryScopeSegment (value: string) =
+        let normalizedValue = if String.IsNullOrWhiteSpace(value) then "empty" else value.Trim()
+
+        Convert
+            .ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(normalizedValue)))
+            .ToLowerInvariant()
+
+    /// Gets the normalized repository root text used to keep local coordination files scoped to one checkout.
+    let private localRepositoryRootScope (rootDirectory: string) =
+        if String.IsNullOrWhiteSpace(rootDirectory) then
+            "empty-root"
+        else
+            let normalizedRoot =
+                Path
+                    .GetFullPath(rootDirectory)
+                    .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+            if runningOnWindows then normalizedRoot.ToUpperInvariant() else normalizedRoot
+
+    /// Gets the temp directory shared by local coordination files for one repository root and branch identity.
+    let internal localRepositoryBranchTempDirectoryForIdentity
+        (repositoryId: Guid)
+        (repositoryName: string)
+        (rootDirectory: string)
+        (branchId: Guid)
+        (branchName: string)
+        =
+        let repositoryScope =
+            if repositoryId <> Guid.Empty then
+                repositoryId.ToString("N")
+            else
+                localRepositoryScopeSegment repositoryName
+
+        let rootScope =
+            rootDirectory
+            |> localRepositoryRootScope
+            |> localRepositoryScopeSegment
+
+        let branchScope =
+            if branchId <> Guid.Empty then
+                branchId.ToString("N")
+            else
+                localRepositoryScopeSegment branchName
+
+        Path.Combine(Path.GetTempPath(), "Grace", "repositories", repositoryScope, rootScope, "branches", branchScope)
+
+    /// Gets the repository-scoped Watch IPC path for a specific local repository identity.
+    let internal IpcFileNameForIdentity (repositoryId: Guid) (repositoryName: string) (rootDirectory: string) (branchId: Guid) (branchName: string) =
+        getNativeFilePath (
+            Path.Combine(localRepositoryBranchTempDirectoryForIdentity repositoryId repositoryName rootDirectory branchId branchName, Constants.IpcFileName)
+        )
+
     /// The full path of the inter-process communication file that grace watch uses to communicate with other invocations of Grace.
-    let IpcFileName () = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.IpcFileName)
+    let IpcFileName () =
+        let current = Current()
+
+        IpcFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
     /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
     let inspectGraceWatchStatus () =
@@ -2944,12 +3000,25 @@ module Services =
 
         newGraceStatus
 
-    /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
-    let updateInProgressFileName () =
-        let directory = Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName)
+    /// Gets the repository-scoped update marker path for a specific local repository identity.
+    let internal updateInProgressFileNameForIdentity
+        (repositoryId: Guid)
+        (repositoryName: string)
+        (rootDirectory: string)
+        (branchId: Guid)
+        (branchName: string)
+        =
+        let directory = localRepositoryBranchTempDirectoryForIdentity repositoryId repositoryName rootDirectory branchId branchName
+
         Directory.CreateDirectory(directory) |> ignore
 
-        getNativeFilePath (Path.Combine(Path.GetTempPath(), "Grace", Current().BranchName, Constants.UpdateInProgressFileName))
+        getNativeFilePath (Path.Combine(directory, Constants.UpdateInProgressFileName))
+
+    /// Gets the file name used to indicate to `grace watch` that updates are in progress from another Grace command, and that it should ignore them.
+    let updateInProgressFileName () =
+        let current = Current()
+
+        updateInProgressFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
     /// Updates the working directory to match the contents of new DirectoryVersions.
     ///
