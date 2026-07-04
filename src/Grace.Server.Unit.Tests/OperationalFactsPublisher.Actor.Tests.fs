@@ -151,6 +151,51 @@ type OperationalFactsPublisherActorTests() =
             previous
             |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
 
+    /// Verifies that DebugAzure Service Bus can use a connection string without a separate namespace setting.
+    [<Test>]
+    [<NonParallelizable>]
+    member _.StartupValidationAcceptsConnectionStringOnlyServiceBusNamespace() =
+        let keys =
+            [|
+                Constants.EnvironmentVariables.GracePubSubSystem
+                Constants.EnvironmentVariables.DebugEnvironment
+                Constants.EnvironmentVariables.AzureStorageAccountName
+                Constants.EnvironmentVariables.AzureStorageKey
+                Constants.EnvironmentVariables.AzureServiceBusConnectionString
+                Constants.EnvironmentVariables.AzureServiceBusNamespace
+                Constants.EnvironmentVariables.AzureServiceBusTopic
+                Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic
+                OperationalFactsProcessorSubscriptionSettingName
+                Constants.EnvironmentVariables.AzureServiceBusSubscription
+            |]
+
+        let previous =
+            keys
+            |> Array.map (fun key -> key, Environment.GetEnvironmentVariable key)
+
+        let connectionString = "Endpoint=sb://grace-debug.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=SAS_KEY_VALUE"
+
+        try
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.GracePubSubSystem, nameof GracePubSubSystem.AzureServiceBus)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.DebugEnvironment, "Azure")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageAccountName, "gracedebug")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureStorageKey, "Zm9v")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusConnectionString, connectionString)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusNamespace, null)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusTopic, "graceeventstream")
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic, "grace-operational-facts")
+            Environment.SetEnvironmentVariable(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
+            Environment.SetEnvironmentVariable(Constants.EnvironmentVariables.AzureServiceBusSubscription, "grace-server")
+
+            let settings = ApplicationContext.configurePubSubSettings ()
+
+            Assert.That(settings.AzureServiceBus.IsSome, Is.True)
+            Assert.That(settings.AzureServiceBus.Value.ConnectionString, Is.EqualTo(connectionString))
+            Assert.That(settings.AzureServiceBus.Value.FullyQualifiedNamespace, Is.EqualTo("grace-debug.servicebus.windows.net"))
+        finally
+            previous
+            |> Array.iter (fun (key, value) -> Environment.SetEnvironmentVariable(key, value))
+
     /// Verifies that usage facts cannot be configured onto the GraceEvent topic/subscriber path.
     [<Test>]
     [<NonParallelizable>]
