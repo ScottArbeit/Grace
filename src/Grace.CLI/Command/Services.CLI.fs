@@ -202,8 +202,8 @@ module Services =
     let isGraceWatchObservationCaptureLegal mode =
         match mode with
         | GraceWatchRuntimeMode.StartingUp
-        | GraceWatchRuntimeMode.HealthyIncremental -> true
-        | GraceWatchRuntimeMode.Resynchronizing
+        | GraceWatchRuntimeMode.HealthyIncremental
+        | GraceWatchRuntimeMode.Resynchronizing -> true
         | GraceWatchRuntimeMode.Suspended
         | GraceWatchRuntimeMode.Stopping
         | _ -> false
@@ -696,8 +696,6 @@ module Services =
                 RootDirectoryBlake3Hash = rootDirectoryVersion.Blake3Hash
             }
 
-    let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
-
     let mutable private lastScanForDifferencesSucceeded = true
 
     /// Coordinates was last scan for differences successful behavior for this CLI command path.
@@ -706,41 +704,45 @@ module Services =
     /// Coordinates set last scan for differences successful for watch tests behavior for this CLI command path.
     let internal setLastScanForDifferencesSuccessfulForWatchTests succeeded = lastScanForDifferencesSucceeded <- succeeded
 
-    /// Clears inherited working directory write times for watch rescan values so explicitly scoped access commands do not target child resources accidentally.
-    let internal clearWorkingDirectoryWriteTimesForWatchRescan () = localWriteTimes.Clear()
+    /// Preserves the old test reset hook after working-tree scans moved to fresh per-scan write-time maps.
+    let internal clearWorkingDirectoryWriteTimesForWatchRescan () = ()
 
     /// Gets a dictionary of local paths and their last write times.
-    let rec getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
-        if shouldNotIgnoreDirectory directoryInfo.FullName then
-            // Add the current directory to the lookup dictionary
-            let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryInfo.FullName)))
+    let getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
+        let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
 
-            localWriteTimes.AddOrUpdate(
-                (FileSystemEntryType.Directory, directoryFullPath),
-                (fun _ -> directoryInfo.LastWriteTimeUtc),
-                (fun _ _ -> directoryInfo.LastWriteTimeUtc)
-            )
-            |> ignore
+        /// Adds non-ignored working-tree entries to the current scan's write-time map.
+        let rec addWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
+            if shouldNotIgnoreDirectory directoryInfo.FullName then
+                // Add the current directory to the lookup dictionary
+                let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryInfo.FullName)))
 
-            // Add each file to the lookup dictionary
-            for f in
-                directoryInfo
-                    .GetFiles()
-                    .Where(fun f -> not <| shouldIgnoreFile f.FullName) do
-                let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, f.FullName)))
-
-                localWriteTimes.AddOrUpdate((FileSystemEntryType.File, fileFullPath), (fun _ -> f.LastWriteTimeUtc), (fun _ _ -> f.LastWriteTimeUtc))
+                localWriteTimes.AddOrUpdate(
+                    (FileSystemEntryType.Directory, directoryFullPath),
+                    (fun _ -> directoryInfo.LastWriteTimeUtc),
+                    (fun _ _ -> directoryInfo.LastWriteTimeUtc)
+                )
                 |> ignore
 
-            // Call recursively for each subdirectory
-            let parallelLoopResult =
-                Parallel.ForEach(directoryInfo.GetDirectories(), Constants.ParallelOptions, (fun d -> getWorkingDirectoryWriteTimes d |> ignore))
+                // Add each file to the lookup dictionary
+                for f in
+                    directoryInfo
+                        .GetFiles()
+                        .Where(fun f -> not <| shouldIgnoreFile f.FullName) do
+                    let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, f.FullName)))
 
-            if parallelLoopResult.IsCompleted then
-                ()
-            else
-                printfn $"Failed while gathering local write times."
+                    localWriteTimes.AddOrUpdate((FileSystemEntryType.File, fileFullPath), (fun _ -> f.LastWriteTimeUtc), (fun _ _ -> f.LastWriteTimeUtc))
+                    |> ignore
 
+                // Call recursively for each subdirectory
+                let parallelLoopResult = Parallel.ForEach(directoryInfo.GetDirectories(), Constants.ParallelOptions, (fun d -> addWorkingDirectoryWriteTimes d))
+
+                if parallelLoopResult.IsCompleted then
+                    ()
+                else
+                    printfn $"Failed while gathering local write times."
+
+        addWorkingDirectoryWriteTimes directoryInfo
         localWriteTimes
 
     /// Reads local state db path from ParseResult, local configuration, or Grace ids.
