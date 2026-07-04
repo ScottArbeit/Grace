@@ -146,7 +146,6 @@ module BranchCommandTests =
     /// Runs branch switch preflight with injected side effects and reports which effects occurred.
     let private runBranchSwitchPreflight markerExists inspection =
         let mutable inspected = false
-        let mutable markerCreated = false
 
         let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
             {
@@ -155,12 +154,6 @@ module BranchCommandTests =
                     fun () ->
                         inspected <- true
                         Task.FromResult inspection
-                CreateUpdateMarker =
-                    fun () ->
-                        task {
-                            markerCreated <- true
-                            return ()
-                        }
             }
 
         let result =
@@ -168,7 +161,7 @@ module BranchCommandTests =
                 .GetAwaiter()
                 .GetResult()
 
-        result, inspected, markerCreated
+        result, inspected
 
     /// Verifies that update marker names include repository and root identity before branch-name scoping.
     [<Test>]
@@ -202,7 +195,7 @@ module BranchCommandTests =
                 File.Exists(currentMarkerFile)
                 |> should equal false
 
-                let result, inspected, markerCreated =
+                let result, inspected =
                     branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ())
                     |> runBranchSwitchPreflight (File.Exists(currentMarkerFile))
 
@@ -211,7 +204,9 @@ module BranchCommandTests =
                 | Error error -> Assert.Fail($"Expected unrelated repository marker to allow branch switch preflight, got: {error.Error}")
 
                 inspected |> should equal true
-                markerCreated |> should equal true
+
+                File.Exists(currentMarkerFile)
+                |> should equal false
 
             finally
                 if File.Exists(foreignMarkerFile) then File.Delete(foreignMarkerFile)
@@ -228,7 +223,9 @@ module BranchCommandTests =
                     BranchName = BranchName "stale-branch-display-name"
                 }
 
-            let result, inspected, markerCreated =
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            let result, inspected =
                 branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) status
                 |> runBranchSwitchPreflight false
 
@@ -237,38 +234,375 @@ module BranchCommandTests =
             | Error error -> Assert.Fail($"Expected healthy Watch status to allow branch switch, got: {error.Error}")
 
             inspected |> should equal true
-            markerCreated |> should equal true)
 
-    /// Verifies that successful branch switch cleanup removes the old branch marker created by preflight.
+            File.Exists(updateMarkerFile)
+            |> should equal false)
+
+    /// Verifies that successful branch switch mutation creates the marker only after the second Watch-clean preflight.
     [<Test>]
-    let ``branch switch working tree update preserves preflight marker lease for outer cleanup`` () =
+    let ``branch switch working tree update creates marker after mutation boundary preflight`` () =
         withTempBranchSwitchRepo (fun () ->
             let updateMarkerFile = Services.updateInProgressFileName ()
-            let preflightMarkerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+            let mutable inspected = false
+            let mutable operationRan = false
+            let mutable markerSeenByOperation = false
+            let mutationFile = Path.Combine(Current().RootDirectory, "grace-owned-mutation.txt")
 
-            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+
+                            File.Exists(updateMarkerFile)
+                            |> should equal false
+
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
+            let result =
+                (Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
+                    task {
+                        operationRan <- true
+                        markerSeenByOperation <- File.Exists(updateMarkerFile)
+                        File.WriteAllText(mutationFile, "Grace-owned branch switch write")
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Ok _ -> ()
+            | Error error -> Assert.Fail($"Expected mutation-boundary preflight to allow branch switch, got: {error.Error}")
+
+            inspected |> should equal true
+            operationRan |> should equal true
+            markerSeenByOperation |> should equal true
+
+            File.Exists(mutationFile) |> should equal true
+
+            File.Exists(updateMarkerFile)
+            |> should equal false)
+
+    /// Verifies that the switch workflow lease serializes precomputation without creating the Watch suppression marker.
+    [<Test>]
+    let ``branch switch workflow lease serializes before precompute without update marker`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let switchLeaseFile = Branch.branchSwitchWorkflowLeaseFileName updateMarkerFile
+            let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+            let mutable inspected = false
+            let mutable workflowRan = false
+            let mutable leaseSeenByWorkflow = false
+            let mutable markerSeenByWorkflow = false
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+
+                            File.Exists(updateMarkerFile)
+                            |> should equal false
+
+                            File.Exists(switchLeaseFile) |> should equal true
+
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
+            let result =
+                (Branch.runBranchSwitchWorkflowWithLease operations correlationId switchLeaseFile switchLeaseText (fun () ->
+                    task {
+                        workflowRan <- true
+                        leaseSeenByWorkflow <- File.Exists(switchLeaseFile)
+                        markerSeenByWorkflow <- File.Exists(updateMarkerFile)
+                        return "computed"
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Ok value -> value |> should equal "computed"
+            | Error error -> Assert.Fail($"Expected branch switch lease to allow workflow, got: {error.Error}")
+
+            inspected |> should equal true
+            workflowRan |> should equal true
+            leaseSeenByWorkflow |> should equal true
+            markerSeenByWorkflow |> should equal false
+
+            File.Exists(switchLeaseFile) |> should equal false
+
+            File.Exists(updateMarkerFile)
+            |> should equal false)
+
+    /// Verifies that an existing switch workflow lease refuses before Watch inspection and state precomputation.
+    [<Test>]
+    let ``branch switch workflow lease refuses competing switch before precompute`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let switchLeaseFile = Branch.branchSwitchWorkflowLeaseFileName updateMarkerFile
+            let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+            let mutable inspected = false
+            let mutable workflowRan = false
+
+            Directory.CreateDirectory(Path.GetDirectoryName(switchLeaseFile))
             |> ignore
 
-            File.WriteAllText(updateMarkerFile, preflightMarkerText)
+            File.WriteAllText(switchLeaseFile, "competing switch workflow")
 
-            (Branch.runBranchSwitchWorkingTreeUpdateWithMarker updateMarkerFile "`grace switch` is in progress." (fun () ->
-                task {
-                    let configuration = Current()
-                    configuration.BranchId <- Guid.NewGuid()
-                    configuration.BranchName <- "branch-switch-target"
-                }))
-                .GetAwaiter()
-                .GetResult()
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
+            let result =
+                (Branch.runBranchSwitchWorkflowWithLease operations correlationId switchLeaseFile switchLeaseText (fun () ->
+                    task {
+                        workflowRan <- true
+                        return ()
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before state precomputation"
+            | Ok _ -> Assert.Fail("Expected competing switch workflow lease to refuse before precompute.")
+
+            inspected |> should equal false
+            workflowRan |> should equal false
+
+            File.ReadAllText(switchLeaseFile)
+            |> should equal "competing switch workflow"
+
+            File.Delete(switchLeaseFile))
+
+    /// Verifies that switch workflow leases serialize the same worktree even after branch identity changes.
+    [<Test>]
+    let ``branch switch workflow lease is independent of mutable branch identity`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let current = Current()
+            let sourceUpdateMarkerFile = Services.updateInProgressFileName ()
+            let targetBranchId = Guid.NewGuid()
+            let targetBranchName = "branch-switch-target"
+
+            let targetUpdateMarkerFile =
+                Services.updateInProgressFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory targetBranchId targetBranchName
+
+            let sourceSwitchLeaseFile = Branch.branchSwitchWorkflowLeaseFileName sourceUpdateMarkerFile
+            let targetSwitchLeaseFile = Branch.branchSwitchWorkflowLeaseFileName targetUpdateMarkerFile
+
+            targetSwitchLeaseFile
+            |> should equal sourceSwitchLeaseFile
+
+            let sourceSwitchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+            let targetSwitchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
+            let mutable inspected = false
+            let mutable workflowRan = false
+
+            Directory.CreateDirectory(Path.GetDirectoryName(sourceSwitchLeaseFile))
+            |> ignore
+
+            File.WriteAllText(sourceSwitchLeaseFile, sourceSwitchLeaseText)
+
+            current.BranchId <- targetBranchId
+            current.BranchName <- targetBranchName
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(targetUpdateMarkerFile)
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
+            let result =
+                (Branch.runBranchSwitchWorkflowWithLease operations correlationId targetSwitchLeaseFile targetSwitchLeaseText (fun () ->
+                    task {
+                        workflowRan <- true
+                        return ()
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before state precomputation"
+            | Ok _ -> Assert.Fail("Expected same-worktree switch workflow lease to refuse after branch identity changes.")
+
+            inspected |> should equal false
+            workflowRan |> should equal false
+
+            File.ReadAllText(sourceSwitchLeaseFile)
+            |> should equal sourceSwitchLeaseText
+
+            File.Delete(sourceSwitchLeaseFile))
+
+    /// Verifies that branch identity is moved before object-cache refresh can fail.
+    [<Test>]
+    let ``branch switch local state updates config before cache refresh failure`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let targetBranchId = Guid.NewGuid()
+            let targetBranchName = "branch-switch-target"
+
+            let operation =
+                Func<Task> (fun () ->
+                    Branch.applyBranchSwitchLocalState
+                        (fun () -> Task.CompletedTask)
+                        (fun () ->
+                            let configuration = Current()
+                            configuration.BranchId <- targetBranchId
+                            configuration.BranchName <- targetBranchName
+                            updateConfiguration configuration)
+                        (fun () -> task { raise (IOException("simulated object cache refresh failure")) })
+                    :> Task)
+
+            Assert.ThrowsAsync<IOException>(operation)
+            |> ignore
+
+            resetConfiguration ()
+            let configuration = Current()
+
+            configuration.BranchId
+            |> should equal targetBranchId
+
+            configuration.BranchName
+            |> should equal targetBranchName)
+
+    /// Verifies that a second Watch-clean preflight failure prevents marker creation and working tree mutation.
+    [<Test>]
+    let ``branch switch working tree update refuses dirty mutation boundary before marker or rewrite`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+            let dirtyStatus = { branchSwitchWatchStatus () with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+            let mutationFile = Path.Combine(Current().RootDirectory, "must-not-be-written.txt")
+            let mutable inspected = false
+            let mutable operationRan = false
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+
+                            File.Exists(updateMarkerFile)
+                            |> should equal false
+
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) dirtyStatus)
+                }
+
+            let result =
+                (Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
+                    task {
+                        operationRan <- true
+                        File.WriteAllText(mutationFile, "must not be written")
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before mutation"
+
+                error.Error |> should contain "dirty working tree"
+            | Ok _ -> Assert.Fail("Expected dirty mutation-boundary Watch status to refuse branch switch.")
+
+            inspected |> should equal true
+            operationRan |> should equal false
+
+            File.Exists(mutationFile) |> should equal false
+
+            File.Exists(updateMarkerFile)
+            |> should equal false)
+
+    /// Verifies that partial mutation failure removes the working-tree marker created by this invocation.
+    [<Test>]
+    let ``branch switch working tree update removes owned marker when operation fails`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                    InspectWatchStatus =
+                        fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
+            let operation =
+                Func<Task> (fun () ->
+                    task {
+                        let! _ =
+                            Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
+                                task { raise (InvalidOperationException("simulated partial mutation failure")) })
+
+                        return ()
+                    }
+                    :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            File.Exists(updateMarkerFile)
+            |> should equal false
+
+            File.Exists(updateMarkerFile + ".completed")
+            |> should equal false)
+
+    /// Verifies that a raced marker creation failure does not run mutation work.
+    [<Test>]
+    let ``branch switch working tree update refuses raced marker before rewrite`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+            let mutable operationRan = false
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists =
+                        fun () ->
+                            if not (File.Exists(updateMarkerFile)) then
+                                Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+                                |> ignore
+
+                                File.WriteAllText(updateMarkerFile, "competing marker")
+
+                            false
+                    InspectWatchStatus =
+                        fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
+            let updateTask =
+                Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () -> task { operationRan <- true })
+
+            let result = updateTask.GetAwaiter().GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "update marker appeared while preflight was running"
+            | Ok _ -> Assert.Fail("Expected raced marker creation to refuse branch switch.")
+
+            operationRan |> should equal false
 
             File.Exists(updateMarkerFile) |> should equal true
 
             File.ReadAllText(updateMarkerFile)
-            |> should equal preflightMarkerText
+            |> should equal "competing marker"
 
-            Branch.deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFile preflightMarkerText
-
-            File.Exists(updateMarkerFile)
-            |> should equal false)
+            File.Delete(updateMarkerFile))
 
     /// Verifies that cancellation removes the working-tree marker when this invocation created it.
     [<Test>]
@@ -277,10 +611,22 @@ module BranchCommandTests =
             let updateMarkerFile = Services.updateInProgressFileName ()
             let markerText = "`grace switch` is in progress."
 
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                    InspectWatchStatus =
+                        fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                }
+
             let operation =
                 Func<Task> (fun () ->
-                    Branch.runBranchSwitchWorkingTreeUpdateWithMarker updateMarkerFile markerText (fun () ->
-                        task { raise (OperationCanceledException("simulated cancellation")) })
+                    task {
+                        let! _ =
+                            Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
+                                task { raise (OperationCanceledException("simulated cancellation")) })
+
+                        return ()
+                    }
                     :> Task)
 
             Assert.ThrowsAsync<OperationCanceledException>(operation)
@@ -323,14 +669,16 @@ module BranchCommandTests =
 
                 inspection.IsUsable |> should equal true
 
-                let result, inspected, markerCreated = runBranchSwitchPreflight false inspection
+                let result, inspected = runBranchSwitchPreflight false inspection
 
                 match result with
                 | Ok _ -> ()
                 | Error error -> Assert.Fail($"Expected current repository Watch IPC to allow branch switch, got: {error.Error}")
 
                 inspected |> should equal true
-                markerCreated |> should equal true
+
+                File.Exists(Services.updateInProgressFileName ())
+                |> should equal false
             finally
                 if File.Exists(currentIpcFile) then File.Delete(currentIpcFile)
 
@@ -347,7 +695,7 @@ module BranchCommandTests =
 
             File.WriteAllText(updateMarkerFile, "same repository marker")
 
-            let result, inspected, markerCreated =
+            let result, inspected =
                 branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ())
                 |> runBranchSwitchPreflight (File.Exists(updateMarkerFile))
 
@@ -360,8 +708,7 @@ module BranchCommandTests =
                 |> should contain "update marker already exists"
             | Ok _ -> Assert.Fail("Expected existing update marker to refuse branch switch.")
 
-            inspected |> should equal false
-            markerCreated |> should equal false)
+            inspected |> should equal false)
 
     /// Verifies that marker write failures remove the partial file created by this preflight.
     [<Test>]
@@ -407,7 +754,7 @@ module BranchCommandTests =
                         .GetAwaiter()
                         .GetResult()
 
-                let result, inspected, markerCreated = runBranchSwitchPreflight false inspection
+                let result, inspected = runBranchSwitchPreflight false inspection
 
                 match result with
                 | Error error ->
@@ -418,7 +765,6 @@ module BranchCommandTests =
                 | Ok _ -> Assert.Fail("Expected dirty current-repository Watch IPC to refuse branch switch.")
 
                 inspected |> should equal true
-                markerCreated |> should equal false
             finally
                 if File.Exists(currentIpcFile) then File.Delete(currentIpcFile))
 
@@ -516,7 +862,7 @@ module BranchCommandTests =
                 |]
 
             for name, inspection, expectedReason in cases do
-                let result, inspected, markerCreated = runBranchSwitchPreflight false inspection
+                let result, inspected = runBranchSwitchPreflight false inspection
 
                 match result with
                 | Error error ->
@@ -526,8 +872,7 @@ module BranchCommandTests =
                     error.Error |> should contain expectedReason
                 | Ok _ -> Assert.Fail($"Expected {name} to refuse branch switch.")
 
-                inspected |> should equal true
-                markerCreated |> should equal false)
+                inspected |> should equal true)
 
     let private sampleAnnotation =
         let lastChangedReferenceId = Guid.NewGuid()

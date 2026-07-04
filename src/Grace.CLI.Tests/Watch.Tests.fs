@@ -393,9 +393,266 @@ module WatchTests =
     /// Builds changed event test data used to exercise CLI watch behavior.
     let private changedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
 
+    /// Builds local file version test data used to exercise CLI watch behavior.
+    let private localFileVersion relativePath =
+        LocalFileVersion.CreateWithHashes
+            relativePath
+            (Sha256Hash $"sha-{relativePath}")
+            (Blake3Hash $"blake3-{relativePath}")
+            false
+            1L
+            (getCurrentInstant ())
+            true
+            DateTime.UtcNow
+
+    /// Builds local directory version test data used to exercise CLI watch behavior.
+    let private localDirectoryVersion relativePath directories files =
+        LocalDirectoryVersion.CreateWithHashes
+            (Guid.NewGuid())
+            OwnerId.Empty
+            OrganizationId.Empty
+            RepositoryId.Empty
+            relativePath
+            (Sha256Hash $"sha-{relativePath}")
+            (Blake3Hash $"blake3-{relativePath}")
+            directories
+            files
+            1L
+            DateTime.UtcNow
+
+    /// Builds grace status tracking test data used to exercise CLI watch behavior.
+    let private graceStatusTracking trackedFiles trackedDirectories =
+        let rootDirectoryId = Guid.NewGuid()
+        let index = GraceIndex()
+
+        let childDirectories =
+            trackedDirectories
+            |> Array.map (fun relativePath -> localDirectoryVersion relativePath (List<DirectoryVersionId>()) (List<LocalFileVersion>()))
+
+        let root =
+            LocalDirectoryVersion.CreateWithHashes
+                rootDirectoryId
+                OwnerId.Empty
+                OrganizationId.Empty
+                RepositoryId.Empty
+                Constants.RootDirectoryPath
+                (Sha256Hash "root-sha")
+                (Blake3Hash "root-blake3")
+                (List<DirectoryVersionId>(
+                    childDirectories
+                    |> Array.map (fun directory -> directory.DirectoryVersionId)
+                ))
+                (List<LocalFileVersion>(trackedFiles |> Array.map localFileVersion))
+                1L
+                DateTime.UtcNow
+
+        index.TryAdd(rootDirectoryId, root) |> ignore
+
+        for directory in childDirectories do
+            index.TryAdd(directory.DirectoryVersionId, directory)
+            |> ignore
+
+        { GraceStatus.Default with
+            Index = index
+            RootDirectoryId = rootDirectoryId
+            RootDirectorySha256Hash = root.Sha256Hash
+            RootDirectoryBlake3Hash = root.Blake3Hash
+        }
+
+    /// Records a completed update marker deletion through the same callback path used by FileSystemWatcher.
+    let private recordCompletedUpdateMarkerDeletion (updateMarkerFile: string) (markerCompletedUtc: DateTime) =
+        Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+        |> ignore
+
+        File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+        File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
+        File.Delete(updateMarkerFile)
+        Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+    /// Records a marker deletion without the completed sidecar produced by a successful branch switch mutation.
+    let private recordIncompleteUpdateMarkerDeletion (updateMarkerFile: string) =
+        Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+        |> ignore
+
+        File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+        File.Delete(updateMarkerFile)
+        Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
     /// Builds renamed event test data used to exercise CLI watch behavior.
     let private renamedEvent (oldFullPath: string) (fullPath: string) =
         RenamedEventArgs(WatcherChangeTypes.Renamed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath), Path.GetFileName(oldFullPath))
+
+    /// Verifies that Grace-owned writes under the update marker do not enqueue Save-producing Watch work.
+    [<Test>]
+    let ``update marker suppresses changed file observation without local save work`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "grace-owned-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            try
+                File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+                File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
+                Watch.OnChanged(changedEvent changedFilePath)
+
+                let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+                pending.FilesToProcess
+                |> should equal Array.empty<string>
+
+                pending.DirectoriesToProcess
+                |> should equal Array.empty<string>
+
+                pending.StatusUpdateTriggers
+                |> should equal Array.empty<string>
+            finally
+                if File.Exists(updateMarkerFile) then File.Delete(updateMarkerFile))
+
+    /// Verifies that delayed callbacks for writes completed under the update marker do not enqueue after deletion.
+    [<Test>]
+    let ``update marker deletion keeps delayed Grace-owned changed observation suppressed`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "delayed-grace-owned-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+            File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
+            File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(-1.0))
+            File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
+            File.Delete(updateMarkerFile)
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking [| "delayed-grace-owned-write.txt" |] Array.empty<string>))
+
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that a late marker-created callback does not remove the successful switch completion sidecar.
+    [<Test>]
+    let ``late update marker created event keeps completed sidecar authoritative until deletion`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "late-created-grace-owned-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let completedSidecar = updateMarkerFile + ".completed"
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+            File.SetLastWriteTimeUtc(updateMarkerFile, markerCompletedUtc.AddSeconds(-1.0))
+            File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
+            File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(-1.0))
+            File.WriteAllText(completedSidecar, markerCompletedUtc.ToString("O"))
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () ->
+                Task.FromResult(
+                    graceStatusTracking
+                        [|
+                            "late-created-grace-owned-write.txt"
+                        |]
+                        Array.empty<string>
+                ))
+
+            Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+
+            File.Exists(completedSidecar) |> should equal true
+
+            File.Delete(updateMarkerFile)
+            Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that marker-created cleanup still removes stale completion sidecars from earlier switches.
+    [<Test>]
+    let ``new update marker created event clears stale completed sidecar`` () =
+        withTempRepo (fun _ ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let completedSidecar = updateMarkerFile + ".completed"
+            let previousMarkerCompletedUtc = DateTime.UtcNow.AddSeconds(-10.0)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(completedSidecar, previousMarkerCompletedUtc.ToString("O"))
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+            File.SetLastWriteTimeUtc(updateMarkerFile, previousMarkerCompletedUtc.AddSeconds(5.0))
+
+            Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+
+            File.Exists(completedSidecar)
+            |> should equal false)
+
+    /// Verifies that marker deletion without a completion sidecar cannot authorize delayed suppression.
+    [<Test>]
+    let ``update marker deletion without completion sidecar does not suppress delayed changed observation`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "partial-switch-write.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            File.WriteAllText(changedFilePath, "partial branch switch payload")
+            File.SetLastWriteTimeUtc(changedFilePath, DateTime.UtcNow.AddSeconds(-1.0))
+            recordIncompleteUpdateMarkerDeletion updateMarkerFile
+
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| changedFilePath |]
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that user writes after marker deletion still enqueue as local Watch work.
+    [<Test>]
+    let ``update marker deletion does not suppress later user changed observation`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "later-user-write.txt")
+            let markerDeletedUtc = DateTime.UtcNow.AddSeconds(-5.0)
+
+            File.WriteAllText(changedFilePath, "user edit after branch switch")
+            File.SetLastWriteTimeUtc(changedFilePath, markerDeletedUtc.AddSeconds(1.0))
+            Watch.recordGraceUpdateMarkerDeletedUtcForTests markerDeletedUtc
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| changedFilePath |]
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
 
     /// Produces an empty difference list for watch tests that do not exercise a scan path.
     let private scanForNoDifferences _ = Task.FromResult(List<FileSystemDifference>())
@@ -542,71 +799,259 @@ module WatchTests =
         File.WriteAllText(Path.Combine(root, Constants.GraceIgnoreFileName), String.Join(Environment.NewLine, entries))
         resetConfiguration ()
 
-    /// Builds local file version test data used to exercise CLI watch behavior.
-    let private localFileVersion relativePath =
-        LocalFileVersion.CreateWithHashes
-            relativePath
-            (Sha256Hash $"sha-{relativePath}")
-            (Blake3Hash $"blake3-{relativePath}")
-            false
-            1L
-            (getCurrentInstant ())
-            true
-            DateTime.UtcNow
+    /// Verifies that marker deletion records the switch completion instant instead of late Watch handling time.
+    [<Test>]
+    let ``update marker deletion uses completed timestamp for delayed changed classification`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "user-write-after-switch.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow.AddSeconds(-5.0)
 
-    /// Builds local directory version test data used to exercise CLI watch behavior.
-    let private localDirectoryVersion relativePath directories files =
-        LocalDirectoryVersion.CreateWithHashes
-            (Guid.NewGuid())
-            OwnerId.Empty
-            OrganizationId.Empty
-            RepositoryId.Empty
-            relativePath
-            (Sha256Hash $"sha-{relativePath}")
-            (Blake3Hash $"blake3-{relativePath}")
-            directories
-            files
-            1L
-            DateTime.UtcNow
+            File.WriteAllText(changedFilePath, "user edit after branch switch completed")
+            File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(1.0))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
 
-    /// Builds grace status tracking test data used to exercise CLI watch behavior.
-    let private graceStatusTracking trackedFiles trackedDirectories =
-        let rootDirectoryId = Guid.NewGuid()
-        let index = GraceIndex()
+            Watch.OnChanged(changedEvent changedFilePath)
 
-        let childDirectories =
-            trackedDirectories
-            |> Array.map (fun relativePath -> localDirectoryVersion relativePath (List<DirectoryVersionId>()) (List<LocalFileVersion>()))
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
 
-        let root =
-            LocalDirectoryVersion.CreateWithHashes
-                rootDirectoryId
-                OwnerId.Empty
-                OrganizationId.Empty
-                RepositoryId.Empty
-                Constants.RootDirectoryPath
-                (Sha256Hash "root-sha")
-                (Blake3Hash "root-blake3")
-                (List<DirectoryVersionId>(
-                    childDirectories
-                    |> Array.map (fun directory -> directory.DirectoryVersionId)
-                ))
-                (List<LocalFileVersion>(trackedFiles |> Array.map localFileVersion))
-                1L
-                DateTime.UtcNow
+            pending.FilesToProcess
+            |> should equal [| changedFilePath |]
 
-        index.TryAdd(rootDirectoryId, root) |> ignore
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
 
-        for directory in childDirectories do
-            index.TryAdd(directory.DirectoryVersionId, directory)
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that delayed create callbacks from completed Grace-owned switch writes are suppressed.
+    [<Test>]
+    let ``update marker deletion suppresses delayed Grace-owned created observation`` () =
+        withTempRepo (fun root ->
+            let createdFilePath = Path.Combine(root, "delayed-grace-owned-create.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            File.WriteAllText(createdFilePath, "Grace-owned branch switch create")
+            File.SetLastWriteTimeUtc(createdFilePath, markerCompletedUtc.AddSeconds(-1.0))
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking [| "delayed-grace-owned-create.txt" |] Array.empty<string>))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            Watch.OnCreated(createdEvent createdFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that preserved older mtimes alone cannot suppress a new user-created file after switch completion.
+    [<Test>]
+    let ``update marker deletion does not suppress untracked created file with preserved old mtime`` () =
+        withTempRepo (fun root ->
+            let createdFilePath = Path.Combine(root, "user-created-preserved-mtime.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking Array.empty<string> Array.empty<string>))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            File.WriteAllText(createdFilePath, "user-created payload with preserved timestamp")
+            File.SetLastWriteTimeUtc(createdFilePath, markerCompletedUtc.AddSeconds(-10.0))
+            Watch.OnCreated(createdEvent createdFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| createdFilePath |]
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that preserved older mtimes alone cannot suppress a changed user file absent from completed status.
+    [<Test>]
+    let ``update marker deletion does not suppress untracked changed file with preserved old mtime`` () =
+        withTempRepo (fun root ->
+            let changedFilePath = Path.Combine(root, "user-changed-preserved-mtime.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking Array.empty<string> Array.empty<string>))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            File.WriteAllText(changedFilePath, "user-changed payload with preserved timestamp")
+            File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(-10.0))
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal [| changedFilePath |]
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that delayed delete callbacks for paths absent from post-switch GraceStatus are suppressed.
+    [<Test>]
+    let ``update marker deletion suppresses delayed Grace-owned deleted observation`` () =
+        withTempRepo (fun root ->
+            let deletedFilePath = Path.Combine(root, "removed-by-switch.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking Array.empty<string> Array.empty<string>))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            Watch.OnDeleted(deletedEvent deletedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that post-switch user-created files are drained when deleted inside the completed-marker window.
+    [<Test>]
+    let ``update marker deletion drains post-switch user-created file deleted inside suppression window`` () =
+        withTempRepo (fun root ->
+            let createdFilePath = Path.Combine(root, "post-switch-user-created.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow.AddSeconds(-5.0)
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking Array.empty<string> Array.empty<string>))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            File.WriteAllText(createdFilePath, "user-created payload")
+            File.SetLastWriteTimeUtc(createdFilePath, markerCompletedUtc.AddSeconds(1.0))
+            Watch.OnCreated(createdEvent createdFilePath)
+
+            File.Delete(createdFilePath)
+            Watch.OnDeleted(deletedEvent createdFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "post-switch-user-created.txt" |]
+
+            let updateCalls, uploadCalls = processPendingWatchWorkForTestWithStatus (graceStatusTracking Array.empty<string> Array.empty<string>)
+
+            updateCalls |> should equal 0
+            uploadCalls |> should equal 0
+
+            let afterProcessing = Watch.pendingWatchWorkSnapshotForTests ()
+
+            afterProcessing.FilesToProcess
+            |> should equal Array.empty<string>
+
+            afterProcessing.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that delayed delete suppression does not hide paths still tracked by completed GraceStatus.
+    [<Test>]
+    let ``update marker deletion preserves tracked deleted observation`` () =
+        withTempRepo (fun root ->
+            let deletedFilePath = Path.Combine(root, "tracked-user-delete.txt")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking [| "tracked-user-delete.txt" |] Array.empty<string>))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            Watch.OnDeleted(deletedEvent deletedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal [| "tracked-user-delete.txt" |])
+
+    /// Verifies that delayed directory callbacks from completed Grace-owned switch writes are suppressed.
+    [<Test>]
+    let ``update marker deletion suppresses delayed Grace-owned directory observation`` () =
+        withTempRepo (fun root ->
+            let directoryPath = Path.Combine(root, "delayed-grace-owned-directory")
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            Directory.SetLastWriteTimeUtc(directoryPath, markerCompletedUtc.AddSeconds(-1.0))
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking Array.empty<string> [| "delayed-grace-owned-directory" |]))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            Watch.OnCreated(createdEvent directoryPath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that delayed GraceStatus artifact observations still publish refresh work after switch completion.
+    [<Test>]
+    let ``update marker deletion preserves delayed GraceStatus artifact refresh observation`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerCompletedUtc = DateTime.UtcNow
+            let graceStatusFile = Current().GraceStatusFile
+
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(graceStatusFile))
             |> ignore
 
-        { GraceStatus.Default with
-            Index = index
-            RootDirectoryId = rootDirectoryId
-            RootDirectorySha256Hash = root.Sha256Hash
-            RootDirectoryBlake3Hash = root.Blake3Hash
-        }
+            File.WriteAllText(graceStatusFile, "Grace-owned local state refresh")
+            File.SetLastWriteTimeUtc(graceStatusFile, markerCompletedUtc.AddSeconds(-1.0))
+            recordCompletedUpdateMarkerDeletion updateMarkerFile markerCompletedUtc
+
+            Watch.OnChanged(changedEvent graceStatusFile)
+
+            Watch.graceStatusHasChangedForWatchTests ()
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false)
 
     /// Builds GraceStatus around explicit file versions so tests can model content-equivalent uploads.
     let private graceStatusTrackingFileVersions (trackedFiles: LocalFileVersion array) =

@@ -253,6 +253,55 @@ module Watch =
     let updateInProgress () = File.Exists(updateInProgressFileName ())
     /// Coordinates update not in progress behavior for this CLI command path.
     let updateNotInProgress () = not <| updateInProgress ()
+    let private graceUpdateMarkerDeletionLock = obj ()
+    let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
+    let mutable private lastGraceUpdateMarkerDeletedUtc = DateTime.MinValue
+
+    /// Gets the completion sidecar written before the Grace update marker is removed.
+    let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
+
+    /// Records the completed Grace-owned update instant so delayed callbacks can be classified by switch authority.
+    let private recordGraceUpdateMarkerCompletedUtc completedUtc =
+        lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc <- completedUtc)
+
+    /// Clears the recent marker-deletion fact when a new Grace-owned update starts or tests reset Watch state.
+    let private clearGraceUpdateMarkerDeletedUtc () =
+        recordGraceUpdateMarkerCompletedUtc DateTime.MinValue
+
+        try
+            let completedFileName = updateMarkerCompletedFileName ()
+
+            if File.Exists(completedFileName) then File.Delete(completedFileName)
+        with
+        | :? IOException -> ()
+        | :? UnauthorizedAccessException -> ()
+
+    /// Sets the recent Grace update marker deletion instant for deterministic Watch callback tests.
+    let internal recordGraceUpdateMarkerDeletedUtcForTests deletedUtc = recordGraceUpdateMarkerCompletedUtc deletedUtc
+
+    /// Reads the marker completion sidecar when a file callback arrives before Watch observes marker deletion.
+    let private tryReadGraceUpdateMarkerCompletedUtc () =
+        try
+            let completedFileName = updateMarkerCompletedFileName ()
+
+            if File.Exists(completedFileName) then
+                match DateTime.TryParse(File.ReadAllText(completedFileName), CultureInfo.InvariantCulture, DateTimeStyles.RoundtripKind) with
+                | true, completedUtc -> Some completedUtc
+                | false, _ -> None
+            else
+                None
+        with
+        | :? IOException -> None
+        | :? UnauthorizedAccessException -> None
+
+    /// Reports whether the completed sidecar was written for the marker that is currently still present.
+    let private currentUpdateMarkerMatchesCompletedSidecar completedUtc =
+        try
+            File.GetLastWriteTimeUtc(updateInProgressFileName ())
+            <= completedUtc
+        with
+        | :? IOException -> false
+        | :? UnauthorizedAccessException -> false
 
     /// Models the explicit access-assignment scope selected by mutually exclusive CLI options.
     type private DeletedPathKind =
@@ -507,6 +556,85 @@ module Watch =
             trackedDeletedPathKind status relativePath
         with
         | _ -> DeletedPathStatusUnavailable
+
+    /// Reads the switch-owned completion instant that should govern delayed Watch callback suppression.
+    let private tryRecentGraceUpdateMarkerCompletedUtc () =
+        let markerCompletedUtc =
+            match tryReadGraceUpdateMarkerCompletedUtc () with
+            | Some completedUtc -> Some completedUtc
+            | None ->
+                let recordedUtc = lock graceUpdateMarkerDeletionLock (fun () -> lastGraceUpdateMarkerDeletedUtc)
+
+                if recordedUtc <> DateTime.MinValue then Some recordedUtc else None
+
+        match markerCompletedUtc with
+        | Some completedUtc when
+            DateTime.UtcNow - completedUtc
+            <= graceUpdateMarkerDeletedObservationWindow
+            ->
+            Some completedUtc
+        | _ -> None
+
+    /// Reports whether a missing path is already absent from the post-switch GraceStatus snapshot.
+    let private completedSwitchRemovedPathFromGraceStatus fullPath =
+        match repositoryRelativePath fullPath with
+        | None -> false
+        | Some relativePath ->
+            try
+                let completedStatus =
+                    readGraceStatusFileForDeletedPathClassification()
+                        .GetAwaiter()
+                        .GetResult()
+
+                match trackedDeletedPathKind completedStatus relativePath with
+                | DeletedPathKindUnknown -> true
+                | DeletedFile
+                | DeletedDirectory
+                | DeletedPathStatusUnavailable -> false
+            with
+            | _ -> false
+
+    /// Reports whether an existing path belongs to the post-switch GraceStatus snapshot.
+    let private completedSwitchTracksExistingPathFromGraceStatus fullPath =
+        match repositoryRelativePath fullPath with
+        | None -> false
+        | Some relativePath ->
+            try
+                let completedStatus =
+                    readGraceStatusFileForDeletedPathClassification()
+                        .GetAwaiter()
+                        .GetResult()
+
+                match trackedDeletedPathKind completedStatus relativePath with
+                | DeletedFile -> File.Exists fullPath
+                | DeletedDirectory -> Directory.Exists fullPath
+                | DeletedPathKindUnknown
+                | DeletedPathStatusUnavailable -> false
+            with
+            | _ -> false
+
+    /// Identifies delayed callbacks for writes that completed while a Grace update marker was still present.
+    let private isDelayedGraceOwnedFileObservation fullPath =
+        match tryRecentGraceUpdateMarkerCompletedUtc () with
+        | None -> false
+        | Some markerCompletedUtc when
+            not (File.Exists fullPath)
+            && not (Directory.Exists fullPath)
+            ->
+            completedSwitchRemovedPathFromGraceStatus fullPath
+        | Some markerCompletedUtc ->
+            completedSwitchTracksExistingPathFromGraceStatus fullPath
+            && (try
+                    let lastWriteTimeUtc =
+                        if File.Exists fullPath then
+                            File.GetLastWriteTimeUtc(fullPath)
+                        else
+                            Directory.GetLastWriteTimeUtc(fullPath)
+
+                    lastWriteTimeUtc <= markerCompletedUtc
+                with
+                | :? IOException -> false
+                | :? UnauthorizedAccessException -> false)
 
     /// Coordinates set grace status for watch tests behavior for this CLI command path.
     let internal setGraceStatusForWatchTests status = graceStatus <- status
@@ -1749,6 +1877,7 @@ module Watch =
         readGraceStatusFileForPendingWorkTransition <- readGraceStatusFile
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
+        clearGraceUpdateMarkerDeletedUtc ()
         watchPathComparison <- defaultWatchPathComparison ()
         watchPathComparisonOverride <- None
         watchPathComparisonConfiguredRoot <- None
@@ -2039,6 +2168,11 @@ module Watch =
     let OnCreated (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
+        elif updateNotInProgress ()
+             && isGraceStatusArtifact args.FullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+        elif isDelayedGraceOwnedFileObservation args.FullPath then
+            logObservationSuppressed args.FullPath
         elif
             updateNotInProgress ()
             && Directory.Exists(args.FullPath)
@@ -2068,6 +2202,12 @@ module Watch =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
         elif updateNotInProgress ()
+             && isGraceStatusArtifact args.FullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
+            logToAnsiConsole Colors.Important $"Grace Status file has been updated."
+        elif isDelayedGraceOwnedFileObservation args.FullPath then
+            logObservationSuppressed args.FullPath
+        elif updateNotInProgress ()
              && isNotDirectory args.FullPath then
             let shouldIgnore = shouldIgnoreFile args.FullPath
             //logToAnsiConsole Colors.Verbose $"Should ignore {args.FullPath}: {shouldIgnore}."
@@ -2076,12 +2216,6 @@ module Watch =
                 logToAnsiConsole Colors.Changed $"I saw that {args.FullPath} changed."
                 enqueueFileUpload args.FullPath |> ignore
                 publishPendingWatchWorkTransitionIfNeeded ()
-
-            // Special handling for the Grace status file; if that is the changed file, we'll set this flag so we reload it in OnWatch() in the main loop
-            if isGraceStatusArtifact args.FullPath then
-                //logToAnsiConsole Colors.Important $"Setting graceStatusHasChanged to true in OnChanged(). Current value: {graceStatusHasChanged}."
-                markGraceStatusChangedAndPublishPendingWorkTransition ()
-                logToAnsiConsole Colors.Important $"Grace Status file has been updated."
 
     /// Reads enqueue directory contents for upload data needed by the command workflow without changing remote state.
     let private enqueueDirectoryContentsForUpload directoryPath = tryEnqueueDirectoryContentsForUpload directoryPath
@@ -2103,10 +2237,16 @@ module Watch =
     let OnDeleted (args: FileSystemEventArgs) =
         if not (canCaptureFilesystemObservation ()) then
             logObservationSuppressed args.FullPath
+        elif updateNotInProgress ()
+             && isGraceStatusArtifact args.FullPath then
+            markGraceStatusChangedAndPublishPendingWorkTransition ()
         elif updateNotInProgress () then
             let canceledFileUpload = cancelPendingUploadsForDeletedPath args.FullPath
 
-            if enqueueStatusUpdateTrigger args.FullPath then
+            if isDelayedGraceOwnedFileObservation args.FullPath
+               && not canceledFileUpload then
+                logObservationSuppressed args.FullPath
+            elif enqueueStatusUpdateTrigger args.FullPath then
                 match repositoryRelativePath args.FullPath with
                 | Some relativePath ->
                     let invalidatedRelativePath = RelativePath relativePath
@@ -2192,6 +2332,13 @@ module Watch =
     let OnGraceUpdateInProgressCreated (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateInProgress () then
+                let hasCurrentCompletedSidecar =
+                    match tryReadGraceUpdateMarkerCompletedUtc () with
+                    | Some completedUtc -> currentUpdateMarkerMatchesCompletedSidecar completedUtc
+                    | None -> false
+
+                if not hasCurrentCompletedSidecar then clearGraceUpdateMarkerDeletedUtc ()
+
                 logToAnsiConsole Colors.Important $"Update is in progress from another Grace instance."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should already exist, but it doesn't."
@@ -2200,7 +2347,13 @@ module Watch =
     let OnGraceUpdateInProgressDeleted (args: FileSystemEventArgs) =
         if args.FullPath = updateInProgressFileName () then
             if updateNotInProgress () then
-                logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                match tryReadGraceUpdateMarkerCompletedUtc () with
+                | Some completedUtc ->
+                    recordGraceUpdateMarkerCompletedUtc completedUtc
+                    logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                | None ->
+                    clearGraceUpdateMarkerDeletedUtc ()
+                    logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
             else
                 logToAnsiConsole Colors.Important $"{updateInProgressFileName ()} should have been deleted, but it hasn't yet."
 

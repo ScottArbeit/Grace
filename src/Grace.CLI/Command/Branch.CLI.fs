@@ -2877,12 +2877,7 @@ module Branch =
         member val ReferenceId: string = String.Empty with get, set
 
     /// Defines the injected side-effect boundary for branch-switch Watch-clean preflight tests.
-    type internal BranchSwitchWatchCleanPreflightOperations =
-        {
-            UpdateMarkerExists: unit -> bool
-            InspectWatchStatus: unit -> Task<GraceWatchStatusInspection>
-            CreateUpdateMarker: unit -> Task<unit>
-        }
+    type internal BranchSwitchWatchCleanPreflightOperations = { UpdateMarkerExists: unit -> bool; InspectWatchStatus: unit -> Task<GraceWatchStatusInspection> }
 
     /// Builds the branch-switch refusal reason for an untrusted Watch IPC snapshot.
     let private branchSwitchWatchCleanPreflightRefusalReason updateMarkerExists (inspection: GraceWatchStatusInspection) =
@@ -2940,7 +2935,7 @@ module Branch =
         | Some reason -> Error reason
         | None -> Ok()
 
-    /// Runs the branch-switch Watch-clean preflight and creates the update marker only after trust is proven.
+    /// Runs the branch-switch Watch-clean preflight without suppressing later filesystem observations.
     let internal runBranchSwitchWatchCleanPreflight (operations: BranchSwitchWatchCleanPreflightOperations) correlationId =
         task {
             if operations.UpdateMarkerExists() then
@@ -2955,18 +2950,7 @@ module Branch =
 
                 match validateBranchSwitchWatchCleanPreflight false inspection with
                 | Error reason -> return Error(GraceError.Create $"Branch switch refused before mutation: {reason}" correlationId)
-                | Ok () ->
-                    try
-                        do! operations.CreateUpdateMarker()
-                        return Ok()
-                    with
-                    | :? IOException ->
-                        return
-                            Error(
-                                GraceError.Create
-                                    "Branch switch refused before mutation: the Grace update marker appeared while preflight was running; another Grace-owned working-tree update may be in progress."
-                                    correlationId
-                            )
+                | Ok () -> return Ok()
         }
 
     /// Writes branch-switch marker content through an injectable writer so failure cleanup can be tested deterministically.
@@ -3000,6 +2984,15 @@ module Branch =
 
     /// Creates the Grace update marker used to keep Watch from observing branch-switch working-tree writes.
     let private createBranchSwitchUpdateMarker (updateMarkerFileName: string) (markerText: string) =
+        let completedFileName = updateMarkerFileName + ".completed"
+
+        if File.Exists(completedFileName) then
+            try
+                File.Delete(completedFileName)
+            with
+            | :? IOException -> ()
+            | :? UnauthorizedAccessException -> ()
+
         createBranchSwitchUpdateMarkerWithWriter
             (fun writer markerText ->
                 task {
@@ -3008,6 +3001,19 @@ module Branch =
                 })
             updateMarkerFileName
             markerText
+
+    /// Records the update marker completion instant before marker removal so Watch can classify delayed callbacks.
+    let private writeBranchSwitchUpdateMarkerCompleted (updateMarkerFileName: string) =
+        try
+            let completedFileName = updateMarkerFileName + ".completed"
+
+            Directory.CreateDirectory(Path.GetDirectoryName(completedFileName))
+            |> ignore
+
+            File.WriteAllText(completedFileName, DateTime.UtcNow.ToString("O", CultureInfo.InvariantCulture))
+        with
+        | :? IOException -> ()
+        | :? UnauthorizedAccessException -> ()
 
     /// Removes only the branch-switch marker content written by this command invocation.
     let internal deleteBranchSwitchUpdateMarkerIfOwned (updateMarkerFileName: string) (markerText: string) =
@@ -3021,21 +3027,120 @@ module Branch =
         | :? IOException -> ()
         | :? UnauthorizedAccessException -> ()
 
-    /// Runs branch-switch working-tree mutation without replacing a preflight marker lease owned by the outer command.
-    let internal runBranchSwitchWorkingTreeUpdateWithMarker (updateMarkerFileName: string) (markerText: string) (operation: unit -> Task<'T>) =
+    /// Gets the repository/worktree-scoped branch-switch workflow lease path without using mutable branch identity.
+    let internal branchSwitchWorkflowLeaseFileName (updateMarkerFileName: string) =
+        let branchDirectory = DirectoryInfo(Path.GetDirectoryName(updateMarkerFileName))
+        let repositoryRootScopeDirectory = branchDirectory.Parent.Parent
+
+        Path.Combine(repositoryRootScopeDirectory.FullName, "branch-switch-workflow.lease")
+
+    /// Creates the branch-switch workflow lease through an injectable writer for deterministic race tests.
+    let internal createBranchSwitchWorkflowLeaseWithWriter (writeLeaseText: StreamWriter -> string -> Task) (switchLeaseFileName: string) (leaseText: string) =
+        createBranchSwitchUpdateMarkerWithWriter writeLeaseText switchLeaseFileName leaseText
+
+    /// Removes only the branch-switch workflow lease content written by this command invocation.
+    let internal deleteBranchSwitchWorkflowLeaseIfOwned (switchLeaseFileName: string) (leaseText: string) =
+        deleteBranchSwitchUpdateMarkerIfOwned switchLeaseFileName leaseText
+
+    /// Runs a branch-switch workflow under a non-Watch-suppressing lease before state is computed.
+    let internal runBranchSwitchWorkflowWithLease
+        (operations: BranchSwitchWatchCleanPreflightOperations)
+        correlationId
+        (switchLeaseFileName: string)
+        (leaseText: string)
+        (workflow: unit -> Task<'T>)
+        =
+        task {
+            let mutable leaseCreatedByThisInvocation = false
+
+            let! leaseResult =
+                task {
+                    try
+                        do!
+                            createBranchSwitchWorkflowLeaseWithWriter
+                                (fun writer leaseText ->
+                                    task {
+                                        do! writer.WriteAsync(leaseText)
+                                        do! writer.FlushAsync()
+                                    })
+                                switchLeaseFileName
+                                leaseText
+
+                        leaseCreatedByThisInvocation <- true
+                        return Ok()
+                    with
+                    | :? IOException
+                    | :? UnauthorizedAccessException ->
+                        return
+                            Error(
+                                GraceError.Create
+                                    "Branch switch refused before state precomputation: another `grace switch` workflow is already in progress for the current branch."
+                                    correlationId
+                            )
+                }
+
+            match leaseResult with
+            | Error error -> return Error error
+            | Ok () ->
+                try
+                    match! runBranchSwitchWatchCleanPreflight operations correlationId with
+                    | Error error -> return Error error
+                    | Ok () ->
+                        let! result = workflow ()
+                        return Ok result
+                finally
+                    if leaseCreatedByThisInvocation then
+                        deleteBranchSwitchWorkflowLeaseIfOwned switchLeaseFileName leaseText
+        }
+
+    /// Applies branch switch local state in the order that keeps branch identity ahead of cache refresh failures.
+    let internal applyBranchSwitchLocalState (writeStatus: unit -> Task) (updateBranchIdentity: unit -> unit) (refreshObjectCache: unit -> Task) =
+        task {
+            do! writeStatus ()
+            updateBranchIdentity ()
+            do! refreshObjectCache ()
+        }
+
+    /// Runs branch-switch working-tree mutation after a mutation-boundary Watch-clean preflight creates the marker.
+    let internal runBranchSwitchWorkingTreeUpdateWithMarker
+        (operations: BranchSwitchWatchCleanPreflightOperations)
+        correlationId
+        (updateMarkerFileName: string)
+        (markerText: string)
+        (operation: unit -> Task<'T>)
+        =
         task {
             let mutable markerCreatedByThisInvocation = false
 
-            try
-                if not (File.Exists(updateMarkerFileName)) then
-                    do! createBranchSwitchUpdateMarker updateMarkerFileName markerText
-                    markerCreatedByThisInvocation <- true
+            match! runBranchSwitchWatchCleanPreflight operations correlationId with
+            | Error error -> return Error error
+            | Ok () ->
+                let! markerResult =
+                    task {
+                        try
+                            do! createBranchSwitchUpdateMarker updateMarkerFileName markerText
+                            markerCreatedByThisInvocation <- true
+                            return Ok()
+                        with
+                        | :? IOException ->
+                            return
+                                Error(
+                                    GraceError.Create
+                                        "Branch switch refused before mutation: the Grace update marker appeared while preflight was running; another Grace-owned working-tree update may be in progress."
+                                        correlationId
+                                )
+                    }
 
-                let! result = operation ()
-                return result
-            finally
-                if markerCreatedByThisInvocation then
-                    deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
+                match markerResult with
+                | Error error -> return Error error
+                | Ok () ->
+                    try
+                        let! result = operation ()
+                        writeBranchSwitchUpdateMarkerCompleted updateMarkerFileName
+                        return Ok result
+                    finally
+                        if markerCreatedByThisInvocation then
+                            deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
         }
 
     /// Executes the switch command by binding ParseResult values to the SDK request and CLI output contract.
@@ -3652,41 +3757,59 @@ module Branch =
 
                                 if not <| isError then
                                     let workingTreeUpdateMarkerFileName = updateInProgressFileName ()
+                                    let workingTreeUpdateMarkerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
 
-                                    do!
-                                        runBranchSwitchWorkingTreeUpdateWithMarker workingTreeUpdateMarkerFileName "`grace switch` is in progress." (fun () ->
-                                            task {
-                                                //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
+                                    let preflightOperations =
+                                        {
+                                            UpdateMarkerExists = fun () -> File.Exists(workingTreeUpdateMarkerFileName)
+                                            InspectWatchStatus = inspectGraceWatchStatus
+                                        }
 
-                                                // Update working directory based on new GraceStatus.Index
-                                                do!
-                                                    updateWorkingDirectory
-                                                        newGraceStatus
-                                                        graceStatusWithNewDirectoryVersionsFromServer
-                                                        newDirectoryVersionDtos
-                                                        (getCorrelationId parseResult)
-                                                //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
+                                    let! workingTreeUpdateResult =
+                                        runBranchSwitchWorkingTreeUpdateWithMarker
+                                            preflightOperations
+                                            (getCorrelationId parseResult)
+                                            workingTreeUpdateMarkerFileName
+                                            workingTreeUpdateMarkerText
+                                            (fun () ->
+                                                task {
+                                                    //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
 
-                                                // Save the new Grace Status.
-                                                do! writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer
+                                                    // Update working directory based on new GraceStatus.Index
+                                                    do!
+                                                        updateWorkingDirectory
+                                                            newGraceStatus
+                                                            graceStatusWithNewDirectoryVersionsFromServer
+                                                            newDirectoryVersionDtos
+                                                            (getCorrelationId parseResult)
+                                                    //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
-                                                // Update graceconfig.json.
-                                                let configuration = Current()
-                                                configuration.BranchId <- newBranch.BranchId
-                                                configuration.BranchName <- newBranch.BranchName
-                                                updateConfiguration configuration
-                                                t |> setProgressTaskValue showOutput 100.0
-                                            })
+                                                    // Save the new Grace Status.
+                                                    do!
+                                                        applyBranchSwitchLocalState
+                                                            (fun () -> writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer)
+                                                            (fun () ->
+                                                                let configuration = Current()
+                                                                configuration.BranchId <- newBranch.BranchId
+                                                                configuration.BranchName <- newBranch.BranchName
+                                                                updateConfiguration configuration)
+                                                            (fun () -> upsertObjectCache graceStatusWithNewDirectoryVersionsFromServer.Index.Values)
 
-                                    newGraceStatus <- graceStatusWithNewDirectoryVersionsFromServer
-                                    rootDirectoryId <- newGraceStatus.RootDirectoryId
-                                    rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
-                                    directoryIdsInNewGraceStatus <- newGraceStatus.Index.Keys.ToHashSet()
+                                                    t |> setProgressTaskValue showOutput 100.0
+                                                })
 
-                                    if parseResult |> verbose then
-                                        logToAnsiConsole Colors.Verbose $"About to exit updateWorkingDirectory."
+                                    match workingTreeUpdateResult with
+                                    | Error error -> return Error error
+                                    | Ok () ->
+                                        newGraceStatus <- graceStatusWithNewDirectoryVersionsFromServer
+                                        rootDirectoryId <- newGraceStatus.RootDirectoryId
+                                        rootDirectorySha256Hash <- newGraceStatus.RootDirectorySha256Hash
+                                        directoryIdsInNewGraceStatus <- newGraceStatus.Index.Keys.ToHashSet()
 
-                                    return Ok(showOutput, parseResult, parameters, newBranch, $"Save created after branch switch.")
+                                        if parseResult |> verbose then
+                                            logToAnsiConsole Colors.Verbose $"About to exit updateWorkingDirectory."
+
+                                        return Ok(showOutput, parseResult, parameters, newBranch, $"Save created after branch switch.")
                                 else
                                     return Error(GraceError.Create $"Failed downloading files from object storage." (parseResult |> getCorrelationId))
                             | Error error ->
@@ -3695,17 +3818,6 @@ module Branch =
 
                                 logToAnsiConsole Colors.Error $"{error}"
                                 return Error(GraceError.Create $"{error}" (parseResult |> getCorrelationId))
-                        }
-
-                    /// Writes new grace status data through the CLI output contract.
-                    let writeNewGraceStatus (t: ProgressTask) (showOutput, parseResult: ParseResult, parameters: SwitchParameters, currentBranch: BranchDto) =
-                        task {
-                            t |> startProgressTask showOutput
-                            do! writeGraceStatusFile newGraceStatus
-                            do! upsertObjectCache newGraceStatus.Index.Values
-
-                            t |> setProgressTaskValue showOutput 100.0
-                            return Ok(showOutput, parseResult, parameters, currentBranch)
                         }
 
                     /// Coordinates generate result behavior for this CLI command path.
@@ -3724,7 +3836,6 @@ module Branch =
                                 >>=! getVersionToSwitchTo progressTasks[7]
                                 >>=! updateWorkingDirectory progressTasks[8]
                                 >>=! createSaveReference progressTasks[9]
-                                >>=! writeNewGraceStatus progressTasks[10]
 
                             match result with
                             | Ok _ -> return 0
@@ -3774,9 +3885,6 @@ module Branch =
                                         let t9 =
                                             progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString CreatingSaveReference}[/]", autoStart = false)
 
-                                        let t10 =
-                                            progressContext.AddTask($"[{Color.DodgerBlue1}]{UIString.getString WritingGraceStatusFile}[/]", autoStart = false)
-
                                         return!
                                             generateResult [| t0
                                                               t1
@@ -3787,14 +3895,12 @@ module Branch =
                                                               t6
                                                               t7
                                                               t8
-                                                              t9
-                                                              t10 |]
+                                                              t9 |]
                                     })
                     else
                         // If we're not showing output, we don't need to create the progress tasks.
                         return!
                             generateResult [| emptyTask
-                                              emptyTask
                                               emptyTask
                                               emptyTask
                                               emptyTask
@@ -3816,60 +3922,48 @@ module Branch =
         override _.InvokeAsync(parseResult: ParseResult, cancellationToken: CancellationToken) : Tasks.Task<int> =
             task {
                 let updateMarkerFileName = updateInProgressFileName ()
-                let updateMarkerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
-                let mutable updateMarkerCreated = false
+                let switchLeaseFileName = branchSwitchWorkflowLeaseFileName updateMarkerFileName
+                let switchLeaseText = $"`grace switch` workflow lease. Lease: {Guid.NewGuid():N}"
 
-                try
-                    if parseResult |> verbose then printParseResult parseResult
+                if parseResult |> verbose then printParseResult parseResult
 
-                    let preflightOperations =
-                        {
-                            UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
-                            InspectWatchStatus = inspectGraceWatchStatus
-                            CreateUpdateMarker =
-                                fun () ->
-                                    task {
-                                        do! createBranchSwitchUpdateMarker updateMarkerFileName updateMarkerText
-                                        updateMarkerCreated <- true
-                                    }
-                        }
+                let preflightOperations = { UpdateMarkerExists = (fun () -> File.Exists(updateMarkerFileName)); InspectWatchStatus = inspectGraceWatchStatus }
 
-                    match! runBranchSwitchWatchCleanPreflight preflightOperations (getCorrelationId parseResult) with
-                    | Error error ->
-                        if parseResult |> verbose then
-                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
-                        else
-                            AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
+                let! switchResult =
+                    runBranchSwitchWorkflowWithLease preflightOperations (getCorrelationId parseResult) switchLeaseFileName switchLeaseText (fun () ->
+                        task {
+                            let switchParameters = SwitchParameters()
 
-                        return -1
-                    | Ok () ->
-                        let switchParameters = SwitchParameters()
+                            let toBranchId = parseResult.GetValue(Options.toBranchId)
+                            if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
 
-                        let toBranchId = parseResult.GetValue(Options.toBranchId)
-                        if toBranchId <> Guid.Empty then switchParameters.ToBranchId <- $"{toBranchId}"
+                            let toBranchName = parseResult.GetValue(Options.toBranchName)
+                            switchParameters.ToBranchName <- toBranchName
 
-                        let toBranchName = parseResult.GetValue(Options.toBranchName)
-                        switchParameters.ToBranchName <- toBranchName
+                            let referenceId = parseResult.GetValue(Options.referenceId)
 
-                        let referenceId = parseResult.GetValue(Options.referenceId)
+                            if referenceId <> Guid.Empty then
+                                switchParameters.ReferenceId <- $"{referenceId}"
 
-                        if referenceId <> Guid.Empty then
-                            switchParameters.ReferenceId <- $"{referenceId}"
+                            let sha256Hash = getSha256HashPrefix parseResult
+                            switchParameters.Sha256Hash <- sha256Hash
 
-                        let sha256Hash = getSha256HashPrefix parseResult
-                        switchParameters.Sha256Hash <- sha256Hash
+                            let blake3Hash = getBlake3HashPrefix parseResult
+                            switchParameters.Blake3Hash <- blake3Hash
 
-                        let blake3Hash = getBlake3HashPrefix parseResult
-                        switchParameters.Blake3Hash <- blake3Hash
+                            let! result = switchHandler parseResult switchParameters
+                            return result
+                        })
 
-                        let! result = switchHandler parseResult switchParameters
-                        return result
-                finally
-                    if
-                        updateMarkerCreated
-                        && File.Exists(updateMarkerFileName)
-                    then
-                        deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName updateMarkerText
+                match switchResult with
+                | Error error ->
+                    if parseResult |> verbose then
+                        AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.ToString())}[/]")
+                    else
+                        AnsiConsole.MarkupLine($"[{Colors.Error}]{Markup.Escape(error.Error)}[/]")
+
+                    return -1
+                | Ok result -> return result
             }
 
     /// Routes the rebase command from parsed options through validation, the SDK call, and result rendering.
