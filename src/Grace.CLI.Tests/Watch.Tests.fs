@@ -480,6 +480,8 @@ module WatchTests =
         |> ignore
 
         File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+        File.SetLastWriteTimeUtc(updateMarkerFile, markerCompletedUtc.AddSeconds(-1.0))
+        Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
         File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
         File.Delete(updateMarkerFile)
         Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
@@ -537,6 +539,8 @@ module WatchTests =
             |> ignore
 
             File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+            File.SetLastWriteTimeUtc(updateMarkerFile, markerCompletedUtc.AddSeconds(-1.0))
+            Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
             File.WriteAllText(changedFilePath, "Grace-owned branch switch payload")
             File.SetLastWriteTimeUtc(changedFilePath, markerCompletedUtc.AddSeconds(-1.0))
             File.WriteAllText(updateMarkerFile + ".completed", markerCompletedUtc.ToString("O"))
@@ -1038,7 +1042,10 @@ module WatchTests =
             Directory.CreateDirectory(Path.GetDirectoryName(branchBMarker))
             |> ignore
 
+            Watch.recordGraceUpdateMarkerDeletedUtcForTests staleRecordedCompletedUtc
             File.WriteAllText(branchBMarker, "`grace switch` is in progress.")
+            File.SetLastWriteTimeUtc(branchBMarker, branchBCompletedUtc.AddSeconds(-1.0))
+            Watch.OnGraceUpdateInProgressCreated(createdEvent branchBMarker)
             File.WriteAllText(branchBMarker + ".completed", branchBCompletedUtc.ToString("O"))
             File.WriteAllText(changedFilePath, "Grace-owned payload from the repeated transition")
             File.SetLastWriteTimeUtc(changedFilePath, branchBCompletedUtc.AddSeconds(-1.0))
@@ -1047,11 +1054,47 @@ module WatchTests =
             resetConfiguration ()
             Current() |> ignore
 
-            Watch.recordGraceUpdateMarkerDeletedUtcForTests staleRecordedCompletedUtc
             Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(statusC))
 
             File.Delete(branchBMarker)
             Watch.OnGraceUpdateInProgressDeleted(deletedEvent branchBMarker)
+            Watch.OnChanged(changedEvent changedFilePath)
+
+            let pending = Watch.pendingWatchWorkSnapshotForTests ()
+
+            pending.FilesToProcess
+            |> should equal Array.empty<string>
+
+            pending.DirectoriesToProcess
+            |> should equal Array.empty<string>
+
+            pending.StatusUpdateTriggers
+            |> should equal Array.empty<string>)
+
+    /// Verifies that delayed callbacks prefer the current sidecar before Watch observes marker deletion.
+    [<Test>]
+    let ``current marker sidecar suppresses repeated transition callback before deletion handler`` () =
+        withTempRepo (fun root ->
+            let relativePath = "current-sidecar-before-deletion.txt"
+            let changedFilePath = Path.Combine(root, relativePath)
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let staleRecordedCompletedUtc = DateTime.UtcNow.AddSeconds(-20.0)
+            let currentCompletedUtc = DateTime.UtcNow
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            Watch.recordGraceUpdateMarkerDeletedUtcForTests staleRecordedCompletedUtc
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress.")
+            File.SetLastWriteTimeUtc(updateMarkerFile, currentCompletedUtc.AddSeconds(-1.0))
+            Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+            File.WriteAllText(updateMarkerFile + ".completed", currentCompletedUtc.ToString("O"))
+            File.WriteAllText(changedFilePath, "Grace-owned payload before marker deletion callback")
+            File.SetLastWriteTimeUtc(changedFilePath, currentCompletedUtc.AddSeconds(-1.0))
+
+            Watch.setReadGraceStatusFileForWatchTests (fun () -> Task.FromResult(graceStatusTracking [| relativePath |] Array.empty<string>))
+
+            File.Delete(updateMarkerFile)
             Watch.OnChanged(changedEvent changedFilePath)
 
             let pending = Watch.pendingWatchWorkSnapshotForTests ()
@@ -1135,6 +1178,35 @@ module WatchTests =
 
                 completionProbeCalls |> should equal 0
                 File.Exists(branchBMarker) |> should equal true
+            finally
+                Watch.resetBranchTransitionCompletionAfterRetireProbeForWatchTests ())
+
+    /// Verifies that stale sidecars cannot complete a later marker lifecycle when Watch never observed that marker.
+    [<Test>]
+    let ``stale same branch sidecar without fresh marker observation does not complete transition`` () =
+        withTempRepo (fun _ ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let staleCompletedUtc = DateTime.UtcNow.AddSeconds(-5.0)
+            let mutable completionProbeCalls = 0
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "`grace switch` ended before completing.")
+            Watch.OnGraceUpdateInProgressCreated(createdEvent updateMarkerFile)
+            File.Delete(updateMarkerFile)
+            Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+            File.WriteAllText(updateMarkerFile + ".completed", staleCompletedUtc.ToString("O"))
+            File.WriteAllText(updateMarkerFile, "`grace switch` is in progress without a new sidecar.")
+
+            try
+                Watch.setBranchTransitionCompletionAfterRetireProbeForWatchTests (fun () -> completionProbeCalls <- completionProbeCalls + 1)
+
+                File.Delete(updateMarkerFile)
+                Watch.OnGraceUpdateInProgressDeleted(deletedEvent updateMarkerFile)
+
+                completionProbeCalls |> should equal 0
             finally
                 Watch.resetBranchTransitionCompletionAfterRetireProbeForWatchTests ())
 
