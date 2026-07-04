@@ -23,6 +23,7 @@ public partial class Program
     private const string AspireResourceModeEnvVar = "ASPIRE_RESOURCE_MODE";
     private const string AspireResourceModeLocal = "Local";
     private const string AspireResourceModeAzure = "Azure";
+    private const string OperationalFactsProcessorSubscriptionName = "operational-facts-processor";
 
     private static void Main(string[] args)
     {
@@ -409,11 +410,14 @@ public partial class Program
                 var zipStorage = storage.AddBlobContainer("zipfiles");
 
                 var serviceBus = builder.AddAzureServiceBus("servicebus");
+                var serviceBusTopicName =
+                    configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)]
+                    ?? Constants.GraceEventStreamTopic;
                 var operationalFactsTopicName =
                     configuration[getConfigKey(EnvironmentVariables.AzureServiceBusOperationalFactsTopic)]
                     ?? Constants.GraceOperationalFactsTopic;
-                var operationalFactsSubscriptionName = $"{operationalFactsTopicName}-processor";
-                _ = serviceBus.AddServiceBusTopic(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
+                EnsureDistinctServiceBusTopics(serviceBusTopicName, operationalFactsTopicName);
+                _ = serviceBus.AddServiceBusTopic(serviceBusTopicName)
                     .AddServiceBusSubscription(configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server");
                 _ = serviceBus.AddServiceBusTopic(
                         "operational-facts",
@@ -423,7 +427,7 @@ public partial class Program
                         topic.RequiresDuplicateDetection = true;
                         topic.DuplicateDetectionHistoryTimeWindow = TimeSpan.FromMinutes(5);
                     })
-                    .AddServiceBusSubscription(operationalFactsSubscriptionName);
+                    .AddServiceBusSubscription(OperationalFactsProcessorSubscriptionName);
 
                 var otlpEndpoint = configuration["grace:otlp_endpoint"] ?? "http://localhost:18889";
                 var publishLogDirectory = configuration["grace:log_directory"] ?? "/tmp/grace-logs";
@@ -450,7 +454,7 @@ public partial class Program
                     .WithEnvironment(EnvironmentVariables.OrleansClusterId, configuration[getConfigKey(EnvironmentVariables.OrleansClusterId)] ?? "production")
                     .WithEnvironment(EnvironmentVariables.OrleansServiceId, configuration[getConfigKey(EnvironmentVariables.OrleansServiceId)] ?? "grace-prod")
                         .WithEnvironment(EnvironmentVariables.GracePubSubSystem, pubSubSystem)
-                    .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusTopic)] ?? "graceeventstream")
+                    .WithEnvironment(EnvironmentVariables.AzureServiceBusTopic, serviceBusTopicName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusOperationalFactsTopic, operationalFactsTopicName)
                     .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, configuration[getConfigKey(EnvironmentVariables.AzureServiceBusSubscription)] ?? "grace-server")
                     .WithEnvironment(EnvironmentVariables.GraceLogDirectory, publishLogDirectory)
@@ -646,7 +650,6 @@ public partial class Program
             ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic)
             ?? Constants.GraceOperationalFactsTopic;
         EnsureDistinctServiceBusTopics(topicName, operationalFactsTopicName);
-        var operationalFactsSubscriptionName = $"{operationalFactsTopicName}-processor";
         var subscriptionName =
             ResolveSetting(configuration, Constants.EnvironmentVariables.AzureServiceBusSubscription)
             ?? "grace-server";
@@ -720,7 +723,7 @@ public partial class Program
                                 {
                                     new
                                     {
-                                        Name = operationalFactsSubscriptionName,
+                                        Name = OperationalFactsProcessorSubscriptionName,
                                         Properties = new
                                         {
                                             DeadLetteringOnMessageExpiration = false,
