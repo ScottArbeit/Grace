@@ -1530,6 +1530,9 @@ module Watch =
     /// Reports whether an explicit resync scan must run before incremental observation application resumes.
     let private isGraceWatchResyncPending () = currentGraceWatchResyncAttempt () <> 0L
 
+    /// Reports whether an explicit resync scan is pending for Watch confidence-boundary tests.
+    let internal isGraceWatchResyncPendingForWatchTests () = isGraceWatchResyncPending ()
+
     /// Reports whether an in-flight resync attempt still owns the recovery boundary.
     let private isGraceWatchResyncAttemptCurrent attempt =
         attempt <> 0L
@@ -1910,10 +1913,7 @@ module Watch =
 
     /// Publishes a target-branch non-incremental snapshot when old IPC retirement is temporarily blocked.
     let private publishNonIncrementalTransitionCompletionAfterRetireFailure completedUtc failure =
-        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
-        graceStatusHasChanged <- true
-
-        lastPublishedHasPendingWatchWork <- None
+        requestGraceWatchExplicitResync $"previous branch IPC retirement failed: {failure}"
 
         logToAnsiConsole
             Colors.Error

@@ -841,6 +841,9 @@ module WatchTests =
                 Watch.currentGraceWatchRuntimeModeForWatchTests ()
                 |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
 
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal true
+
                 readWatchStatusJsonStringProperty "BranchId"
                 |> should equal $"{branchBId}"
 
