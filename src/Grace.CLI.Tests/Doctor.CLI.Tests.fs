@@ -2601,7 +2601,7 @@ module DoctorCliTests =
                 (findCheckById checks "state.db.schema-version")
                     .GetProperty("Summary")
                     .GetString()
-                |> should contain "schema_version is 6"
+                |> should contain "schema_version is 7"
 
                 (findCheckById checks "object-cache.index-readable")
                     .GetProperty("Summary")
@@ -2751,7 +2751,7 @@ module DoctorCliTests =
                     use connection = openRawConnection dbPath
                     executeNonQuery connection "DROP TABLE meta;"
                     executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '6');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '7');"
 
                     executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
 
@@ -2798,7 +2798,7 @@ module DoctorCliTests =
                     use connection = openRawConnection dbPath
                     executeNonQuery connection "DROP TABLE meta;"
                     executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '6');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '7');"
 
                     executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
 
@@ -3061,7 +3061,7 @@ module DoctorCliTests =
                         |> should equal "Ok"
 
                         checks[ 0 ].GetProperty("Summary").GetString()
-                        |> should contain "schema_version is 6"
+                        |> should contain "schema_version is 7"
 
                         let trace = readTrace tracePath
                         trace |> should contain repoDbPath

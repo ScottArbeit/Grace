@@ -160,6 +160,7 @@ module Common =
                 DifferenceType: string
                 FileSystemEntryType: string
                 RelativePath: string option
+                QuarantineReason: string option
             }
 
         /// Models filtered durable Watch journal diagnostics for maintenance show-journal.

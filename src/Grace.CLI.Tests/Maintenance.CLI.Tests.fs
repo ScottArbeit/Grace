@@ -693,6 +693,50 @@ module MaintenanceCliTests =
             pathRow.GetProperty("RelativePath").GetString()
             |> should equal "src/file-2.txt")
 
+    /// Verifies that maintenance show journal exposes startup quarantine diagnostics in the JSON contract.
+    [<Test>]
+    let ``maintenance show journal json exposes quarantine reason`` () =
+        withTempRepo (fun root ->
+            seedWatchJournalRows root 2L 0L
+
+            let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            use setupConnection = new SqliteConnection($"Data Source={dbPath}")
+            setupConnection.Open()
+
+            executeNonQuery setupConnection "UPDATE watch_journal SET quarantined_at_unix_ticks = 99, quarantine_reason = 'wrong branch' WHERE sequence = 1;"
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError =
+                runJsonMaintenance [| "show-journal"
+                                      "--state"
+                                      "quarantined"
+                                      "--limit"
+                                      "10" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+
+            let rows =
+                document
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")
+
+            rows.GetArrayLength() |> should equal 1
+            let row = rows[0]
+
+            row.GetProperty("Sequence").GetInt64()
+            |> should equal 1L
+
+            row.GetProperty("State").GetString()
+            |> should equal "quarantined"
+
+            row.GetProperty("QuarantineReason").GetString()
+            |> should equal "wrong branch")
+
     /// Verifies that maintenance show journal reports unhealthy local state without repairing or rotating the DB.
     [<Test>]
     let ``maintenance show journal json reports stale schema without mutating local db`` () =

@@ -38,6 +38,7 @@ module LocalStateDbTests =
         configuration.OwnerId <- Guid.NewGuid()
         configuration.OrganizationId <- Guid.NewGuid()
         configuration.RepositoryId <- Guid.NewGuid()
+        configuration.BranchId <- Guid.NewGuid()
         configuration.RootDirectory <- root
         configuration.StandardizedRootDirectory <- normalizeFilePath root
         configuration.GraceDirectory <- Path.Combine(root, Constants.GraceConfigDirectory)
@@ -180,8 +181,24 @@ module LocalStateDbTests =
                 $"INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES ({sequence}, {sequence}, 'Change', 'File', 'file-{sequence}.txt');")
 
     /// Builds a replayable Watch journal observation for local-state ordering tests.
+    let private watchJournalScope (configuration: GraceConfiguration) : LocalStateDb.WatchJournalScope =
+        {
+            RepositoryId = configuration.RepositoryId
+            BranchId = configuration.BranchId
+            WorkspaceRoot = configuration.RootDirectory
+            WatchRoot = configuration.RootDirectory
+            RootDirectoryId = DirectoryVersionId("11111111-1111-1111-1111-111111111111")
+            RootDirectoryBlake3Hash = Blake3Hash "test-root-blake3"
+            WatchMode = "repository-root"
+        }
+
+    /// Builds a replayable Watch journal observation for local-state ordering tests.
     let private watchJournalObservation differenceType entryType (relativePath: string) : LocalStateDb.WatchJournalObservation =
-        { DifferenceType = differenceType; EntryType = entryType; RelativePath = RelativePath relativePath }
+        { Scope = watchJournalScope (Current()); DifferenceType = differenceType; EntryType = entryType; RelativePath = RelativePath relativePath }
+
+    /// Builds a scoped replayable Watch journal observation for startup recovery tests.
+    let private scopedWatchJournalObservation scope differenceType entryType (relativePath: string) : LocalStateDb.WatchJournalObservation =
+        { Scope = scope; DifferenceType = differenceType; EntryType = entryType; RelativePath = RelativePath relativePath }
 
     /// Gets corrupt backups needed by the test scenario.
     let private getCorruptBackups (dbPath: string) =
@@ -258,9 +275,13 @@ module LocalStateDbTests =
 
         executeNonQuery
             connection
-            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL, quarantined_at_unix_ticks INTEGER, quarantine_reason TEXT);"
 
-        executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '6');"
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, event_type TEXT NOT NULL, message TEXT NOT NULL, replayable INTEGER NOT NULL CHECK (replayable = 0));"
+
+        executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7');"
         executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
 
         executeNonQuery
@@ -355,7 +376,7 @@ module LocalStateDbTests =
                 use cmd = connection.CreateCommand()
                 cmd.CommandText <- "SELECT value FROM meta WHERE key = 'schema_version';"
                 let schemaVersion = cmd.ExecuteScalar() :?> string
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 cmd.CommandText <- "SELECT COUNT(*) FROM status_meta;"
                 let statusMetaCount = Convert.ToInt32(cmd.ExecuteScalar())
@@ -777,6 +798,127 @@ module LocalStateDbTests =
                     |]
             })
 
+    /// Verifies that startup recovery returns compatible pending rows without mutating them before Watch replays them.
+    [<Test>]
+    let ``watch journal startup recovery returns compatible pending rows`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = watchJournalScope configuration
+
+                let! sequences =
+                    LocalStateDb.appendWatchJournalObservations
+                        configuration.GraceStatusFile
+                        [
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "src/app.fs"
+                        ]
+
+                let! recovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
+
+                sequences |> should equal [| 1L |]
+                recovery.AppliedThroughSequence |> should equal 0L
+                recovery.QuarantinedRows |> should haveLength 0
+
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row.Sequence, row.DifferenceType, row.EntryType, row.RelativePath)
+                |> should
+                    equal
+                    [|
+                        1L, DifferenceType.Change, FileSystemEntryType.File, RelativePath "src/app.fs"
+                    |]
+
+                let! snapshot = LocalStateDb.readWatchJournalSnapshot configuration.GraceStatusFile "pending" None 10
+                snapshot.Rows |> should haveLength 1
+
+                snapshot.Rows[0].State
+                |> should equal LocalStateDb.WatchJournalRowState.Pending
+            })
+
+    /// Verifies that startup recovery quarantines rows from stale identity scopes and retires only contiguous failures.
+    [<Test>]
+    let ``watch journal startup recovery quarantines incompatible identity rows`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = watchJournalScope configuration
+
+                let wrongRepository = { scope with RepositoryId = Guid.NewGuid() }
+
+                let wrongBranch = { scope with BranchId = Guid.NewGuid() }
+
+                let wrongWorkspace = { scope with WorkspaceRoot = Path.Combine(configuration.RootDirectory, "other-workspace") }
+
+                let wrongRoot = { scope with WatchRoot = Path.Combine(configuration.RootDirectory, "other-root") }
+
+                let failedContinuity = { scope with RootDirectoryBlake3Hash = Blake3Hash "different-root-blake3" }
+
+                let observations =
+                    [|
+                        scopedWatchJournalObservation wrongRepository DifferenceType.Change FileSystemEntryType.File "wrong-repo.txt"
+                        scopedWatchJournalObservation wrongBranch DifferenceType.Change FileSystemEntryType.File "wrong-branch.txt"
+                        scopedWatchJournalObservation wrongWorkspace DifferenceType.Change FileSystemEntryType.File "wrong-workspace.txt"
+                        scopedWatchJournalObservation wrongRoot DifferenceType.Change FileSystemEntryType.File "wrong-root.txt"
+                        scopedWatchJournalObservation failedContinuity DifferenceType.Change FileSystemEntryType.File "failed-continuity.txt"
+                        scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "compatible.txt"
+                    |]
+
+                let! sequences = LocalStateDb.appendWatchJournalObservations configuration.GraceStatusFile observations
+                let! recovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
+
+                sequences
+                |> should equal [| 1L; 2L; 3L; 4L; 5L; 6L |]
+
+                recovery.QuarantinedRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some "wrong-repo.txt", Some "wrong repository"
+                        2L, Some "wrong-branch.txt", Some "wrong branch"
+                        3L, Some "wrong-workspace.txt", Some "wrong workspace root"
+                        4L, Some "wrong-root.txt", Some "wrong watch root"
+                        5L, Some "failed-continuity.txt", Some "failed root hash continuity"
+                    |]
+
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath)
+                |> should equal [| 6L, RelativePath "compatible.txt" |]
+
+                let! appliedThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                appliedThrough |> should equal 5L
+
+                let! quarantinedSnapshot = LocalStateDb.readWatchJournalSnapshot configuration.GraceStatusFile "quarantined" None 10
+                quarantinedSnapshot.Rows |> should haveLength 5
+
+                let! pendingSnapshot = LocalStateDb.readWatchJournalSnapshot configuration.GraceStatusFile "pending" None 10
+
+                pendingSnapshot.Rows
+                |> Array.map (fun row -> row.Sequence)
+                |> should equal [| 6L |]
+            })
+
+    /// Verifies that lifecycle diagnostics are durable and explicitly non-replayable.
+    [<Test>]
+    let ``watch lifecycle events are recorded as non replayable diagnostics`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = watchJournalScope configuration
+
+                do!
+                    LocalStateDb.recordWatchLifecycleEvent
+                        configuration.GraceStatusFile
+                        { Scope = scope; EventType = "startup-replay-complete"; Message = "Startup replay completed." }
+
+                use connection = new SqliteConnection($"Data Source={configuration.GraceStatusFile}")
+                connection.Open()
+                let eventCount = executeScalarInt connection "SELECT COUNT(*) FROM watch_lifecycle_events WHERE event_type = 'startup-replay-complete';"
+                let replayableTotal = executeScalarInt connection "SELECT SUM(replayable) FROM watch_lifecycle_events;"
+
+                eventCount |> should equal 1
+                replayableTotal |> should equal 0
+
+                executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+                |> should equal 0
+            })
+
     /// Verifies that round trips status snapshot.
     [<Test>]
     let ``round trips status snapshot`` () =
@@ -1043,7 +1185,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -1079,7 +1221,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 let sequencePk = executeScalarInt connection "SELECT pk FROM pragma_table_info('watch_journal') WHERE name = 'sequence';"
                 sequencePk |> should equal 1
@@ -1131,7 +1273,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -1171,7 +1313,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 let tableSql = executeScalarString connection "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
 
@@ -1211,7 +1353,7 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
 
                 let! readThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
@@ -1253,7 +1395,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let duplicateRows = executeScalarInt connection "SELECT COUNT(*) FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 duplicateRows |> should equal 1
 
@@ -1298,7 +1440,7 @@ module LocalStateDbTests =
                     with
                     | :? SqliteException -> false
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 duplicateInsertSucceeded |> should equal false
 
@@ -1337,7 +1479,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1376,7 +1518,7 @@ module LocalStateDbTests =
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
                 let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
                 allocationRows |> should equal 0
@@ -1414,7 +1556,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1451,7 +1593,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1488,7 +1630,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1534,7 +1676,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1581,7 +1723,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1627,7 +1769,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1675,7 +1817,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1716,7 +1858,7 @@ module LocalStateDbTests =
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
                 let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 appliedThrough |> should equal "0"
                 journalRows |> should equal 0
 
@@ -1746,7 +1888,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 let corruptAfter =
                     getCorruptBackups configuration.GraceStatusFile
@@ -1801,7 +1943,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "6")
+                |> should equal (Some "7")
 
                 inspection.MissingRequiredTables
                 |> should equal Array.empty<string>
@@ -1846,7 +1988,7 @@ module LocalStateDbTests =
                 inspection.OpenError |> should equal None
 
                 inspection.SchemaVersion
-                |> should equal (Some "6")
+                |> should equal (Some "7")
 
                 inspection.IntegrityCheckRows
                 |> should equal [| "ok" |]
@@ -2124,7 +2266,7 @@ module LocalStateDbTests =
                 let schemaVersion = executeScalarString connection2 "SELECT value FROM meta WHERE key = 'schema_version';"
                 let readRootId = executeScalarString connection2 "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection2 "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 readRootId
                 |> should not' (equal (rootId.ToString()))
@@ -2161,7 +2303,7 @@ module LocalStateDbTests =
                 let readRootId = executeScalarString connection "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
                 let readRootHash = executeScalarString connection "SELECT root_directory_sha256_hash FROM status_meta WHERE id = 1;"
                 let readRootBlake3Hash = executeScalarString connection "SELECT root_directory_blake3_hash FROM status_meta WHERE id = 1;"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 readRootId |> should equal (rootId.ToString())
                 readRootHash |> should equal rootHash
                 readRootBlake3Hash |> should equal rootBlake3Hash
@@ -2216,7 +2358,7 @@ module LocalStateDbTests =
                 let watchJournalCount = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal';"
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 watchJournalCount |> should equal 1
                 appliedThrough |> should equal "0"
 
@@ -2268,9 +2410,9 @@ module LocalStateDbTests =
 
                 let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 hiddenRequiredColumns |> should equal 0
-                journalColumns |> should equal 5
+                journalColumns |> should equal 14
                 appliedThrough |> should equal "0"
 
                 let corruptAfter =
@@ -2305,7 +2447,7 @@ module LocalStateDbTests =
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 rootBlake3Columns |> should equal 1
                 statusMetaCount |> should equal 1
 
@@ -2346,7 +2488,7 @@ module LocalStateDbTests =
                 let statusDirectoryCount = executeScalarInt connection "SELECT COUNT(*) FROM status_directories;"
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
 
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
                 statusDirectoryCount |> should equal 0
                 statusMetaCount |> should equal 1
 
@@ -2539,7 +2681,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
 
                 let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                 statusMetaCount |> should equal 1
@@ -2566,7 +2708,7 @@ module LocalStateDbTests =
 
                 use connection = openRawConnection configuration.GraceStatusFile
                 let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                schemaVersion |> should equal "6"
+                schemaVersion |> should equal "7"
             })
 
     /// Verifies that replace status snapshot fully clears old snapshot rows.
@@ -2880,7 +3022,7 @@ module LocalStateDbTests =
                 do
                     use connection = openRawConnection configuration.GraceStatusFile
                     executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '6');"
+                    executeNonQuery connection "INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '7');"
 
                     executeNonQuery
                         connection
@@ -3790,7 +3932,7 @@ module LocalStateDbTests =
                     integrity.ToLowerInvariant() |> should equal "ok"
 
                     let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
-                    schemaVersion |> should equal "6"
+                    schemaVersion |> should equal "7"
 
                     let statusMetaCount = executeScalarInt connection "SELECT COUNT(*) FROM status_meta;"
                     statusMetaCount |> should equal 1

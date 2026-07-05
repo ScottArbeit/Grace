@@ -434,6 +434,7 @@ module CommandOutputContract =
                 "DifferenceType", scalarSchema "string"
                 "FileSystemEntryType", scalarSchema "string"
                 "RelativePath", nullableStringSchema "Repository-relative path for the normalized replay observation."
+                "QuarantineReason", nullableStringSchema "Reason a startup recovery pass retired this row instead of replaying it."
             ]
             [|
                 "Sequence"
@@ -442,6 +443,7 @@ module CommandOutputContract =
                 "DifferenceType"
                 "FileSystemEntryType"
                 "RelativePath"
+                "QuarantineReason"
             |]
 
     let private maintenanceShowJournalSchema =

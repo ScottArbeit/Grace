@@ -19,7 +19,7 @@ open SQLitePCL
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let private SchemaVersion = "6"
+    let private SchemaVersion = "7"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]
@@ -186,7 +186,8 @@ module LocalStateDb =
             "CREATE INDEX IF NOT EXISTS ix_object_cache_children_parent ON object_cache_directory_children(parent_directory_version_id);"
             "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
-            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL, quarantined_at_unix_ticks INTEGER, quarantine_reason TEXT);"
+            "CREATE TABLE IF NOT EXISTS watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, event_type TEXT NOT NULL, message TEXT NOT NULL, replayable INTEGER NOT NULL CHECK (replayable = 0));"
         |]
 
     let private requiredTableNames =
@@ -199,6 +200,7 @@ module LocalStateDb =
             "object_cache_directory_children"
             "object_cache_directory_files"
             "watch_journal"
+            "watch_lifecycle_events"
         |]
 
     let private requiredIndexNames =
@@ -694,6 +696,30 @@ module LocalStateDb =
         | :? string as sql -> createSqlDeclaresSequenceAutoincrement sql
         | _ -> false
 
+    /// Adds one nullable Watch journal column when migrating v6 databases without deleting pending rows.
+    let private addWatchJournalColumnIfMissing (connection: SqliteConnection) columnName columnDeclaration =
+        if not (columnExists connection "watch_journal" columnName) then
+            executeNonQuery connection $"ALTER TABLE watch_journal ADD COLUMN {columnDeclaration};"
+
+    /// Adds the lifecycle diagnostics table that records Watch recovery decisions without replay payloads.
+    let private ensureWatchLifecycleEventTable (connection: SqliteConnection) =
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, event_type TEXT NOT NULL, message TEXT NOT NULL, replayable INTEGER NOT NULL CHECK (replayable = 0));"
+
+    /// Migrates the v6 Watch journal shape by preserving rows and adding identity plus quarantine metadata.
+    let private migrateWatchJournalV6ToV7 (connection: SqliteConnection) =
+        addWatchJournalColumnIfMissing connection "repository_id" "repository_id TEXT"
+        addWatchJournalColumnIfMissing connection "branch_id" "branch_id TEXT"
+        addWatchJournalColumnIfMissing connection "workspace_root" "workspace_root TEXT"
+        addWatchJournalColumnIfMissing connection "watch_root" "watch_root TEXT"
+        addWatchJournalColumnIfMissing connection "root_directory_version_id" "root_directory_version_id TEXT"
+        addWatchJournalColumnIfMissing connection "root_directory_blake3_hash" "root_directory_blake3_hash TEXT"
+        addWatchJournalColumnIfMissing connection "watch_mode" "watch_mode TEXT"
+        addWatchJournalColumnIfMissing connection "quarantined_at_unix_ticks" "quarantined_at_unix_ticks INTEGER"
+        addWatchJournalColumnIfMissing connection "quarantine_reason" "quarantine_reason TEXT"
+        ensureWatchLifecycleEventTable connection
+
     /// Verifies that the Watch journal table can support ordered local recovery and retention operations.
     let private hasRequiredWatchJournalShape (connection: SqliteConnection) =
         let columns = readTableColumnShapes connection "watch_journal"
@@ -702,9 +728,18 @@ module LocalStateDb =
             [|
                 "sequence"
                 "created_at_unix_ticks"
+                "repository_id"
+                "branch_id"
+                "workspace_root"
+                "watch_root"
+                "root_directory_version_id"
+                "root_directory_blake3_hash"
+                "watch_mode"
                 "difference_type"
                 "entry_type"
                 "relative_path"
+                "quarantined_at_unix_ticks"
+                "quarantine_reason"
             |]
 
         let tryFindColumn columnName =
@@ -742,12 +777,39 @@ module LocalStateDb =
                 && column.DefaultValueSql.IsNone
             | None -> false
 
+        let hasOptionalTextColumn columnName =
+            match tryFindColumn columnName with
+            | Some column ->
+                isTextColumnType column.TypeName
+                && not column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
+        let hasOptionalIntegerColumn columnName =
+            match tryFindColumn columnName with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && not column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
         hasExpectedColumnSet
         && hasSequenceColumn
         && hasCreatedAtColumn
+        && hasOptionalTextColumn "repository_id"
+        && hasOptionalTextColumn "branch_id"
+        && hasOptionalTextColumn "workspace_root"
+        && hasOptionalTextColumn "watch_root"
+        && hasOptionalTextColumn "root_directory_version_id"
+        && hasOptionalTextColumn "root_directory_blake3_hash"
+        && hasOptionalTextColumn "watch_mode"
         && hasRequiredTextColumn "difference_type"
         && hasRequiredTextColumn "entry_type"
         && hasRequiredTextColumn "relative_path"
+        && hasOptionalIntegerColumn "quarantined_at_unix_ticks"
+        && hasOptionalTextColumn "quarantine_reason"
         && watchJournalUsesAutoincrement connection
 
     /// Reports whether the Watch journal contains rows that require trustworthy recovery metadata.
@@ -828,6 +890,16 @@ module LocalStateDb =
         use command = connection.CreateCommand()
         command.CommandText <- "SELECT COUNT(*) FROM watch_journal;"
         command.ExecuteScalar() |> Convert.ToInt64
+
+    /// Reports whether a journal sequence was retired by quarantine and can be skipped by the replay watermark.
+    let private isWatchJournalSequenceQuarantined (connection: SqliteConnection) sequence =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT EXISTS(SELECT 1 FROM watch_journal WHERE sequence = $sequence AND quarantined_at_unix_ticks IS NOT NULL);"
+
+        command.Parameters.AddWithValue("$sequence", sequence)
+        |> ignore
+
+        Convert.ToInt32(command.ExecuteScalar()) <> 0
 
     /// Reads local-state metadata for read-only inspection checks without writing default rows.
     let private tryGetMetaValueReadOnly (connection: SqliteConnection) (key: string) =
@@ -1078,7 +1150,9 @@ module LocalStateDb =
 
         executeNonQuery
             connection
-            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL, quarantined_at_unix_ticks INTEGER, quarantine_reason TEXT);"
+
+        ensureWatchLifecycleEventTable connection
 
     /// Replaces malformed or missing Watch recovery metadata with the clear-journal reset watermark.
     let private resetWatchJournalAppliedThroughSequenceForClear (connection: SqliteConnection) =
@@ -1092,6 +1166,19 @@ module LocalStateDb =
     type WatchJournalRowState =
         | Applied
         | Pending
+        | Quarantined
+
+    /// Identifies the repository, branch, workspace, root, and mode that make a Watch journal row replay-compatible.
+    type WatchJournalScope =
+        {
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            WorkspaceRoot: string
+            WatchRoot: string
+            RootDirectoryId: DirectoryVersionId
+            RootDirectoryBlake3Hash: Blake3Hash
+            WatchMode: string
+        }
 
     /// Models one durable Watch journal sequence row for diagnostics.
     type WatchJournalRow =
@@ -1102,10 +1189,26 @@ module LocalStateDb =
             DifferenceType: string
             EntryType: string
             RelativePath: string option
+            QuarantineReason: string option
         }
 
     /// Models the replayable normalized Watch observation persisted before status application.
-    type WatchJournalObservation = { DifferenceType: DifferenceType; EntryType: FileSystemEntryType; RelativePath: RelativePath }
+    type WatchJournalObservation = { Scope: WatchJournalScope; DifferenceType: DifferenceType; EntryType: FileSystemEntryType; RelativePath: RelativePath }
+
+    /// Models one compatible unapplied Watch journal row that startup recovery can replay after reconciliation.
+    type WatchJournalPendingReplay = { Sequence: int64; DifferenceType: DifferenceType; EntryType: FileSystemEntryType; RelativePath: RelativePath }
+
+    /// Models startup recovery's durable quarantine and replay classification result.
+    type WatchJournalStartupRecovery =
+        {
+            DbPath: string
+            AppliedThroughSequence: int64
+            CompatibleReplayRows: WatchJournalPendingReplay array
+            QuarantinedRows: WatchJournalRow array
+        }
+
+    /// Models a non-replayable Watch lifecycle diagnostic event.
+    type WatchLifecycleEvent = { Scope: WatchJournalScope; EventType: string; Message: string }
 
     /// Models a filtered Watch journal diagnostic snapshot.
     type WatchJournalSnapshot =
@@ -1142,8 +1245,9 @@ module LocalStateDb =
             match normalized with
             | "all"
             | "applied"
-            | "pending" -> normalized
-            | _ -> invalidArg (nameof stateFilter) "Watch journal state must be one of: all, applied, pending."
+            | "pending"
+            | "quarantined" -> normalized
+            | _ -> invalidArg (nameof stateFilter) "Watch journal state must be one of: all, applied, pending, quarantined."
 
     /// Determines whether a diagnostic journal row should be returned for the requested filters.
     let private watchJournalRowMatches stateFilter pathFilter (row: WatchJournalRow) =
@@ -1152,6 +1256,7 @@ module LocalStateDb =
             | "all", _ -> true
             | "applied", Applied -> true
             | "pending", Pending -> true
+            | "quarantined", Quarantined -> true
             | _ -> false
 
         let pathMatches =
@@ -1194,6 +1299,7 @@ module LocalStateDb =
         && columnExists connection "object_cache_directories" "blake3_hash"
         && columnExists connection "object_cache_directory_files" "blake3_hash"
         && tableExists connection "watch_journal"
+        && tableExists connection "watch_lifecycle_events"
         && hasRequiredWatchJournalShape connection
         && hasValidWatchJournalAppliedThroughSequenceMeta connection
 
@@ -1288,6 +1394,13 @@ module LocalStateDb =
 
                                                 match tryGetMetaValue connection "schema_version" with
                                                 | Some version when version = SchemaVersion -> ()
+                                                | Some "6" ->
+                                                    if hasRequiredMetaKeyValueShape connection then
+                                                        logTrace "migrating local state DB schema from v6 to v7"
+                                                        migrateWatchJournalV6ToV7 connection
+                                                        setMetaValue connection "schema_version" SchemaVersion
+                                                    else
+                                                        recreate <- true
                                                 | Some _ -> recreate <- true
                                                 | None ->
                                                     logTrace "meta schema_version missing; writing defaults"
@@ -1399,14 +1512,17 @@ module LocalStateDb =
             match normalizedStateFilter with
             | "applied" ->
                 whereClauses.Add("sequence <= $applied_through")
+                whereClauses.Add("quarantined_at_unix_ticks IS NULL")
 
                 command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
                 |> ignore
             | "pending" ->
                 whereClauses.Add("sequence > $applied_through")
+                whereClauses.Add("quarantined_at_unix_ticks IS NULL")
 
                 command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
                 |> ignore
+            | "quarantined" -> whereClauses.Add("quarantined_at_unix_ticks IS NOT NULL")
             | _ -> ()
 
             match normalizedPathFilter with
@@ -1425,7 +1541,7 @@ module LocalStateDb =
                     $" WHERE {joinedWhereClauses}"
 
             command.CommandText <-
-                $"SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path FROM watch_journal{whereSql} ORDER BY sequence DESC LIMIT $limit;"
+                $"SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path, quarantined_at_unix_ticks, quarantine_reason FROM watch_journal{whereSql} ORDER BY sequence DESC LIMIT $limit;"
 
             command.Parameters.AddWithValue("$limit", limit)
             |> ignore
@@ -1436,7 +1552,10 @@ module LocalStateDb =
             while reader.Read() do
                 let sequence = reader.GetInt64(0)
 
-                let state = if sequence <= appliedThroughSequence then Applied else Pending
+                let state =
+                    if not (reader.IsDBNull(5)) then Quarantined
+                    elif sequence <= appliedThroughSequence then Applied
+                    else Pending
 
                 let row =
                     {
@@ -1446,6 +1565,7 @@ module LocalStateDb =
                         DifferenceType = reader.GetString(2)
                         EntryType = reader.GetString(3)
                         RelativePath = Some(reader.GetString(4))
+                        QuarantineReason = if reader.IsDBNull(6) then None else Some(reader.GetString(6))
                     }
 
                 if watchJournalRowMatches normalizedStateFilter normalizedPathFilter row then
@@ -1555,9 +1675,30 @@ module LocalStateDb =
                                 use command = connection.CreateCommand()
 
                                 command.CommandText <-
-                                    "INSERT INTO watch_journal (created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES ($created_at, $difference_type, $entry_type, $relative_path) RETURNING sequence;"
+                                    "INSERT INTO watch_journal (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_blake3_hash, $watch_mode, $difference_type, $entry_type, $relative_path) RETURNING sequence;"
 
                                 command.Parameters.Add("$created_at", SqliteType.Integer)
+                                |> ignore
+
+                                command.Parameters.Add("$repository_id", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$branch_id", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$workspace_root", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$watch_root", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$root_directory_version_id", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$root_directory_blake3_hash", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$watch_mode", SqliteType.Text)
                                 |> ignore
 
                                 command.Parameters.Add("$difference_type", SqliteType.Text)
@@ -1573,6 +1714,13 @@ module LocalStateDb =
 
                                 for observation in observationArray do
                                     command.Parameters["$created_at"].Value <- getCurrentInstant().ToUnixTimeTicks()
+                                    command.Parameters["$repository_id"].Value <- observation.Scope.RepositoryId.ToString()
+                                    command.Parameters["$branch_id"].Value <- observation.Scope.BranchId.ToString()
+                                    command.Parameters["$workspace_root"].Value <- observation.Scope.WorkspaceRoot
+                                    command.Parameters["$watch_root"].Value <- observation.Scope.WatchRoot
+                                    command.Parameters["$root_directory_version_id"].Value <- observation.Scope.RootDirectoryId.ToString()
+                                    command.Parameters["$root_directory_blake3_hash"].Value <- string observation.Scope.RootDirectoryBlake3Hash
+                                    command.Parameters["$watch_mode"].Value <- observation.Scope.WatchMode
                                     command.Parameters["$difference_type"].Value <- getDiscriminatedUnionCaseName observation.DifferenceType
                                     command.Parameters["$entry_type"].Value <- getDiscriminatedUnionCaseName observation.EntryType
                                     command.Parameters["$relative_path"].Value <- string observation.RelativePath
@@ -1590,6 +1738,342 @@ module LocalStateDb =
                         })
 
                 return sequences
+        }
+
+    /// Parses a durable journal difference type only when it matches the normalized Watch payload contract.
+    let private tryParseWatchJournalDifferenceType value =
+        match value with
+        | "Add" -> Some DifferenceType.Add
+        | "Change" -> Some DifferenceType.Change
+        | "Delete" -> Some DifferenceType.Delete
+        | _ -> None
+
+    /// Parses a durable journal entry type only when it matches the normalized Watch payload contract.
+    let private tryParseWatchJournalEntryType value =
+        match value with
+        | "Directory" -> Some FileSystemEntryType.Directory
+        | "File" -> Some FileSystemEntryType.File
+        | _ -> None
+
+    /// Normalizes filesystem roots stored in journal identity fields before comparing startup compatibility.
+    let private normalizeWatchJournalRoot value =
+        if String.IsNullOrWhiteSpace(value) then
+            String.Empty
+        else
+            Path
+                .GetFullPath(value)
+                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+    /// Uses platform path rules when comparing workspace and watch roots from durable journal rows.
+    let private watchJournalRootEquals expected actual =
+        let comparison =
+            if OperatingSystem.IsWindows() then
+                StringComparison.OrdinalIgnoreCase
+            else
+                StringComparison.Ordinal
+
+        String.Equals(normalizeWatchJournalRoot expected, normalizeWatchJournalRoot actual, comparison)
+
+    /// Reads a nullable text column from a journal query without converting database null into a trusted value.
+    let private readNullableText (reader: SqliteDataReader) ordinal = if reader.IsDBNull(ordinal) then None else Some(reader.GetString(ordinal))
+
+    /// Builds a diagnostic row for a startup quarantine decision.
+    let private quarantinedJournalRowFromReader appliedThroughSequence (reader: SqliteDataReader) =
+        let sequence = reader.GetInt64(0)
+
+        {
+            Sequence = sequence
+            CreatedAtUnixTicks = reader.GetInt64(1)
+            State = Quarantined
+            DifferenceType = reader.GetString(9)
+            EntryType = reader.GetString(10)
+            RelativePath = Some(reader.GetString(11))
+            QuarantineReason = readNullableText reader 13
+        }
+
+    /// Explains why an unapplied row cannot be trusted for startup replay in the current repository scope.
+    let private tryFindWatchJournalReplayIncompatibility (scope: WatchJournalScope) row =
+        let (repositoryId, branchId, workspaceRoot, watchRoot, rootDirectoryId, rootDirectoryBlake3Hash, watchMode, differenceType, entryType, relativePath) =
+            row
+
+        let checks =
+            [|
+                match repositoryId with
+                | Some value when String.Equals(value, scope.RepositoryId.ToString(), StringComparison.OrdinalIgnoreCase) -> None
+                | Some _ -> Some "wrong repository"
+                | None -> Some "missing repository identity"
+
+                match branchId with
+                | Some value when String.Equals(value, scope.BranchId.ToString(), StringComparison.OrdinalIgnoreCase) -> None
+                | Some _ -> Some "wrong branch"
+                | None -> Some "missing branch identity"
+
+                match workspaceRoot with
+                | Some value when watchJournalRootEquals scope.WorkspaceRoot value -> None
+                | Some _ -> Some "wrong workspace root"
+                | None -> Some "missing workspace root"
+
+                match watchRoot with
+                | Some value when watchJournalRootEquals scope.WatchRoot value -> None
+                | Some _ -> Some "wrong watch root"
+                | None -> Some "missing watch root"
+
+                match rootDirectoryId with
+                | Some value when String.Equals(value, scope.RootDirectoryId.ToString(), StringComparison.OrdinalIgnoreCase) -> None
+                | Some _ -> Some "failed root continuity"
+                | None -> Some "missing root continuity"
+
+                match rootDirectoryBlake3Hash with
+                | Some value when String.Equals(value, string scope.RootDirectoryBlake3Hash, StringComparison.OrdinalIgnoreCase) -> None
+                | Some _ -> Some "failed root hash continuity"
+                | None -> Some "missing root hash continuity"
+
+                match watchMode with
+                | Some value when String.Equals(value, scope.WatchMode, StringComparison.Ordinal) -> None
+                | Some _ -> Some "wrong watch mode"
+                | None -> Some "missing watch mode"
+
+                if tryParseWatchJournalDifferenceType differenceType
+                   |> Option.isSome then
+                    None
+                else
+                    Some "invalid difference type"
+
+                if tryParseWatchJournalEntryType entryType
+                   |> Option.isSome then
+                    None
+                else
+                    Some "invalid entry type"
+
+                if
+                    String.IsNullOrWhiteSpace(relativePath)
+                    || Path.IsPathRooted(relativePath)
+                then
+                    Some "invalid relative path"
+                else
+                    None
+            |]
+
+        checks |> Array.tryPick id
+
+    /// Records one Watch lifecycle event as non-replayable diagnostics.
+    let recordWatchLifecycleEvent (dbPath: string) (event: WatchLifecycleEvent) =
+        task {
+            do! ensureDbInitialized dbPath
+
+            do!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection dbPath
+
+                        executeNonQueryWithParams
+                            connection
+                            "INSERT INTO watch_lifecycle_events (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, event_type, message, replayable) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_blake3_hash, $watch_mode, $event_type, $message, 0);"
+                            (fun parameters ->
+                                parameters.AddWithValue("$created_at", getCurrentInstant().ToUnixTimeTicks())
+                                |> ignore
+
+                                parameters.AddWithValue("$repository_id", event.Scope.RepositoryId.ToString())
+                                |> ignore
+
+                                parameters.AddWithValue("$branch_id", event.Scope.BranchId.ToString())
+                                |> ignore
+
+                                parameters.AddWithValue("$workspace_root", event.Scope.WorkspaceRoot)
+                                |> ignore
+
+                                parameters.AddWithValue("$watch_root", event.Scope.WatchRoot)
+                                |> ignore
+
+                                parameters.AddWithValue("$root_directory_version_id", event.Scope.RootDirectoryId.ToString())
+                                |> ignore
+
+                                parameters.AddWithValue("$root_directory_blake3_hash", string event.Scope.RootDirectoryBlake3Hash)
+                                |> ignore
+
+                                parameters.AddWithValue("$watch_mode", event.Scope.WatchMode)
+                                |> ignore
+
+                                parameters.AddWithValue("$event_type", event.EventType)
+                                |> ignore
+
+                                parameters.AddWithValue("$message", event.Message)
+                                |> ignore)
+                    })
+        }
+
+    /// Classifies unapplied startup journal rows after reconciliation and quarantines rows that cannot be replayed safely.
+    let recoverWatchJournalForStartup (dbPath: string) (scope: WatchJournalScope) =
+        task {
+            do! ensureDbInitialized dbPath
+            let normalizedPath = Path.GetFullPath(dbPath)
+            let mutable result = None
+
+            do!
+                executeWithRetry (fun () ->
+                    task {
+                        use connection = openConnection normalizedPath
+                        executeNonQuery connection "BEGIN IMMEDIATE;"
+                        let mutable committed = false
+
+                        try
+                            let appliedThroughSequence = readWatchJournalAppliedThroughSequenceInternal connection
+
+                            use command = connection.CreateCommand()
+
+                            command.CommandText <-
+                                "SELECT sequence, created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path, quarantined_at_unix_ticks, quarantine_reason FROM watch_journal WHERE sequence > $applied_through AND quarantined_at_unix_ticks IS NULL ORDER BY sequence ASC;"
+
+                            command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+                            |> ignore
+
+                            use reader = command.ExecuteReader()
+                            let compatibleRows = ResizeArray<WatchJournalPendingReplay>()
+                            let rowsToQuarantine = ResizeArray<int64 * string>()
+
+                            while reader.Read() do
+                                let differenceTypeValue = reader.GetString(9)
+                                let entryTypeValue = reader.GetString(10)
+                                let relativePath = reader.GetString(11)
+
+                                let rowIdentity =
+                                    (readNullableText reader 2,
+                                     readNullableText reader 3,
+                                     readNullableText reader 4,
+                                     readNullableText reader 5,
+                                     readNullableText reader 6,
+                                     readNullableText reader 7,
+                                     readNullableText reader 8,
+                                     differenceTypeValue,
+                                     entryTypeValue,
+                                     relativePath)
+
+                                try
+                                    match tryFindWatchJournalReplayIncompatibility scope rowIdentity with
+                                    | Some reason -> rowsToQuarantine.Add(reader.GetInt64(0), reason)
+                                    | None ->
+                                        compatibleRows.Add(
+                                            {
+                                                Sequence = reader.GetInt64(0)
+                                                DifferenceType =
+                                                    tryParseWatchJournalDifferenceType differenceTypeValue
+                                                    |> Option.get
+                                                EntryType =
+                                                    tryParseWatchJournalEntryType entryTypeValue
+                                                    |> Option.get
+                                                RelativePath = RelativePath relativePath
+                                            }
+                                        )
+                                with
+                                | :? InvalidOperationException as ex -> rowsToQuarantine.Add(reader.GetInt64(0), ex.Message)
+
+                            reader.Close()
+
+                            if rowsToQuarantine.Count > 0 then
+                                use quarantineCommand = connection.CreateCommand()
+
+                                quarantineCommand.CommandText <-
+                                    "UPDATE watch_journal SET quarantined_at_unix_ticks = $quarantined_at, quarantine_reason = $reason WHERE sequence = $sequence AND quarantined_at_unix_ticks IS NULL;"
+
+                                quarantineCommand.Parameters.Add("$quarantined_at", SqliteType.Integer)
+                                |> ignore
+
+                                quarantineCommand.Parameters.Add("$reason", SqliteType.Text)
+                                |> ignore
+
+                                quarantineCommand.Parameters.Add("$sequence", SqliteType.Integer)
+                                |> ignore
+
+                                for sequence, reason in rowsToQuarantine do
+                                    quarantineCommand.Parameters["$quarantined_at"].Value <- getCurrentInstant().ToUnixTimeTicks()
+                                    quarantineCommand.Parameters["$reason"].Value <- reason
+                                    quarantineCommand.Parameters["$sequence"].Value <- sequence
+                                    quarantineCommand.ExecuteNonQuery() |> ignore
+
+                                let mutable candidate = appliedThroughSequence + 1L
+                                let mutable targetSequence = appliedThroughSequence
+
+                                while isWatchJournalSequenceQuarantined connection candidate do
+                                    targetSequence <- candidate
+                                    candidate <- candidate + 1L
+
+                                if targetSequence > appliedThroughSequence then
+                                    setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{targetSequence}"
+
+                                executeNonQueryWithParams
+                                    connection
+                                    "INSERT INTO watch_lifecycle_events (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, event_type, message, replayable) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_blake3_hash, $watch_mode, $event_type, $message, 0);"
+                                    (fun parameters ->
+                                        parameters.AddWithValue("$created_at", getCurrentInstant().ToUnixTimeTicks())
+                                        |> ignore
+
+                                        parameters.AddWithValue("$repository_id", scope.RepositoryId.ToString())
+                                        |> ignore
+
+                                        parameters.AddWithValue("$branch_id", scope.BranchId.ToString())
+                                        |> ignore
+
+                                        parameters.AddWithValue("$workspace_root", scope.WorkspaceRoot)
+                                        |> ignore
+
+                                        parameters.AddWithValue("$watch_root", scope.WatchRoot)
+                                        |> ignore
+
+                                        parameters.AddWithValue("$root_directory_version_id", scope.RootDirectoryId.ToString())
+                                        |> ignore
+
+                                        parameters.AddWithValue("$root_directory_blake3_hash", string scope.RootDirectoryBlake3Hash)
+                                        |> ignore
+
+                                        parameters.AddWithValue("$watch_mode", scope.WatchMode)
+                                        |> ignore
+
+                                        parameters.AddWithValue("$event_type", "startup-quarantine")
+                                        |> ignore
+
+                                        parameters.AddWithValue(
+                                            "$message",
+                                            $"Quarantined {rowsToQuarantine.Count} incompatible Watch journal rows before replay."
+                                        )
+                                        |> ignore)
+
+                            use quarantinedCommand = connection.CreateCommand()
+
+                            quarantinedCommand.CommandText <-
+                                "SELECT sequence, created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path, quarantined_at_unix_ticks, quarantine_reason FROM watch_journal WHERE sequence > $applied_through AND quarantined_at_unix_ticks IS NOT NULL ORDER BY sequence ASC;"
+
+                            quarantinedCommand.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+                            |> ignore
+
+                            use quarantinedReader = quarantinedCommand.ExecuteReader()
+                            let quarantinedRows = ResizeArray<WatchJournalRow>()
+
+                            while quarantinedReader.Read() do
+                                quarantinedRows.Add(quarantinedJournalRowFromReader appliedThroughSequence quarantinedReader)
+
+                            executeNonQuery connection "COMMIT;"
+                            committed <- true
+
+                            result <-
+                                Some
+                                    {
+                                        DbPath = normalizedPath
+                                        AppliedThroughSequence = appliedThroughSequence
+                                        CompatibleReplayRows = compatibleRows.ToArray()
+                                        QuarantinedRows = quarantinedRows.ToArray()
+                                    }
+                        finally
+                            if not committed then
+                                try
+                                    executeNonQuery connection "ROLLBACK;"
+                                with
+                                | _ -> ()
+                    })
+
+            return
+                match result with
+                | Some value -> value
+                | None -> failwith "Watch journal startup recovery did not produce a result."
         }
 
     /// Advances the Watch journal watermark only across applied sequences that are contiguous from the current boundary.
@@ -1618,7 +2102,8 @@ module LocalStateDb =
                                 let mutable candidate = currentSequence + 1L
                                 let mutable targetSequence = currentSequence
 
-                                while appliedSequenceSet.Contains(candidate) do
+                                while appliedSequenceSet.Contains(candidate)
+                                      || isWatchJournalSequenceQuarantined connection candidate do
                                     targetSequence <- candidate
                                     candidate <- candidate + 1L
 
