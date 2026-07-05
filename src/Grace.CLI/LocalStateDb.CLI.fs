@@ -2220,6 +2220,80 @@ module LocalStateDb =
                 | None -> failwith "Watch journal startup recovery did not produce a result."
         }
 
+    /// Quarantines known-stale Watch journal rows and advances the startup replay boundary through contiguous terminal rows.
+    let quarantineWatchJournalSequences (dbPath: string) (sequences: IEnumerable<int64>) reason =
+        task {
+            let sequenceSet =
+                sequences
+                |> Seq.filter (fun sequence -> sequence > 0L)
+                |> HashSet<int64>
+
+            if sequenceSet.Count = 0 then
+                return 0L
+            else
+                do! ensureDbInitialized dbPath
+                let normalizedPath = Path.GetFullPath(dbPath)
+                let mutable advancedThrough = 0L
+
+                do!
+                    executeWithRetry (fun () ->
+                        task {
+                            use connection = openConnection normalizedPath
+                            executeNonQuery connection "BEGIN IMMEDIATE;"
+                            let mutable committed = false
+
+                            try
+                                let currentSequence = readWatchJournalAppliedThroughSequenceInternal connection
+                                let quarantineAt = getCurrentInstant().ToUnixTimeTicks()
+
+                                use quarantineCommand = connection.CreateCommand()
+
+                                quarantineCommand.CommandText <-
+                                    "UPDATE watch_journal SET quarantined_at_unix_ticks = $quarantined_at, quarantine_reason = $reason WHERE sequence = $sequence AND sequence > $applied_through AND quarantined_at_unix_ticks IS NULL;"
+
+                                quarantineCommand.Parameters.Add("$quarantined_at", SqliteType.Integer)
+                                |> ignore
+
+                                quarantineCommand.Parameters.Add("$reason", SqliteType.Text)
+                                |> ignore
+
+                                quarantineCommand.Parameters.Add("$sequence", SqliteType.Integer)
+                                |> ignore
+
+                                quarantineCommand.Parameters.Add("$applied_through", SqliteType.Integer)
+                                |> ignore
+
+                                for sequence in sequenceSet do
+                                    quarantineCommand.Parameters["$quarantined_at"].Value <- quarantineAt
+                                    quarantineCommand.Parameters["$reason"].Value <- reason
+                                    quarantineCommand.Parameters["$sequence"].Value <- sequence
+                                    quarantineCommand.Parameters["$applied_through"].Value <- currentSequence
+                                    quarantineCommand.ExecuteNonQuery() |> ignore
+
+                                let mutable candidate = currentSequence + 1L
+                                let mutable targetSequence = currentSequence
+
+                                while isWatchJournalSequenceQuarantined connection candidate do
+                                    targetSequence <- candidate
+                                    candidate <- candidate + 1L
+
+                                if targetSequence > currentSequence then
+                                    setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{targetSequence}"
+
+                                executeNonQuery connection "COMMIT;"
+                                committed <- true
+                                advancedThrough <- targetSequence
+                            finally
+                                if not committed then
+                                    try
+                                        executeNonQuery connection "ROLLBACK;"
+                                    with
+                                    | _ -> ()
+                        })
+
+                return advancedThrough
+        }
+
     /// Advances the Watch journal watermark only across applied sequences that are contiguous from the current boundary.
     let advanceWatchJournalAppliedThroughContiguousSequences (dbPath: string) (appliedSequences: IEnumerable<int64>) =
         task {

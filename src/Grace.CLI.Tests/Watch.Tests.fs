@@ -3243,6 +3243,205 @@ module WatchTests =
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())
 
+    /// Verifies that startup scan work cannot append a duplicate when replay already recovered the same difference.
+    [<Test>]
+    let ``watch startup replay before scan prevents duplicate journal append`` () =
+        withTempRepo (fun _ ->
+            let relativePath = "startup-replay-scan-duplicate.txt"
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+            let ordering = ResizeArray<string>()
+
+            try
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [|
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Delete
+                            EntryType = FileSystemEntryType.File
+                            RelativePath = RelativePath relativePath
+                        }
+                    |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun recoveryScope -> LocalStateDb.recoverWatchJournalForStartup dbPath recoveryScope)
+                    (fun event -> task { ordering.Add($"lifecycle:{event.EventType}") })
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.queueStartupDifferenceForWatch (FileSystemDifference.Create Delete FileSystemEntryType.File (RelativePath relativePath))
+
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun _ -> Task.FromException<int64 array>(InvalidOperationException("startup scan must not append a duplicate replay row")))
+                    (fun sequences ->
+                        task {
+                            sequences |> Seq.toArray |> should equal [| 1L |]
+                            ordering.Add("advance")
+                            return! LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences dbPath sequences
+                        })
+
+                /// Reads status needed by the replay-before-scan scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this replayed delete scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Applies one replayed difference even though startup scan queued the same path afterward.
+                let updateGraceStatusFromDifferences currentStatus differences _ =
+                    differences
+                    |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, string difference.RelativePath)
+                    |> Seq.toArray
+                    |> should
+                        equal
+                        [|
+                            DifferenceType.Delete, FileSystemEntryType.File, relativePath
+                        |]
+
+                    ordering.Add("apply")
+                    Task.FromResult(Some currentStatus)
+
+                /// Leaves incremental status writes outside this replay ordering scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the replay-before-scan test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                let snapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "applied" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                snapshot.AppliedThroughSequence |> should equal 1L
+                snapshot.TotalRows |> should equal 1
+                ordering.ToArray() |> should contain "apply"
+                ordering.ToArray() |> should contain "advance"
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
+    /// Verifies that missing replayed file Add/Change rows retire durably instead of reaching upload status application.
+    [<Test>]
+    let ``watch startup recovery quarantines missing replayed file add and change rows`` () =
+        withTempRepo (fun _ ->
+            let addPath = "missing-replayed-add.txt"
+            let changePath = "missing-replayed-change.txt"
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+            let lifecycleEvents = ResizeArray<string>()
+
+            try
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [|
+                        { Scope = scope; DifferenceType = DifferenceType.Add; EntryType = FileSystemEntryType.File; RelativePath = RelativePath addPath }
+                        { Scope = scope; DifferenceType = DifferenceType.Change; EntryType = FileSystemEntryType.File; RelativePath = RelativePath changePath }
+                    |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun recoveryScope -> LocalStateDb.recoverWatchJournalForStartup dbPath recoveryScope)
+                    (fun event -> task { lifecycleEvents.Add(event.EventType) })
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.File (RelativePath addPath))
+                |> should equal None
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File (RelativePath changePath)
+                )
+                |> should equal None
+
+                /// Reads status needed by the stale replay scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this status-only replay scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Fails the test if stale replay rows reach status application after quarantine.
+                let updateGraceStatusFromDifferences _ _ _ =
+                    Task.FromException<GraceStatus option>(InvalidOperationException("stale file replay rows should not apply status"))
+
+                /// Leaves incremental status writes outside this stale replay scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the stale replay test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                let quarantinedSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                let pendingSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "pending" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                quarantinedSnapshot.AppliedThroughSequence
+                |> should equal 2L
+
+                quarantinedSnapshot.Rows |> should haveLength 2
+
+                quarantinedSnapshot.Rows
+                |> Array.map (fun row -> row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        Some "stale startup replay file content missing before status application"
+                        Some "stale startup replay file content missing before status application"
+                    |]
+
+                pendingSnapshot.Rows |> should haveLength 0
+
+                lifecycleEvents.ToArray()
+                |> should contain "startup-stale-file-replay-retired"
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
     /// Verifies that delayed startup replay runs after pending startup backlog drains on a later timer pass.
     [<Test>]
     let ``startup recovery runs after delayed backlog drains`` () =
@@ -3447,11 +3646,14 @@ module WatchTests =
         withTempRepo (fun root ->
             let relativePath = "deferred-startup-replay.txt"
             let liveRelativePath = "deferred-live-delete.txt"
+            let replayFilePath = Path.Combine(root, relativePath)
             let status = graceStatusTracking [| liveRelativePath |] Array.empty<string>
             let dbPath = Current().GraceStatusFile
             let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
 
             try
+                File.WriteAllText(replayFilePath, "startup replay content still exists")
+
                 (LocalStateDb.appendWatchJournalObservations
                     dbPath
                     [|

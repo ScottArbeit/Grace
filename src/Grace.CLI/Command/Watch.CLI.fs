@@ -82,6 +82,9 @@ module Watch =
     let mutable private recoverWatchJournalForStartupForWatch =
         fun scope -> Grace.CLI.LocalStateDb.recoverWatchJournalForStartup (Current().GraceStatusFile) scope
 
+    let mutable private quarantineWatchJournalSequencesForWatch =
+        fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
+
     let mutable private recordWatchLifecycleEventForWatch = fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
     /// Installs durable journal clients used by append-before-apply ordering tests.
@@ -117,6 +120,9 @@ module Watch =
         pruneWatchJournalRetentionForWatch <- fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
 
         recoverWatchJournalForStartupForWatch <- fun scope -> Grace.CLI.LocalStateDb.recoverWatchJournalForStartup (Current().GraceStatusFile) scope
+
+        quarantineWatchJournalSequencesForWatch <-
+            fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
 
         recordWatchLifecycleEventForWatch <- fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
@@ -4272,6 +4278,13 @@ module Watch =
             enqueueFileUpload difference.RelativePath
             |> ignore
 
+    /// Checks whether replayed startup file content can no longer produce an upload side effect.
+    let private isStaleStartupFileReplayRow (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay) =
+        row.EntryType = FileSystemEntryType.File
+        && (row.DifferenceType = DifferenceType.Add
+            || row.DifferenceType = DifferenceType.Change)
+        && finalPathKind row.RelativePath <> FinalPathFile
+
     /// Records a startup lifecycle event as diagnostics that cannot be replayed as Watch correctness data.
     let private recordStartupLifecycleEvent status eventType message =
         recordWatchLifecycleEventForWatch (
@@ -4290,20 +4303,40 @@ module Watch =
 
                 logToAnsiConsole Colors.Important $"Grace Watch quarantined {recovery.QuarantinedRows.Length} incompatible startup journal rows before replay."
 
-            for row in recovery.CompatibleReplayRows do
+            let staleFileReplayRows, replayRows =
+                recovery.CompatibleReplayRows
+                |> Array.partition isStaleStartupFileReplayRow
+
+            if staleFileReplayRows.Length > 0 then
+                let staleReplaySequences =
+                    staleFileReplayRows
+                    |> Array.map (fun row -> row.Sequence)
+
+                let! _ = quarantineWatchJournalSequencesForWatch staleReplaySequences "stale startup replay file content missing before status application"
+
+                Interlocked.Add(&quarantinedWatchObservationCount, staleFileReplayRows.Length)
+                |> ignore
+
+                logToAnsiConsole Colors.Important $"Grace Watch retired {staleFileReplayRows.Length} stale startup file replay rows before status application."
+
+                do!
+                    recordStartupLifecycleEvent
+                        status
+                        "startup-stale-file-replay-retired"
+                        $"Startup replay retired {staleFileReplayRows.Length} stale file add/change rows because their final file content was missing."
+
+            for row in replayRows do
                 let difference = FileSystemDifference.Create row.DifferenceType row.EntryType row.RelativePath
                 addStartupReplayedStatusDifference row.Sequence difference
 
-            if recovery.CompatibleReplayRows.Length > 0 then
-                logToAnsiConsole
-                    Colors.Important
-                    $"Grace Watch replayed {recovery.CompatibleReplayRows.Length} compatible pending journal rows after startup reconciliation."
+            if replayRows.Length > 0 then
+                logToAnsiConsole Colors.Important $"Grace Watch replayed {replayRows.Length} compatible pending journal rows after startup reconciliation."
 
             do!
                 recordStartupLifecycleEvent
                     status
                     "startup-replay-complete"
-                    $"Startup replay queued {recovery.CompatibleReplayRows.Length} compatible rows and quarantined {recovery.QuarantinedRows.Length} incompatible rows."
+                    $"Startup replay queued {replayRows.Length} compatible rows, retired {staleFileReplayRows.Length} stale file rows, and quarantined {recovery.QuarantinedRows.Length} incompatible rows."
 
             return recovery
         }
@@ -4590,6 +4623,11 @@ module Watch =
                         logToAnsiConsole Colors.Error $"Failed to retrieve branch metadata. Cannot connect to SignalR Hub."
 
                         logToAnsiConsole Colors.Error $"{Markup.Escape(error.ToString())}"
+
+                    let! startupRecovery = recoverStartupWatchJournalAfterReconciliation graceStatus
+
+                    if startupRecovery.CompatibleReplayRows.Length > 0 then
+                        logToAnsiConsole Colors.Verbose $"Grace Watch recovered startup journal rows before scanning for offline differences."
 
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
