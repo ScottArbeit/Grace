@@ -120,3 +120,47 @@ type AspireTestHostDiagnosticsTests() =
                 Assert.That(message, Does.Contain("unsupported for Grace.Server.Tests"))
                 Assert.That(message, Does.Contain("Owner Created event")))
         )
+
+    /// Verifies ordinary resource health progress keeps the startup wording scenario.
+    [<Test>]
+    member _.ResourceHealthProgressKeepsOrdinaryStartupWording() =
+        let startMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitStartMessage "azurite" None
+        let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "azurite" None
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(startMessage, Is.EqualTo("waiting for resource 'azurite' to become healthy."))
+                Assert.That(healthyMessage, Is.EqualTo("resource 'azurite' is healthy."))
+                Assert.That(startMessage, Does.Not.Contain("restart"))
+                Assert.That(healthyMessage, Does.Not.Contain("restart")))
+        )
+
+    /// Verifies deliberate Grace.Server restart progress identifies the test operation scenario.
+    [<Test>]
+    member _.ResourceHealthProgressNamesIntentionalGraceServerRestartContext() =
+        let context = "RestartDurabilityServer.DurableActorStateRehydratesAcrossGraceServerProjectRestart"
+        let startMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitStartMessage "grace-server" (Some context)
+        let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "grace-server" (Some context)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(startMessage, Does.Contain("intentional Grace.Server restart"))
+                Assert.That(startMessage, Does.Contain(context))
+                Assert.That(startMessage, Does.Contain("waiting for resource 'grace-server' to become healthy"))
+                Assert.That(healthyMessage, Does.Contain("recovered after intentional Grace.Server restart"))
+                Assert.That(healthyMessage, Does.Contain(context)))
+        )
+
+    /// Verifies restart context does not relabel non Grace.Server resource waits scenario.
+    [<Test>]
+    member _.ResourceHealthProgressDoesNotRelabelNonGraceServerResourcesAsRestarts() =
+        let startMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitStartMessage "servicebus-emulator" (Some "RestartDurability")
+        let healthyMessage = AspireTestHost.FixtureDiagnostics.formatResourceHealthWaitHealthyMessage "servicebus-emulator" (Some "RestartDurability")
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(startMessage, Is.EqualTo("waiting for resource 'servicebus-emulator' to become healthy."))
+                Assert.That(healthyMessage, Is.EqualTo("resource 'servicebus-emulator' is healthy."))
+                Assert.That(startMessage, Does.Not.Contain("Grace.Server restart"))
+                Assert.That(healthyMessage, Does.Not.Contain("Grace.Server restart")))
+        )

@@ -78,6 +78,31 @@ module AspireTestHost =
         Console.Error.WriteLine(progressMessage)
         Console.Error.Flush()
 
+    /// Normalizes a deliberate Grace.Server restart context for diagnostic progress messages.
+    let private normalizeRestartContext (restartContext: string) =
+        if String.IsNullOrWhiteSpace restartContext then
+            "unspecified test operation"
+        else
+            restartContext.Trim()
+
+    /// Resolves the deliberate restart context when the wait is for the Grace.Server Aspire resource.
+    let private tryGetGraceServerRestartContext (resourceName: string) (restartContext: string option) =
+        match restartContext with
+        | Some context when resourceName.Equals(graceServerResourceName, StringComparison.OrdinalIgnoreCase) -> Some(normalizeRestartContext context)
+        | _ -> None
+
+    /// Formats the progress message emitted before waiting for an Aspire resource to become healthy.
+    let private formatResourceHealthWaitStartProgress (resourceName: string) (restartContext: string option) =
+        match tryGetGraceServerRestartContext resourceName restartContext with
+        | Some context -> $"intentional Grace.Server restart '{context}': waiting for resource '{resourceName}' to become healthy."
+        | None -> $"waiting for resource '{resourceName}' to become healthy."
+
+    /// Formats the progress message emitted after an Aspire resource reports healthy.
+    let private formatResourceHealthWaitHealthyProgress (resourceName: string) (restartContext: string option) =
+        match tryGetGraceServerRestartContext resourceName restartContext with
+        | Some context -> $"resource '{resourceName}' recovered after intentional Grace.Server restart '{context}'."
+        | None -> $"resource '{resourceName}' is healthy."
+
     /// Defines ensure bootstrap compatible behavior for the surrounding tests used by the server integration aspire Test Host scenario.
     let private ensureBootstrapCompatible (bootstrapUserId: string) =
         match sharedBootstrapUserId with
@@ -448,17 +473,18 @@ module AspireTestHost =
                     return $"Docker containers:{Environment.NewLine}{containersSummary}{Environment.NewLine}{String.Join(Environment.NewLine, logBlocks)}"
         }
 
-    let private waitForResourceHealthyAsync
+    let private waitForResourceHealthyWithProgressContextAsync
         (notificationService: ResourceNotificationService)
         (app: DistributedApplication)
         (resourceName: string)
         (ct: CancellationToken)
+        (restartContext: string option)
         =
         task {
             try
-                logProgress $"waiting for resource '{resourceName}' to become healthy."
+                logProgress (formatResourceHealthWaitStartProgress resourceName restartContext)
                 let! _ = notificationService.WaitForResourceHealthyAsync(resourceName, ct)
-                logProgress $"resource '{resourceName}' is healthy."
+                logProgress (formatResourceHealthWaitHealthyProgress resourceName restartContext)
                 ()
             with
             | ex ->
@@ -481,8 +507,22 @@ module AspireTestHost =
                 raise (Exception($"{resourceName} failed to start. {details}{Environment.NewLine}{logDetails}", ex))
         }
 
+    let private waitForResourceHealthyAsync
+        (notificationService: ResourceNotificationService)
+        (app: DistributedApplication)
+        (resourceName: string)
+        (ct: CancellationToken)
+        =
+        waitForResourceHealthyWithProgressContextAsync notificationService app resourceName ct None
+
     /// Groups shared helpers for fixture diagnostics.
     module FixtureDiagnostics =
+        /// Formats the progress message emitted before waiting for an Aspire resource to become healthy.
+        let formatResourceHealthWaitStartMessage resourceName restartContext = formatResourceHealthWaitStartProgress resourceName restartContext
+
+        /// Formats the progress message emitted after an Aspire resource reports healthy.
+        let formatResourceHealthWaitHealthyMessage resourceName restartContext = formatResourceHealthWaitHealthyProgress resourceName restartContext
+
         /// Defines redact connection string segments behavior for the surrounding tests used by the server integration aspire Test Host scenario.
         let private redactConnectionStringSegments (sensitivePrefixes: string list) (connectionString: string) =
             if String.IsNullOrWhiteSpace connectionString then
@@ -1295,13 +1335,14 @@ module AspireTestHost =
                 Console.WriteLine("Aspire host shutdown skipped to avoid test host teardown crashes.")
         }
 
-    /// Restarts grace server to verify durability across process restarts.
-    let restartGraceServerAsync (state: TestHostState) =
+    /// Restarts Grace.Server with a scenario label for deliberate restart diagnostics.
+    let restartGraceServerAsync (state: TestHostState) (restartContext: string) =
         task {
             do! sharedStateLock.WaitAsync()
 
             try
-                Console.WriteLine("Restarting Grace.Server Aspire project resource...")
+                let normalizedRestartContext = normalizeRestartContext restartContext
+                Console.WriteLine($"Restarting Grace.Server Aspire project resource for {normalizedRestartContext}...")
                 let commandService = state.App.Services.GetRequiredService<ResourceCommandService>()
                 use cts = new CancellationTokenSource(defaultWaitTimeout)
 
@@ -1313,12 +1354,21 @@ module AspireTestHost =
                         elif result.Canceled then "Restart command was canceled."
                         else "Restart command failed without details."
 
-                    raise (InvalidOperationException($"Grace.Server restart failed: {errorMessage}"))
+                    raise (InvalidOperationException($"Grace.Server restart failed during {normalizedRestartContext}: {errorMessage}"))
 
                 let notificationService = state.App.Services.GetRequiredService<ResourceNotificationService>()
-                do! waitForResourceHealthyAsync notificationService state.App graceServerResourceName cts.Token
+
+                do!
+                    waitForResourceHealthyWithProgressContextAsync
+                        notificationService
+                        state.App
+                        graceServerResourceName
+                        cts.Token
+                        (Some normalizedRestartContext)
+
                 do! waitForGraceServerHttpReadyAsync state.Client cts.Token
-                Console.WriteLine("Grace.Server Aspire project resource restart completed.")
+                logProgress $"Grace.Server HTTP readiness recovered after intentional restart '{normalizedRestartContext}'."
+                Console.WriteLine($"Grace.Server Aspire project resource restart completed for {normalizedRestartContext}.")
             finally
                 sharedStateLock.Release() |> ignore
         }
