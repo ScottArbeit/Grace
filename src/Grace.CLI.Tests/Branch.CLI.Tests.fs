@@ -291,6 +291,77 @@ module BranchCommandTests =
             File.Exists(updateMarkerFile)
             |> should equal false)
 
+    /// Verifies that durable rows appended after clean preflight still block mutation once the update marker exists.
+    [<Test>]
+    let ``branch switch working tree update rechecks durable rows after marker creation`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let updateMarkerFile = Services.updateInProgressFileName ()
+            let markerText = $"`grace switch` is in progress. Lease: {Guid.NewGuid():N}"
+            let mutationFile = Path.Combine(Current().RootDirectory, "must-not-be-written-after-marker.txt")
+            let mutable inspected = false
+            let mutable journalReadCount = 0
+            let mutable markerSeenByPostMarkerJournalRead = false
+            let mutable operationRan = false
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+
+                            File.Exists(updateMarkerFile)
+                            |> should equal false
+
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary =
+                        fun () ->
+                            journalReadCount <- journalReadCount + 1
+
+                            if journalReadCount = 1 then
+                                Task.FromResult(cleanPendingJournalSummary ())
+                            else
+                                markerSeenByPostMarkerJournalRead <- File.Exists(updateMarkerFile)
+
+                                Task.FromResult(
+                                    { DbPath = Current().GraceStatusFile; AppliedThroughSequence = 7L; PendingRowCount = 1L }: LocalStateDb.WatchJournalPendingWorkSummary
+                                )
+                }
+
+            let result =
+                (Branch.runBranchSwitchWorkingTreeUpdateWithMarker operations correlationId updateMarkerFile markerText (fun () ->
+                    task {
+                        operationRan <- true
+                        File.WriteAllText(mutationFile, "must not be written")
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before mutation"
+
+                error.Error
+                |> should contain "after update marker creation"
+
+                error.Error
+                |> should contain "unresolved durable journal rows"
+            | Ok _ -> Assert.Fail("Expected post-marker durable journal evidence to refuse branch switch.")
+
+            inspected |> should equal true
+            journalReadCount |> should equal 2
+
+            markerSeenByPostMarkerJournalRead
+            |> should equal true
+
+            operationRan |> should equal false
+
+            File.Exists(mutationFile) |> should equal false
+
+            File.Exists(updateMarkerFile)
+            |> should equal false)
+
     /// Verifies that the switch workflow lease serializes precomputation without creating the Watch suppression marker.
     [<Test>]
     let ``branch switch workflow lease serializes before precompute without update marker`` () =

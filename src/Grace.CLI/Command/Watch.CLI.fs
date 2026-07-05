@@ -2888,6 +2888,39 @@ module Watch =
             RootDirectoryId: DirectoryVersionId option
         }
 
+    /// Combines IPC inspection with durable journal evidence that must fail closed before status shortcuts are trusted.
+    type private WatchCheckTrustInspection =
+        {
+            Inspection: GraceWatchStatusInspection
+            DurablePendingRows: int64 option
+            DurableInspectionError: string option
+        }
+
+        /// Reports whether Watch check may advertise incremental status shortcuts.
+        member this.CanUseIncrementalStatus =
+            this.Inspection.IsUsable
+            && this.DurableInspectionError.IsNone
+            && (this.DurablePendingRows |> Option.defaultValue 0L) = 0L
+
+        /// Reports whether durable local-state evidence blocks a clean IPC snapshot.
+        member this.HasDurablePendingRows =
+            this.DurablePendingRows
+            |> Option.exists (fun pendingRows -> pendingRows > 0L)
+
+    /// Reads durable journal evidence for `watch --check` without treating a missing local-state DB as clean.
+    let private inspectWatchCheckDurableTrust (inspection: GraceWatchStatusInspection) =
+        task {
+            if inspection.IsUsable then
+                try
+                    let! pendingJournalSummary = Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+
+                    return { Inspection = inspection; DurablePendingRows = Some pendingJournalSummary.PendingRowCount; DurableInspectionError = None }
+                with
+                | ex -> return { Inspection = inspection; DurablePendingRows = None; DurableInspectionError = Some ex.Message }
+            else
+                return { Inspection = inspection; DurablePendingRows = None; DurableInspectionError = None }
+        }
+
     /// Reports whether a Watch IPC snapshot has the root identity needed by incremental status shortcuts.
     let private hasUsableRootSnapshotForCheck (status: GraceWatchStatus) =
         status.RootDirectoryId <> Guid.Empty
@@ -2900,26 +2933,38 @@ module Watch =
         && status.DirectoryIds.Count > 0
 
     /// Builds safety flags for `watch --check` after combining persisted and derived mode facts.
-    let private safetyFlagsForWatchCheck (inspection: GraceWatchStatusInspection) =
+    let private safetyFlagsForWatchCheck (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
         let flags = HashSet<string>(inspection.SafetyFlags, StringComparer.Ordinal)
 
-        if not inspection.IsUsable then
-            flags.Remove("incrementalSafe") |> ignore
+        if trustInspection.HasDurablePendingRows then
+            flags.Add("pendingWatchWork") |> ignore
 
-            if not (flags.Contains("pendingWatchWork")) then
-                flags.Add("requiresExplicitResync") |> ignore
+        if trustInspection.DurableInspectionError.IsSome then
+            flags.Add("durableJournalInspectionFailed")
+            |> ignore
+
+        if not trustInspection.CanUseIncrementalStatus then
+            flags.Remove("incrementalSafe") |> ignore
+            flags.Remove("cleanWorkingTree") |> ignore
+
+            flags.Add("requiresExplicitResync") |> ignore
 
         flags |> Seq.sort |> Seq.toArray
 
     /// Maps a Watch IPC inspection result to the stable status reason emitted to humans and agents.
-    let private watchCheckReason (inspection: GraceWatchStatusInspection) =
+    let private watchCheckReason (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
+
         match inspection.ReadError, inspection.Exists, inspection.Status, inspection.EffectiveMode with
         | Some _, _, _, _ -> "unreadableStatus"
         | None, false, _, _ -> "notRunning"
         | None, true, None, _ -> "unreadableStatus"
         | None, true, Some _, _ when not inspection.IsFresh -> "staleStatus"
         | None, true, Some status, _ when status.IsStartupClaim -> "startingUp"
-        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when inspection.IsUsable -> "running"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.DurableInspectionError.IsSome -> "durableStatusUnavailable"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.HasDurablePendingRows -> "resynchronizing"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.CanUseIncrementalStatus -> "running"
         | None, true, Some _, Some GraceWatchRuntimeMode.Resynchronizing -> "resynchronizing"
         | None, true, Some _, Some GraceWatchRuntimeMode.Suspended -> "suspended"
         | None, true, Some _, Some GraceWatchRuntimeMode.Stopping -> "stopping"
@@ -2930,6 +2975,7 @@ module Watch =
     let private watchCheckMessage reason =
         match reason with
         | "running" -> "GraceWatch is running in HealthyIncremental mode. Incremental status shortcuts are available."
+        | "durableStatusUnavailable" -> "GraceWatch status cannot prove incremental shortcuts because durable local-state evidence could not be inspected."
         | "startingUp" -> "GraceWatch is starting and has not published a usable status snapshot yet."
         | "resynchronizing" -> "GraceWatch is resynchronizing trusted state; incremental status shortcuts are suspended until resync completes."
         | "suspended" -> "GraceWatch is suspended after confidence loss; restart watch or run an explicit resync before relying on incremental status."
@@ -2940,9 +2986,10 @@ module Watch =
         | _ -> "GraceWatch status is not ready for incremental shortcuts."
 
     /// Converts Watch IPC inspection into the public `watch --check` status payload.
-    let private toWatchCheckStatusDto (inspection: GraceWatchStatusInspection) =
+    let private toWatchCheckStatusDto (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
         let status = inspection.Status
-        let reason = watchCheckReason inspection
+        let reason = watchCheckReason trustInspection
 
         let mode =
             inspection.EffectiveMode
@@ -2951,11 +2998,11 @@ module Watch =
 
         {
             IsRunning = inspection.IsLiveProcess
-            CanUseIncrementalStatus = inspection.IsUsable
+            CanUseIncrementalStatus = trustInspection.CanUseIncrementalStatus
             Mode = mode
             Reason = reason
             Message = watchCheckMessage reason
-            SafetyFlags = safetyFlagsForWatchCheck inspection
+            SafetyFlags = safetyFlagsForWatchCheck trustInspection
             IsFresh = inspection.IsFresh
             HasUsableRootSnapshot =
                 status
@@ -4771,7 +4818,8 @@ module Watch =
                 try
                     if isCheckRequested parseResult then
                         let! watchStatusInspection = inspectGraceWatchStatus ()
-                        let watchCheckStatus = toWatchCheckStatusDto watchStatusInspection
+                        let! trustInspection = inspectWatchCheckDurableTrust watchStatusInspection
+                        let watchCheckStatus = toWatchCheckStatusDto trustInspection
                         raise (WatchCommandExit(renderWatchCheckStatus parseResult watchCheckStatus))
 
                     let! claimedGraceWatchStatus = tryClaimGraceWatchInterprocessFile ()

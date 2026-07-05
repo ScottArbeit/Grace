@@ -345,6 +345,10 @@ module WatchTests =
 
         let ipcFileName = Services.IpcFileName()
 
+        (LocalStateDb.ensureDbInitialized (Current().GraceStatusFile))
+            .GetAwaiter()
+            .GetResult()
+
         Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
         |> ignore
 
@@ -353,6 +357,22 @@ module WatchTests =
 
     /// Reads file if exists needed by the test scenario.
     let private readFileIfExists path = if File.Exists(path) then Some(File.ReadAllText(path)) else None
+
+    /// Deletes local-state database files so status trust tests can prove fail-closed durable inspection.
+    let private deleteLocalStateDbFiles () =
+        let dbPath = Current().GraceStatusFile
+
+        Microsoft.Data.Sqlite.SqliteConnection.ClearAllPools()
+        GC.Collect()
+        GC.WaitForPendingFinalizers()
+
+        [|
+            dbPath
+            dbPath + "-wal"
+            dbPath + "-shm"
+            dbPath + "-journal"
+        |]
+        |> Array.iter (fun path -> if File.Exists(path) then File.Delete(path))
 
     /// Builds delete watch status file if exists test data used to exercise CLI watch behavior.
     let private deleteWatchStatusFileIfExists () =
@@ -13792,6 +13812,121 @@ module WatchTests =
             let mutable error = Unchecked.defaultof<JsonElement>
 
             root.TryGetProperty("Error", &error)
+            |> should equal false
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    /// Verifies that watch check fails closed when clean IPC exists but durable journal rows are still unapplied.
+    [<Test>]
+    let ``watch check json refuses clean status when durable journal rows are pending`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+
+            (LocalStateDb.appendWatchJournalObservations
+                (Current().GraceStatusFile)
+                [|
+                    watchJournalObservation DifferenceType.Change FileSystemEntryType.File "pending-watch-check.txt"
+                |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            /// Verifies that the CLI watch scenario exits with the expected process status.
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "watch"
+                                                  "--check" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let root = document.RootElement.GetProperty("ReturnValue")
+
+            root.GetProperty("IsRunning").GetBoolean()
+            |> should equal true
+
+            root
+                .GetProperty("CanUseIncrementalStatus")
+                .GetBoolean()
+            |> should equal false
+
+            root.GetProperty("Reason").GetString()
+            |> should equal "resynchronizing"
+
+            let safetyFlags =
+                root.GetProperty("SafetyFlags").EnumerateArray()
+                |> Seq.map (fun flag -> flag.GetString())
+                |> Set.ofSeq
+
+            safetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "incrementalSafe"
+            |> should equal false
+
+            readFileIfExists ipcFileName
+            |> should equal originalContents)
+
+    /// Verifies that watch check fails closed when clean IPC exists but durable local-state evidence is missing.
+    [<Test>]
+    let ``watch check json refuses clean status when local-state database is missing`` () =
+        withTempRepo (fun _ ->
+            let ipcFileName = writeLiveWatchStatusFile ()
+            let originalContents = readFileIfExists ipcFileName
+            deleteLocalStateDbFiles ()
+
+            /// Verifies that the CLI watch scenario exits with the expected process status.
+            let exitCode, standardOut, standardError =
+                runWithCapturedStdoutAndStderr [| "--output"
+                                                  "Json"
+                                                  "watch"
+                                                  "--check" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = parseJsonOutput standardOut
+            let root = document.RootElement.GetProperty("ReturnValue")
+
+            root.GetProperty("IsRunning").GetBoolean()
+            |> should equal true
+
+            root
+                .GetProperty("CanUseIncrementalStatus")
+                .GetBoolean()
+            |> should equal false
+
+            root.GetProperty("Reason").GetString()
+            |> should equal "durableStatusUnavailable"
+
+            root.GetProperty("Message").GetString()
+            |> should contain "durable local-state evidence could not be inspected"
+
+            let safetyFlags =
+                root.GetProperty("SafetyFlags").EnumerateArray()
+                |> Seq.map (fun flag -> flag.GetString())
+                |> Set.ofSeq
+
+            safetyFlags
+            |> Set.contains "durableJournalInspectionFailed"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "requiresExplicitResync"
+            |> should equal true
+
+            safetyFlags
+            |> Set.contains "incrementalSafe"
             |> should equal false
 
             readFileIfExists ipcFileName

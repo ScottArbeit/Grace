@@ -2940,6 +2940,31 @@ module Branch =
         | Some reason -> Error reason
         | None -> Ok()
 
+    /// Refuses branch switch mutation when durable Watch journal evidence cannot prove no unapplied rows exist.
+    let private validateBranchSwitchDurablePendingWorkSummary (operations: BranchSwitchWatchCleanPreflightOperations) correlationId boundaryDescription =
+        task {
+            try
+                let! pendingJournalSummary = operations.ReadPendingJournalSummary()
+
+                if pendingJournalSummary.HasPendingRows then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"Branch switch refused before mutation: Grace Watch has {pendingJournalSummary.PendingRowCount} unresolved durable journal rows that have not reached the applied boundary{boundaryDescription}."
+                                correlationId
+                        )
+                else
+                    return Ok()
+            with
+            | ex ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Branch switch refused before mutation: Grace Watch durable journal pending-work evidence could not be inspected{boundaryDescription}: {ex.Message}"
+                            correlationId
+                    )
+        }
+
     /// Runs the branch-switch Watch-clean preflight without suppressing later filesystem observations.
     let internal runBranchSwitchWatchCleanPreflight (operations: BranchSwitchWatchCleanPreflightOperations) correlationId =
         task {
@@ -2955,27 +2980,7 @@ module Branch =
 
                 match validateBranchSwitchWatchCleanPreflight false inspection with
                 | Error reason -> return Error(GraceError.Create $"Branch switch refused before mutation: {reason}" correlationId)
-                | Ok () ->
-                    try
-                        let! pendingJournalSummary = operations.ReadPendingJournalSummary()
-
-                        if pendingJournalSummary.HasPendingRows then
-                            return
-                                Error(
-                                    GraceError.Create
-                                        $"Branch switch refused before mutation: Grace Watch has {pendingJournalSummary.PendingRowCount} unresolved durable journal rows that have not reached the applied boundary."
-                                        correlationId
-                                )
-                        else
-                            return Ok()
-                    with
-                    | ex ->
-                        return
-                            Error(
-                                GraceError.Create
-                                    $"Branch switch refused before mutation: Grace Watch durable journal pending-work evidence could not be inspected: {ex.Message}"
-                                    correlationId
-                            )
+                | Ok () -> return! validateBranchSwitchDurablePendingWorkSummary operations correlationId ""
         }
 
     /// Writes branch-switch marker content through an injectable writer so failure cleanup can be tested deterministically.
@@ -3160,9 +3165,12 @@ module Branch =
                 | Error error -> return Error error
                 | Ok () ->
                     try
-                        let! result = operation ()
-                        writeBranchSwitchUpdateMarkerCompleted updateMarkerFileName
-                        return Ok result
+                        match! validateBranchSwitchDurablePendingWorkSummary operations correlationId " after update marker creation" with
+                        | Error error -> return Error error
+                        | Ok () ->
+                            let! result = operation ()
+                            writeBranchSwitchUpdateMarkerCompleted updateMarkerFileName
+                            return Ok result
                     finally
                         if markerCreatedByThisInvocation then
                             deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
