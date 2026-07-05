@@ -7,6 +7,7 @@ open Grace.SDK.Common
 open Grace.Shared
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
+open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Services
 open Grace.Types.Common
 open Grace.Types.Reference
@@ -3185,7 +3186,293 @@ module Watch =
         payload.RepositoryId = current.RepositoryId
         && payload.BranchId = current.BranchId
 
-    /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
+    /// Carries the injectable clients used to materialize a current-branch remote Reference from Watch.
+    type internal CurrentBranchRemoteMaterializationOperations =
+        {
+            InspectWatchStatus: unit -> Task<GraceWatchStatusInspection>
+            ReadGraceStatus: unit -> Task<GraceStatus>
+            GetDirectoryVersionsRecursive: DirectoryVersionId
+                -> CorrelationId
+                -> Task<Result<Grace.Types.DirectoryVersion.DirectoryVersionDto array, GraceError>>
+            DownloadDirectoryFiles: Grace.Types.DirectoryVersion.DirectoryVersionDto array -> CorrelationId -> Task<Result<unit, GraceError>>
+            ApplyRemoteDirectory: CurrentBranchReferenceNotification
+                -> GraceStatus
+                -> Grace.Types.DirectoryVersion.DirectoryVersionDto array
+                -> CorrelationId
+                -> Task<Result<GraceStatus, GraceError>>
+            PublishWatchStatus: GraceStatus -> Task<unit>
+        }
+
+    /// Records a deferred current-branch Reference and the decision reason that made Watch hold it.
+    type private PendingCurrentBranchMaterialization = { Payload: CurrentBranchReferenceNotification; Reason: LatestCurrentBranchReferenceDecisionReason }
+
+    /// Summarizes Watch-owned deferred current-branch materialization state for focused tests.
+    type internal PendingCurrentBranchMaterializationStatus =
+        {
+            Count: int
+            LatestReferenceId: ReferenceId option
+            LatestDirectoryId: DirectoryVersionId option
+            LatestReason: LatestCurrentBranchReferenceDecisionReason option
+        }
+
+    let private pendingCurrentBranchMaterializationLock = obj ()
+    let mutable private pendingCurrentBranchMaterializations: PendingCurrentBranchMaterialization list = []
+    let private currentBranchMaterializationGate = new SemaphoreSlim(1, 1)
+
+    /// Records a remote Reference notification that must be retried after Watch returns to a clean state.
+    let private rememberPendingCurrentBranchMaterialization payload reason =
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            pendingCurrentBranchMaterializations <-
+                pendingCurrentBranchMaterializations
+                @ [
+                    { Payload = payload; Reason = reason }
+                ])
+
+    /// Reads pending current-branch materializations in arrival order for the latest-reference decision helper.
+    let private pendingCurrentBranchMaterializationSnapshot () =
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            pendingCurrentBranchMaterializations
+            |> List.map (fun pending -> pending.Payload))
+
+    /// Reads Watch-owned pending materialization status without exposing it through public CLI output.
+    let internal pendingCurrentBranchMaterializationStatusForWatchTests () =
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            let latest =
+                pendingCurrentBranchMaterializations
+                |> List.tryLast
+
+            {
+                Count = pendingCurrentBranchMaterializations.Length
+                LatestReferenceId =
+                    latest
+                    |> Option.map (fun pending -> pending.Payload.ReferenceId)
+                LatestDirectoryId =
+                    latest
+                    |> Option.map (fun pending -> pending.Payload.DirectoryId)
+                LatestReason =
+                    latest
+                    |> Option.map (fun pending -> pending.Reason)
+            })
+
+    /// Clears remote materialization retry state after the latest pending Reference is applied or becomes a no-op.
+    let private clearPendingCurrentBranchMaterializations () =
+        lock pendingCurrentBranchMaterializationLock (fun () -> pendingCurrentBranchMaterializations <- [])
+
+    /// Exposes pending current-branch materialization cleanup to deterministic Watch tests.
+    let internal clearPendingCurrentBranchMaterializationsForWatchTests () = clearPendingCurrentBranchMaterializations ()
+
+    /// Builds the default live clients that fetch, download, and apply remote current-branch directory versions.
+    let private defaultCurrentBranchRemoteMaterializationOperations () =
+        let getDirectoryVersionsRecursive directoryVersionId correlationId =
+            task {
+                let current = Current()
+
+                let parameters =
+                    Grace.Shared.Parameters.DirectoryVersion.GetParameters(
+                        OwnerId = $"{current.OwnerId}",
+                        OwnerName = current.OwnerName,
+                        OrganizationId = $"{current.OrganizationId}",
+                        OrganizationName = current.OrganizationName,
+                        RepositoryId = $"{current.RepositoryId}",
+                        RepositoryName = current.RepositoryName,
+                        DirectoryVersionId = $"{directoryVersionId}",
+                        CorrelationId = correlationId
+                    )
+
+                match! Grace.SDK.DirectoryVersion.GetDirectoryVersionsRecursive parameters with
+                | Ok returnValue -> return Ok(returnValue.ReturnValue |> Seq.toArray)
+                | Error error -> return Error error
+            }
+
+        let downloadDirectoryFiles (directoryVersionDtos: Grace.Types.DirectoryVersion.DirectoryVersionDto array) correlationId =
+            task {
+                let current = Current()
+
+                let parameters =
+                    Grace.Shared.Parameters.Storage.GetDownloadUriParameters(
+                        OwnerId = $"{current.OwnerId}",
+                        OwnerName = current.OwnerName,
+                        OrganizationId = $"{current.OrganizationId}",
+                        OrganizationName = current.OrganizationName,
+                        RepositoryId = $"{current.RepositoryId}",
+                        RepositoryName = current.RepositoryName,
+                        CorrelationId = correlationId
+                    )
+
+                let mutable index = 0
+                let mutable resultError: GraceError option = None
+
+                while index < directoryVersionDtos.Length
+                      && resultError.IsNone do
+                    match! downloadFileVersionsFromObjectStorage parameters directoryVersionDtos[index].DirectoryVersion.Files correlationId with
+                    | Ok _ -> index <- index + 1
+                    | Error error -> resultError <- Some(GraceError.Create $"{error}" correlationId)
+
+                match resultError with
+                | Some error -> return Error error
+                | None -> return Ok()
+            }
+
+        let applyRemoteDirectory payload previousGraceStatus directoryVersionDtos correlationId =
+            task {
+                let updatedGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer previousGraceStatus directoryVersionDtos
+
+                if updatedGraceStatus.RootDirectoryId
+                   <> payload.DirectoryId
+                   || updatedGraceStatus.RootDirectorySha256Hash
+                      <> payload.Sha256Hash
+                   || (payload.Blake3Hash <> Blake3Hash String.Empty
+                       && updatedGraceStatus.RootDirectoryBlake3Hash
+                          <> payload.Blake3Hash) then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"Current-branch remote materialization refused because fetched root {updatedGraceStatus.RootDirectoryId} did not match notification {payload.ReferenceId}."
+                                correlationId
+                        )
+                else
+                    let markerFileName = updateInProgressFileName ()
+                    let markerText = $"`grace watch` current-branch materialization is in progress. Lease: {Guid.NewGuid():N}"
+
+                    let preflightOperations: Grace.CLI.Command.Branch.BranchSwitchWatchCleanPreflightOperations =
+                        {
+                            UpdateMarkerExists = fun () -> File.Exists(markerFileName)
+                            InspectWatchStatus = inspectGraceWatchStatus
+                            ReadPendingJournalSummary =
+                                fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+                        }
+
+                    match!
+                        Grace.CLI.Command.Branch.runBranchSwitchWorkingTreeUpdateWithMarker
+                            preflightOperations
+                            correlationId
+                            markerFileName
+                            markerText
+                            (fun () ->
+                                task {
+                                    do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
+                                    do! writeGraceStatusFile updatedGraceStatus
+                                    do! upsertObjectCache updatedGraceStatus.Index.Values
+                                    return updatedGraceStatus
+                                })
+                        with
+                    | Ok updatedStatus -> return Ok updatedStatus
+                    | Error error -> return Error error
+            }
+
+        {
+            InspectWatchStatus = inspectGraceWatchStatus
+            ReadGraceStatus = readGraceStatusFile
+            GetDirectoryVersionsRecursive = getDirectoryVersionsRecursive
+            DownloadDirectoryFiles = downloadDirectoryFiles
+            ApplyRemoteDirectory = applyRemoteDirectory
+            PublishWatchStatus =
+                fun graceStatus ->
+                    task {
+                        let directoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
+                        do! updateGraceWatchInterprocessFile graceStatus (Some directoryIds)
+                    }
+        }
+
+    /// Processes current-branch Reference candidates through the clean gate and optional remote materialization.
+    let private processCurrentBranchReferenceMaterialization
+        (operations: CurrentBranchRemoteMaterializationOperations)
+        recordPendingOnBlock
+        (payloads: CurrentBranchReferenceNotification seq)
+        =
+        task {
+            let payloadArray = payloads |> Seq.toArray
+
+            if payloadArray.Length = 0 then
+                return LatestCurrentBranchReferenceDecision.NoApplicableReference
+            else
+                do! currentBranchMaterializationGate.WaitAsync()
+
+                try
+                    let current = Current()
+                    let! inspection = operations.InspectWatchStatus()
+
+                    let localStatus = if inspection.IsUsable then inspection.Status else None
+
+                    let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus payloadArray
+
+                    match decision.Reason, decision.Reference with
+                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired, Some payload ->
+                        if recordPendingOnBlock then
+                            rememberPendingCurrentBranchMaterialization payload decision.Reason
+
+                        let correlationId = generateCorrelationId ()
+                        let! previousGraceStatus = operations.ReadGraceStatus()
+
+                        match! operations.GetDirectoryVersionsRecursive payload.DirectoryId correlationId with
+                        | Error error ->
+                            logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                            return decision
+                        | Ok directoryVersionDtos ->
+                            match! operations.DownloadDirectoryFiles directoryVersionDtos correlationId with
+                            | Error error ->
+                                logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                                return decision
+                            | Ok () ->
+                                match! operations.ApplyRemoteDirectory payload previousGraceStatus directoryVersionDtos correlationId with
+                                | Error error ->
+                                    logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                                    return decision
+                                | Ok updatedStatus ->
+                                    do! operations.PublishWatchStatus updatedStatus
+                                    clearPendingCurrentBranchMaterializations ()
+
+                                    logToAnsiConsole
+                                        Colors.Highlighted
+                                        $"Materialized current-branch reference notification {payload.ReferenceId} for root {payload.DirectoryId}."
+
+                                    return decision
+                    | LatestCurrentBranchReferenceDecisionReason.SameRoot, _ ->
+                        clearPendingCurrentBranchMaterializations ()
+                        return decision
+                    | reason, Some payload ->
+                        if recordPendingOnBlock then
+                            rememberPendingCurrentBranchMaterialization payload reason
+
+                        logToAnsiConsole
+                            Colors.Verbose
+                            $"Deferred current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
+
+                        return decision
+                    | reason, None ->
+                        logToAnsiConsole Colors.Verbose $"Skipped current-branch reference notification because latest-current-branch decision was {reason}."
+                        return decision
+                finally
+                    currentBranchMaterializationGate.Release()
+                    |> ignore
+        }
+
+    /// Exposes current-branch remote materialization processing to Watch tests without opening SignalR.
+    let internal processCurrentBranchReferenceMaterializationForWatchTests operations recordPendingOnBlock payloads =
+        processCurrentBranchReferenceMaterialization operations recordPendingOnBlock payloads
+
+    /// Retries deferred current-branch remote materialization when the Watch loop reaches a safe point.
+    let private retryPendingCurrentBranchMaterialization () =
+        task {
+            let pending = pendingCurrentBranchMaterializationSnapshot ()
+
+            if pending.Length > 0 then
+                let! _ = processCurrentBranchReferenceMaterialization (defaultCurrentBranchRemoteMaterializationOperations ()) false pending
+                return ()
+        }
+
+    /// Exposes deferred current-branch remote materialization retry to Watch tests without opening SignalR.
+    let internal retryPendingCurrentBranchMaterializationForWatchTests operations =
+        task {
+            let pending = pendingCurrentBranchMaterializationSnapshot ()
+
+            if pending.Length = 0 then
+                return LatestCurrentBranchReferenceDecision.NoApplicableReference
+            else
+                return! processCurrentBranchReferenceMaterialization operations false pending
+        }
+
+    /// Handles same-branch Reference notifications by applying the latest clean remote root through the Watch boundary.
     let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
         task {
             try
@@ -3195,10 +3482,7 @@ module Watch =
                         Colors.Verbose
                         $"Skipped current-branch reference notification {payload.ReferenceId} because it targets repository {payload.RepositoryId}, branch {payload.BranchId}, not current branch {Current().BranchId}."
                 else
-                    let current = Current()
-                    let! localStatus = getGraceWatchStatus ()
-
-                    let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus [| payload |]
+                    let! decision = processCurrentBranchReferenceMaterialization (defaultCurrentBranchRemoteMaterializationOperations ()) true [| payload |]
 
                     match decision.Reason with
                     | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
@@ -3208,7 +3492,7 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
                         logToAnsiConsole
                             Colors.Highlighted
-                            $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
+                            $"Current-branch reference notification {payload.ReferenceId} required remote materialization for root {payload.DirectoryId}."
                     | reason ->
                         logToAnsiConsole
                             Colors.Verbose
@@ -5135,6 +5419,7 @@ module Watch =
 
                         do! processChangedFiles ()
                         do! completeStartupRecoveryIfPendingWorkDrained readGraceStatusFile updateGraceWatchInterprocessFile processChangedFiles
+                        do! retryPendingCurrentBranchMaterialization ()
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 
