@@ -406,6 +406,68 @@ type NotificationServerTests() =
                 ))
         )
 
+    /// Verifies that checkpoint current-branch broadcasts are ordered after branch-specific diff readiness.
+    [<Test>]
+    member _.CheckpointCurrentBranchNotificationRunsAfterDiffReadiness() =
+        let notificationServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Notification.Server.fs"))
+        let notificationSource = File.ReadAllText notificationServerPath
+        let checkpointStart = notificationSource.IndexOf("| ReferenceType.Checkpoint ->", StringComparison.Ordinal)
+        let saveStart = notificationSource.IndexOf("| ReferenceType.Save ->", checkpointStart, StringComparison.Ordinal)
+
+        Assert.That(checkpointStart, Is.GreaterThanOrEqualTo(0), "Notification subscriber must handle Checkpoint references.")
+        Assert.That(saveStart, Is.GreaterThan(checkpointStart), "Checkpoint branch must be bounded by the Save branch.")
+
+        let checkpointBranch = notificationSource.Substring(checkpointStart, saveStart - checkpointStart)
+        let parentNotificationIndex = checkpointBranch.IndexOf(".NotifyOnCheckpoint(", StringComparison.Ordinal)
+        let checkpointDiffIndex = checkpointBranch.IndexOf("let! checkpoints = getCheckpoints repositoryId branchId 2 correlationId", StringComparison.Ordinal)
+        let commitDiffIndex = checkpointBranch.IndexOf("match! getLatestCommit repositoryId branchId", StringComparison.Ordinal)
+        let currentBranchNotificationIndex = checkpointBranch.IndexOf("do! emitCurrentBranchReference branchDto.BranchName", StringComparison.Ordinal)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(parentNotificationIndex, Is.GreaterThanOrEqualTo(0), "Checkpoint handling must preserve parent notification.")
+                Assert.That(checkpointDiffIndex, Is.GreaterThan(parentNotificationIndex), "Checkpoint diff work should remain in the checkpoint branch.")
+                Assert.That(commitDiffIndex, Is.GreaterThan(checkpointDiffIndex), "Commit comparison work should remain after checkpoint diff setup.")
+
+                Assert.That(
+                    currentBranchNotificationIndex,
+                    Is.GreaterThan(commitDiffIndex),
+                    "Current-branch checkpoint payloads must not run before checkpoint diff readiness."
+                ))
+        )
+
+    /// Verifies that save current-branch broadcasts are ordered after branch-specific diff readiness.
+    [<Test>]
+    member _.SaveCurrentBranchNotificationRunsAfterDiffReadiness() =
+        let notificationServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Notification.Server.fs"))
+        let notificationSource = File.ReadAllText notificationServerPath
+        let saveStart = notificationSource.IndexOf("| ReferenceType.Save ->", StringComparison.Ordinal)
+        let tagStart = notificationSource.IndexOf("| ReferenceType.Tag", saveStart, StringComparison.Ordinal)
+
+        Assert.That(saveStart, Is.GreaterThanOrEqualTo(0), "Notification subscriber must handle Save references.")
+        Assert.That(tagStart, Is.GreaterThan(saveStart), "Save branch must be bounded by non-materialized reference handling.")
+
+        let saveBranch = notificationSource.Substring(saveStart, tagStart - saveStart)
+        let parentNotificationIndex = saveBranch.IndexOf(".NotifyOnSave(", StringComparison.Ordinal)
+        let saveDiffIndex = saveBranch.IndexOf("let! latestTwoSaves = getSaves branchDto.RepositoryId branchId 2 correlationId", StringComparison.Ordinal)
+        let commitDiffIndex = saveBranch.IndexOf("match! getLatestCommit branchDto.RepositoryId branchDto.BranchId", StringComparison.Ordinal)
+        let checkpointDiffIndex = saveBranch.IndexOf("match! getLatestCheckpoint branchDto.RepositoryId branchDto.BranchId", StringComparison.Ordinal)
+        let currentBranchNotificationIndex = saveBranch.IndexOf("do! emitCurrentBranchReference branchDto.BranchName", StringComparison.Ordinal)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(parentNotificationIndex, Is.GreaterThanOrEqualTo(0), "Save handling must preserve parent notification.")
+                Assert.That(saveDiffIndex, Is.GreaterThan(parentNotificationIndex), "Save-to-save diff work should remain in the Save branch.")
+                Assert.That(commitDiffIndex, Is.GreaterThan(saveDiffIndex), "Save-to-commit diff work should remain after save diff setup.")
+                Assert.That(checkpointDiffIndex, Is.GreaterThan(commitDiffIndex), "Save-to-checkpoint diff work should remain after commit comparison.")
+
+                Assert.That(
+                    currentBranchNotificationIndex,
+                    Is.GreaterThan(checkpointDiffIndex),
+                    "Current-branch save payloads must not run before save diff readiness."
+                ))
+        )
+
     /// Verifies that the additive current-branch contract does not remove parent-branch notification methods.
     [<Test>]
     member _.SignalRClientContractKeepsParentBranchNotificationsWithCurrentBranchPayload() =

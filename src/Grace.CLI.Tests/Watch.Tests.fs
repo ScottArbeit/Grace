@@ -5,6 +5,7 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Types.Automation
@@ -992,6 +993,83 @@ module WatchTests =
 
                 Watch.trySetSignalRBranchSubscriptionForWatchTests staleRefreshAuthority parentAId
                 |> should equal false
+
+                let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+
+                subscription.BranchId |> should equal branchBId
+
+                subscription.ParentBranchId
+                |> should equal parentBId
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentAId
+                |> should equal false
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentBId
+                |> should equal true
+            finally
+                Watch.resetSignalRSubscriptionRefreshForWatchTests ())
+
+    /// Verifies that stale reconnect refreshes cannot replace the hub's active current-branch group.
+    [<Test>]
+    let ``stale signalr refresh does not invoke current branch hub registration`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let parentAId = Guid.NewGuid()
+            let parentBId = Guid.NewGuid()
+            let repositoryName = "transition-signalr-hub-authority-repo"
+
+            try
+                writeRepositoryConfiguration root repositoryId repositoryName branchAId "branch-a"
+                resetConfiguration ()
+                Current() |> ignore
+
+                let parentBranchDto =
+                    { Grace.Types.Branch.BranchDto.Default with RepositoryId = repositoryId; BranchId = parentAId; BranchName = BranchName "parent-a" }
+
+                /// Advances local branch identity while an old-branch SignalR refresh is awaiting parent metadata.
+                let getParentBranch (_: GetBranchParameters) =
+                    writeRepositoryConfiguration root repositoryId repositoryName branchBId "branch-b"
+                    resetConfiguration ()
+                    Current() |> ignore
+
+                    Watch.clearSignalRBranchSubscriptionForTransitionForWatchTests ()
+                    Watch.setSignalRBranchSubscriptionForWatchTests branchBId parentBId
+
+                    Task.FromResult(Ok(GraceReturnValue.Create parentBranchDto "stale-refresh-test"))
+
+                let currentRegistrations = ResizeArray<RepositoryId * BranchId>()
+                let parentRegistrations = ResizeArray<BranchId * BranchId>()
+
+                /// Records current-branch group registrations only when the refresh has local authority.
+                let registerCurrentBranch repositoryId branchId _ =
+                    currentRegistrations.Add(repositoryId, branchId)
+                    Task.CompletedTask
+
+                /// Records parent-branch group registrations only when the refresh has local authority.
+                let registerParentBranch branchId parentBranchId _ =
+                    parentRegistrations.Add(branchId, parentBranchId)
+                    Task.CompletedTask
+
+                let result =
+                    (Watch.registerCurrentSignalRParentBranchWithClientsForWatchTests
+                        getParentBranch
+                        registerCurrentBranch
+                        registerParentBranch
+                        CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult()
+
+                match result with
+                | Ok _ -> ()
+                | Error error -> Assert.Fail($"Expected stale refresh to return the parent lookup result without hub side effects: {error}")
+
+                currentRegistrations.ToArray()
+                |> should equal Array.empty<RepositoryId * BranchId>
+
+                parentRegistrations.ToArray()
+                |> should equal Array.empty<BranchId * BranchId>
 
                 let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
 

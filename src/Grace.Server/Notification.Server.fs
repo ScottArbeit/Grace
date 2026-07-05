@@ -1003,8 +1003,6 @@ module Notification =
                                         .Group($"{branchDto.ParentBranchId}")
                                         .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
-                            do! emitCurrentBranchReference branchDto.BranchName
-
                             // Create the diff between the two most recent checkpoints.
                             let! checkpoints = getCheckpoints repositoryId branchId 2 correlationId
 
@@ -1031,6 +1029,8 @@ module Notification =
                                         correlationId
                             | None -> ()
 
+                            do! emitCurrentBranchReference branchDto.BranchName
+
                         | ReferenceType.Save ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
                             let! parentBranchDto = getBranchDto branchDto.ParentBranchId repositoryId correlationId
@@ -1043,8 +1043,6 @@ module Notification =
                                         .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
                             else
                                 log.LogWarning("No SignalR hub context available; cannot notify clients of save.")
-
-                            do! emitCurrentBranchReference branchDto.BranchName
 
                             // Create the diff between the new save and the previous save.
                             let! latestTwoSaves = getSaves branchDto.RepositoryId branchId 2 correlationId
@@ -1090,6 +1088,8 @@ module Notification =
                                             branchDto.RepositoryId
                                             correlationId
                             | None -> ()
+
+                            do! emitCurrentBranchReference branchDto.BranchName
 
                         | ReferenceType.Tag
                         | ReferenceType.Rebase
