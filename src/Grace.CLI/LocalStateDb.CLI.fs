@@ -782,6 +782,12 @@ module LocalStateDb =
         | Some sequence -> sequence
         | None -> raise (InvalidDataException("sqlite_sequence.seq for watch_journal must be a non-negative 64-bit integer."))
 
+    /// Reads the clear-journal allocation watermark without trusting malformed journal-only metadata.
+    let private readAllocatedWatchJournalSequenceForClear (connection: SqliteConnection) =
+        match tryReadAllocatedWatchJournalSequence connection with
+        | Some sequence -> sequence
+        | None -> 0L
+
     /// Counts durable Watch journal rows without reading any replay payload.
     let private countWatchJournalRows (connection: SqliteConnection) =
         use command = connection.CreateCommand()
@@ -1306,8 +1312,30 @@ module LocalStateDb =
             if limit < 1 then
                 invalidArg (nameof limit) "Watch journal limit must be greater than zero."
 
-            do! ensureDbInitialized dbPath
-            use connection = openConnection dbPath
+            let normalizedPath = Path.GetFullPath(dbPath)
+            let inspection = inspectReadOnly normalizedPath
+
+            if not inspection.OpenedReadOnly then
+                let detail =
+                    inspection.OpenError
+                    |> Option.defaultValue "local state database does not exist or could not be opened read-only."
+
+                raise (InvalidDataException($"Watch journal diagnostics require a readable local state database: {detail}"))
+
+            if inspection.SchemaVersion <> Some SchemaVersion
+               || inspection.MissingRequiredTables.Length > 0
+               || inspection.MissingRequiredIndexes.Length > 0
+               || inspection.WatchJournalShapeValid <> Some true
+               || inspection.WatchJournalAppliedThroughMetadataValid
+                  <> Some true then
+                raise (
+                    InvalidDataException(
+                        "Watch journal diagnostics require a healthy local state database; run grace doctor or a writable command to repair local state."
+                    )
+                )
+
+            let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
+            use connection = openReadOnlyConnection normalizedPath immutableSnapshot
             let appliedThroughSequence = readWatchJournalAppliedThroughSequenceInternal connection
             let allocatedSequence = readAllocatedWatchJournalSequence connection
             let totalRows = countWatchJournalRows connection
@@ -1350,7 +1378,7 @@ module LocalStateDb =
 
             return
                 {
-                    DbPath = Path.GetFullPath(dbPath)
+                    DbPath = normalizedPath
                     AppliedThroughSequence = appliedThroughSequence
                     AllocatedSequence = allocatedSequence
                     TotalRows = totalRows
@@ -1365,53 +1393,69 @@ module LocalStateDb =
     /// Clears only the durable Watch journal rows, allocation metadata, and recovery watermark.
     let clearWatchJournal (dbPath: string) =
         task {
-            let mutable result = None
+            let normalizedPath = Path.GetFullPath(dbPath)
 
-            do!
-                executeWithRetry (fun () ->
-                    task {
-                        use connection = openConnection dbPath
-                        ensureWatchJournalClearSchema connection
-                        executeNonQuery connection "BEGIN IMMEDIATE;"
-                        let mutable committed = false
+            if
+                not (File.Exists(normalizedPath))
+                && not (Directory.Exists(normalizedPath))
+            then
+                return
+                    {
+                        DbPath = normalizedPath
+                        RowsDeleted = 0L
+                        AppliedThroughSequenceBefore = 0L
+                        AppliedThroughSequenceAfter = 0L
+                        AllocatedSequenceBefore = 0L
+                        AllocatedSequenceAfter = 0L
+                    }
+            else
+                let mutable result = None
 
-                        try
-                            let rowsBefore = countWatchJournalRows connection
-                            let appliedBefore = readWatchJournalAppliedThroughSequenceForClear connection
-                            let allocatedBefore = readAllocatedWatchJournalSequence connection
+                do!
+                    executeWithRetry (fun () ->
+                        task {
+                            use connection = openConnection normalizedPath
+                            ensureWatchJournalClearSchema connection
+                            executeNonQuery connection "BEGIN IMMEDIATE;"
+                            let mutable committed = false
 
-                            executeNonQuery connection "DELETE FROM watch_journal;"
-                            executeNonQuery connection "DELETE FROM sqlite_sequence WHERE name = 'watch_journal';"
-                            resetWatchJournalAppliedThroughSequenceForClear connection
+                            try
+                                let rowsBefore = countWatchJournalRows connection
+                                let appliedBefore = readWatchJournalAppliedThroughSequenceForClear connection
+                                let allocatedBefore = readAllocatedWatchJournalSequenceForClear connection
 
-                            let rowsAfter = countWatchJournalRows connection
-                            let appliedAfter = readWatchJournalAppliedThroughSequenceInternal connection
-                            let allocatedAfter = readAllocatedWatchJournalSequence connection
+                                executeNonQuery connection "DELETE FROM watch_journal;"
+                                executeNonQuery connection "DELETE FROM sqlite_sequence WHERE name = 'watch_journal';"
+                                resetWatchJournalAppliedThroughSequenceForClear connection
 
-                            executeNonQuery connection "COMMIT;"
-                            committed <- true
+                                let rowsAfter = countWatchJournalRows connection
+                                let appliedAfter = readWatchJournalAppliedThroughSequenceInternal connection
+                                let allocatedAfter = readAllocatedWatchJournalSequenceForClear connection
 
-                            result <-
-                                Some
-                                    {
-                                        DbPath = Path.GetFullPath(dbPath)
-                                        RowsDeleted = rowsBefore - rowsAfter
-                                        AppliedThroughSequenceBefore = appliedBefore
-                                        AppliedThroughSequenceAfter = appliedAfter
-                                        AllocatedSequenceBefore = allocatedBefore
-                                        AllocatedSequenceAfter = allocatedAfter
-                                    }
-                        finally
-                            if not committed then
-                                try
-                                    executeNonQuery connection "ROLLBACK;"
-                                with
-                                | _ -> ()
-                    })
+                                executeNonQuery connection "COMMIT;"
+                                committed <- true
 
-            match result with
-            | Some result -> return result
-            | None -> return failwith "Watch journal clear did not produce a result."
+                                result <-
+                                    Some
+                                        {
+                                            DbPath = normalizedPath
+                                            RowsDeleted = rowsBefore - rowsAfter
+                                            AppliedThroughSequenceBefore = appliedBefore
+                                            AppliedThroughSequenceAfter = appliedAfter
+                                            AllocatedSequenceBefore = allocatedBefore
+                                            AllocatedSequenceAfter = allocatedAfter
+                                        }
+                            finally
+                                if not committed then
+                                    try
+                                        executeNonQuery connection "ROLLBACK;"
+                                    with
+                                    | _ -> ()
+                        })
+
+                match result with
+                | Some result -> return result
+                | None -> return failwith "Watch journal clear did not produce a result."
         }
 
     /// Persists the local Watch journal recovery watermark without changing journal rows.

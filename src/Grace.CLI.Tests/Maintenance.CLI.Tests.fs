@@ -108,6 +108,32 @@ module MaintenanceCliTests =
         connection.Open()
         executeScalarInt connection $"SELECT COUNT(*) FROM {tableName};"
 
+    /// Gets corrupt backups needed by the maintenance command mutation assertions.
+    let private getCorruptBackups root =
+        let graceDir = Path.Combine(root, Constants.GraceConfigDirectory)
+
+        if Directory.Exists(graceDir) then
+            Directory.GetFiles(graceDir, "grace-local.corrupt.*.db")
+        else
+            Array.empty
+
+    /// Captures database bytes so read-only diagnostic commands can prove they did not repair local state.
+    let private snapshotFile path =
+        if File.Exists(path) then
+            use stream = new FileStream(path, FileMode.Open, FileAccess.Read, FileShare.ReadWrite ||| FileShare.Delete)
+            use reader = new BinaryReader(stream)
+            Some(reader.ReadBytes(int stream.Length), File.GetLastWriteTimeUtc(path))
+        else
+            None
+
+    /// Seeds only stale schema metadata so show-journal can prove read-only diagnostic behavior.
+    let private seedSchemaVersionOnly root schemaVersion =
+        let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+        use connection = new SqliteConnection($"Data Source={dbPath}")
+        connection.Open()
+        executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+        executeNonQuery connection $"INSERT OR REPLACE INTO meta (key, value) VALUES ('schema_version', '{schemaVersion}');"
+
     /// Writes a fresh Watch IPC snapshot so clear-journal can prove the v1 single-writer refusal.
     let private writeLiveWatchIpc () =
         let current = Current()
@@ -620,6 +646,37 @@ module MaintenanceCliTests =
             appliedRow.GetProperty("Sequence").GetInt64()
             |> should equal 2L)
 
+    /// Verifies that maintenance show journal reports unhealthy local state without repairing or rotating the DB.
+    [<Test>]
+    let ``maintenance show journal json reports stale schema without mutating local db`` () =
+        withTempRepo (fun root ->
+            seedSchemaVersionOnly root "0"
+
+            let localStateDbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+            let dbBefore = snapshotFile localStateDbPath
+            let corruptBefore = getCorruptBackups root |> Array.length
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "show-journal" |]
+
+            exitCode |> should equal -1
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+
+            document
+                .RootElement
+                .GetProperty("Error")
+                .GetString()
+            |> should contain "healthy local state database"
+
+            snapshotFile localStateDbPath
+            |> should equal dbBefore
+
+            getCorruptBackups root
+            |> Array.length
+            |> should equal corruptBefore)
+
     /// Verifies that maintenance clear journal resets journal state without removing status data.
     [<Test>]
     let ``maintenance clear journal json clears only journal rows and metadata`` () =
@@ -655,6 +712,35 @@ module MaintenanceCliTests =
 
             countRows root "status_meta"
             |> should equal statusRowsBefore)
+
+    /// Verifies that maintenance clear journal does not create a partial local-state database when nothing exists.
+    [<Test>]
+    let ``maintenance clear journal json no-ops without creating local db`` () =
+        withTempRepo (fun root ->
+            let localStateDbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            File.Exists(localStateDbPath)
+            |> should equal false
+
+            /// Verifies that the CLI maintenance scenario exits with the expected process status.
+            let exitCode, standardOut, standardError = runJsonMaintenance [| "clear-journal" |]
+
+            exitCode |> should equal 0
+            standardError |> should equal String.Empty
+
+            use document = assertCleanJsonStdout standardOut
+            let returnValue = document.RootElement.GetProperty("ReturnValue")
+
+            returnValue.GetProperty("RowsDeleted").GetInt64()
+            |> should equal 0L
+
+            returnValue
+                .GetProperty("AppliedThroughSequenceBefore")
+                .GetInt64()
+            |> should equal 0L
+
+            File.Exists(localStateDbPath)
+            |> should equal false)
 
     /// Verifies that maintenance clear journal refuses while a fresh Watch process owns IPC.
     [<Test>]

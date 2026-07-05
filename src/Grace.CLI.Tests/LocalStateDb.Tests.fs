@@ -545,6 +545,86 @@ module LocalStateDbTests =
                 |> should equal rootHash
             })
 
+    /// Verifies that clear-journal treats malformed SQLite allocation metadata as resettable journal-only state.
+    [<Test>]
+    let ``clear watch journal clears malformed allocation metadata without recreating local state`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let objectCacheId = Guid.NewGuid()
+                let rootHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                let rootBlake3Hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                let objectHash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                let objectBlake3Hash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId rootHash rootBlake3Hash 123L
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    seedObjectCacheDirectory connection objectCacheId "cache" objectHash objectBlake3Hash
+                    executeNonQuery connection "UPDATE meta SET value = '1' WHERE key = 'AppliedThroughSequence';"
+                    executeNonQuery connection "UPDATE sqlite_sequence SET seq = 'not-a-number' WHERE name = 'watch_journal';"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                let! result = LocalStateDb.clearWatchJournal configuration.GraceStatusFile
+
+                result.RowsDeleted |> should equal 2L
+
+                result.AppliedThroughSequenceBefore
+                |> should equal 1L
+
+                result.AllocatedSequenceBefore |> should equal 0L
+                result.AllocatedSequenceAfter |> should equal 0L
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+                let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let statusRootId = executeScalarString connection "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
+                let objectCacheRows = executeScalarInt connection "SELECT COUNT(*) FROM object_cache_directories;"
+
+                journalRows |> should equal 0
+                allocationRows |> should equal 0
+                appliedThrough |> should equal "0"
+                statusRootId |> should equal (string rootId)
+                objectCacheRows |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal corruptBefore
+            })
+
+    /// Verifies that empty clear-journal does not create a partial local-state database.
+    [<Test>]
+    let ``clear watch journal no-ops without creating a missing local state database`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                File.Exists(configuration.GraceStatusFile)
+                |> should equal false
+
+                let! result = LocalStateDb.clearWatchJournal configuration.GraceStatusFile
+
+                result.RowsDeleted |> should equal 0L
+
+                result.AppliedThroughSequenceBefore
+                |> should equal 0L
+
+                result.AppliedThroughSequenceAfter
+                |> should equal 0L
+
+                result.AllocatedSequenceBefore |> should equal 0L
+                result.AllocatedSequenceAfter |> should equal 0L
+
+                File.Exists(configuration.GraceStatusFile)
+                |> should equal false
+            })
+
     /// Verifies that journal-only clear repairs untrusted Watch metadata without recreating unrelated local state.
     [<TestCase("missing")>]
     [<TestCase("malformed")>]
@@ -1822,6 +1902,35 @@ module LocalStateDbTests =
 
                 inspection.MissingRequiredIndexes
                 |> should contain "ix_object_cache_files_path_hash"
+
+                snapshotFile configuration.GraceStatusFile
+                |> should equal dbBefore
+
+                let backupsAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                backupsAfter |> should equal backupsBefore
+            })
+
+    /// Verifies that Watch journal diagnostics report stale schema without repairing or rotating the DB.
+    [<Test>]
+    let ``watch journal snapshot reports stale schema without mutating local state`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                seedSchemaVersionOnly configuration.GraceStatusFile "0"
+                let dbBefore = snapshotFile configuration.GraceStatusFile
+
+                let backupsBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                let operation = Func<Task>(fun () -> LocalStateDb.readWatchJournalSnapshot configuration.GraceStatusFile "all" None 10 :> Task)
+
+                let ex = Assert.ThrowsAsync<InvalidDataException>(operation)
+
+                ex.Message
+                |> should contain "healthy local state database"
 
                 snapshotFile configuration.GraceStatusFile
                 |> should equal dbBefore
