@@ -1659,6 +1659,25 @@ module LocalStateDb =
                 return { DbPath = normalizedPath; AppliedThroughSequence = appliedThroughSequence; PendingRowCount = pendingRowCount }
         }
 
+    /// Reads unresolved durable Watch journal evidence for branch transition trust checks that must fail closed.
+    let readWatchJournalPendingWorkSummaryForTransitionCheck (dbPath: string) =
+        task {
+            let normalizedPath = Path.GetFullPath(dbPath)
+
+            if
+                not (File.Exists(normalizedPath))
+                && not (Directory.Exists(normalizedPath))
+            then
+                return
+                    raise (
+                        InvalidDataException(
+                            "Watch journal pending-work inspection requires a readable local state database; the local-state database is missing."
+                        )
+                    )
+            else
+                return! readWatchJournalPendingWorkSummary normalizedPath
+        }
+
     /// Reads a bounded diagnostic snapshot of the durable Watch journal.
     let readWatchJournalSnapshot (dbPath: string) (stateFilter: string) (pathFilter: string option) (limit: int) =
         task {

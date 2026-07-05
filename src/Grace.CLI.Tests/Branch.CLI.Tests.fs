@@ -821,6 +821,49 @@ module BranchCommandTests =
             inspected |> should equal true
             inspectedJournal |> should equal true)
 
+    /// Verifies branch switch treats a missing local-state DB as uninspectable durable evidence, not zero pending rows.
+    [<Test>]
+    let ``branch switch Watch preflight refuses missing local-state database after clean IPC`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let mutable inspected = false
+            let mutable inspectedJournal = false
+            let localStatePath = Current().GraceStatusFile
+
+            if File.Exists(localStatePath) then File.Delete(localStatePath)
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> false
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary =
+                        fun () ->
+                            inspectedJournal <- true
+                            LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck localStatePath
+                }
+
+            let result =
+                (Branch.runBranchSwitchWatchCleanPreflight operations correlationId)
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before mutation"
+
+                error.Error
+                |> should contain "durable journal pending-work evidence could not be inspected"
+
+                error.Error
+                |> should contain "local-state database is missing"
+            | Ok _ -> Assert.Fail("Expected missing durable journal evidence to refuse branch switch.")
+
+            inspected |> should equal true
+            inspectedJournal |> should equal true)
+
     /// Verifies that untrusted Watch states refuse before branch switch marker creation.
     [<Test>]
     let ``branch switch Watch preflight refuses untrusted Watch states before marker creation`` () =

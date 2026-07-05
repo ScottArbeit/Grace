@@ -838,6 +838,19 @@ module LocalStateDbTests =
                 cleanSummary.HasPendingRows |> should equal false
             })
 
+    /// Verifies that transition checks fail closed instead of trusting a missing local-state database as clean.
+    [<Test>]
+    let ``watch journal transition summary treats missing local-state database as uninspectable`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let operation = Func<Task>(fun () -> LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck configuration.GraceStatusFile :> Task)
+
+                let ex = Assert.ThrowsAsync<InvalidDataException>(operation)
+
+                ex.Message
+                |> should contain "local-state database is missing"
+            })
+
     /// Verifies the pending-work summary avoids full diagnostic schema/index inspection in Watch hot paths.
     [<Test>]
     let ``watch journal pending work summary ignores unrelated diagnostic index drift`` () =

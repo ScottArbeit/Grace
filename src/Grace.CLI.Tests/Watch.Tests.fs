@@ -10766,6 +10766,137 @@ module WatchTests =
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
+    /// Verifies that durable-only journal evidence publishes non-incremental IPC instead of a healthy dirty snapshot.
+    [<Test>]
+    let ``watch durable-only pending journal evidence publishes resync-required transition`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            try
+                Watch.setWatchJournalStatusClientForWatchTests (fun () ->
+                    Task.FromResult(
+                        { LocalStateDb.WatchJournalPendingWorkSummary.DbPath = Current().GraceStatusFile; AppliedThroughSequence = 1L; PendingRowCount = 1L }
+                    ))
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                inspection.IsUsable |> should equal false
+
+                inspection.EffectiveMode
+                |> should equal (Some Services.GraceWatchRuntimeMode.Resynchronizing)
+
+                let publishedStatus =
+                    inspection.Status
+                    |> Option.defaultWith (fun () -> failwith "Expected durable-only IPC status.")
+
+                publishedStatus.HasPendingWatchWork
+                |> should equal true
+
+                publishedStatus.IsWorkingTreeClean
+                |> should equal false
+
+                publishedStatus.RootDirectoryId
+                |> should equal GraceStatus.Default.RootDirectoryId
+
+                publishedStatus.DirectoryIds.Count
+                |> should equal 0
+
+                let safetyFlags = inspection.SafetyFlags |> Set.ofArray
+
+                safetyFlags
+                |> Set.contains "pendingWatchWork"
+                |> should equal true
+
+                safetyFlags
+                |> Set.contains "requiresExplicitResync"
+                |> should equal true
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
+    /// Verifies that durable dirty-to-clean evidence republishes immediately during an idle timer pass.
+    [<Test>]
+    let ``watch durable pending journal evidence publishes clean transition after clearing`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let mutable pendingRows = 1L
+
+            try
+                Watch.setWatchJournalStatusClientForWatchTests (fun () ->
+                    Task.FromResult(
+                        {
+                            LocalStateDb.WatchJournalPendingWorkSummary.DbPath = Current().GraceStatusFile
+                            AppliedThroughSequence = 1L
+                            PendingRowCount = pendingRows
+                        }
+                    ))
+
+                Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () -> Task.FromResult(status))
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                |> should equal true
+
+                pendingRows <- 0L
+
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ -> Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    scannerHostileDifferenceDiscovery
+                    (fun currentStatus _ _ -> Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun currentStatus currentDirectoryIds -> Services.updateGraceWatchInterprocessFile currentStatus currentDirectoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                |> should equal false
+
+                readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+                |> should equal true
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                inspection.IsUsable |> should equal true
+
+                let safetyFlags = inspection.SafetyFlags |> Set.ofArray
+
+                safetyFlags
+                |> Set.contains "pendingWatchWork"
+                |> should equal false
+
+                safetyFlags
+                |> Set.contains "requiresExplicitResync"
+                |> should equal false
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
     /// Verifies durable-only journal evidence does not enter the processable Watch work branch.
     [<Test>]
     let ``watch durable-only pending journal evidence publishes without processing`` () =

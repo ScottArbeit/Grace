@@ -3789,7 +3789,8 @@ module Branch =
                                             UpdateMarkerExists = fun () -> File.Exists(workingTreeUpdateMarkerFileName)
                                             InspectWatchStatus = inspectGraceWatchStatus
                                             ReadPendingJournalSummary =
-                                                fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
+                                                fun () ->
+                                                    Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
                                         }
 
                                     let! workingTreeUpdateResult =
@@ -3958,7 +3959,8 @@ module Branch =
                     {
                         UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
                         InspectWatchStatus = inspectGraceWatchStatus
-                        ReadPendingJournalSummary = fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
+                        ReadPendingJournalSummary =
+                            fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
                     }
 
                 let! switchResult =

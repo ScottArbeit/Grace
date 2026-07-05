@@ -2108,6 +2108,23 @@ module Watch =
 
             true
 
+    /// Describes pending Watch work without merging process-local queues and durable journal evidence.
+    type private PendingWatchWorkEvidence =
+        {
+            HasProcessablePendingWork: bool
+            HasDurableWatchJournalEvidence: bool
+        }
+
+        /// Reports whether any Watch work or durable journal evidence must keep IPC dirty.
+        member this.HasPendingWork =
+            this.HasProcessablePendingWork
+            || this.HasDurableWatchJournalEvidence
+
+        /// Reports whether durable journal evidence is the only reason IPC must be dirty.
+        member this.HasDurableOnlyPendingWork =
+            this.HasDurableWatchJournalEvidence
+            && not this.HasProcessablePendingWork
+
     /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
     let private hasProcessablePendingWatchWork () =
         isGraceWatchResyncPending ()
@@ -2123,6 +2140,12 @@ module Watch =
     let private hasPendingWatchWork () =
         hasProcessablePendingWatchWork ()
         || hasPendingDurableWatchJournalEvidence ()
+
+    /// Reads process-local and durable pending-work facts once for a single status publication decision.
+    let private readPendingWatchWorkEvidence () =
+        let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
+
+        { HasProcessablePendingWork = hasProcessablePendingWork; HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence () }
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -2145,6 +2168,12 @@ module Watch =
 
     /// Records the pending-work flag that the next Watch IPC snapshot should publish.
     let private setGraceWatchPendingWorkStatusFlag hasPendingWork = lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+    /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
+    let private pendingWatchWorkTransitionNeedsPublication () =
+        File.Exists(IpcFileName())
+        && lastPublishedHasPendingWatchWork
+           <> Some((readPendingWatchWorkEvidence ()).HasPendingWork)
 
     /// Returns the root BLAKE3 hash that Watch expects to see in the IPC snapshot it just published.
     let private expectedRootDirectoryBlake3Hash (status: GraceStatus) =
@@ -2201,19 +2230,38 @@ module Watch =
 
             while pendingWorkChangedDuringWrite && attempts < 2 do
                 attempts <- attempts + 1
-                let hasPendingWork = hasPendingWatchWork ()
+                let pendingEvidence = readPendingWatchWorkEvidence ()
+                let hasPendingWork = pendingEvidence.HasPendingWork
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
                 let publicationStartedAt = getCurrentInstant ()
 
+                let statusForVerification, directoryIdsForVerification =
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        GraceStatus.Default, HashSet<DirectoryVersionId>()
+                    else
+                        expectedStatus, expectedDirectoryIds
+
                 try
-                    writeSnapshot().GetAwaiter().GetResult()
-                    transitionWasPublished <- cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                        match currentGraceWatchRuntimeMode () with
+                        | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
+                        | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds)
+                        |> fun writeTask -> writeTask.GetAwaiter().GetResult()
+                    else
+                        writeSnapshot().GetAwaiter().GetResult()
+
+                    transitionWasPublished <-
+                        cachePendingWatchWorkPublicationIfVerified statusForVerification directoryIdsForVerification hasPendingWork publicationStartedAt
                 with
                 | ex ->
                     lastPublishedHasPendingWatchWork <- None
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
-                pendingWorkChangedDuringWrite <- hasPendingWatchWork () <> hasPendingWork
+                pendingWorkChangedDuringWrite <-
+                    (readPendingWatchWorkEvidence ()).HasPendingWork
+                    <> hasPendingWork
 
             transitionWasPublished)
 
@@ -2225,7 +2273,8 @@ module Watch =
     /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
     let private publishPendingWatchWorkTransitionIfNeeded () =
         lock watchStatusPublishLock (fun () ->
-            let hasPendingWork = hasPendingWatchWork ()
+            let pendingEvidence = readPendingWatchWorkEvidence ()
+            let hasPendingWork = pendingEvidence.HasPendingWork
 
             if
                 File.Exists(IpcFileName())
@@ -2237,7 +2286,9 @@ module Watch =
                 let runtimeMode = currentGraceWatchRuntimeMode ()
 
                 let shouldPublish, statusForPublish, directoryIdsForPublish =
-                    if
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                    elif
                         runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
                     then
@@ -4401,7 +4452,7 @@ module Watch =
                     logToAnsiConsole
                         Colors.Error
                         $"Error in processChangedFiles: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
-            elif hasPendingDurableWatchJournalEvidence () then
+            elif pendingWatchWorkTransitionNeedsPublication () then
                 publishPendingWatchWorkTransitionIfNeeded ()
             // Refresh the file every (just under) 5 minutes to indicate that `grace watch` is still alive.
             elif
