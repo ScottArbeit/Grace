@@ -409,6 +409,10 @@ module WatchTests =
     /// Builds changed event test data used to exercise CLI watch behavior.
     let private changedEvent (fullPath: string) = FileSystemEventArgs(WatcherChangeTypes.Changed, Path.GetDirectoryName(fullPath), Path.GetFileName(fullPath))
 
+    /// Builds a replayable Watch journal observation for Watch command retention tests.
+    let private watchJournalObservation differenceType entryType (relativePath: string) : LocalStateDb.WatchJournalObservation =
+        { DifferenceType = differenceType; EntryType = entryType; RelativePath = RelativePath relativePath }
+
     /// Builds local file version test data used to exercise CLI watch behavior.
     let private localFileVersion relativePath =
         LocalFileVersion.CreateWithHashes
@@ -3098,6 +3102,122 @@ module WatchTests =
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
+    /// Verifies that successful trusted journal boundary advancement prunes applied rows.
+    [<Test>]
+    let ``watch prunes journal retention after trusted boundary advance`` () =
+        withTempRepo (fun root ->
+            let relativePath = "journal-prune-after-advance-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let mutable appendCalls = 0
+            let mutable applyCalls = 0
+            let mutable advanceCalls = 0
+            let mutable pruneCalls = 0
+            let mutable recoveryCalls = 0
+
+            let seededObservations =
+                [ 1..1026 ]
+                |> Seq.map (fun index -> watchJournalObservation DifferenceType.Change FileSystemEntryType.File $"seed-{index}.txt")
+                |> Seq.toArray
+
+            let seededSequences =
+                (LocalStateDb.appendWatchJournalObservations dbPath seededObservations)
+                    .GetAwaiter()
+                    .GetResult()
+
+            seededSequences
+            |> Array.length
+            |> should equal 1026
+
+            (LocalStateDb.setWatchJournalAppliedThroughSequence dbPath 1026L)
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            try
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun observations ->
+                        appendCalls <- appendCalls + 1
+                        LocalStateDb.appendWatchJournalObservations dbPath observations)
+                    (fun sequences ->
+                        advanceCalls <- advanceCalls + 1
+
+                        sequences
+                        |> Seq.toArray
+                        |> should equal [| 1027L |]
+
+                        LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences dbPath sequences)
+
+                Watch.setWatchJournalMaintenanceClientsForWatchTests
+                    (fun _ _ ->
+                        recoveryCalls <- recoveryCalls + 1
+                        Task.FromResult(()))
+                    (fun () ->
+                        pruneCalls <- pruneCalls + 1
+                        LocalStateDb.pruneWatchJournalRetention dbPath)
+
+                /// Reads status needed by the trusted journal pruning scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this status-only observation scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Simulates successful status application after the corresponding journal append.
+                let updateGraceStatusFromDifferences currentStatus _ _ =
+                    applyCalls <- applyCalls + 1
+                    Task.FromResult(Some currentStatus)
+
+                /// Leaves incremental status writes outside this status-only observation scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the journal pruning scenario.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                appendCalls |> should equal 1
+                applyCalls |> should equal 1
+                advanceCalls |> should equal 1
+                pruneCalls |> should equal 1
+                recoveryCalls |> should equal 0
+
+                let journalSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "all" None 2048)
+                        .GetAwaiter()
+                        .GetResult()
+
+                journalSnapshot.AppliedThroughSequence
+                |> should equal 1027L
+
+                journalSnapshot.TotalRows |> should equal 1024
+
+                journalSnapshot.Rows
+                |> Array.map (fun row -> row.Sequence)
+                |> Array.min
+                |> should equal 4L
+
+                journalSnapshot.Rows
+                |> Array.map (fun row -> row.Sequence)
+                |> Array.max
+                |> should equal 1027L
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
     /// Verifies that a non-contiguous journal boundary result forces resync instead of healthy status draining.
     [<Test>]
     let ``watch quarantines status work when journal boundary cannot advance through appended sequence`` () =
@@ -3105,21 +3225,51 @@ module WatchTests =
             let relativePath = "journal-non-contiguous-retry-delete.txt"
             let filePath = Path.Combine(root, relativePath)
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
             let mutable appendCalls = 0
             let mutable applyCalls = 0
             let mutable advanceCalls = 0
+            let mutable recoveryCalls = 0
+            let mutable pruneCalls = 0
+            let mutable recoveredAdvancedThrough = -1L
+            let mutable recoveredRequiredThrough = -1L
+
+            let seededSequences =
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [
+                        watchJournalObservation DifferenceType.Change FileSystemEntryType.File "older-pending.txt"
+                    ])
+                    .GetAwaiter()
+                    .GetResult()
+
+            seededSequences |> should equal [| 1L |]
 
             Watch.OnDeleted(deletedEvent filePath)
 
             try
                 Watch.setWatchJournalClientsForWatchTests
-                    (fun _ ->
+                    (fun observations ->
                         appendCalls <- appendCalls + 1
-                        Task.FromResult([| 2L |]))
+                        LocalStateDb.appendWatchJournalObservations dbPath observations)
                     (fun sequences ->
                         advanceCalls <- advanceCalls + 1
                         sequences |> Seq.toArray |> should equal [| 2L |]
-                        Task.FromResult(0L))
+                        LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences dbPath sequences)
+
+                Watch.setWatchJournalMaintenanceClientsForWatchTests
+                    (fun advancedThrough requiredThrough ->
+                        recoveryCalls <- recoveryCalls + 1
+                        recoveredAdvancedThrough <- advancedThrough
+                        recoveredRequiredThrough <- requiredThrough
+
+                        task {
+                            let! _ = LocalStateDb.clearWatchJournal dbPath
+                            return ()
+                        })
+                    (fun () ->
+                        pruneCalls <- pruneCalls + 1
+                        Task.FromResult(()))
 
                 /// Reads status needed by the non-contiguous journal retry scenario.
                 let readStatus () = Task.FromResult(status)
@@ -3153,6 +3303,21 @@ module WatchTests =
                 appendCalls |> should equal 1
                 applyCalls |> should equal 1
                 advanceCalls |> should equal 1
+                recoveryCalls |> should equal 1
+                recoveredAdvancedThrough |> should equal 0L
+                recoveredRequiredThrough |> should equal 2L
+                pruneCalls |> should equal 0
+
+                let repairedJournalSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "all" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                repairedJournalSnapshot.TotalRows
+                |> should equal 0
+
+                repairedJournalSnapshot.AppliedThroughSequence
+                |> should equal 0L
 
                 Watch.currentGraceWatchRuntimeModeForWatchTests ()
                 |> should equal Services.GraceWatchRuntimeMode.Resynchronizing

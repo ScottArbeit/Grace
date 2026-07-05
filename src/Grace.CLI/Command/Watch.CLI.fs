@@ -70,10 +70,24 @@ module Watch =
     let mutable private advanceWatchJournalAppliedThroughSequencesForWatch =
         fun sequences -> Grace.CLI.LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences (Current().GraceStatusFile) sequences
 
+    let mutable private recoverWatchJournalBoundaryGapForWatch =
+        fun _ _ ->
+            task {
+                let! _ = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
+                return ()
+            }
+
+    let mutable private pruneWatchJournalRetentionForWatch = fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
+
     /// Installs durable journal clients used by append-before-apply ordering tests.
     let internal setWatchJournalClientsForWatchTests appendObservations advanceAppliedSequences =
         appendWatchJournalObservationsForWatch <- appendObservations
         advanceWatchJournalAppliedThroughSequencesForWatch <- advanceAppliedSequences
+
+    /// Installs durable journal maintenance clients used by boundary repair and retention tests.
+    let internal setWatchJournalMaintenanceClientsForWatchTests recoverBoundaryGap pruneRetention =
+        recoverWatchJournalBoundaryGapForWatch <- recoverBoundaryGap
+        pruneWatchJournalRetentionForWatch <- pruneRetention
 
     /// Restores durable journal clients after tests replace append or boundary behavior.
     let internal resetWatchJournalClientsForWatchTests () =
@@ -82,6 +96,15 @@ module Watch =
 
         advanceWatchJournalAppliedThroughSequencesForWatch <-
             fun sequences -> Grace.CLI.LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences (Current().GraceStatusFile) sequences
+
+        recoverWatchJournalBoundaryGapForWatch <-
+            fun _ _ ->
+                task {
+                    let! _ = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
+                    return ()
+                }
+
+        pruneWatchJournalRetentionForWatch <- fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
 
     /// Reports that a filesystem observation was ignored because the current runtime mode cannot capture it.
     let private logObservationSuppressed fullPath =
@@ -3819,6 +3842,7 @@ module Watch =
 
                                         if advancedThrough < requiredAppliedThrough then
                                             watchJournalBoundaryTrusted <- false
+                                            do! recoverWatchJournalBoundaryGapForWatch advancedThrough requiredAppliedThrough
 
                                             requestGraceWatchExplicitResync
                                                 $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
@@ -3859,6 +3883,15 @@ module Watch =
                                     clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
                                     clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
                                     removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
+
+                                    if appendedWatchJournalSequences.Length > 0 then
+                                        try
+                                            do! pruneWatchJournalRetentionForWatch ()
+                                        with
+                                        | ex ->
+                                            logToAnsiConsole
+                                                Colors.Verbose
+                                                $"Grace Watch could not prune applied journal rows after a trusted boundary advance; retention will retry after later status work: {Markup.Escape(ex.Message)}."
                             else
                                 clearPendingStatusDifferences pendingDifferencesToClear
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
