@@ -3204,7 +3204,13 @@ module Watch =
         }
 
     /// Records a deferred current-branch Reference and the decision reason that made Watch hold it.
-    type private PendingCurrentBranchMaterialization = { Payload: CurrentBranchReferenceNotification; Reason: LatestCurrentBranchReferenceDecisionReason }
+    type private PendingCurrentBranchMaterialization =
+        {
+            Payload: CurrentBranchReferenceNotification
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            Reason: LatestCurrentBranchReferenceDecisionReason
+        }
 
     /// Summarizes Watch-owned deferred current-branch materialization state for focused tests.
     type internal PendingCurrentBranchMaterializationStatus =
@@ -3219,17 +3225,45 @@ module Watch =
     let mutable private pendingCurrentBranchMaterializations: PendingCurrentBranchMaterialization list = []
     let private currentBranchMaterializationGate = new SemaphoreSlim(1, 1)
 
-    /// Records a remote Reference notification that must be retried after Watch returns to a clean state.
-    let private rememberPendingCurrentBranchMaterialization payload reason =
+    /// Removes pending materializations that no longer belong to the repository branch Watch is observing.
+    let private prunePendingCurrentBranchMaterializationsForActiveBranch () =
+        let current = Current()
+
         lock pendingCurrentBranchMaterializationLock (fun () ->
             pendingCurrentBranchMaterializations <-
                 pendingCurrentBranchMaterializations
-                @ [
-                    { Payload = payload; Reason = reason }
-                ])
+                |> List.filter (fun pending ->
+                    pending.RepositoryId = current.RepositoryId
+                    && pending.BranchId = current.BranchId))
+
+    /// Reports whether a deferred materialization reason can become safe without receiving a newer notification.
+    let private shouldRetainPendingCurrentBranchMaterialization reason =
+        match reason with
+        | LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable
+        | LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
+        | LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync
+        | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired -> true
+        | LatestCurrentBranchReferenceDecisionReason.NoApplicableReference
+        | LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable
+        | LatestCurrentBranchReferenceDecisionReason.SameRoot
+        | _ -> false
+
+    /// Records a remote Reference notification that must be retried after Watch returns to a clean state.
+    let private rememberPendingCurrentBranchMaterialization payload reason =
+        prunePendingCurrentBranchMaterializationsForActiveBranch ()
+
+        if shouldRetainPendingCurrentBranchMaterialization reason then
+            lock pendingCurrentBranchMaterializationLock (fun () ->
+                pendingCurrentBranchMaterializations <-
+                    pendingCurrentBranchMaterializations
+                    @ [
+                        { Payload = payload; RepositoryId = payload.RepositoryId; BranchId = payload.BranchId; Reason = reason }
+                    ])
 
     /// Reads pending current-branch materializations in arrival order for the latest-reference decision helper.
     let private pendingCurrentBranchMaterializationSnapshot () =
+        prunePendingCurrentBranchMaterializationsForActiveBranch ()
+
         lock pendingCurrentBranchMaterializationLock (fun () ->
             pendingCurrentBranchMaterializations
             |> List.map (fun pending -> pending.Payload))
@@ -3260,6 +3294,24 @@ module Watch =
 
     /// Exposes pending current-branch materialization cleanup to deterministic Watch tests.
     let internal clearPendingCurrentBranchMaterializationsForWatchTests () = clearPendingCurrentBranchMaterializations ()
+
+    /// Confirms that a fetched remote root still applies to the same clean local root observed before network work began.
+    let internal currentBranchMaterializationPreFetchRootStillCurrent (previousGraceStatus: GraceStatus) (currentGraceStatus: GraceStatus) =
+        currentGraceStatus.RootDirectoryId = previousGraceStatus.RootDirectoryId
+        && currentGraceStatus.RootDirectorySha256Hash = previousGraceStatus.RootDirectorySha256Hash
+        && currentGraceStatus.RootDirectoryBlake3Hash = previousGraceStatus.RootDirectoryBlake3Hash
+
+    /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
+    let private publishCurrentBranchMaterializedStatus (graceStatus: GraceStatus) =
+        task {
+            let directoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
+            updateGraceStatusDirectoryIds graceStatus
+
+            publishWatchIpcWithFreshPendingWorkProbe graceStatus directoryIds (fun () -> updateGraceWatchInterprocessFile graceStatus (Some directoryIds))
+        }
+
+    /// Exposes current-branch materialized status publication to deterministic Watch tests.
+    let internal publishCurrentBranchMaterializedStatusForWatchTests graceStatus = publishCurrentBranchMaterializedStatus graceStatus
 
     /// Builds the default live clients that fetch, download, and apply remote current-branch directory versions.
     let private defaultCurrentBranchRemoteMaterializationOperations () =
@@ -3313,7 +3365,7 @@ module Watch =
                 | None -> return Ok()
             }
 
-        let applyRemoteDirectory payload previousGraceStatus directoryVersionDtos correlationId =
+        let applyRemoteDirectory payload (previousGraceStatus: GraceStatus) directoryVersionDtos correlationId =
             task {
                 let updatedGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer previousGraceStatus directoryVersionDtos
 
@@ -3350,13 +3402,24 @@ module Watch =
                             markerText
                             (fun () ->
                                 task {
-                                    do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
-                                    do! writeGraceStatusFile updatedGraceStatus
-                                    do! upsertObjectCache updatedGraceStatus.Index.Values
-                                    return updatedGraceStatus
+                                    let! currentGraceStatus = readGraceStatusFile ()
+
+                                    if not (currentBranchMaterializationPreFetchRootStillCurrent previousGraceStatus currentGraceStatus) then
+                                        return
+                                            Error(
+                                                GraceError.Create
+                                                    $"Current-branch remote materialization refused because local root changed after notification preflight; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                    correlationId
+                                            )
+                                    else
+                                        do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
+                                        do! writeGraceStatusFile updatedGraceStatus
+                                        do! upsertObjectCache updatedGraceStatus.Index.Values
+                                        return Ok updatedGraceStatus
                                 })
                         with
-                    | Ok updatedStatus -> return Ok updatedStatus
+                    | Ok (Ok updatedStatus) -> return Ok updatedStatus
+                    | Ok (Error error) -> return Error error
                     | Error error -> return Error error
             }
 
@@ -3366,12 +3429,7 @@ module Watch =
             GetDirectoryVersionsRecursive = getDirectoryVersionsRecursive
             DownloadDirectoryFiles = downloadDirectoryFiles
             ApplyRemoteDirectory = applyRemoteDirectory
-            PublishWatchStatus =
-                fun graceStatus ->
-                    task {
-                        let directoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
-                        do! updateGraceWatchInterprocessFile graceStatus (Some directoryIds)
-                    }
+            PublishWatchStatus = fun graceStatus -> task { do! publishCurrentBranchMaterializedStatus graceStatus }
         }
 
     /// Processes current-branch Reference candidates through the clean gate and optional remote materialization.
@@ -3431,7 +3489,11 @@ module Watch =
                         clearPendingCurrentBranchMaterializations ()
                         return decision
                     | reason, Some payload ->
-                        if recordPendingOnBlock then
+                        if reason = LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable then
+                            clearPendingCurrentBranchMaterializations ()
+
+                        if recordPendingOnBlock
+                           && shouldRetainPendingCurrentBranchMaterialization reason then
                             rememberPendingCurrentBranchMaterialization payload reason
 
                         logToAnsiConsole
@@ -3457,8 +3519,14 @@ module Watch =
             let pending = pendingCurrentBranchMaterializationSnapshot ()
 
             if pending.Length > 0 then
-                let! _ = processCurrentBranchReferenceMaterialization (defaultCurrentBranchRemoteMaterializationOperations ()) false pending
-                return ()
+                try
+                    let! _ = processCurrentBranchReferenceMaterialization (defaultCurrentBranchRemoteMaterializationOperations ()) false pending
+                    return ()
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch failed to retry current-branch remote materialization; pending notification will retry later: {Markup.Escape(ex.Message)}."
         }
 
     /// Exposes deferred current-branch remote materialization retry to Watch tests without opening SignalR.
@@ -3469,7 +3537,15 @@ module Watch =
             if pending.Length = 0 then
                 return LatestCurrentBranchReferenceDecision.NoApplicableReference
             else
-                return! processCurrentBranchReferenceMaterialization operations false pending
+                try
+                    return! processCurrentBranchReferenceMaterialization operations false pending
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch failed to retry current-branch remote materialization; pending notification will retry later: {Markup.Escape(ex.Message)}."
+
+                    return LatestCurrentBranchReferenceDecision.NoApplicableReference
         }
 
     /// Handles same-branch Reference notifications by applying the latest clean remote root through the Watch boundary.
