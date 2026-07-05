@@ -4311,6 +4311,182 @@ module WatchTests =
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())
 
+    /// Verifies that confidence-loss quarantine retires replay keys for the pending differences it discards.
+    [<Test>]
+    let ``watch quarantine clears startup replay key for pending difference`` () =
+        withTempRepo (fun _ ->
+            let relativePath = "quarantined-startup-replay-delete.txt"
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+
+            try
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun _ ->
+                        task {
+                            return
+                                {
+                                    LocalStateDb.WatchJournalStartupRecovery.DbPath = Current().GraceStatusFile
+                                    AppliedThroughSequence = 0L
+                                    CompatibleReplayRows =
+                                        [|
+                                            {
+                                                LocalStateDb.WatchJournalPendingReplay.Sequence = 101L
+                                                DifferenceType = DifferenceType.Delete
+                                                EntryType = FileSystemEntryType.File
+                                                RelativePath = RelativePath relativePath
+                                            }
+                                        |]
+                                    QuarantinedRows = Array.empty
+                                }
+                        })
+                    (fun _ -> Task.FromResult(()))
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                let difference = FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath relativePath)
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests difference
+                |> should equal (Some 101L)
+
+                Watch.requestGraceWatchExplicitResyncForWatchTests "test replay-key quarantine"
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests difference
+                |> should equal None
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
+    /// Verifies that a same-path observation after replay quarantine appends fresh durable journal evidence.
+    [<Test>]
+    let ``watch same path observation after replay quarantine appends fresh journal row`` () =
+        withTempRepo (fun root ->
+            let relativePath = "same-path-after-quarantine-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let appendedDifferences = ResizeArray<FileSystemDifference>()
+            let advancedSequences = ResizeArray<int64>()
+
+            try
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun _ ->
+                        task {
+                            return
+                                {
+                                    LocalStateDb.WatchJournalStartupRecovery.DbPath = Current().GraceStatusFile
+                                    AppliedThroughSequence = 0L
+                                    CompatibleReplayRows =
+                                        [|
+                                            {
+                                                LocalStateDb.WatchJournalPendingReplay.Sequence = 102L
+                                                DifferenceType = DifferenceType.Delete
+                                                EntryType = FileSystemEntryType.File
+                                                RelativePath = RelativePath relativePath
+                                            }
+                                        |]
+                                    QuarantinedRows = Array.empty
+                                }
+                        })
+                    (fun _ -> Task.FromResult(()))
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                let staleDifference = FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath relativePath)
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests staleDifference
+                |> should equal (Some 102L)
+
+                Watch.requestGraceWatchExplicitResyncForWatchTests "test same-path replay quarantine"
+
+                /// Reads status needed while resync clears the confidence-loss boundary.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this status-only resync scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper available without changing status.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+                /// Produces a clean resync scan before same-path incremental capture resumes.
+                let cleanScan _ = Task.FromResult(List<FileSystemDifference>())
+
+                /// Applies same-path status differences after resync has completed.
+                let updateGraceStatusFromDifferences currentStatus differences _ =
+                    differences
+                    |> Seq.toArray
+                    |> should equal [| staleDifference |]
+
+                    Task.FromResult(Some currentStatus)
+
+                /// Leaves incremental status writes outside this status-only replay scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the replay quarantine test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    cleanScan
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun observations ->
+                        let observationsArray = observations |> Seq.toArray
+
+                        observationsArray
+                        |> Array.map (fun observation -> FileSystemDifference.Create observation.DifferenceType observation.EntryType observation.RelativePath)
+                        |> should equal [| staleDifference |]
+
+                        for observation in observationsArray do
+                            appendedDifferences.Add(FileSystemDifference.Create observation.DifferenceType observation.EntryType observation.RelativePath)
+
+                        Task.FromResult([| 202L |]))
+                    (fun sequences ->
+                        for sequence in sequences do
+                            advancedSequences.Add(sequence)
+
+                        Task.FromResult(202L))
+
+                Watch.OnDeleted(deletedEvent filePath)
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                appendedDifferences.ToArray()
+                |> should equal [| staleDifference |]
+
+                advancedSequences.ToArray()
+                |> should equal [| 202L |]
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests staleDifference
+                |> should equal None
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
     /// Verifies that journal append failure prevents unjournaled status application.
     [<Test>]
     let ``watch skips status application when journal append fails`` () =

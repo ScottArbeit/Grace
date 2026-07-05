@@ -1850,18 +1850,22 @@ module Watch =
     /// Reports the replay sequence queued for a difference in startup recovery tests.
     let internal tryPeekStartupReplaySequenceForWatchTests difference = tryPeekStartupReplaySequence difference
 
+    /// Removes replay metadata for one pending difference after it has reached a terminal local outcome.
+    let private clearStartupReplaySequenceForDifference (difference: FileSystemDifference) =
+        let key = pendingStatusDifferenceReplayKey difference
+        let mutable queue = Unchecked.defaultof<Queue<int64>>
+
+        if pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue) then
+            pendingStatusDifferenceReplaySequences.Remove(key)
+            |> ignore
+
     /// Consumes replay sequence metadata only after the corresponding pending status difference is cleared.
     let private clearStartupReplaySequences (differences: seq<FileSystemDifference>) =
         lock pendingStatusDifferencesLock (fun () ->
             ensureStartupReplaySequenceComparer ()
 
             for difference in differences do
-                let key = pendingStatusDifferenceReplayKey difference
-                let mutable queue = Unchecked.defaultof<Queue<int64>>
-
-                if pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue) then
-                    pendingStatusDifferenceReplaySequences.Remove(key)
-                    |> ignore)
+                clearStartupReplaySequenceForDifference difference)
 
     /// Reads the best available GraceStatus snapshot for classifying directory-create observations.
     let private readGraceStatusForDirectoryAddClassification () =
@@ -1939,7 +1943,12 @@ module Watch =
 
         let pendingDifferences =
             lock pendingStatusDifferencesLock (fun () ->
+                ensureStartupReplaySequenceComparer ()
                 let snapshot = pendingStatusDifferences.ToArray()
+
+                for pendingDifference in snapshot do
+                    clearStartupReplaySequenceForDifference pendingDifference
+
                 pendingStatusDifferences.Clear()
                 snapshot)
 
