@@ -1347,6 +1347,17 @@ module LocalStateDb =
             Rows: WatchJournalRow array
         }
 
+    /// Summarizes unresolved durable Watch journal evidence without decoding replay payloads.
+    type WatchJournalPendingWorkSummary =
+        {
+            DbPath: string
+            AppliedThroughSequence: int64
+            PendingRowCount: int64
+        }
+
+        /// Reports whether any durable Watch observation still needs status/application convergence.
+        member this.HasPendingRows = this.PendingRowCount > 0L
+
     /// Models the result of explicitly resetting only durable Watch journal state.
     type ClearWatchJournalResult =
         {
@@ -1591,6 +1602,80 @@ module LocalStateDb =
             do! ensureDbInitialized dbPath
             use connection = openConnection dbPath
             return readWatchJournalAppliedThroughSequenceInternal connection
+        }
+
+    /// Counts non-quarantined Watch journal rows that remain beyond the durable applied boundary.
+    let private countPendingWatchJournalRows (connection: SqliteConnection) appliedThroughSequence =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT COUNT(*) FROM watch_journal WHERE sequence > $applied_through AND quarantined_at_unix_ticks IS NULL;"
+
+        command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+        |> ignore
+
+        command.ExecuteScalar() |> Convert.ToInt64
+
+    /// Reads unresolved durable Watch journal evidence without repairing the database before transition checks.
+    let readWatchJournalPendingWorkSummary (dbPath: string) =
+        task {
+            let normalizedPath = Path.GetFullPath(dbPath)
+
+            if
+                not (File.Exists(normalizedPath))
+                && not (Directory.Exists(normalizedPath))
+            then
+                return { DbPath = normalizedPath; AppliedThroughSequence = 0L; PendingRowCount = 0L }
+            else
+                let missingPartialWalSidecars = missingPartialWalSidecars normalizedPath
+
+                if missingPartialWalSidecars.Length > 0 then
+                    let missingNames = String.concat ", " missingPartialWalSidecars
+
+                    raise (InvalidDataException($"Watch journal pending-work inspection requires a complete WAL sidecar set; missing: {missingNames}."))
+
+                let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
+                use connection = openReadOnlyConnection normalizedPath immutableSnapshot
+
+                let schemaVersion =
+                    try
+                        readSchemaVersionReadOnly connection
+                    with
+                    | _ -> None
+
+                if
+                    schemaVersion <> Some SchemaVersion
+                    || not (tableExists connection "watch_journal")
+                    || not (hasRequiredWatchJournalShape connection)
+                    || not (hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection)
+                then
+                    raise (
+                        InvalidDataException(
+                            "Watch journal pending-work inspection requires readable journal schema and applied-boundary metadata; run grace doctor or a writable command to repair local state."
+                        )
+                    )
+
+                let appliedThroughSequence = readWatchJournalAppliedThroughSequenceInternal connection
+                let pendingRowCount = countPendingWatchJournalRows connection appliedThroughSequence
+
+                return { DbPath = normalizedPath; AppliedThroughSequence = appliedThroughSequence; PendingRowCount = pendingRowCount }
+        }
+
+    /// Reads unresolved durable Watch journal evidence for branch transition trust checks that must fail closed.
+    let readWatchJournalPendingWorkSummaryForTransitionCheck (dbPath: string) =
+        task {
+            let normalizedPath = Path.GetFullPath(dbPath)
+
+            if
+                not (File.Exists(normalizedPath))
+                && not (Directory.Exists(normalizedPath))
+            then
+                return
+                    raise (
+                        InvalidDataException(
+                            "Watch journal pending-work inspection requires a readable local state database; the local-state database is missing."
+                        )
+                    )
+            else
+                return! readWatchJournalPendingWorkSummary normalizedPath
         }
 
     /// Reads a bounded diagnostic snapshot of the durable Watch journal.

@@ -88,6 +88,9 @@ module Watch =
     let mutable private quarantineWatchJournalSequencesForWatch =
         fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
 
+    let mutable private readWatchJournalPendingWorkSummaryForWatch =
+        fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
+
     let mutable private recordWatchLifecycleEventForWatch = fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
     /// Installs durable journal clients used by append-before-apply ordering tests.
@@ -104,6 +107,9 @@ module Watch =
     let internal setWatchJournalStartupClientsForWatchTests recoverStartup recordLifecycle =
         recoverWatchJournalForStartupForWatch <- recoverStartup
         recordWatchLifecycleEventForWatch <- recordLifecycle
+
+    /// Installs the durable journal status reader used by transition and status integration tests.
+    let internal setWatchJournalStatusClientForWatchTests readPendingWorkSummary = readWatchJournalPendingWorkSummaryForWatch <- readPendingWorkSummary
 
     /// Restores durable journal clients after tests replace append or boundary behavior.
     let internal resetWatchJournalClientsForWatchTests () =
@@ -126,6 +132,8 @@ module Watch =
 
         quarantineWatchJournalSequencesForWatch <-
             fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
+
+        readWatchJournalPendingWorkSummaryForWatch <- fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
 
         recordWatchLifecycleEventForWatch <- fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
@@ -2085,8 +2093,40 @@ module Watch =
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
-    /// Evaluates has pending watch work against parsed options and command state.
-    let private hasPendingWatchWork () =
+    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
+    let private hasPendingDurableWatchJournalEvidence () =
+        try
+            readWatchJournalPendingWorkSummaryForWatch()
+                .GetAwaiter()
+                .GetResult()
+                .HasPendingRows
+        with
+        | ex ->
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
+
+            true
+
+    /// Describes pending Watch work without merging process-local queues and durable journal evidence.
+    type private PendingWatchWorkEvidence =
+        {
+            HasProcessablePendingWork: bool
+            HasDurableWatchJournalEvidence: bool
+        }
+
+        /// Reports whether any Watch work or durable journal evidence must keep IPC dirty.
+        member this.HasPendingWork =
+            this.HasProcessablePendingWork
+            || this.HasDurableWatchJournalEvidence
+
+        /// Reports whether durable journal evidence is the only reason IPC must be dirty.
+        member this.HasDurableOnlyPendingWork =
+            this.HasDurableWatchJournalEvidence
+            && not this.HasProcessablePendingWork
+
+    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
+    let private hasProcessablePendingWatchWork () =
         isGraceWatchResyncPending ()
         || graceStatusHasChanged
         || not (
@@ -2095,6 +2135,17 @@ module Watch =
             && statusUpdateTriggers.IsEmpty
             && not (hasPendingStatusDifferences ())
         )
+
+    /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
+    let private hasPendingWatchWork () =
+        hasProcessablePendingWatchWork ()
+        || hasPendingDurableWatchJournalEvidence ()
+
+    /// Reads process-local and durable pending-work facts once for a single status publication decision.
+    let private readPendingWatchWorkEvidence () =
+        let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
+
+        { HasProcessablePendingWork = hasProcessablePendingWork; HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence () }
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -2117,6 +2168,12 @@ module Watch =
 
     /// Records the pending-work flag that the next Watch IPC snapshot should publish.
     let private setGraceWatchPendingWorkStatusFlag hasPendingWork = lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+    /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
+    let private pendingWatchWorkTransitionNeedsPublication () =
+        File.Exists(IpcFileName())
+        && lastPublishedHasPendingWatchWork
+           <> Some((readPendingWatchWorkEvidence ()).HasPendingWork)
 
     /// Returns the root BLAKE3 hash that Watch expects to see in the IPC snapshot it just published.
     let private expectedRootDirectoryBlake3Hash (status: GraceStatus) =
@@ -2173,19 +2230,38 @@ module Watch =
 
             while pendingWorkChangedDuringWrite && attempts < 2 do
                 attempts <- attempts + 1
-                let hasPendingWork = hasPendingWatchWork ()
+                let pendingEvidence = readPendingWatchWorkEvidence ()
+                let hasPendingWork = pendingEvidence.HasPendingWork
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
                 let publicationStartedAt = getCurrentInstant ()
 
+                let statusForVerification, directoryIdsForVerification =
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        GraceStatus.Default, HashSet<DirectoryVersionId>()
+                    else
+                        expectedStatus, expectedDirectoryIds
+
                 try
-                    writeSnapshot().GetAwaiter().GetResult()
-                    transitionWasPublished <- cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        let emptyDirectoryIds = HashSet<DirectoryVersionId>()
+
+                        match currentGraceWatchRuntimeMode () with
+                        | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
+                        | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds)
+                        |> fun writeTask -> writeTask.GetAwaiter().GetResult()
+                    else
+                        writeSnapshot().GetAwaiter().GetResult()
+
+                    transitionWasPublished <-
+                        cachePendingWatchWorkPublicationIfVerified statusForVerification directoryIdsForVerification hasPendingWork publicationStartedAt
                 with
                 | ex ->
                     lastPublishedHasPendingWatchWork <- None
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
-                pendingWorkChangedDuringWrite <- hasPendingWatchWork () <> hasPendingWork
+                pendingWorkChangedDuringWrite <-
+                    (readPendingWatchWorkEvidence ()).HasPendingWork
+                    <> hasPendingWork
 
             transitionWasPublished)
 
@@ -2197,7 +2273,8 @@ module Watch =
     /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
     let private publishPendingWatchWorkTransitionIfNeeded () =
         lock watchStatusPublishLock (fun () ->
-            let hasPendingWork = hasPendingWatchWork ()
+            let pendingEvidence = readPendingWatchWorkEvidence ()
+            let hasPendingWork = pendingEvidence.HasPendingWork
 
             if
                 File.Exists(IpcFileName())
@@ -2209,7 +2286,9 @@ module Watch =
                 let runtimeMode = currentGraceWatchRuntimeMode ()
 
                 let shouldPublish, statusForPublish, directoryIdsForPublish =
-                    if
+                    if pendingEvidence.HasDurableOnlyPendingWork then
+                        true, GraceStatus.Default, Some(HashSet<DirectoryVersionId>())
+                    elif
                         runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
                         && not (isGraceWatchResyncPending ())
                     then
@@ -2809,6 +2888,39 @@ module Watch =
             RootDirectoryId: DirectoryVersionId option
         }
 
+    /// Combines IPC inspection with durable journal evidence that must fail closed before status shortcuts are trusted.
+    type private WatchCheckTrustInspection =
+        {
+            Inspection: GraceWatchStatusInspection
+            DurablePendingRows: int64 option
+            DurableInspectionError: string option
+        }
+
+        /// Reports whether Watch check may advertise incremental status shortcuts.
+        member this.CanUseIncrementalStatus =
+            this.Inspection.IsUsable
+            && this.DurableInspectionError.IsNone
+            && (this.DurablePendingRows |> Option.defaultValue 0L) = 0L
+
+        /// Reports whether durable local-state evidence blocks a clean IPC snapshot.
+        member this.HasDurablePendingRows =
+            this.DurablePendingRows
+            |> Option.exists (fun pendingRows -> pendingRows > 0L)
+
+    /// Reads durable journal evidence for `watch --check` without treating a missing local-state DB as clean.
+    let private inspectWatchCheckDurableTrust (inspection: GraceWatchStatusInspection) =
+        task {
+            if inspection.IsUsable then
+                try
+                    let! pendingJournalSummary = Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+
+                    return { Inspection = inspection; DurablePendingRows = Some pendingJournalSummary.PendingRowCount; DurableInspectionError = None }
+                with
+                | ex -> return { Inspection = inspection; DurablePendingRows = None; DurableInspectionError = Some ex.Message }
+            else
+                return { Inspection = inspection; DurablePendingRows = None; DurableInspectionError = None }
+        }
+
     /// Reports whether a Watch IPC snapshot has the root identity needed by incremental status shortcuts.
     let private hasUsableRootSnapshotForCheck (status: GraceWatchStatus) =
         status.RootDirectoryId <> Guid.Empty
@@ -2821,26 +2933,38 @@ module Watch =
         && status.DirectoryIds.Count > 0
 
     /// Builds safety flags for `watch --check` after combining persisted and derived mode facts.
-    let private safetyFlagsForWatchCheck (inspection: GraceWatchStatusInspection) =
+    let private safetyFlagsForWatchCheck (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
         let flags = HashSet<string>(inspection.SafetyFlags, StringComparer.Ordinal)
 
-        if not inspection.IsUsable then
-            flags.Remove("incrementalSafe") |> ignore
+        if trustInspection.HasDurablePendingRows then
+            flags.Add("pendingWatchWork") |> ignore
 
-            if not (flags.Contains("pendingWatchWork")) then
-                flags.Add("requiresExplicitResync") |> ignore
+        if trustInspection.DurableInspectionError.IsSome then
+            flags.Add("durableJournalInspectionFailed")
+            |> ignore
+
+        if not trustInspection.CanUseIncrementalStatus then
+            flags.Remove("incrementalSafe") |> ignore
+            flags.Remove("cleanWorkingTree") |> ignore
+
+            flags.Add("requiresExplicitResync") |> ignore
 
         flags |> Seq.sort |> Seq.toArray
 
     /// Maps a Watch IPC inspection result to the stable status reason emitted to humans and agents.
-    let private watchCheckReason (inspection: GraceWatchStatusInspection) =
+    let private watchCheckReason (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
+
         match inspection.ReadError, inspection.Exists, inspection.Status, inspection.EffectiveMode with
         | Some _, _, _, _ -> "unreadableStatus"
         | None, false, _, _ -> "notRunning"
         | None, true, None, _ -> "unreadableStatus"
         | None, true, Some _, _ when not inspection.IsFresh -> "staleStatus"
         | None, true, Some status, _ when status.IsStartupClaim -> "startingUp"
-        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when inspection.IsUsable -> "running"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.DurableInspectionError.IsSome -> "durableStatusUnavailable"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.HasDurablePendingRows -> "resynchronizing"
+        | None, true, Some _, Some GraceWatchRuntimeMode.HealthyIncremental when trustInspection.CanUseIncrementalStatus -> "running"
         | None, true, Some _, Some GraceWatchRuntimeMode.Resynchronizing -> "resynchronizing"
         | None, true, Some _, Some GraceWatchRuntimeMode.Suspended -> "suspended"
         | None, true, Some _, Some GraceWatchRuntimeMode.Stopping -> "stopping"
@@ -2851,6 +2975,7 @@ module Watch =
     let private watchCheckMessage reason =
         match reason with
         | "running" -> "GraceWatch is running in HealthyIncremental mode. Incremental status shortcuts are available."
+        | "durableStatusUnavailable" -> "GraceWatch status cannot prove incremental shortcuts because durable local-state evidence could not be inspected."
         | "startingUp" -> "GraceWatch is starting and has not published a usable status snapshot yet."
         | "resynchronizing" -> "GraceWatch is resynchronizing trusted state; incremental status shortcuts are suspended until resync completes."
         | "suspended" -> "GraceWatch is suspended after confidence loss; restart watch or run an explicit resync before relying on incremental status."
@@ -2861,9 +2986,10 @@ module Watch =
         | _ -> "GraceWatch status is not ready for incremental shortcuts."
 
     /// Converts Watch IPC inspection into the public `watch --check` status payload.
-    let private toWatchCheckStatusDto (inspection: GraceWatchStatusInspection) =
+    let private toWatchCheckStatusDto (trustInspection: WatchCheckTrustInspection) =
+        let inspection = trustInspection.Inspection
         let status = inspection.Status
-        let reason = watchCheckReason inspection
+        let reason = watchCheckReason trustInspection
 
         let mode =
             inspection.EffectiveMode
@@ -2872,11 +2998,11 @@ module Watch =
 
         {
             IsRunning = inspection.IsLiveProcess
-            CanUseIncrementalStatus = inspection.IsUsable
+            CanUseIncrementalStatus = trustInspection.CanUseIncrementalStatus
             Mode = mode
             Reason = reason
             Message = watchCheckMessage reason
-            SafetyFlags = safetyFlagsForWatchCheck inspection
+            SafetyFlags = safetyFlagsForWatchCheck trustInspection
             IsFresh = inspection.IsFresh
             HasUsableRootSnapshot =
                 status
@@ -4091,7 +4217,7 @@ module Watch =
                     logToAnsiConsole
                         Colors.Error
                         $"Error in processChangedFiles resync: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
-            elif hasPendingWatchWork () then
+            elif hasProcessablePendingWatchWork () then
                 try
                     let correlationId = generateCorrelationId ()
 
@@ -4373,6 +4499,8 @@ module Watch =
                     logToAnsiConsole
                         Colors.Error
                         $"Error in processChangedFiles: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+            elif pendingWatchWorkTransitionNeedsPublication () then
+                publishPendingWatchWorkTransitionIfNeeded ()
             // Refresh the file every (just under) 5 minutes to indicate that `grace watch` is still alive.
             elif
                 graceWatchStatusUpdateTime
@@ -4638,7 +4766,7 @@ module Watch =
             let mutable attemptedStartupCompletion = false
 
             if
-                not (hasPendingWatchWork ())
+                not (hasProcessablePendingWatchWork ())
                 && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
             then
                 attemptedStartupCompletion <- true
@@ -4690,7 +4818,8 @@ module Watch =
                 try
                     if isCheckRequested parseResult then
                         let! watchStatusInspection = inspectGraceWatchStatus ()
-                        let watchCheckStatus = toWatchCheckStatusDto watchStatusInspection
+                        let! trustInspection = inspectWatchCheckDurableTrust watchStatusInspection
+                        let watchCheckStatus = toWatchCheckStatusDto trustInspection
                         raise (WatchCommandExit(renderWatchCheckStatus parseResult watchCheckStatus))
 
                     let! claimedGraceWatchStatus = tryClaimGraceWatchInterprocessFile ()

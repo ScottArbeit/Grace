@@ -2877,7 +2877,12 @@ module Branch =
         member val ReferenceId: string = String.Empty with get, set
 
     /// Defines the injected side-effect boundary for branch-switch Watch-clean preflight tests.
-    type internal BranchSwitchWatchCleanPreflightOperations = { UpdateMarkerExists: unit -> bool; InspectWatchStatus: unit -> Task<GraceWatchStatusInspection> }
+    type internal BranchSwitchWatchCleanPreflightOperations =
+        {
+            UpdateMarkerExists: unit -> bool
+            InspectWatchStatus: unit -> Task<GraceWatchStatusInspection>
+            ReadPendingJournalSummary: unit -> Task<Grace.CLI.LocalStateDb.WatchJournalPendingWorkSummary>
+        }
 
     /// Builds the branch-switch refusal reason for an untrusted Watch IPC snapshot.
     let private branchSwitchWatchCleanPreflightRefusalReason updateMarkerExists (inspection: GraceWatchStatusInspection) =
@@ -2935,6 +2940,31 @@ module Branch =
         | Some reason -> Error reason
         | None -> Ok()
 
+    /// Refuses branch switch mutation when durable Watch journal evidence cannot prove no unapplied rows exist.
+    let private validateBranchSwitchDurablePendingWorkSummary (operations: BranchSwitchWatchCleanPreflightOperations) correlationId boundaryDescription =
+        task {
+            try
+                let! pendingJournalSummary = operations.ReadPendingJournalSummary()
+
+                if pendingJournalSummary.HasPendingRows then
+                    return
+                        Error(
+                            GraceError.Create
+                                $"Branch switch refused before mutation: Grace Watch has {pendingJournalSummary.PendingRowCount} unresolved durable journal rows that have not reached the applied boundary{boundaryDescription}."
+                                correlationId
+                        )
+                else
+                    return Ok()
+            with
+            | ex ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Branch switch refused before mutation: Grace Watch durable journal pending-work evidence could not be inspected{boundaryDescription}: {ex.Message}"
+                            correlationId
+                    )
+        }
+
     /// Runs the branch-switch Watch-clean preflight without suppressing later filesystem observations.
     let internal runBranchSwitchWatchCleanPreflight (operations: BranchSwitchWatchCleanPreflightOperations) correlationId =
         task {
@@ -2950,7 +2980,7 @@ module Branch =
 
                 match validateBranchSwitchWatchCleanPreflight false inspection with
                 | Error reason -> return Error(GraceError.Create $"Branch switch refused before mutation: {reason}" correlationId)
-                | Ok () -> return Ok()
+                | Ok () -> return! validateBranchSwitchDurablePendingWorkSummary operations correlationId ""
         }
 
     /// Writes branch-switch marker content through an injectable writer so failure cleanup can be tested deterministically.
@@ -3135,9 +3165,12 @@ module Branch =
                 | Error error -> return Error error
                 | Ok () ->
                     try
-                        let! result = operation ()
-                        writeBranchSwitchUpdateMarkerCompleted updateMarkerFileName
-                        return Ok result
+                        match! validateBranchSwitchDurablePendingWorkSummary operations correlationId " after update marker creation" with
+                        | Error error -> return Error error
+                        | Ok () ->
+                            let! result = operation ()
+                            writeBranchSwitchUpdateMarkerCompleted updateMarkerFileName
+                            return Ok result
                     finally
                         if markerCreatedByThisInvocation then
                             deleteBranchSwitchUpdateMarkerIfOwned updateMarkerFileName markerText
@@ -3763,6 +3796,9 @@ module Branch =
                                         {
                                             UpdateMarkerExists = fun () -> File.Exists(workingTreeUpdateMarkerFileName)
                                             InspectWatchStatus = inspectGraceWatchStatus
+                                            ReadPendingJournalSummary =
+                                                fun () ->
+                                                    Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
                                         }
 
                                     let! workingTreeUpdateResult =
@@ -3927,7 +3963,13 @@ module Branch =
 
                 if parseResult |> verbose then printParseResult parseResult
 
-                let preflightOperations = { UpdateMarkerExists = (fun () -> File.Exists(updateMarkerFileName)); InspectWatchStatus = inspectGraceWatchStatus }
+                let preflightOperations =
+                    {
+                        UpdateMarkerExists = fun () -> File.Exists(updateMarkerFileName)
+                        InspectWatchStatus = inspectGraceWatchStatus
+                        ReadPendingJournalSummary =
+                            fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
+                    }
 
                 let! switchResult =
                     runBranchSwitchWorkflowWithLease preflightOperations (getCorrelationId parseResult) switchLeaseFileName switchLeaseText (fun () ->
