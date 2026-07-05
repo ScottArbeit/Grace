@@ -746,6 +746,17 @@ module Watch =
     let private signalRBranchSubscriptionStillTrusted trustedSubscription =
         lock signalRBranchSubscriptionLock (fun () -> signalRBranchSubscription = trustedSubscription)
 
+    /// Clears branch-scoped SignalR trust only when the failing refresh still owns the local subscription authority.
+    let private clearSignalRBranchSubscriptionIfStillTrusted trustedSubscription =
+        lock signalRBranchSubscriptionLock (fun () ->
+            if signalRBranchSubscription = trustedSubscription then
+                let generation = signalRBranchSubscription.Generation + 1L
+                signalRBranchSubscription <- emptySignalRBranchSubscription generation
+                signalRBranchSubscriptionRefreshNeededAfterTransition <- false
+                true
+            else
+                false)
+
     /// Installs the active SignalR parent-branch refresh operation used after branch identity changes.
     let private registerSignalRSubscriptionRefresh refresh =
         lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion <- refresh)
@@ -3220,16 +3231,36 @@ module Watch =
                     let parentBranchDto = returnValue.ReturnValue
 
                     if trySetSignalRBranchSubscription refreshAuthority parentBranchDto.BranchId then
-                        try
-                            do! registerCurrentBranch current.RepositoryId refreshAuthority.BranchId cancellationToken
-                            do! registerParentBranch refreshAuthority.BranchId parentBranchDto.BranchId cancellationToken
+                        let trustedSubscription =
+                            { BranchId = refreshAuthority.BranchId; ParentBranchId = parentBranchDto.BranchId; Generation = refreshAuthority.Generation }
 
-                            logToAnsiConsole
-                                Colors.Highlighted
-                                $"SignalR Hub connection state: {connectionState ()}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {connectionId ()}."
+                        try
+                            let mutable registeredParentBranch = false
+
+                            if signalRBranchSubscriptionStillTrusted trustedSubscription then
+                                do! registerCurrentBranch current.RepositoryId refreshAuthority.BranchId cancellationToken
+
+                                if signalRBranchSubscriptionStillTrusted trustedSubscription then
+                                    do! registerParentBranch refreshAuthority.BranchId parentBranchDto.BranchId cancellationToken
+                                    registeredParentBranch <- true
+                                else
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch skipped stale SignalR parent subscription registration for branch {refreshAuthority.BranchId}; current branch identity changed after current-branch registration."
+                            else
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Grace Watch skipped stale SignalR current-branch subscription registration for branch {refreshAuthority.BranchId}; current branch identity changed before hub registration."
+
+                            if registeredParentBranch then
+                                logToAnsiConsole
+                                    Colors.Highlighted
+                                    $"SignalR Hub connection state: {connectionState ()}. Listening for changes in parent branch {parentBranchDto.BranchName} ({parentBranchDto.BranchId}); connectionId: {connectionId ()}."
                         with
                         | ex ->
-                            clearSignalRBranchSubscription ()
+                            clearSignalRBranchSubscriptionIfStillTrusted trustedSubscription
+                            |> ignore
+
                             raise ex
 
                         return Ok parentBranchDto
