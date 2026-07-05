@@ -703,6 +703,32 @@ module LocalStateDb =
     /// Reports whether SQLite stored the Watch journal table as an AUTOINCREMENT sequence table.
     let private watchJournalUsesAutoincrement (connection: SqliteConnection) = tableUsesAutoincrementSequence connection "watch_journal"
 
+    /// Matches the lifecycle diagnostics invariant that no row can become replayable Watch work.
+    let private lifecycleReplayableCheckPattern =
+        Regex(
+            @"\bCHECK\s*\(\s*replayable\s*=\s*0\s*\)",
+            RegexOptions.IgnoreCase
+            ||| RegexOptions.CultureInvariant
+        )
+
+    /// Reports whether SQLite stored the lifecycle replayability constraint that keeps diagnostics terminal.
+    let private watchLifecycleReplayableColumnRejectsReplayableRows (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_lifecycle_events' LIMIT 1;"
+
+        match command.ExecuteScalar() with
+        | :? string as sql ->
+            match tryGetCreateTableColumnList sql with
+            | Some columnList ->
+                splitTopLevelSqlDeclarations columnList
+                |> Array.exists (fun declaration ->
+                    match tryReadLeadingSqlIdentifier declaration with
+                    | Some (identifier, _) when StringComparer.OrdinalIgnoreCase.Equals(identifier, "replayable") ->
+                        lifecycleReplayableCheckPattern.IsMatch(declaration)
+                    | _ -> false)
+            | None -> false
+        | _ -> false
+
     /// Adds one nullable Watch journal column when migrating v6 databases without deleting pending rows.
     let private addWatchJournalColumnIfMissing (connection: SqliteConnection) columnName columnDeclaration =
         if not (columnExists connection "watch_journal" columnName) then
@@ -906,6 +932,7 @@ module LocalStateDb =
         && hasRequiredTextColumn "message"
         && hasReplayableColumn
         && tableUsesAutoincrementSequence connection "watch_lifecycle_events"
+        && watchLifecycleReplayableColumnRejectsReplayableRows connection
 
     /// Reports whether the Watch journal contains rows that require trustworthy recovery metadata.
     let private hasWatchJournalRows (connection: SqliteConnection) =
@@ -1908,10 +1935,9 @@ module LocalStateDb =
                         normalizedWatchRoot
                         + string Path.DirectorySeparatorChar
 
-                    if
-                        String.Equals(candidatePath, normalizedWatchRoot, comparison)
-                        || candidatePath.StartsWith(rootWithSeparator, comparison)
-                    then
+                    if String.Equals(candidatePath, normalizedWatchRoot, comparison) then
+                        Some "watch root path cannot be replayed as a status difference"
+                    elif candidatePath.StartsWith(rootWithSeparator, comparison) then
                         None
                     else
                         Some "relative path escapes watch root"

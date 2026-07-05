@@ -882,6 +882,8 @@ module LocalStateDbTests =
                         configuration.GraceStatusFile
                         [
                             scopedWatchJournalObservation scope DifferenceType.Delete FileSystemEntryType.File "."
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "dir/.."
+                            scopedWatchJournalObservation scope DifferenceType.Add FileSystemEntryType.File "child/../."
                             scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.Directory "changed-directory"
                             scopedWatchJournalObservation scope DifferenceType.Delete FileSystemEntryType.File "deleted-directory/"
                             scopedWatchJournalObservation scope DifferenceType.Add FileSystemEntryType.File "file-add.txt"
@@ -894,7 +896,20 @@ module LocalStateDbTests =
                 let! recovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
 
                 sequences
-                |> should equal [| 1L; 2L; 3L; 4L; 5L; 6L; 7L; 8L |]
+                |> should
+                    equal
+                    [|
+                        1L
+                        2L
+                        3L
+                        4L
+                        5L
+                        6L
+                        7L
+                        8L
+                        9L
+                        10L
+                    |]
 
                 recovery.QuarantinedRows
                 |> Array.map (fun row -> row.Sequence, row.RelativePath, row.QuarantineReason)
@@ -902,8 +917,10 @@ module LocalStateDbTests =
                     equal
                     [|
                         1L, Some ".", Some "watch root path cannot be replayed as a status difference"
-                        2L, Some "changed-directory", Some "directory change rows are not emitted by Watch startup scan"
-                        3L, Some "deleted-directory/", Some "file replay row targets a directory-shaped path"
+                        2L, Some "dir/..", Some "watch root path cannot be replayed as a status difference"
+                        3L, Some "child/../.", Some "watch root path cannot be replayed as a status difference"
+                        4L, Some "changed-directory", Some "directory change rows are not emitted by Watch startup scan"
+                        5L, Some "deleted-directory/", Some "file replay row targets a directory-shaped path"
                     |]
 
                 recovery.CompatibleReplayRows
@@ -911,15 +928,15 @@ module LocalStateDbTests =
                 |> should
                     equal
                     [|
-                        4L, DifferenceType.Add, FileSystemEntryType.File, RelativePath "file-add.txt"
-                        5L, DifferenceType.Change, FileSystemEntryType.File, RelativePath "file-change.txt"
-                        6L, DifferenceType.Delete, FileSystemEntryType.File, RelativePath "file-delete.txt"
-                        7L, DifferenceType.Add, FileSystemEntryType.Directory, RelativePath "directory-add"
-                        8L, DifferenceType.Delete, FileSystemEntryType.Directory, RelativePath "directory-delete"
+                        6L, DifferenceType.Add, FileSystemEntryType.File, RelativePath "file-add.txt"
+                        7L, DifferenceType.Change, FileSystemEntryType.File, RelativePath "file-change.txt"
+                        8L, DifferenceType.Delete, FileSystemEntryType.File, RelativePath "file-delete.txt"
+                        9L, DifferenceType.Add, FileSystemEntryType.Directory, RelativePath "directory-add"
+                        10L, DifferenceType.Delete, FileSystemEntryType.Directory, RelativePath "directory-delete"
                     |]
 
                 let! appliedThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
-                appliedThrough |> should equal 3L
+                appliedThrough |> should equal 5L
             })
 
     /// Verifies that startup recovery quarantines malformed durable roots instead of throwing during classification.
@@ -1086,6 +1103,54 @@ module LocalStateDbTests =
 
                 let lifecycleRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_lifecycle_events;"
                 lifecycleRows |> should equal 1
+            })
+
+    /// Verifies that current-schema validation rejects lifecycle tables that allow replayable diagnostics.
+    [<Test>]
+    let ``ensureDbInitialized recreates current schema database with replayable lifecycle constraint`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_lifecycle_events;"
+
+                    executeNonQuery
+                        connection
+                        "CREATE TABLE watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, repository_id TEXT, branch_id TEXT, workspace_root TEXT, watch_root TEXT, root_directory_version_id TEXT, root_directory_blake3_hash TEXT, watch_mode TEXT, event_type TEXT NOT NULL, message TEXT NOT NULL, replayable INTEGER NOT NULL CHECK (replayable = 1));"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+                schemaVersion |> should equal "7"
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+
+                do!
+                    LocalStateDb.recordWatchLifecycleEvent
+                        configuration.GraceStatusFile
+                        { Scope = watchJournalScope configuration; EventType = "startup-replay-complete"; Message = "Lifecycle table was repaired." }
+
+                let lifecycleRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_lifecycle_events WHERE replayable = 0;"
+                lifecycleRows |> should equal 1
+
+                (fun () ->
+                    executeNonQuery
+                        connection
+                        "INSERT INTO watch_lifecycle_events (created_at_unix_ticks, event_type, message, replayable) VALUES (1, 'malformed', 'must fail', 1);")
+                |> should throw typeof<SqliteException>
             })
 
     /// Verifies that round trips status snapshot.

@@ -1071,6 +1071,11 @@ module Watch =
     /// Finds the tracked file entry that owns a repository-relative path in GraceStatus.
     let private tryFindTrackedFile (status: GraceStatus) (relativePath: RelativePath) = tryFindTrackedFileWithComparison watchPathComparison status relativePath
 
+    /// Checks whether GraceStatus already tracks a repository-relative file path.
+    let private isTrackedFile (status: GraceStatus) (relativePath: RelativePath) =
+        tryFindTrackedFile status relativePath
+        |> Option.isSome
+
     /// Checks whether GraceStatus already tracks a repository-relative directory path.
     let private isTrackedDirectory (status: GraceStatus) (relativePath: RelativePath) =
         let normalizedRelativePath = normalizeRelativePath relativePath
@@ -1764,14 +1769,17 @@ module Watch =
 
         canceledFileUpload
 
+    /// Checks whether two status differences represent the same repository path observation.
+    let private statusDifferenceMatches (left: FileSystemDifference) (right: FileSystemDifference) =
+        left.DifferenceType = right.DifferenceType
+        && left.FileSystemEntryType = right.FileSystemEntryType
+        && String.Equals(normalizeRelativePath left.RelativePath, normalizeRelativePath right.RelativePath, watchPathComparison)
+
     /// Records an already-derived filesystem difference so status application can retry without duplicating work.
     let private addPendingStatusDifference (difference: FileSystemDifference) =
         lock pendingStatusDifferencesLock (fun () ->
             if not
-               <| pendingStatusDifferences.Exists (fun (existing: FileSystemDifference) ->
-                   existing.RelativePath = difference.RelativePath
-                   && existing.DifferenceType = difference.DifferenceType
-                   && existing.FileSystemEntryType = difference.FileSystemEntryType) then
+               <| pendingStatusDifferences.Exists(fun existing -> statusDifferenceMatches existing difference) then
                 pendingStatusDifferences.Add(difference))
 
     /// Builds the stable key used to pair a startup-replayed difference with its existing journal sequence.
@@ -2493,10 +2501,7 @@ module Watch =
 
         let addIfMissing (difference: FileSystemDifference) =
             if not
-               <| merged.Exists (fun existing ->
-                   existing.RelativePath = difference.RelativePath
-                   && existing.DifferenceType = difference.DifferenceType
-                   && existing.FileSystemEntryType = difference.FileSystemEntryType) then
+               <| merged.Exists(fun existing -> statusDifferenceMatches existing difference) then
                 merged.Add(difference)
 
         for difference in first do
@@ -2506,12 +2511,6 @@ module Watch =
             addIfMissing difference
 
         merged
-
-    /// Checks whether two status differences represent the same repository path observation.
-    let private statusDifferenceMatches (left: FileSystemDifference) (right: FileSystemDifference) =
-        left.DifferenceType = right.DifferenceType
-        && left.FileSystemEntryType = right.FileSystemEntryType
-        && String.Equals(normalizeRelativePath left.RelativePath, normalizeRelativePath right.RelativePath, watchPathComparison)
 
     /// Checks whether a difference came from uploaded file work that newer event-derived upload state can supersede.
     let private isUploadedFileAddOrChangeDifference (difference: FileSystemDifference) =
@@ -4279,7 +4278,7 @@ module Watch =
             |> ignore
 
     /// Classifies compatible durable replay rows against current startup scan applicability before status mutation.
-    let private tryStartupReplayRetirementReason (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay) =
+    let private tryStartupReplayRetirementReason (status: GraceStatus) (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay) =
         let fullPath = Path.Combine(Current().RootDirectory, $"{row.RelativePath}")
 
         match row.EntryType, row.DifferenceType, finalPathKind row.RelativePath with
@@ -4289,6 +4288,14 @@ module Watch =
           FinalPathFile ->
             if shouldIgnoreFile fullPath then
                 Some "current startup replay file content ignored before status application"
+            elif row.DifferenceType = DifferenceType.Add
+                 && isTrackedFile status row.RelativePath then
+                Some "startup replay file add already tracked"
+            elif
+                row.DifferenceType = DifferenceType.Change
+                && not (isTrackedFile status row.RelativePath)
+            then
+                Some "startup replay file change is not tracked"
             else
                 None
         | FileSystemEntryType.File,
@@ -4297,10 +4304,16 @@ module Watch =
           (FinalPathMissing
           | FinalPathDirectory) -> Some "stale startup replay file content missing before status application"
         | FileSystemEntryType.File, DifferenceType.Delete, FinalPathDirectory -> Some "startup replay file delete now targets a directory"
-        | FileSystemEntryType.File, DifferenceType.Delete, _ -> None
+        | FileSystemEntryType.File, DifferenceType.Delete, _ ->
+            if isTrackedFile status row.RelativePath then
+                None
+            else
+                Some "startup replay file delete is not tracked"
         | FileSystemEntryType.Directory, DifferenceType.Add, FinalPathDirectory ->
             if shouldIgnoreDirectory fullPath then
                 Some "current startup replay directory ignored before status application"
+            elif isTrackedDirectory status row.RelativePath then
+                Some "startup replay directory add already tracked"
             else
                 None
         | FileSystemEntryType.Directory,
@@ -4309,7 +4322,11 @@ module Watch =
           | FinalPathFile) -> Some "stale startup replay directory missing before status application"
         | FileSystemEntryType.Directory, DifferenceType.Change, _ -> Some "directory change rows are not emitted by Watch startup scan"
         | FileSystemEntryType.Directory, DifferenceType.Delete, FinalPathFile -> Some "startup replay directory delete now targets a file"
-        | FileSystemEntryType.Directory, DifferenceType.Delete, _ -> None
+        | FileSystemEntryType.Directory, DifferenceType.Delete, _ ->
+            if isTrackedDirectory status row.RelativePath then
+                None
+            else
+                Some "startup replay directory delete is not tracked"
 
     /// Records a startup lifecycle event as diagnostics that cannot be replayed as Watch correctness data.
     let private recordStartupLifecycleEvent status eventType message =
@@ -4331,7 +4348,7 @@ module Watch =
 
             let startupReplayClassifications =
                 recovery.CompatibleReplayRows
-                |> Array.map (fun row -> row, tryStartupReplayRetirementReason row)
+                |> Array.map (fun row -> row, tryStartupReplayRetirementReason status row)
 
             let retiredReplayRows =
                 startupReplayClassifications
@@ -4372,6 +4389,21 @@ module Watch =
                         | "startup replay directory delete now targets a file" ->
                             "startup-directory-delete-replay-retired",
                             $"Startup replay retired directory delete row {row.Sequence} because the current path is a file."
+                        | "startup replay file add already tracked" ->
+                            "startup-tracked-file-add-replay-retired",
+                            $"Startup replay retired file add row {row.Sequence} because GraceStatus already tracks that file."
+                        | "startup replay file change is not tracked" ->
+                            "startup-untracked-file-change-replay-retired",
+                            $"Startup replay retired file change row {row.Sequence} because GraceStatus does not track that file."
+                        | "startup replay file delete is not tracked" ->
+                            "startup-untracked-file-delete-replay-retired",
+                            $"Startup replay retired file delete row {row.Sequence} because GraceStatus does not track that file."
+                        | "startup replay directory add already tracked" ->
+                            "startup-tracked-directory-add-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because GraceStatus already tracks that directory."
+                        | "startup replay directory delete is not tracked" ->
+                            "startup-untracked-directory-delete-replay-retired",
+                            $"Startup replay retired directory delete row {row.Sequence} because GraceStatus does not track that directory."
                         | _ -> "startup-replay-retired", $"Startup replay retired row {row.Sequence} because current startup rules would not apply it."
 
                     do! recordStartupLifecycleEvent status lifecycleEventType lifecycleMessage
