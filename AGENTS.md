@@ -52,6 +52,10 @@ When implementing an epic, always use an explicit epic integration branch. Creat
 sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as
 the production release candidate. Do not use direct-to-`main` epic slices. Ensure CI or recorded validation covers PRs
 targeting `epic/**` before relying on the integration branch flow.
+For top-level epics split into mini-epics, each mini-epic gets its own integration branch. Route leaf pull requests to
+their mini-epic integration branches, then merge each mini-epic integration branch into the parent epic integration
+branch. For Operations, leaf pull requests target their WS mini-epic branches and WS mini-epic pull requests target
+`epic/554-grace-operations`.
 Every pull request must link its related GitHub issue in the PR body. When a PR targets the default branch and should
 close an issue, use one of GitHub's supported closing keywords: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`,
 `resolve`, `resolves`, or `resolved`. Use `docs/Development process.md` for default-branch versus epic-branch wording
@@ -123,7 +127,8 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then wait for
   Codex Code Review Bot to review the refreshed PR head. A bot signal on a stale commit does not satisfy the completion
   gate. For sub-issue PRs targeting an epic integration branch, run that freshness gate against the current epic branch;
-  for the final epic-to-`main` PR, run it against current `origin/main`.
+  for mini-epic integration branch PRs, run it against the current parent epic branch; for the final epic-to-`main` PR,
+  run it against current `origin/main`.
 - Commit after each completed slice and keep pull requests focused and reviewable.
 - When acting as the main implementation orchestrator, delegate each coding task and each fix task to a fresh worker
   subagent. The main orchestrator must not implement, repair, inspect or validate code fixes as a substitute for the
@@ -165,6 +170,31 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   even if GitHub still maps the thread onto the current diff. Do not assign workers, make code changes, or post fix
   evidence for stale findings; close them only as stale when the maintainer directs that disposition, and say that no
   code change addressed them.
+- For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
+  assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
+  defer it only after that future issue already exists or is created, the issue records the exact finding, invariant,
+  and proof obligation, and the PR reply and `Review Status` name that future issue before resolving the conversation.
+  Do not broaden the current PR to absorb that future scope. Update the future sibling issue's detail gate before
+  assigning it when the finding reveals missing acceptance criteria, adversarial cases, or risk-surface traps.
+- Do not defer a finding to a future leaf issue when it challenges the current leaf's trust contract. If later leaves
+  consume a fact, authority signal, persisted field, status flag, or trust predicate produced by the current leaf, the
+  current leaf owns making that surface reliable before merge.
+- Track substantive Codex Code Review Bot cycles. A substantive cycle is a latest-head behavior, correctness,
+  concurrency, recovery, durability, authority, contract, or maintainability finding, followed by a worker fix, followed
+  by another substantive latest-head finding. Do not count duplicate findings, stale findings from previous review
+  passes whether resolved or unresolved, formatting-only comments, administrative comments, CI flakes, invalid findings,
+  or maintainer-accepted deferrals.
+- Use repeated-review stabilization thresholds: after the first substantive cycle, continue the normal fix loop; after
+  the second cycle, add a short repeated-theme prevention note to `Review Status`; after the third cycle, stop one-off
+  patching and post a review stabilization ledger to the issue and PR before assigning more fix work; after the fourth
+  cycle, hard stop until the ledger is implemented, proven, and self-reviewed.
+- Start the stabilization pass after two substantive cycles for high-risk surfaces, including Watch state, IPC/status
+  contracts, branch-switch safety, local working-tree mutation, runtime timers, storage, actors, retries,
+  idempotency, authorization, public contracts, persisted shapes, concurrency, recovery, or side-effect ordering.
+- If a pull request has more than three Codex Code Review Bot review sessions even without three counted substantive
+  cycles, pause before assigning another routine fix worker. Audit the review timeline, separate stale/duplicate/invalid
+  sessions from fresh findings, and decide whether the issue needs a missing invariant, sibling-issue deferral, or
+  structural stabilization ledger before the next review request.
 - Serialize review-fix workers for a single Grace pull request unless the completed latest-head review contains multiple
   fresh findings with provably disjoint write sets. Do not overlap workers that touch the same branch, files, tests, or
   review surface. After a fix worker pushes, reply to and resolve only the fresh findings it addressed, update

@@ -30,6 +30,10 @@ Re-read these files during the current session before relying on older memory or
 - When implementing an epic, always use an explicit `epic-integration-branch`. Create
   `epic/<parent-issue>-<short-slug>` from `origin/main`, route sub-issue pull requests to that branch, and use the
   final epic-to-`main` pull request as the production release candidate. Do not use direct-to-`main` epic slices.
+- For top-level epics split into mini-epics, each mini-epic gets its own integration branch. Route leaf pull requests to
+  their mini-epic integration branches, then merge each mini-epic integration branch into the parent epic integration
+  branch. For Operations, leaf pull requests target their WS mini-epic branches and WS mini-epic pull requests target
+  `epic/554-grace-operations`.
 - Before assigning a sub-issue, require the minimum detail gate:
   - invariant tuple
   - forbidden implementation shapes
@@ -69,7 +73,9 @@ preparatory compile-item or file-scaffold slice before later branches edit separ
 For standalone non-epic issues, create issue branches from `origin/main` and target pull requests to `main`. For epics,
 create `epic/<parent-issue>-<short-slug>` from `origin/main`, create sub-issue branches from the current
 `origin/epic/...`, target sub-issue PRs to the epic branch, and use the final epic-to-`main` PR as the production
-release candidate. Keep the epic branch refreshed from `origin/main`; ensure CI validates PRs targeting `epic/**`, or
+release candidate. For mini-epic topologies, create one integration branch per mini-epic, create leaf branches from the
+current mini-epic branch, target leaf PRs to that branch, and target the mini-epic PR to its parent epic integration
+branch. Keep each integration branch refreshed from its parent branch; ensure CI validates PRs targeting `epic/**`, or
 record the CI gap and required local validation before assigning workers.
 
 ## Orchestration And Review
@@ -105,6 +111,30 @@ When acting as the main implementation orchestrator, follow the repo policy:
   worker subagent. After the worker hands off, the orchestrator replies to the bot comment with the fix commit and
   validation evidence, includes the prevention line from `docs/Development process.md`, resolves the conversation,
   updates `Review Status`, and waits for the next bot review.
+
+Repeated review cycles need structural handling, not endless one-off fixes:
+
+- A substantive cycle is a fresh latest-head behavior, correctness, concurrency, recovery, durability, authority,
+  contract, or maintainability finding, followed by a worker fix, followed by another substantive latest-head finding.
+- Do not count stale threads from previous review passes whether resolved or unresolved, duplicates, formatting-only
+  comments, administrative comments, CI flakes, invalid findings, or maintainer-accepted deferrals.
+- After one substantive cycle, continue the normal fix loop. After two, add a repeated-theme prevention note to
+  `Review Status`. After three, pause one-off fixes and post a stabilization ledger to the issue and PR. After four,
+  hard stop until the ledger is implemented, proven, and self-reviewed.
+- Start stabilization after two substantive cycles for high-risk surfaces such as Watch state, IPC/status contracts,
+  branch-switch safety, storage, actors, authorization, public contracts, persisted shapes, concurrency, recovery, or
+  side-effect ordering.
+- Count each completed Codex Code Review Bot pass on a distinct PR head as a review session, including no-issues
+  outcomes and finding-producing reviews. Do not count CI reruns, repeated status checks, or unresolved stale threads
+  without a new completed bot pass.
+- If a PR has more than three Codex Code Review Bot review sessions even without three counted substantive cycles,
+  audit the timeline before assigning another routine fix worker. Decide whether the issue is missing invariants,
+  needs a future leaf deferral, or requires a structural ledger before the next review request.
+- In an epic-branch PR, a valid finding may be resolved as future work only when it is explicitly outside the current
+  leaf, the future issue already exists or is created first, the future issue body receives the exact finding,
+  invariant, and proof obligation, the PR reply names the future issue, and `Review Status` records the deferral.
+- Do not defer prerequisites that make the current leaf trustworthy. If later leaves consume a fact, authority signal,
+  persisted field, status flag, or trust predicate produced by the current leaf, the current leaf owns that reliability.
 
 If subagent tools are unavailable or cannot be used under the active tool policy, state that limitation and preserve the
 rest of the Grace workflow as far as possible.
@@ -147,9 +177,10 @@ rule: formatting or freshness checks first, then one final build/test gate.
 
 Before the Grace completion review gate, update the branch against its required base: current `origin/main` for
 standalone non-epic issue branches, current `origin/epic/...` for sub-issue branches targeting an epic integration
-branch, and current `origin/main` for the final epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that
-no unexpected deletions are present, run the chosen validation gate, then wait for Codex Code Review Bot on the
-refreshed PR head. A bot reaction or comment on a stale commit does not satisfy completion.
+branch, the current parent epic branch for mini-epic integration branch PRs, and current `origin/main` for the final
+epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that no unexpected deletions are present, run the
+chosen validation gate, then wait for Codex Code Review Bot on the refreshed PR head. A bot reaction or comment on a
+stale commit does not satisfy completion.
 
 ## Merge Cleanup
 

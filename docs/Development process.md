@@ -229,14 +229,23 @@ current `origin/epic/<parent-issue>-<short-slug>`, and sub-issue pull requests t
 is an integration branch, not a production deployment branch. The final ready-for-review pull request from the epic
 branch to `main` is the production release candidate for the epic.
 
+When a top-level epic is split into mini-epics, each mini-epic must have its own integration branch. Leaf issue branches
+start from and target the current mini-epic integration branch. Mini-epic integration branches start from and merge into
+the parent epic integration branch. For Operations, leaf pull requests target their WS mini-epic branches, and WS
+mini-epic pull requests target `epic/554-grace-operations`.
+
 When using an epic integration branch:
 
 - Keep the parent issue DAG, checklist, and merge strategy clear about which sub-issues target the epic branch.
 - Keep the epic branch refreshed from `origin/main`, especially before later sub-issue waves and before the final
   epic-to-`main` pull request.
+- Keep mini-epic integration branches refreshed from their current parent epic branch. A mini-epic integration pull
+  request targets the parent epic branch, so its completion gate validates against that branch, not `origin/main`.
 - Ensure CI validates pull requests targeting `epic/**`, or record the CI gap and required local validation in the
   parent issue before assigning workers.
 - Treat each sub-issue as complete when it is reviewed, validated, merged to the epic branch, and cleaned up.
+- Treat each mini-epic as complete when its integration pull request is reviewed, validated against the current parent
+  epic branch, merged to that parent epic branch, and cleaned up.
 - Treat the epic as complete only after the final epic-to-`main` pull request is reviewed, validated against current
   `origin/main`, merged to `main`, and cleaned up.
 - Make sure every sub-issue pull request links to its sub-issue in the pull request body. Use non-closing wording for
@@ -602,6 +611,13 @@ the latest head commit, then classify findings before assigning any fix worker.
 - Do not assign a worker, edit code, or post fix evidence for stale findings. When the maintainer directs stale
   findings to be closed, reply with a stale disposition, say that no code change addressed the thread, resolve it, and
   keep the current action set limited to fresh latest-review findings.
+- For epic-branch pull requests, also classify each fresh latest-review finding against the current leaf issue's scope.
+  If a finding is valid but explicitly belongs to a named future leaf issue in the same epic, the orchestrator may
+  reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
+  and avoid assigning a fix worker for that item only after the future issue exists and its body records the exact
+  finding, invariant, and proof obligation. Do not broaden the current pull request to absorb future-leaf scope. If the
+  finding exposes missing acceptance criteria, adversarial cases, or risk-surface traps, update the future sibling
+  issue's detail gate before resolving the current review conversation or assigning that future work.
 - If the bot has acknowledged the current head with 👀 but has not yet submitted its completed review or no-issues
   result, continue waiting. Do not infer the action set from early inline threads.
 
@@ -714,6 +730,87 @@ The review loop is blocking:
 
 Only after Codex Code Review Bot reports no issues for the latest commit can the task continue toward merge readiness,
 handoff, or any other completion step. Record the final bot no-issues state and validation evidence in the pull request.
+
+### Repeated Review Stabilization
+
+Count substantive Codex Code Review Bot cycles for every Grace pull request. A substantive cycle is:
+
+1. Codex reports one or more behavior, correctness, concurrency, recovery, durability, authority, contract, or
+   maintainability findings.
+2. A worker pushes a fix commit or fix series.
+3. Codex reports another substantive finding on the new head.
+
+Do not count duplicate findings, stale findings from any previous review pass, formatting-only comments, administrative
+comments, CI flakes, findings the maintainer explicitly classifies as invalid, or findings the maintainer accepts as
+deferred to a named future issue. A previous-pass finding is stale for cycle counting when the latest completed
+current-head review does not repeat it, whether or not the old GitHub conversation has already been resolved.
+
+Use these thresholds:
+
+- **Cycle 1:** continue the normal review-fix loop.
+- **Cycle 2:** continue, but add a short prevention note to `Review Status` naming any repeated theme.
+- **Cycle 3:** pause one-off fixing and start a stabilization pass before assigning more routine fix work.
+- **Cycle 4:** hard stop. Do not assign another routine fix worker or request another review until the stabilization
+  ledger is implemented, proven, and self-reviewed.
+
+Start stabilization after **two substantive cycles** when the pull request touches a high-risk surface:
+
+- Watch state, IPC/status contracts, branch-switch safety, local working-tree mutation, or runtime timers
+- storage, CAS, manifests, object placement, cleanup, or reference accounting
+- Orleans actor state, idempotency, replay, retries, or reminders
+- authorization, ownership, tenant or repository scope, secrets, or token authority
+- public DTOs, CLI contracts, OpenAPI, SDK behavior, serialized events, or persisted shapes
+- concurrency, TOCTOU windows, partial failure, recovery, or side-effect ordering
+
+Treat each completed Codex Code Review Bot pass on a distinct PR head as a review session, whether the outcome is a
+no-issues 👍🏻 reaction, a top-level finding, inline review-thread findings, or a mix of stale and fresh comments. A
+manual missed-ack trigger that causes the bot to review the same head also counts as a session; repeated status checks,
+CI reruns, or unresolved stale threads without a new completed bot pass do not.
+
+If a pull request has more than three Codex Code Review Bot review sessions, audit the review timeline before assigning
+another routine fix worker even when not every session counts as a substantive cycle. The audit should separate stale,
+duplicate, invalid, deferred, and no-issue sessions from fresh findings, then decide whether the PR needs a missing
+invariant, a sibling-issue deferral, or a structural stabilization ledger before the next review request.
+
+During a stabilization pass, the orchestrator must:
+
+- collect a concise review timeline and group findings by missing invariant, not only by review order;
+- decide whether each fresh finding belongs to the current issue or to a named future leaf issue;
+- post a Review Stabilization Ledger to the issue and pull request;
+- freeze one-off review-fix workers until the ledger is the acceptance target;
+- assign one structural fix worker when code changes are needed;
+- require a final self-review mapping every ledger invariant to code and proof.
+
+If a review finding is clearly owned by a future leaf issue in the same epic, the orchestrator may resolve it without a
+fix worker only when all of these are true:
+
+- the finding is about behavior explicitly out of scope for the current leaf;
+- the future issue already exists or is created before resolution;
+- the future issue body is updated with the exact finding, invariant, and proof obligation;
+- the PR reply names the future issue and explains why the current PR must not implement it;
+- the PR `Review Status` records the deferral.
+
+Do not defer prerequisites that make the current leaf's contract trustworthy. If later leaves consume a fact, authority
+signal, persisted field, status flag, or trust predicate produced by the current leaf, then the current leaf owns making
+that surface reliable.
+
+After stabilization starts, the worker handoff must include a status map:
+
+| Invariant | Status | Code seam | Test/proof seam | Residual risk |
+| --------- | ------ | --------- | --------------- | ------------- |
+| `<ledger invariant>` | `<allowed status>` | `<file/function>` | `<test or validation>` | `<risk or none>` |
+
+Allowed statuses are only:
+
+- `implemented and proven`
+- `implemented but proof incomplete`
+- `waived`, with reason
+- `out of scope`, with reason
+- `not applicable`, with reason
+
+Do not request another Codex review until every unresolved current-head finding is fixed, waived, or explicitly
+deferred to a named future issue; the status map is present; focused tests and the selected validation gate passed; and
+residual risks are recorded in the pull request.
 
 ### Ready For Review Handoff
 
@@ -922,6 +1019,7 @@ Before the Grace completion review gate, update the branch against its required 
 
 - standalone non-epic issue branch: current `origin/main`
 - sub-issue branch targeting an epic integration branch: current `origin/epic/<parent-issue>-<short-slug>`
+- mini-epic integration branch targeting a parent epic branch: current parent epic branch
 - final epic-to-`main` branch: current `origin/main`
 
 Then verify:
