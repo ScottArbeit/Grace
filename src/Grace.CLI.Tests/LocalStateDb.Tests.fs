@@ -833,6 +833,80 @@ module LocalStateDbTests =
                 |> should equal LocalStateDb.WatchJournalRowState.Pending
             })
 
+    /// Verifies that startup recovery quarantines persisted relative paths that would escape the watch root.
+    [<Test>]
+    let ``watch journal startup recovery quarantines relative paths that escape watch root`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = watchJournalScope configuration
+
+                let! sequences =
+                    LocalStateDb.appendWatchJournalObservations
+                        configuration.GraceStatusFile
+                        [
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "../outside.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "dir/../../outside.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "src/app.fs"
+                        ]
+
+                let! recovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
+
+                sequences |> should equal [| 1L; 2L; 3L |]
+
+                recovery.QuarantinedRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some "../outside.txt", Some "relative path escapes watch root"
+                        2L, Some "dir/../../outside.txt", Some "relative path escapes watch root"
+                    |]
+
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath)
+                |> should equal [| 3L, RelativePath "src/app.fs" |]
+
+                let! appliedThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                appliedThrough |> should equal 2L
+            })
+
+    /// Verifies that startup recovery quarantines malformed durable roots instead of throwing during classification.
+    [<Test>]
+    let ``watch journal startup recovery quarantines malformed durable roots`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = watchJournalScope configuration
+                let malformedRoot = "malformed" + string (char 0)
+                let malformedWorkspace = { scope with WorkspaceRoot = malformedRoot }
+                let malformedWatchRoot = { scope with WatchRoot = malformedRoot }
+
+                let! sequences =
+                    LocalStateDb.appendWatchJournalObservations
+                        configuration.GraceStatusFile
+                        [
+                            scopedWatchJournalObservation malformedWorkspace DifferenceType.Change FileSystemEntryType.File "workspace.txt"
+                            scopedWatchJournalObservation malformedWatchRoot DifferenceType.Change FileSystemEntryType.File "watch-root.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "compatible.txt"
+                        ]
+
+                let! recovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
+
+                sequences |> should equal [| 1L; 2L; 3L |]
+
+                recovery.QuarantinedRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some "workspace.txt", Some "invalid workspace root"
+                        2L, Some "watch-root.txt", Some "invalid watch root"
+                    |]
+
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath)
+                |> should equal [| 3L, RelativePath "compatible.txt" |]
+            })
+
     /// Verifies that startup recovery quarantines rows from stale identity scopes and retires only contiguous failures.
     [<Test>]
     let ``watch journal startup recovery quarantines incompatible identity rows`` () =
@@ -917,6 +991,49 @@ module LocalStateDbTests =
 
                 executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
                 |> should equal 0
+            })
+
+    /// Verifies that current-schema initialization recreates malformed lifecycle tables before inserts trust them.
+    [<Test>]
+    let ``ensureDbInitialized recreates current schema database with malformed watch lifecycle table`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let ticks = 1234567890L
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId "root-sha" "root-blake3" ticks
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "DROP TABLE watch_lifecycle_events;"
+                    executeNonQuery connection "CREATE TABLE watch_lifecycle_events (sequence INTEGER PRIMARY KEY AUTOINCREMENT);"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+
+                let lifecycleColumns = executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('watch_lifecycle_events');"
+
+                schemaVersion |> should equal "7"
+                lifecycleColumns |> should equal 12
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+
+                do!
+                    LocalStateDb.recordWatchLifecycleEvent
+                        configuration.GraceStatusFile
+                        { Scope = watchJournalScope configuration; EventType = "startup-replay-complete"; Message = "Lifecycle table was repaired." }
+
+                let lifecycleRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_lifecycle_events;"
+                lifecycleRows |> should equal 1
             })
 
     /// Verifies that round trips status snapshot.

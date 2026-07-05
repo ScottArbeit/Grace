@@ -1812,8 +1812,8 @@ module Watch =
     /// Remembers a row appended during deferred replay so the next retry does not append it again.
     let private rememberDeferredStartupReplaySequence sequence (difference: FileSystemDifference) = recordStartupReplaySequence false sequence difference
 
-    /// Reads the existing startup replay sequence for a difference that should not be appended again.
-    let private tryPeekStartupReplaySequence (difference: FileSystemDifference) =
+    /// Reads the existing startup replay sequences for a difference that should not be appended again.
+    let private startupReplaySequencesForDifference (difference: FileSystemDifference) =
         lock pendingStatusDifferencesLock (fun () ->
             ensureStartupReplaySequenceComparer ()
             let key = pendingStatusDifferenceReplayKey difference
@@ -1823,9 +1823,15 @@ module Watch =
                 pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue)
                 && queue.Count > 0
             then
-                Some(queue.Peek())
+                queue.ToArray()
             else
-                None)
+                Array.empty<int64>)
+
+    /// Reads the first existing startup replay sequence for tests that assert duplicate append prevention.
+    let private tryPeekStartupReplaySequence (difference: FileSystemDifference) =
+        match startupReplaySequencesForDifference difference with
+        | [||] -> None
+        | sequences -> Some sequences[0]
 
     /// Reports the replay sequence queued for a difference in startup recovery tests.
     let internal tryPeekStartupReplaySequenceForWatchTests difference = tryPeekStartupReplaySequence difference
@@ -1839,15 +1845,9 @@ module Watch =
                 let key = pendingStatusDifferenceReplayKey difference
                 let mutable queue = Unchecked.defaultof<Queue<int64>>
 
-                if
-                    pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue)
-                    && queue.Count > 0
-                then
-                    queue.Dequeue() |> ignore
-
-                    if queue.Count = 0 then
-                        pendingStatusDifferenceReplaySequences.Remove(key)
-                        |> ignore)
+                if pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue) then
+                    pendingStatusDifferenceReplaySequences.Remove(key)
+                    |> ignore)
 
     /// Reads the best available GraceStatus snapshot for classifying directory-create observations.
     let private readGraceStatusForDirectoryAddClassification () =
@@ -4030,7 +4030,7 @@ module Watch =
                                             try
                                                 let startupReplaySequences =
                                                     statusDifferencesForApply.Applicable
-                                                    |> Seq.choose tryPeekStartupReplaySequence
+                                                    |> Seq.collect startupReplaySequencesForDifference
                                                     |> Seq.toArray
 
                                                 let differencesNeedingJournalAppend =
@@ -4108,7 +4108,7 @@ module Watch =
 
                             let resolvedStartupReplaySequences =
                                 statusDifferencesForApply.Resolved
-                                |> Seq.choose tryPeekStartupReplaySequence
+                                |> Seq.collect startupReplaySequencesForDifference
                                 |> Seq.toArray
 
                             appendedWatchJournalSequences <- combineWatchJournalSequences appendedWatchJournalSequences resolvedStartupReplaySequences

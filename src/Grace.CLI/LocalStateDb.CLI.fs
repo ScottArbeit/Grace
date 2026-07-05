@@ -686,15 +686,22 @@ module LocalStateDb =
                 | _ -> false)
         | None -> false
 
-    /// Reports whether SQLite stored the Watch journal table as an AUTOINCREMENT sequence table.
-    let private watchJournalUsesAutoincrement (connection: SqliteConnection) =
+    /// Reports whether SQLite stored a local-state table as an AUTOINCREMENT sequence table.
+    let private tableUsesAutoincrementSequence (connection: SqliteConnection) tableName =
         use command = connection.CreateCommand()
-        command.CommandText <- "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = 'watch_journal' LIMIT 1;"
+        command.CommandText <- "SELECT sql FROM sqlite_master WHERE type = 'table' AND name = $table_name LIMIT 1;"
+
+        command.Parameters.AddWithValue("$table_name", tableName)
+        |> ignore
+
         let value = command.ExecuteScalar()
 
         match value with
         | :? string as sql -> createSqlDeclaresSequenceAutoincrement sql
         | _ -> false
+
+    /// Reports whether SQLite stored the Watch journal table as an AUTOINCREMENT sequence table.
+    let private watchJournalUsesAutoincrement (connection: SqliteConnection) = tableUsesAutoincrementSequence connection "watch_journal"
 
     /// Adds one nullable Watch journal column when migrating v6 databases without deleting pending rows.
     let private addWatchJournalColumnIfMissing (connection: SqliteConnection) columnName columnDeclaration =
@@ -811,6 +818,94 @@ module LocalStateDb =
         && hasOptionalIntegerColumn "quarantined_at_unix_ticks"
         && hasOptionalTextColumn "quarantine_reason"
         && watchJournalUsesAutoincrement connection
+
+    /// Verifies that lifecycle diagnostics can be inserted without trusting a malformed existing table.
+    let private hasRequiredWatchLifecycleEventShape (connection: SqliteConnection) =
+        let columns = readTableColumnShapes connection "watch_lifecycle_events"
+
+        let expectedColumnNames =
+            [|
+                "sequence"
+                "created_at_unix_ticks"
+                "repository_id"
+                "branch_id"
+                "workspace_root"
+                "watch_root"
+                "root_directory_version_id"
+                "root_directory_blake3_hash"
+                "watch_mode"
+                "event_type"
+                "message"
+                "replayable"
+            |]
+
+        let tryFindColumn columnName =
+            columns
+            |> Array.tryFind (fun column -> StringComparer.OrdinalIgnoreCase.Equals(column.Name, columnName))
+
+        let hasExpectedColumnSet =
+            columns.Length = expectedColumnNames.Length
+            && expectedColumnNames
+               |> Array.forall (fun columnName -> tryFindColumn columnName |> Option.isSome)
+
+        let hasSequenceColumn =
+            match tryFindColumn "sequence" with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && column.PrimaryKeyOrdinal = 1
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
+        let hasCreatedAtColumn =
+            match tryFindColumn "created_at_unix_ticks" with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
+        let hasOptionalTextColumn columnName =
+            match tryFindColumn columnName with
+            | Some column ->
+                isTextColumnType column.TypeName
+                && not column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
+        let hasRequiredTextColumn columnName =
+            match tryFindColumn columnName with
+            | Some column ->
+                isTextColumnType column.TypeName
+                && column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
+        let hasReplayableColumn =
+            match tryFindColumn "replayable" with
+            | Some column ->
+                isIntegerColumnType column.TypeName
+                && column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
+        hasExpectedColumnSet
+        && hasSequenceColumn
+        && hasCreatedAtColumn
+        && hasOptionalTextColumn "repository_id"
+        && hasOptionalTextColumn "branch_id"
+        && hasOptionalTextColumn "workspace_root"
+        && hasOptionalTextColumn "watch_root"
+        && hasOptionalTextColumn "root_directory_version_id"
+        && hasOptionalTextColumn "root_directory_blake3_hash"
+        && hasOptionalTextColumn "watch_mode"
+        && hasRequiredTextColumn "event_type"
+        && hasRequiredTextColumn "message"
+        && hasReplayableColumn
+        && tableUsesAutoincrementSequence connection "watch_lifecycle_events"
 
     /// Reports whether the Watch journal contains rows that require trustworthy recovery metadata.
     let private hasWatchJournalRows (connection: SqliteConnection) =
@@ -1301,6 +1396,7 @@ module LocalStateDb =
         && tableExists connection "watch_journal"
         && tableExists connection "watch_lifecycle_events"
         && hasRequiredWatchJournalShape connection
+        && hasRequiredWatchLifecycleEventShape connection
         && hasValidWatchJournalAppliedThroughSequenceMeta connection
 
     /// Evaluates has empty writable status blake3 rows against parsed options and command state.
@@ -1760,23 +1856,67 @@ module LocalStateDb =
         | _ -> None
 
     /// Normalizes filesystem roots stored in journal identity fields before comparing startup compatibility.
-    let private normalizeWatchJournalRoot value =
-        if String.IsNullOrWhiteSpace(value) then
-            String.Empty
-        else
-            Path
-                .GetFullPath(value)
-                .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+    let private tryNormalizeWatchJournalRoot value =
+        try
+            if String.IsNullOrWhiteSpace(value) then
+                Ok String.Empty
+            else
+                Ok(
+                    Path
+                        .GetFullPath(value)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+                )
+        with
+        | ex -> Error ex.Message
 
     /// Uses platform path rules when comparing workspace and watch roots from durable journal rows.
-    let private watchJournalRootEquals expected actual =
+    let private tryWatchJournalRootEquals expected actual =
         let comparison =
             if OperatingSystem.IsWindows() then
                 StringComparison.OrdinalIgnoreCase
             else
                 StringComparison.Ordinal
 
-        String.Equals(normalizeWatchJournalRoot expected, normalizeWatchJournalRoot actual, comparison)
+        match tryNormalizeWatchJournalRoot expected, tryNormalizeWatchJournalRoot actual with
+        | Ok normalizedExpected, Ok normalizedActual -> Ok(String.Equals(normalizedExpected, normalizedActual, comparison))
+        | Error reason, _
+        | _, Error reason -> Error reason
+
+    /// Rejects persisted relative paths that would escape the current watch root during replay.
+    let private tryFindWatchJournalRelativePathIncompatibility watchRoot relativePath =
+        try
+            if String.IsNullOrWhiteSpace(relativePath) then
+                Some "invalid relative path"
+            elif Path.IsPathRooted(relativePath) then
+                Some "invalid relative path"
+            else
+                match tryNormalizeWatchJournalRoot watchRoot with
+                | Error _ -> Some "invalid watch root"
+                | Ok normalizedWatchRoot ->
+                    let candidatePath =
+                        Path
+                            .GetFullPath(Path.Combine(normalizedWatchRoot, relativePath))
+                            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+
+                    let comparison =
+                        if OperatingSystem.IsWindows() then
+                            StringComparison.OrdinalIgnoreCase
+                        else
+                            StringComparison.Ordinal
+
+                    let rootWithSeparator =
+                        normalizedWatchRoot
+                        + string Path.DirectorySeparatorChar
+
+                    if
+                        String.Equals(candidatePath, normalizedWatchRoot, comparison)
+                        || candidatePath.StartsWith(rootWithSeparator, comparison)
+                    then
+                        None
+                    else
+                        Some "relative path escapes watch root"
+        with
+        | _ -> Some "invalid relative path"
 
     /// Reads a nullable text column from a journal query without converting database null into a trusted value.
     let private readNullableText (reader: SqliteDataReader) ordinal = if reader.IsDBNull(ordinal) then None else Some(reader.GetString(ordinal))
@@ -1813,13 +1953,19 @@ module LocalStateDb =
                 | None -> Some "missing branch identity"
 
                 match workspaceRoot with
-                | Some value when watchJournalRootEquals scope.WorkspaceRoot value -> None
-                | Some _ -> Some "wrong workspace root"
+                | Some value ->
+                    match tryWatchJournalRootEquals scope.WorkspaceRoot value with
+                    | Ok true -> None
+                    | Ok false -> Some "wrong workspace root"
+                    | Error _ -> Some "invalid workspace root"
                 | None -> Some "missing workspace root"
 
                 match watchRoot with
-                | Some value when watchJournalRootEquals scope.WatchRoot value -> None
-                | Some _ -> Some "wrong watch root"
+                | Some value ->
+                    match tryWatchJournalRootEquals scope.WatchRoot value with
+                    | Ok true -> None
+                    | Ok false -> Some "wrong watch root"
+                    | Error _ -> Some "invalid watch root"
                 | None -> Some "missing watch root"
 
                 match rootDirectoryId with
@@ -1849,13 +1995,7 @@ module LocalStateDb =
                 else
                     Some "invalid entry type"
 
-                if
-                    String.IsNullOrWhiteSpace(relativePath)
-                    || Path.IsPathRooted(relativePath)
-                then
-                    Some "invalid relative path"
-                else
-                    None
+                tryFindWatchJournalRelativePathIncompatibility scope.WatchRoot relativePath
             |]
 
         checks |> Array.tryPick id

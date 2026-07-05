@@ -3139,6 +3139,110 @@ module WatchTests =
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())
 
+    /// Verifies that coalesced duplicate startup replay rows all retire after one status application.
+    [<Test>]
+    let ``watch startup replay retires all duplicate sequences for coalesced difference`` () =
+        withTempRepo (fun _ ->
+            let relativePath = "startup-replay-duplicate.txt"
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let ordering = ResizeArray<string>()
+
+            try
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun _ ->
+                        task {
+                            ordering.Add("recover")
+
+                            let replayRow sequence : LocalStateDb.WatchJournalPendingReplay =
+                                {
+                                    Sequence = sequence
+                                    DifferenceType = DifferenceType.Delete
+                                    EntryType = FileSystemEntryType.File
+                                    RelativePath = RelativePath relativePath
+                                }
+
+                            return
+                                {
+                                    LocalStateDb.WatchJournalStartupRecovery.DbPath = Current().GraceStatusFile
+                                    AppliedThroughSequence = 0L
+                                    CompatibleReplayRows = [| replayRow 41L; replayRow 42L |]
+                                    QuarantinedRows = Array.empty
+                                }
+                        })
+                    (fun _ -> Task.FromResult(()))
+
+                Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status
+                |> fun recoveryTask -> recoveryTask.GetAwaiter().GetResult()
+                |> ignore
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath relativePath)
+                )
+                |> should equal (Some 41L)
+
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun _ -> Task.FromException<int64 array>(InvalidOperationException("startup replay must not append duplicate rows")))
+                    (fun sequences ->
+                        task {
+                            sequences
+                            |> Seq.toArray
+                            |> should equal [| 41L; 42L |]
+
+                            ordering.Add("advance")
+                            return 42L
+                        })
+
+                /// Reads status needed by the duplicate startup replay scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this replayed delete scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Applies one coalesced difference while preserving all represented replay sequences.
+                let updateGraceStatusFromDifferences currentStatus differences _ =
+                    differences
+                    |> Seq.map (fun difference -> difference.DifferenceType, difference.FileSystemEntryType, string difference.RelativePath)
+                    |> Seq.toArray
+                    |> should
+                        equal
+                        [|
+                            DifferenceType.Delete, FileSystemEntryType.File, relativePath
+                        |]
+
+                    ordering.Add("apply")
+                    Task.FromResult(Some currentStatus)
+
+                /// Leaves incremental status writes outside this replay ordering scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the replay ordering test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                ordering.ToArray()
+                |> should equal [| "recover"; "apply"; "advance" |]
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath relativePath)
+                )
+                |> should equal None
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
     /// Verifies that delayed startup replay runs after pending startup backlog drains on a later timer pass.
     [<Test>]
     let ``startup recovery runs after delayed backlog drains`` () =

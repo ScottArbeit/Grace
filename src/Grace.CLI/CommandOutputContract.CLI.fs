@@ -492,6 +492,7 @@ module CommandOutputContract =
                             DifferenceType = "Change"
                             FileSystemEntryType = "File"
                             RelativePath = "src/Program.fs"
+                            QuarantineReason = null
                         |}
                     |]
             |}
