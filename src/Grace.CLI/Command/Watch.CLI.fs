@@ -2317,7 +2317,6 @@ module Watch =
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot =
         tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot
-        |> ignore
 
     /// Publishes only clean/dirty Watch IPC transitions so duplicate raw observations do not churn status.
     let private publishPendingWatchWorkTransitionIfNeeded () =
@@ -2547,6 +2546,7 @@ module Watch =
             match currentGraceWatchRuntimeMode () with
             | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
             | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds))
+        |> ignore
 
         logToAnsiConsole Colors.Important $"Grace Watch published non-incremental IPC for branch transition completion: {context}."
 
@@ -3271,26 +3271,65 @@ module Watch =
 
     let private pendingCurrentBranchMaterializationLock = obj ()
     let mutable private pendingCurrentBranchMaterializations: PendingCurrentBranchMaterialization list = []
-    let private supersededCurrentBranchMaterializationRoots = HashSet<string>(StringComparer.Ordinal)
+    type private SupersededCurrentBranchMaterializationRoot = { ReferenceIds: HashSet<ReferenceId>; mutable AnonymousRejectionsRemaining: int }
+
+    let private supersededCurrentBranchMaterializationRoots = Dictionary<string, SupersededCurrentBranchMaterializationRoot>(StringComparer.Ordinal)
     let private currentBranchMaterializationGate = new SemaphoreSlim(1, 1)
 
     /// Builds a process-local root-history key for current-branch materialization freshness checks.
     let private currentBranchMaterializationRootHistoryKey repositoryId branchId rootDirectoryId = $"{repositoryId}:{branchId}:{rootDirectoryId}"
 
-    /// Records a clean root that a successful current-branch materialization moved past in this Watch process.
+    /// Gets or creates bounded process-local stale Reference authority for one superseded root.
+    let private supersededCurrentBranchMaterializationRootEntry repositoryId branchId rootDirectoryId =
+        let key = currentBranchMaterializationRootHistoryKey repositoryId branchId rootDirectoryId
+        let mutable entry = Unchecked.defaultof<SupersededCurrentBranchMaterializationRoot>
+
+        if supersededCurrentBranchMaterializationRoots.TryGetValue(key, &entry) then
+            entry
+        else
+            let created = { ReferenceIds = HashSet<ReferenceId>(); AnonymousRejectionsRemaining = 0 }
+
+            supersededCurrentBranchMaterializationRoots[key] <- created
+            created
+
+    /// Records a skipped or applied notification as stale without permanently banning its root value.
+    let private recordSupersededCurrentBranchMaterializationPayload (payload: CurrentBranchReferenceNotification) =
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            let entry = supersededCurrentBranchMaterializationRootEntry payload.RepositoryId payload.BranchId payload.DirectoryId
+
+            if payload.ReferenceId <> ReferenceId.Empty then
+                entry.ReferenceIds.Add(payload.ReferenceId)
+                |> ignore)
+
+    /// Records a clean root that a successful current-branch materialization moved past when no Reference identity is available.
     let private recordSupersededCurrentBranchMaterializationRoot (authority: CurrentBranchMaterializationAuthority) (updatedStatus: GraceStatus) =
         if authority.RootDirectoryId
            <> updatedStatus.RootDirectoryId then
             lock pendingCurrentBranchMaterializationLock (fun () ->
-                supersededCurrentBranchMaterializationRoots.Add(
-                    currentBranchMaterializationRootHistoryKey authority.RepositoryId authority.BranchId authority.RootDirectoryId
-                )
-                |> ignore)
+                let entry = supersededCurrentBranchMaterializationRootEntry authority.RepositoryId authority.BranchId authority.RootDirectoryId
 
-    /// Reports whether a remote root is already known to be behind the current branch even after tree replacement.
-    let private isSupersededCurrentBranchMaterializationRoot repositoryId branchId rootDirectoryId =
+                entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1)
+
+    /// Reports whether a remote root is known stale by Reference identity or bounded root-only authority.
+    let private isSupersededCurrentBranchMaterializationRoot (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
-            supersededCurrentBranchMaterializationRoots.Contains(currentBranchMaterializationRootHistoryKey repositoryId branchId rootDirectoryId))
+            let key = currentBranchMaterializationRootHistoryKey payload.RepositoryId payload.BranchId payload.DirectoryId
+
+            let mutable entry = Unchecked.defaultof<SupersededCurrentBranchMaterializationRoot>
+
+            if supersededCurrentBranchMaterializationRoots.TryGetValue(key, &entry) then
+                if
+                    payload.ReferenceId <> ReferenceId.Empty
+                    && entry.ReferenceIds.Contains(payload.ReferenceId)
+                then
+                    true
+                elif entry.AnonymousRejectionsRemaining > 0 then
+                    entry.AnonymousRejectionsRemaining <- entry.AnonymousRejectionsRemaining - 1
+                    true
+                else
+                    false
+            else
+                false)
 
     /// Removes pending materializations that no longer belong to the repository branch Watch is observing.
     let private prunePendingCurrentBranchMaterializationsForActiveBranch () =
@@ -3316,7 +3355,7 @@ module Watch =
         | _ -> false
 
     /// Records a remote Reference notification that must be retried after Watch returns to a clean state.
-    let private rememberPendingCurrentBranchMaterialization payload reason =
+    let private rememberPendingCurrentBranchMaterialization (payload: CurrentBranchReferenceNotification) reason =
         prunePendingCurrentBranchMaterializationsForActiveBranch ()
 
         if shouldRetainPendingCurrentBranchMaterialization reason then
@@ -3356,17 +3395,30 @@ module Watch =
             })
 
     /// Removes deferred materializations through an applied or proven no-op Reference while preserving newer tail work.
-    let private forgetPendingCurrentBranchMaterializationsThrough payload =
+    let private forgetPendingCurrentBranchMaterializationsThrough (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
-            let rec keepAfterMatchedReference pending =
+            let rec splitThroughMatchedReference (skipped: PendingCurrentBranchMaterialization list) pending =
                 match pending with
                 | [] -> None
-                | candidate :: remaining when candidate.Payload.ReferenceId = payload.ReferenceId -> Some remaining
-                | _ :: remaining -> keepAfterMatchedReference remaining
+                | candidate :: remaining when candidate.Payload.ReferenceId = payload.ReferenceId -> Some(List.rev skipped, remaining)
+                | candidate :: remaining -> splitThroughMatchedReference (candidate :: skipped) remaining
 
-            match keepAfterMatchedReference pendingCurrentBranchMaterializations with
-            | Some pending -> pendingCurrentBranchMaterializations <- pending
+            match splitThroughMatchedReference [] pendingCurrentBranchMaterializations with
+            | Some (skipped, pending) ->
+                for skippedEntry in skipped do
+                    recordSupersededCurrentBranchMaterializationPayload skippedEntry.Payload
+
+                pendingCurrentBranchMaterializations <- pending
             | None -> ())
+
+    /// Consumes a remote payload after durable status reached disk but before resync prevents completion.
+    let private consumeDurablyAppliedCurrentBranchMaterializationBeforeResync (payload: CurrentBranchReferenceNotification) =
+        recordSupersededCurrentBranchMaterializationPayload payload
+        forgetPendingCurrentBranchMaterializationsThrough payload
+
+    /// Exposes durable-apply consumption to tests without forcing full filesystem materialization setup.
+    let internal consumeDurablyAppliedCurrentBranchMaterializationBeforeResyncForWatchTests payload =
+        consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
 
 
     /// Clears remote materialization retry state when branch identity or unusable payloads make all entries invalid.
@@ -3424,7 +3476,7 @@ module Watch =
         status.RootDirectoryId <> payload.DirectoryId
         && ((not (isNull status.DirectoryIds)
              && status.DirectoryIds.Contains(payload.DirectoryId))
-            || isSupersededCurrentBranchMaterializationRoot payload.RepositoryId payload.BranchId payload.DirectoryId)
+            || isSupersededCurrentBranchMaterializationRoot payload)
 
     /// Runs Grace-owned materialization writes under an update marker without emitting branch-transition completion evidence.
     let private runCurrentBranchMaterializationWithMarker (markerFileName: string) (markerText: string) operation =
@@ -3504,11 +3556,25 @@ module Watch =
         task {
             let directoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
 
-            publishWatchIpcWithFreshPendingWorkProbe graceStatus directoryIds (fun () ->
-                task {
-                    updateGraceStatusDirectoryIds graceStatus
-                    do! writeWatchInterprocessFile graceStatus (Some directoryIds)
-                })
+            let wasPublished =
+                publishWatchIpcWithFreshPendingWorkProbe graceStatus directoryIds (fun () ->
+                    task {
+                        updateGraceStatusDirectoryIds graceStatus
+                        do! writeWatchInterprocessFile graceStatus (Some directoryIds)
+                    })
+
+            if wasPublished then
+                return Ok()
+            else
+                requestGraceWatchExplicitResync
+                    $"Current-branch remote materialization could not verify Watch IPC publication for root {graceStatus.RootDirectoryId}; incremental confidence is suspended until resync completes."
+
+                return
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization could not verify Watch IPC publication for root {graceStatus.RootDirectoryId}."
+                            (generateCorrelationId ())
+                    )
         }
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
@@ -3656,10 +3722,13 @@ module Watch =
                                         do! upsertObjectCache updatedGraceStatus.Index.Values
 
                                         match! verifyCurrentBranchMaterializationMarkerWindowClean payload.ReferenceId updatedGraceStatus correlationId with
-                                        | Error error -> return Error error
+                                        | Error error ->
+                                            consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+                                            return Error error
                                         | Ok () ->
-                                            do! publishCurrentBranchMaterializedStatus updatedGraceStatus
-                                            return Ok updatedGraceStatus
+                                            match! publishCurrentBranchMaterializedStatus updatedGraceStatus with
+                                            | Ok () -> return Ok updatedGraceStatus
+                                            | Error error -> return Error error
                             })
                         with
                     | Ok updatedStatus -> return Ok updatedStatus
@@ -4916,6 +4985,7 @@ module Watch =
                             if clearedResyncAttempt then
                                 publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
                                     updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+                                |> ignore
 
                                 if signalRBranchSubscriptionRefreshNeededForTransition () then
                                     try
@@ -5224,11 +5294,13 @@ module Watch =
 
                         publishWatchIpcWithFreshPendingWorkProbe graceStatus graceStatusDirectoryIds (fun () ->
                             updateGraceWatchInterprocessFileClient graceStatus (Some graceStatusDirectoryIds))
+                        |> ignore
                     else
                         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
 
                         publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
                             updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                        |> ignore
 
                         logToAnsiConsole
                             Colors.Important
@@ -5259,16 +5331,19 @@ module Watch =
 
                     publishWatchIpcWithFreshPendingWorkProbe graceStatusFromDisk graceStatusDirectoryIds (fun () ->
                         updateGraceWatchInterprocessFileClient graceStatusFromDisk (Some graceStatusDirectoryIds))
+                    |> ignore
                 elif runtimeMode = GraceWatchRuntimeMode.Suspended then
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
 
                     publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
                         updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds))
+                    |> ignore
                 else
                     let emptyDirectoryIds = HashSet<DirectoryVersionId>()
 
                     publishWatchIpcWithFreshPendingWorkProbe GraceStatus.Default emptyDirectoryIds (fun () ->
                         updateGraceWatchInterprocessFileClient GraceStatus.Default (Some emptyDirectoryIds))
+                    |> ignore
 
                     logToAnsiConsole
                         Colors.Important
