@@ -799,6 +799,45 @@ module LocalStateDbTests =
                     |]
             })
 
+    /// Verifies that pending-work summaries report only unresolved non-quarantined durable journal rows.
+    [<Test>]
+    let ``watch journal pending work summary ignores applied and quarantined rows`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let appliedObservation = watchJournalObservation DifferenceType.Change FileSystemEntryType.File "applied.txt"
+                let pendingObservation = watchJournalObservation DifferenceType.Change FileSystemEntryType.File "pending.txt"
+                let quarantinedObservation = watchJournalObservation DifferenceType.Delete FileSystemEntryType.File "quarantined.txt"
+
+                let! appliedSequences = LocalStateDb.appendWatchJournalObservations configuration.GraceStatusFile [ appliedObservation ]
+                let! pendingSequences = LocalStateDb.appendWatchJournalObservations configuration.GraceStatusFile [ pendingObservation ]
+                let! quarantinedSequences = LocalStateDb.appendWatchJournalObservations configuration.GraceStatusFile [ quarantinedObservation ]
+
+                let! appliedThrough = LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences configuration.GraceStatusFile appliedSequences
+                appliedThrough |> should equal 1L
+
+                let! quarantineBoundary =
+                    LocalStateDb.quarantineWatchJournalSequences configuration.GraceStatusFile quarantinedSequences "test quarantined stale identity"
+
+                quarantineBoundary |> should equal 1L
+
+                let! summary = LocalStateDb.readWatchJournalPendingWorkSummary configuration.GraceStatusFile
+
+                summary.AppliedThroughSequence |> should equal 1L
+                summary.PendingRowCount |> should equal 1L
+                summary.HasPendingRows |> should equal true
+
+                let! pendingAdvance = LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences configuration.GraceStatusFile pendingSequences
+                pendingAdvance |> should equal 3L
+
+                let! cleanSummary = LocalStateDb.readWatchJournalPendingWorkSummary configuration.GraceStatusFile
+
+                cleanSummary.AppliedThroughSequence
+                |> should equal 3L
+
+                cleanSummary.PendingRowCount |> should equal 0L
+                cleanSummary.HasPendingRows |> should equal false
+            })
+
     /// Verifies that startup recovery returns compatible pending rows without mutating them before Watch replays them.
     [<Test>]
     let ``watch journal startup recovery returns compatible pending rows`` () =

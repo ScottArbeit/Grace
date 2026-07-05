@@ -10719,6 +10719,109 @@ module WatchTests =
             File.ReadAllText(Services.IpcFileName())
             |> should equal dirtyJson)
 
+    /// Verifies that durable journal evidence marks Watch status dirty even when process-local queues are empty.
+    [<Test>]
+    let ``watch durable pending journal evidence publishes dirty transition`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            try
+                Watch.setWatchJournalStatusClientForWatchTests (fun () ->
+                    Task.FromResult(
+                        { LocalStateDb.WatchJournalPendingWorkSummary.DbPath = Current().GraceStatusFile; AppliedThroughSequence = 1L; PendingRowCount = 1L }
+                    ))
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                |> should equal true
+
+                readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+                |> should equal false
+
+                let inspection =
+                    Services
+                        .inspectGraceWatchStatus()
+                        .GetAwaiter()
+                        .GetResult()
+
+                inspection.IsUsable |> should equal false
+
+                let safetyFlags = inspection.SafetyFlags |> Set.ofArray
+
+                safetyFlags
+                |> Set.contains "pendingWatchWork"
+                |> should equal true
+
+                safetyFlags
+                |> Set.contains "requiresExplicitResync"
+                |> should equal true
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
+    /// Verifies that watch check JSON exposes durable-pending degradation without changing stdout/stderr routing.
+    [<Test>]
+    let ``watch check json reports durable pending journal evidence`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            try
+                Watch.setWatchJournalStatusClientForWatchTests (fun () ->
+                    Task.FromResult(
+                        { LocalStateDb.WatchJournalPendingWorkSummary.DbPath = Current().GraceStatusFile; AppliedThroughSequence = 1L; PendingRowCount = 1L }
+                    ))
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+                let exitCode, standardOut, standardError =
+                    runWithCapturedStdoutAndStderr [| "--output"
+                                                      "Json"
+                                                      "watch"
+                                                      "--check" |]
+
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
+
+                use document = parseJsonOutput standardOut
+                let root = document.RootElement.GetProperty("ReturnValue")
+
+                root
+                    .GetProperty("CanUseIncrementalStatus")
+                    .GetBoolean()
+                |> should equal false
+
+                root.GetProperty("Reason").GetString()
+                |> should equal "resynchronizing"
+
+                let safetyFlags =
+                    root.GetProperty("SafetyFlags").EnumerateArray()
+                    |> Seq.map (fun flag -> flag.GetString())
+                    |> Set.ofSeq
+
+                safetyFlags
+                |> Set.contains "pendingWatchWork"
+                |> should equal true
+
+                safetyFlags
+                |> Set.contains "requiresExplicitResync"
+                |> should equal true
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
     /// Verifies that transient IPC write failures do not suppress the next dirty status publication attempt.
     [<Test>]
     let ``watch dirty status transition retries after ipc write failure`` () =

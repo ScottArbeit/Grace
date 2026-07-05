@@ -88,6 +88,9 @@ module Watch =
     let mutable private quarantineWatchJournalSequencesForWatch =
         fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
 
+    let mutable private readWatchJournalPendingWorkSummaryForWatch =
+        fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
+
     let mutable private recordWatchLifecycleEventForWatch = fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
     /// Installs durable journal clients used by append-before-apply ordering tests.
@@ -104,6 +107,9 @@ module Watch =
     let internal setWatchJournalStartupClientsForWatchTests recoverStartup recordLifecycle =
         recoverWatchJournalForStartupForWatch <- recoverStartup
         recordWatchLifecycleEventForWatch <- recordLifecycle
+
+    /// Installs the durable journal status reader used by transition and status integration tests.
+    let internal setWatchJournalStatusClientForWatchTests readPendingWorkSummary = readWatchJournalPendingWorkSummaryForWatch <- readPendingWorkSummary
 
     /// Restores durable journal clients after tests replace append or boundary behavior.
     let internal resetWatchJournalClientsForWatchTests () =
@@ -126,6 +132,8 @@ module Watch =
 
         quarantineWatchJournalSequencesForWatch <-
             fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
+
+        readWatchJournalPendingWorkSummaryForWatch <- fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummary (Current().GraceStatusFile)
 
         recordWatchLifecycleEventForWatch <- fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
@@ -2085,10 +2093,26 @@ module Watch =
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
+    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
+    let private hasPendingDurableWatchJournalEvidence () =
+        try
+            readWatchJournalPendingWorkSummaryForWatch()
+                .GetAwaiter()
+                .GetResult()
+                .HasPendingRows
+        with
+        | ex ->
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
+
+            true
+
     /// Evaluates has pending watch work against parsed options and command state.
     let private hasPendingWatchWork () =
         isGraceWatchResyncPending ()
         || graceStatusHasChanged
+        || hasPendingDurableWatchJournalEvidence ()
         || not (
             filesToProcess.IsEmpty
             && directoriesToProcess.IsEmpty
