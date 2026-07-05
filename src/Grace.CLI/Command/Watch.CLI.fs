@@ -3271,7 +3271,26 @@ module Watch =
 
     let private pendingCurrentBranchMaterializationLock = obj ()
     let mutable private pendingCurrentBranchMaterializations: PendingCurrentBranchMaterialization list = []
+    let private supersededCurrentBranchMaterializationRoots = HashSet<string>(StringComparer.Ordinal)
     let private currentBranchMaterializationGate = new SemaphoreSlim(1, 1)
+
+    /// Builds a process-local root-history key for current-branch materialization freshness checks.
+    let private currentBranchMaterializationRootHistoryKey repositoryId branchId rootDirectoryId = $"{repositoryId}:{branchId}:{rootDirectoryId}"
+
+    /// Records a clean root that a successful current-branch materialization moved past in this Watch process.
+    let private recordSupersededCurrentBranchMaterializationRoot (authority: CurrentBranchMaterializationAuthority) (updatedStatus: GraceStatus) =
+        if authority.RootDirectoryId
+           <> updatedStatus.RootDirectoryId then
+            lock pendingCurrentBranchMaterializationLock (fun () ->
+                supersededCurrentBranchMaterializationRoots.Add(
+                    currentBranchMaterializationRootHistoryKey authority.RepositoryId authority.BranchId authority.RootDirectoryId
+                )
+                |> ignore)
+
+    /// Reports whether a remote root is already known to be behind the current branch even after tree replacement.
+    let private isSupersededCurrentBranchMaterializationRoot repositoryId branchId rootDirectoryId =
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            supersededCurrentBranchMaterializationRoots.Contains(currentBranchMaterializationRootHistoryKey repositoryId branchId rootDirectoryId))
 
     /// Removes pending materializations that no longer belong to the repository branch Watch is observing.
     let private prunePendingCurrentBranchMaterializationsForActiveBranch () =
@@ -3352,7 +3371,9 @@ module Watch =
 
     /// Clears remote materialization retry state when branch identity or unusable payloads make all entries invalid.
     let private clearPendingCurrentBranchMaterializations () =
-        lock pendingCurrentBranchMaterializationLock (fun () -> pendingCurrentBranchMaterializations <- [])
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            pendingCurrentBranchMaterializations <- []
+            supersededCurrentBranchMaterializationRoots.Clear())
 
     /// Exposes pending current-branch materialization cleanup to deterministic Watch tests.
     let internal clearPendingCurrentBranchMaterializationsForWatchTests () = clearPendingCurrentBranchMaterializations ()
@@ -3401,8 +3422,9 @@ module Watch =
     /// Reports whether the remote root is already known as an older non-current root in the inspected clean snapshot.
     let private currentBranchReferenceTargetsKnownNonCurrentRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
         status.RootDirectoryId <> payload.DirectoryId
-        && not (isNull status.DirectoryIds)
-        && status.DirectoryIds.Contains(payload.DirectoryId)
+        && ((not (isNull status.DirectoryIds)
+             && status.DirectoryIds.Contains(payload.DirectoryId))
+            || isSupersededCurrentBranchMaterializationRoot payload.RepositoryId payload.BranchId payload.DirectoryId)
 
     /// Runs Grace-owned materialization writes under an update marker without emitting branch-transition completion evidence.
     let private runCurrentBranchMaterializationWithMarker (markerFileName: string) (markerText: string) operation =
@@ -3454,13 +3476,18 @@ module Watch =
                         File.WriteAllText(completedSidecar, completedUtc.ToString("O", CultureInfo.InvariantCulture))
                         recordCurrentBranchMaterializationCompletedMarker markerFileName completedUtc
                         recordGraceUpdateMarkerCompletedUtc completedUtc
-                    | Error _ -> ()
+                    | Error _ ->
+                        requestGraceWatchExplicitResync
+                            "current-branch materialization aborted after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes"
 
                     deleteMarkerIfOwned ()
 
                     return result
                 with
                 | ex ->
+                    requestGraceWatchExplicitResync
+                        $"current-branch materialization threw after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes: {ex.Message}"
+
                     deleteMarkerIfOwned ()
                     return raise ex
         }
@@ -3494,6 +3521,39 @@ module Watch =
     /// Publishes materialized status through an injected IPC writer so tests can prove cache/write serialization.
     let internal publishCurrentBranchMaterializedStatusWithWriterForWatchTests graceStatus writeWatchInterprocessFile =
         publishCurrentBranchMaterializedStatusWithWriter graceStatus writeWatchInterprocessFile
+
+    /// Scans the marker-window result before Watch can publish materialization completion evidence.
+    let private verifyCurrentBranchMaterializationMarkerWindowClean referenceId (updatedGraceStatus: GraceStatus) correlationId =
+        task {
+            let! finalDifferences = scanForDifferences updatedGraceStatus
+
+            if not (wasLastScanForDifferencesSuccessful ()) then
+                requestGraceWatchExplicitResync
+                    $"Current-branch remote materialization could not complete its marker-window verification scan for Reference {referenceId}."
+
+                return
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization requires resync because the marker-window verification scan failed for Reference {referenceId}."
+                            correlationId
+                    )
+            elif finalDifferences.Count > 0 then
+                requestGraceWatchExplicitResync
+                    $"Current-branch remote materialization observed {finalDifferences.Count} local edits during the update marker window for Reference {referenceId}."
+
+                return
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization requires resync because local edits were observed during the marker window for Reference {referenceId}."
+                            correlationId
+                    )
+            else
+                return Ok()
+        }
+
+    /// Exposes marker-window verification to focused Watch tests without changing public IPC or CLI contracts.
+    let internal verifyCurrentBranchMaterializationMarkerWindowCleanForWatchTests referenceId updatedGraceStatus correlationId =
+        verifyCurrentBranchMaterializationMarkerWindowClean referenceId updatedGraceStatus correlationId
 
     /// Builds the default live clients that fetch, download, and apply remote current-branch directory versions.
     let private defaultCurrentBranchRemoteMaterializationOperations () =
@@ -3594,7 +3654,12 @@ module Watch =
                                         do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
                                         do! writeGraceStatusFile updatedGraceStatus
                                         do! upsertObjectCache updatedGraceStatus.Index.Values
-                                        return Ok updatedGraceStatus
+
+                                        match! verifyCurrentBranchMaterializationMarkerWindowClean payload.ReferenceId updatedGraceStatus correlationId with
+                                        | Error error -> return Error error
+                                        | Ok () ->
+                                            do! publishCurrentBranchMaterializedStatus updatedGraceStatus
+                                            return Ok updatedGraceStatus
                             })
                         with
                     | Ok updatedStatus -> return Ok updatedStatus
@@ -3607,7 +3672,7 @@ module Watch =
             GetDirectoryVersionsRecursive = getDirectoryVersionsRecursive
             DownloadDirectoryFiles = downloadDirectoryFiles
             ApplyRemoteDirectory = applyRemoteDirectory
-            PublishWatchStatus = fun graceStatus -> task { do! publishCurrentBranchMaterializedStatus graceStatus }
+            PublishWatchStatus = fun _ -> Task.FromResult(())
         }
 
     /// Processes current-branch Reference candidates through the clean gate and optional remote materialization.
@@ -3634,9 +3699,6 @@ module Watch =
 
                     match decision.Reason, decision.Reference with
                     | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired, Some payload ->
-                        if recordPendingOnBlock then
-                            rememberPendingCurrentBranchMaterialization payload decision.Reason
-
                         let correlationId = generateCorrelationId ()
 
                         let authority =
@@ -3662,6 +3724,9 @@ module Watch =
 
                             return decision
                         | Some authority ->
+                            if recordPendingOnBlock then
+                                rememberPendingCurrentBranchMaterialization payload decision.Reason
+
                             let! previousGraceStatus = operations.ReadGraceStatus()
 
                             if not (currentBranchMaterializationRootMatchesAuthority authority previousGraceStatus) then
@@ -3711,14 +3776,23 @@ module Watch =
                                                     logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                                                     return decision
                                                 | Ok updatedStatus ->
-                                                    do! operations.PublishWatchStatus updatedStatus
-                                                    forgetPendingCurrentBranchMaterializationsThrough payload
+                                                    try
+                                                        do! operations.PublishWatchStatus updatedStatus
+                                                        recordSupersededCurrentBranchMaterializationRoot authority updatedStatus
+                                                        forgetPendingCurrentBranchMaterializationsThrough payload
 
-                                                    logToAnsiConsole
-                                                        Colors.Highlighted
-                                                        $"Materialized current-branch reference notification {payload.ReferenceId} for root {payload.DirectoryId}."
+                                                        logToAnsiConsole
+                                                            Colors.Highlighted
+                                                            $"Materialized current-branch reference notification {payload.ReferenceId} for root {payload.DirectoryId}."
 
-                                                    return decision
+                                                        return decision
+                                                    with
+                                                    | ex ->
+                                                        requestGraceWatchExplicitResync
+                                                            $"Current-branch remote materialization could not publish durable status for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes: {ex.Message}"
+
+                                                        logToAnsiConsole Colors.Error $"{Markup.Escape(ex.Message)}"
+                                                        return decision
                     | LatestCurrentBranchReferenceDecisionReason.SameRoot, Some payload ->
                         forgetPendingCurrentBranchMaterializationsThrough payload
                         return decision
