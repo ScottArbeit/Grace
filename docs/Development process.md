@@ -239,9 +239,13 @@ When using an epic integration branch:
 - Keep the parent issue DAG, checklist, and merge strategy clear about which sub-issues target the epic branch.
 - Keep the epic branch refreshed from `origin/main`, especially before later sub-issue waves and before the final
   epic-to-`main` pull request.
+- Keep mini-epic integration branches refreshed from their current parent epic branch. A mini-epic integration pull
+  request targets the parent epic branch, so its completion gate validates against that branch, not `origin/main`.
 - Ensure CI validates pull requests targeting `epic/**`, or record the CI gap and required local validation in the
   parent issue before assigning workers.
 - Treat each sub-issue as complete when it is reviewed, validated, merged to the epic branch, and cleaned up.
+- Treat each mini-epic as complete when its integration pull request is reviewed, validated against the current parent
+  epic branch, merged to that parent epic branch, and cleaned up.
 - Treat the epic as complete only after the final epic-to-`main` pull request is reviewed, validated against current
   `origin/main`, merged to `main`, and cleaned up.
 - Make sure every sub-issue pull request links to its sub-issue in the pull request body. Use non-closing wording for
@@ -610,9 +614,10 @@ the latest head commit, then classify findings before assigning any fix worker.
 - For epic-branch pull requests, also classify each fresh latest-review finding against the current leaf issue's scope.
   If a finding is valid but explicitly belongs to a named future leaf issue in the same epic, the orchestrator may
   reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
-  and avoid assigning a fix worker for that item. Do not broaden the current pull request to absorb future-leaf scope.
-  If the finding exposes missing acceptance criteria, adversarial cases, or risk-surface traps, update the future
-  sibling issue's detail gate before assigning that future work.
+  and avoid assigning a fix worker for that item only after the future issue exists and its body records the exact
+  finding, invariant, and proof obligation. Do not broaden the current pull request to absorb future-leaf scope. If the
+  finding exposes missing acceptance criteria, adversarial cases, or risk-surface traps, update the future sibling
+  issue's detail gate before resolving the current review conversation or assigning that future work.
 - If the bot has acknowledged the current head with 👀 but has not yet submitted its completed review or no-issues
   result, continue waiting. Do not infer the action set from early inline threads.
 
@@ -735,9 +740,10 @@ Count substantive Codex Code Review Bot cycles for every Grace pull request. A s
 2. A worker pushes a fix commit or fix series.
 3. Codex reports another substantive finding on the new head.
 
-Do not count duplicate findings, stale resolved threads, formatting-only comments, administrative comments, CI flakes,
-findings the maintainer explicitly classifies as invalid, or findings the maintainer accepts as deferred to a named
-future issue.
+Do not count duplicate findings, stale findings from any previous review pass, formatting-only comments, administrative
+comments, CI flakes, findings the maintainer explicitly classifies as invalid, or findings the maintainer accepts as
+deferred to a named future issue. A previous-pass finding is stale for cycle counting when the latest completed
+current-head review does not repeat it, whether or not the old GitHub conversation has already been resolved.
 
 Use these thresholds:
 
@@ -1013,6 +1019,7 @@ Before the Grace completion review gate, update the branch against its required 
 
 - standalone non-epic issue branch: current `origin/main`
 - sub-issue branch targeting an epic integration branch: current `origin/epic/<parent-issue>-<short-slug>`
+- mini-epic integration branch targeting a parent epic branch: current parent epic branch
 - final epic-to-`main` branch: current `origin/main`
 
 Then verify:
