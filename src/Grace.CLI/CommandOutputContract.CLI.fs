@@ -424,6 +424,96 @@ module CommandOutputContract =
                     |]
             |}
 
+    let private maintenanceJournalRowSchema =
+        schemaObject
+            "MaintenanceJournalRowDto"
+            [
+                "Sequence", scalarSchema "integer"
+                "CreatedAtUnixTicks", scalarSchema "integer"
+                "State", scalarSchema "string"
+                "RelativePath", nullableStringSchema "Repository-relative path when the durable journal row stores path metadata."
+            ]
+            [|
+                "Sequence"
+                "CreatedAtUnixTicks"
+                "State"
+                "RelativePath"
+            |]
+
+    let private maintenanceShowJournalSchema =
+        schemaObject
+            "MaintenanceShowJournalDto"
+            [
+                "DbPath", scalarSchema "string"
+                "AppliedThroughSequence", scalarSchema "integer"
+                "AllocatedSequence", scalarSchema "integer"
+                "TotalRows", scalarSchema "integer"
+                "RowCount", scalarSchema "integer"
+                "StateFilter", scalarSchema "string"
+                "PathFilter", nullableStringSchema "Path filter echoed from the command invocation."
+                "Limit", scalarSchema "integer"
+                "Rows", arraySchema maintenanceJournalRowSchema "Filtered durable Watch journal rows."
+            ]
+            [|
+                "DbPath"
+                "AppliedThroughSequence"
+                "AllocatedSequence"
+                "TotalRows"
+                "RowCount"
+                "StateFilter"
+                "PathFilter"
+                "Limit"
+                "Rows"
+            |]
+
+    let private maintenanceShowJournalExample =
+        box
+            {|
+                DbPath = "C:\\repo\\.grace\\grace-local.db"
+                AppliedThroughSequence = 2L
+                AllocatedSequence = 4L
+                TotalRows = 4L
+                RowCount = 1
+                StateFilter = "pending"
+                PathFilter = null
+                Limit = 1
+                Rows =
+                    [|
+                        {| Sequence = 4L; CreatedAtUnixTicks = 4L; State = "pending"; RelativePath = null |}
+                    |]
+            |}
+
+    let private maintenanceClearJournalSchema =
+        schemaObject
+            "MaintenanceClearJournalDto"
+            [
+                "DbPath", scalarSchema "string"
+                "RowsDeleted", scalarSchema "integer"
+                "AppliedThroughSequenceBefore", scalarSchema "integer"
+                "AppliedThroughSequenceAfter", scalarSchema "integer"
+                "AllocatedSequenceBefore", scalarSchema "integer"
+                "AllocatedSequenceAfter", scalarSchema "integer"
+            ]
+            [|
+                "DbPath"
+                "RowsDeleted"
+                "AppliedThroughSequenceBefore"
+                "AppliedThroughSequenceAfter"
+                "AllocatedSequenceBefore"
+                "AllocatedSequenceAfter"
+            |]
+
+    let private maintenanceClearJournalExample =
+        box
+            {|
+                DbPath = "C:\\repo\\.grace\\grace-local.db"
+                RowsDeleted = 3L
+                AppliedThroughSequenceBefore = 2L
+                AppliedThroughSequenceAfter = 0L
+                AllocatedSequenceBefore = 3L
+                AllocatedSequenceAfter = 0L
+            |}
+
     let private watchStatusSchema =
         schemaObject
             "WatchStatusDto"
@@ -686,6 +776,26 @@ module CommandOutputContract =
                 maintenanceScanExample
                 [
                     "Command-specific CLI DTO emitted by maintenance scan in the common Grace result envelope."
+                ]
+        | "maintenance.show-journal", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "MaintenanceShowJournalDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                maintenanceShowJournalSchema
+                maintenanceShowJournalExample
+                [
+                    "Command-specific CLI DTO emitted by maintenance show-journal in the common Grace result envelope."
+                    "Rows expose durable sequence diagnostics and derived applied/pending state without storing raw watcher events as replay data."
+                ]
+        | "maintenance.clear-journal", ExistingGraceResultEnvelope RequiresCliDto ->
+            supportedReturnValueContract
+                "MaintenanceClearJournalDto"
+                "Grace.CLI.Command.Common.LocalOutputDto"
+                maintenanceClearJournalSchema
+                maintenanceClearJournalExample
+                [
+                    "Command-specific CLI DTO emitted by maintenance clear-journal in the common Grace result envelope."
+                    "The command clears only Watch journal rows, SQLite allocation metadata, and the AppliedThroughSequence watermark."
                 ]
         | "maintenance.stats", ExistingGraceResultEnvelope RequiresCliDto ->
             supportedReturnValueContract
@@ -1159,8 +1269,10 @@ module CommandOutputContract =
             row [ "history" ] "show" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [] "doctor" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "check-ignore-entries" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
+            row [ "maintenance" ] "clear-journal" true true common_renderOutput_envelope mutating local_client RequiresCliDto
             row [ "maintenance" ] "list-contents" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "scan" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
+            row [ "maintenance" ] "show-journal" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "stats" true false common_renderOutput_envelope read_list_search local_client RequiresCliDto
             row [ "maintenance" ] "update-index" true true common_renderOutput_envelope progress_local_workflow local_client RequiresCliDto
             row [ "organization" ] "create" true true common_renderOutput_envelope mutating_state_transition server_via_sdk ReuseExistingApiOrSdkDto

@@ -782,6 +782,18 @@ module LocalStateDb =
         | Some sequence -> sequence
         | None -> raise (InvalidDataException("sqlite_sequence.seq for watch_journal must be a non-negative 64-bit integer."))
 
+    /// Reads the clear-journal allocation watermark without trusting malformed journal-only metadata.
+    let private readAllocatedWatchJournalSequenceForClear (connection: SqliteConnection) =
+        match tryReadAllocatedWatchJournalSequence connection with
+        | Some sequence -> sequence
+        | None -> 0L
+
+    /// Counts durable Watch journal rows without reading any replay payload.
+    let private countWatchJournalRows (connection: SqliteConnection) =
+        use command = connection.CreateCommand()
+        command.CommandText <- "SELECT COUNT(*) FROM watch_journal;"
+        command.ExecuteScalar() |> Convert.ToInt64
+
     /// Reads local-state metadata for read-only inspection checks without writing default rows.
     let private tryGetMetaValueReadOnly (connection: SqliteConnection) (key: string) =
         use cmd = connection.CreateCommand()
@@ -1012,6 +1024,98 @@ module LocalStateDb =
             | None -> raise (InvalidDataException($"{WatchJournalAppliedThroughSequenceMetaKey} must be a non-negative 64-bit integer."))
         | None -> 0L
 
+    /// Reads the clear-journal starting watermark without trusting malformed journal-only metadata.
+    let private readWatchJournalAppliedThroughSequenceForClear (connection: SqliteConnection) =
+        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+        | 1 ->
+            match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
+            | Some value ->
+                match tryParseWatchJournalAppliedThroughSequence value with
+                | Some sequence -> sequence
+                | None -> 0L
+            | None -> 0L
+        | _ -> 0L
+
+    /// Ensures clear-journal has the minimal journal tables it mutates without recreating unrelated local state.
+    let private ensureWatchJournalClearSchema (connection: SqliteConnection) =
+        ensureJournalMode connection
+        executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL);"
+
+    /// Replaces malformed or missing Watch recovery metadata with the clear-journal reset watermark.
+    let private resetWatchJournalAppliedThroughSequenceForClear (connection: SqliteConnection) =
+        executeNonQueryWithParams connection "DELETE FROM meta WHERE key = $key;" (fun parameters ->
+            parameters.AddWithValue("$key", WatchJournalAppliedThroughSequenceMetaKey)
+            |> ignore)
+
+        setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey "0"
+
+    /// Defines the derived state used when showing journal rows without storing raw watcher events.
+    type WatchJournalRowState =
+        | Applied
+        | Pending
+
+    /// Models one durable Watch journal sequence row for diagnostics.
+    type WatchJournalRow = { Sequence: int64; CreatedAtUnixTicks: int64; State: WatchJournalRowState; RelativePath: string option }
+
+    /// Models a filtered Watch journal diagnostic snapshot.
+    type WatchJournalSnapshot =
+        {
+            DbPath: string
+            AppliedThroughSequence: int64
+            AllocatedSequence: int64
+            TotalRows: int64
+            RowCount: int
+            StateFilter: string
+            PathFilter: string option
+            Limit: int
+            Rows: WatchJournalRow array
+        }
+
+    /// Models the result of explicitly resetting only durable Watch journal state.
+    type ClearWatchJournalResult =
+        {
+            DbPath: string
+            RowsDeleted: int64
+            AppliedThroughSequenceBefore: int64
+            AppliedThroughSequenceAfter: int64
+            AllocatedSequenceBefore: int64
+            AllocatedSequenceAfter: int64
+        }
+
+    /// Normalizes the journal row state filter used by diagnostic show commands.
+    let private normalizeWatchJournalStateFilter (stateFilter: string) =
+        if String.IsNullOrWhiteSpace(stateFilter) then
+            "all"
+        else
+            let normalized = stateFilter.Trim().ToLowerInvariant()
+
+            match normalized with
+            | "all"
+            | "applied"
+            | "pending" -> normalized
+            | _ -> invalidArg (nameof stateFilter) "Watch journal state must be one of: all, applied, pending."
+
+    /// Determines whether a diagnostic journal row should be returned for the requested filters.
+    let private watchJournalRowMatches stateFilter pathFilter (row: WatchJournalRow) =
+        let stateMatches =
+            match stateFilter, row.State with
+            | "all", _ -> true
+            | "applied", Applied -> true
+            | "pending", Pending -> true
+            | _ -> false
+
+        let pathMatches =
+            match pathFilter, row.RelativePath with
+            | None, _ -> true
+            | Some filter, Some relativePath -> relativePath.Contains((filter: string), StringComparison.OrdinalIgnoreCase)
+            | Some _, None -> false
+
+        stateMatches && pathMatches
+
     /// Persists insert status meta if missing changes in the local SQLite state database.
     let private insertStatusMetaIfMissing (connection: SqliteConnection) =
         let defaultStatus = GraceStatus.Default
@@ -1200,6 +1304,158 @@ module LocalStateDb =
             do! ensureDbInitialized dbPath
             use connection = openConnection dbPath
             return readWatchJournalAppliedThroughSequenceInternal connection
+        }
+
+    /// Reads a bounded diagnostic snapshot of the durable Watch journal.
+    let readWatchJournalSnapshot (dbPath: string) (stateFilter: string) (pathFilter: string option) (limit: int) =
+        task {
+            if limit < 1 then
+                invalidArg (nameof limit) "Watch journal limit must be greater than zero."
+
+            let normalizedPath = Path.GetFullPath(dbPath)
+            let inspection = inspectReadOnly normalizedPath
+
+            if not inspection.OpenedReadOnly then
+                let detail =
+                    inspection.OpenError
+                    |> Option.defaultValue "local state database does not exist or could not be opened read-only."
+
+                raise (InvalidDataException($"Watch journal diagnostics require a readable local state database: {detail}"))
+
+            if inspection.SchemaVersion <> Some SchemaVersion
+               || inspection.MissingRequiredTables.Length > 0
+               || inspection.MissingRequiredIndexes.Length > 0
+               || inspection.WatchJournalShapeValid <> Some true
+               || inspection.WatchJournalAppliedThroughMetadataValid
+                  <> Some true then
+                raise (
+                    InvalidDataException(
+                        "Watch journal diagnostics require a healthy local state database; run grace doctor or a writable command to repair local state."
+                    )
+                )
+
+            let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
+            use connection = openReadOnlyConnection normalizedPath immutableSnapshot
+            let appliedThroughSequence = readWatchJournalAppliedThroughSequenceInternal connection
+            let allocatedSequence = readAllocatedWatchJournalSequence connection
+            let totalRows = countWatchJournalRows connection
+            let normalizedStateFilter = normalizeWatchJournalStateFilter stateFilter
+
+            let normalizedPathFilter =
+                pathFilter
+                |> Option.bind (fun value -> if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim()))
+
+            use command = connection.CreateCommand()
+
+            command.CommandText <-
+                match normalizedStateFilter with
+                | "applied" ->
+                    "SELECT sequence, created_at_unix_ticks FROM watch_journal WHERE sequence <= $applied_through ORDER BY sequence DESC LIMIT $limit;"
+                | "pending" ->
+                    "SELECT sequence, created_at_unix_ticks FROM watch_journal WHERE sequence > $applied_through ORDER BY sequence DESC LIMIT $limit;"
+                | _ -> "SELECT sequence, created_at_unix_ticks FROM watch_journal ORDER BY sequence DESC LIMIT $limit;"
+
+            command.Parameters.AddWithValue("$limit", limit)
+            |> ignore
+
+            if normalizedStateFilter = "applied"
+               || normalizedStateFilter = "pending" then
+                command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+                |> ignore
+
+            use reader = command.ExecuteReader()
+            let rows = ResizeArray<WatchJournalRow>()
+
+            while reader.Read() do
+                let sequence = reader.GetInt64(0)
+
+                let state = if sequence <= appliedThroughSequence then Applied else Pending
+
+                let row = { Sequence = sequence; CreatedAtUnixTicks = reader.GetInt64(1); State = state; RelativePath = None }
+
+                if watchJournalRowMatches normalizedStateFilter normalizedPathFilter row then
+                    rows.Add(row)
+
+            return
+                {
+                    DbPath = normalizedPath
+                    AppliedThroughSequence = appliedThroughSequence
+                    AllocatedSequence = allocatedSequence
+                    TotalRows = totalRows
+                    RowCount = rows.Count
+                    StateFilter = normalizedStateFilter
+                    PathFilter = normalizedPathFilter
+                    Limit = limit
+                    Rows = rows |> Seq.toArray
+                }
+        }
+
+    /// Clears only the durable Watch journal rows, allocation metadata, and recovery watermark.
+    let clearWatchJournal (dbPath: string) =
+        task {
+            let normalizedPath = Path.GetFullPath(dbPath)
+
+            if
+                not (File.Exists(normalizedPath))
+                && not (Directory.Exists(normalizedPath))
+            then
+                return
+                    {
+                        DbPath = normalizedPath
+                        RowsDeleted = 0L
+                        AppliedThroughSequenceBefore = 0L
+                        AppliedThroughSequenceAfter = 0L
+                        AllocatedSequenceBefore = 0L
+                        AllocatedSequenceAfter = 0L
+                    }
+            else
+                let mutable result = None
+
+                do!
+                    executeWithRetry (fun () ->
+                        task {
+                            use connection = openConnection normalizedPath
+                            ensureWatchJournalClearSchema connection
+                            executeNonQuery connection "BEGIN IMMEDIATE;"
+                            let mutable committed = false
+
+                            try
+                                let rowsBefore = countWatchJournalRows connection
+                                let appliedBefore = readWatchJournalAppliedThroughSequenceForClear connection
+                                let allocatedBefore = readAllocatedWatchJournalSequenceForClear connection
+
+                                executeNonQuery connection "DELETE FROM watch_journal;"
+                                executeNonQuery connection "DELETE FROM sqlite_sequence WHERE name = 'watch_journal';"
+                                resetWatchJournalAppliedThroughSequenceForClear connection
+
+                                let rowsAfter = countWatchJournalRows connection
+                                let appliedAfter = readWatchJournalAppliedThroughSequenceInternal connection
+                                let allocatedAfter = readAllocatedWatchJournalSequenceForClear connection
+
+                                executeNonQuery connection "COMMIT;"
+                                committed <- true
+
+                                result <-
+                                    Some
+                                        {
+                                            DbPath = normalizedPath
+                                            RowsDeleted = rowsBefore - rowsAfter
+                                            AppliedThroughSequenceBefore = appliedBefore
+                                            AppliedThroughSequenceAfter = appliedAfter
+                                            AllocatedSequenceBefore = allocatedBefore
+                                            AllocatedSequenceAfter = allocatedAfter
+                                        }
+                            finally
+                                if not committed then
+                                    try
+                                        executeNonQuery connection "ROLLBACK;"
+                                    with
+                                    | _ -> ()
+                        })
+
+                match result with
+                | Some result -> return result
+                | None -> return failwith "Watch journal clear did not produce a result."
         }
 
     /// Persists the local Watch journal recovery watermark without changing journal rows.
