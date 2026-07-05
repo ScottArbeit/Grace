@@ -281,6 +281,7 @@ module Maintenance =
             DifferenceType = row.DifferenceType
             FileSystemEntryType = row.EntryType
             RelativePath = row.RelativePath
+            QuarantineReason = row.QuarantineReason
         }
 
     /// Converts a Watch journal diagnostic snapshot into the maintenance command output contract.
@@ -962,6 +963,10 @@ module Maintenance =
 
                         for row in dto.Rows do
                             AnsiConsole.MarkupLine($"[{Colors.Verbose}]#{row.Sequence} {row.State} created_at_unix_ticks={row.CreatedAtUnixTicks}[/]")
+
+                            match row.QuarantineReason with
+                            | Some reason -> AnsiConsole.MarkupLine($"[{Colors.Verbose}]  quarantine_reason={Markup.Escape(reason)}[/]")
+                            | None -> ()
 
                         return 0
                 with

@@ -82,6 +82,14 @@ module Watch =
 
     let mutable private pruneWatchJournalRetentionForWatch = fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
 
+    let mutable private recoverWatchJournalForStartupForWatch =
+        fun scope -> Grace.CLI.LocalStateDb.recoverWatchJournalForStartup (Current().GraceStatusFile) scope
+
+    let mutable private quarantineWatchJournalSequencesForWatch =
+        fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
+
+    let mutable private recordWatchLifecycleEventForWatch = fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
+
     /// Installs durable journal clients used by append-before-apply ordering tests.
     let internal setWatchJournalClientsForWatchTests appendObservations advanceAppliedSequences =
         appendWatchJournalObservationsForWatch <- appendObservations
@@ -91,6 +99,11 @@ module Watch =
     let internal setWatchJournalMaintenanceClientsForWatchTests recoverBoundaryGap pruneRetention =
         recoverWatchJournalBoundaryGapForWatch <- recoverBoundaryGap
         pruneWatchJournalRetentionForWatch <- pruneRetention
+
+    /// Installs startup recovery clients used by replay and quarantine ordering tests.
+    let internal setWatchJournalStartupClientsForWatchTests recoverStartup recordLifecycle =
+        recoverWatchJournalForStartupForWatch <- recoverStartup
+        recordWatchLifecycleEventForWatch <- recordLifecycle
 
     /// Restores durable journal clients after tests replace append or boundary behavior.
     let internal resetWatchJournalClientsForWatchTests () =
@@ -108,6 +121,13 @@ module Watch =
                 }
 
         pruneWatchJournalRetentionForWatch <- fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
+
+        recoverWatchJournalForStartupForWatch <- fun scope -> Grace.CLI.LocalStateDb.recoverWatchJournalForStartup (Current().GraceStatusFile) scope
+
+        quarantineWatchJournalSequencesForWatch <-
+            fun sequences reason -> Grace.CLI.LocalStateDb.quarantineWatchJournalSequences (Current().GraceStatusFile) sequences reason
+
+        recordWatchLifecycleEventForWatch <- fun event -> Grace.CLI.LocalStateDb.recordWatchLifecycleEvent (Current().GraceStatusFile) event
 
     /// Reports that a filesystem observation was ignored because the current runtime mode cannot capture it.
     let private logObservationSuppressed fullPath =
@@ -265,6 +285,9 @@ module Watch =
     let private pendingStatusDifferencesLock = obj ()
 
     let private pendingStatusDifferences = List<FileSystemDifference>()
+
+    /// Tracks startup-replayed journal sequences by normalized difference so status application does not append duplicates.
+    let mutable private pendingStatusDifferenceReplaySequences = Dictionary<string, Queue<int64>>(StringComparer.Ordinal)
 
     let mutable private quarantinedWatchObservationCount = 0
 
@@ -1074,6 +1097,11 @@ module Watch =
     /// Finds the tracked file entry that owns a repository-relative path in GraceStatus.
     let private tryFindTrackedFile (status: GraceStatus) (relativePath: RelativePath) = tryFindTrackedFileWithComparison watchPathComparison status relativePath
 
+    /// Checks whether GraceStatus already tracks a repository-relative file path.
+    let private isTrackedFile (status: GraceStatus) (relativePath: RelativePath) =
+        tryFindTrackedFile status relativePath
+        |> Option.isSome
+
     /// Checks whether GraceStatus already tracks a repository-relative directory path.
     let private isTrackedDirectory (status: GraceStatus) (relativePath: RelativePath) =
         let normalizedRelativePath = normalizeRelativePath relativePath
@@ -1387,9 +1415,38 @@ module Watch =
     /// Models the differences that can be applied and the queued work they resolve.
     type private StatusDifferencesForApply = { Applicable: List<FileSystemDifference>; Resolved: List<FileSystemDifference> }
 
+    /// Returns the root BLAKE3 hash that durable Watch journal identity expects for replay.
+    let private rootDirectoryBlake3HashForWatchJournal (status: GraceStatus) =
+        let mutable rootDirectoryVersion = LocalDirectoryVersion.Default
+
+        if status.Index.TryGetValue(status.RootDirectoryId, &rootDirectoryVersion) then
+            rootDirectoryVersion.Blake3Hash
+        elif not (String.IsNullOrWhiteSpace(string status.RootDirectoryBlake3Hash)) then
+            status.RootDirectoryBlake3Hash
+        else
+            Blake3Hash String.Empty
+
+    /// Captures the current repository identity that makes normalized Watch journal rows replayable.
+    let private currentWatchJournalScope (status: GraceStatus) : Grace.CLI.LocalStateDb.WatchJournalScope =
+        {
+            RepositoryId = Current().RepositoryId
+            BranchId = Current().BranchId
+            WorkspaceRoot = Path.GetFullPath(Current().RootDirectory)
+            WatchRoot = Path.GetFullPath(Current().RootDirectory)
+            PathComparison = watchPathComparison
+            RootDirectoryId = status.RootDirectoryId
+            RootDirectoryBlake3Hash = rootDirectoryBlake3HashForWatchJournal status
+            WatchMode = "repository-root"
+        }
+
     /// Converts an already-normalized status difference into the replay payload owned by the local Watch journal.
     let private journalObservationForDifference (difference: FileSystemDifference) : Grace.CLI.LocalStateDb.WatchJournalObservation =
-        { DifferenceType = difference.DifferenceType; EntryType = difference.FileSystemEntryType; RelativePath = difference.RelativePath }
+        {
+            Scope = currentWatchJournalScope graceStatus
+            DifferenceType = difference.DifferenceType
+            EntryType = difference.FileSystemEntryType
+            RelativePath = difference.RelativePath
+        }
 
     /// Checks whether a pending uploaded file difference must be dropped because final path state no longer has a file.
     let private isStaleUploadedFileDifference (difference: FileSystemDifference) =
@@ -1739,15 +1796,118 @@ module Watch =
 
         canceledFileUpload
 
+    /// Checks whether two status differences represent the same repository path observation.
+    let private statusDifferenceMatches (left: FileSystemDifference) (right: FileSystemDifference) =
+        left.DifferenceType = right.DifferenceType
+        && left.FileSystemEntryType = right.FileSystemEntryType
+        && String.Equals(normalizeRelativePath left.RelativePath, normalizeRelativePath right.RelativePath, watchPathComparison)
+
     /// Records an already-derived filesystem difference so status application can retry without duplicating work.
     let private addPendingStatusDifference (difference: FileSystemDifference) =
         lock pendingStatusDifferencesLock (fun () ->
             if not
-               <| pendingStatusDifferences.Exists (fun (existing: FileSystemDifference) ->
-                   existing.RelativePath = difference.RelativePath
-                   && existing.DifferenceType = difference.DifferenceType
-                   && existing.FileSystemEntryType = difference.FileSystemEntryType) then
+               <| pendingStatusDifferences.Exists(fun existing -> statusDifferenceMatches existing difference) then
                 pendingStatusDifferences.Add(difference))
+
+    /// Builds the stable key used to pair a startup-replayed difference with its existing journal sequence.
+    let private pendingStatusDifferenceReplayKey (difference: FileSystemDifference) =
+        $"{getDiscriminatedUnionCaseName difference.DifferenceType}|{getDiscriminatedUnionCaseName difference.FileSystemEntryType}|{normalizeRelativePath difference.RelativePath}"
+
+    /// Rebuilds the replay sequence dictionary when repository path comparison changes.
+    let private ensureStartupReplaySequenceComparer () =
+        let desiredComparer =
+            if watchPathComparison = StringComparison.OrdinalIgnoreCase
+               || watchPathComparison = StringComparison.InvariantCultureIgnoreCase
+               || watchPathComparison = StringComparison.CurrentCultureIgnoreCase then
+                StringComparer.OrdinalIgnoreCase
+            else
+                StringComparer.Ordinal
+
+        if not (obj.ReferenceEquals(pendingStatusDifferenceReplaySequences.Comparer, desiredComparer)) then
+            let replacement = Dictionary<string, Queue<int64>>(desiredComparer)
+
+            for pair in pendingStatusDifferenceReplaySequences do
+                replacement[pair.Key] <- Queue<int64>(pair.Value)
+
+            pendingStatusDifferenceReplaySequences <- replacement
+
+    /// Records one replay sequence and optionally queues its difference for startup status application.
+    let private recordStartupReplaySequence queueDifference sequence (difference: FileSystemDifference) =
+        lock pendingStatusDifferencesLock (fun () ->
+            ensureStartupReplaySequenceComparer ()
+
+            if queueDifference then addPendingStatusDifference difference
+
+            let key = pendingStatusDifferenceReplayKey difference
+            let mutable queue = Unchecked.defaultof<Queue<int64>>
+
+            if not (pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue)) then
+                queue <- Queue<int64>()
+                pendingStatusDifferenceReplaySequences.Add(key, queue)
+
+            queue.Enqueue(sequence))
+
+    /// Queues one startup-replayed difference without creating a duplicate durable journal row.
+    let private addStartupReplayedStatusDifference sequence (difference: FileSystemDifference) = recordStartupReplaySequence true sequence difference
+
+    /// Remembers a row appended during deferred replay so the next retry does not append it again.
+    let private rememberDeferredStartupReplaySequence sequence (difference: FileSystemDifference) = recordStartupReplaySequence false sequence difference
+
+    /// Reads the existing startup replay sequences for a difference that should not be appended again.
+    let private startupReplaySequencesForDifference (difference: FileSystemDifference) =
+        lock pendingStatusDifferencesLock (fun () ->
+            ensureStartupReplaySequenceComparer ()
+            let key = pendingStatusDifferenceReplayKey difference
+            let mutable queue = Unchecked.defaultof<Queue<int64>>
+
+            if
+                pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue)
+                && queue.Count > 0
+            then
+                queue.ToArray()
+            else
+                Array.empty<int64>)
+
+    /// Reads the first existing startup replay sequence for tests that assert duplicate append prevention.
+    let private tryPeekStartupReplaySequence (difference: FileSystemDifference) =
+        match startupReplaySequencesForDifference difference with
+        | [||] -> None
+        | sequences -> Some sequences[0]
+
+    /// Reports the replay sequence queued for a difference in startup recovery tests.
+    let internal tryPeekStartupReplaySequenceForWatchTests difference = tryPeekStartupReplaySequence difference
+
+    /// Reads the replay sequences represented by differences that reached a durable terminal outcome.
+    let private startupReplaySequencesForTerminalDifferences (differences: seq<FileSystemDifference>) =
+        differences
+        |> Seq.collect startupReplaySequencesForDifference
+        |> Seq.toArray
+
+    /// Removes replay metadata for one pending difference and returns the durable rows it represented.
+    let private takeStartupReplaySequencesForDifference (difference: FileSystemDifference) =
+        let key = pendingStatusDifferenceReplayKey difference
+        let mutable queue = Unchecked.defaultof<Queue<int64>>
+
+        if pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue) then
+            pendingStatusDifferenceReplaySequences.Remove(key)
+            |> ignore
+
+            queue.ToArray()
+        else
+            Array.empty<int64>
+
+    /// Removes replay metadata for one pending difference after it has reached a terminal local outcome.
+    let private clearStartupReplaySequenceForDifference (difference: FileSystemDifference) =
+        takeStartupReplaySequencesForDifference difference
+        |> ignore
+
+    /// Consumes replay sequence metadata only after the corresponding pending status difference is cleared.
+    let private clearStartupReplaySequences (differences: seq<FileSystemDifference>) =
+        lock pendingStatusDifferencesLock (fun () ->
+            ensureStartupReplaySequenceComparer ()
+
+            for difference in differences do
+                clearStartupReplaySequenceForDifference difference)
 
     /// Reads the best available GraceStatus snapshot for classifying directory-create observations.
     let private readGraceStatusForDirectoryAddClassification () =
@@ -1823,15 +1983,44 @@ module Watch =
                 quarantineWatchObservation reason "status-trigger" pendingTrigger.Key
                 quarantinedCount <- quarantinedCount + 1
 
-        let pendingDifferences =
+        let pendingDifferences, startupReplaySequencesToQuarantine =
             lock pendingStatusDifferencesLock (fun () ->
+                ensureStartupReplaySequenceComparer ()
                 let snapshot = pendingStatusDifferences.ToArray()
+                let replaySequences = ResizeArray<int64>()
+
+                for pendingDifference in snapshot do
+                    replaySequences.AddRange(takeStartupReplaySequencesForDifference pendingDifference)
+
                 pendingStatusDifferences.Clear()
-                snapshot)
+                snapshot, replaySequences.ToArray())
 
         for pendingDifference in pendingDifferences do
             quarantineWatchObservation reason "status-difference" $"{pendingDifference.RelativePath}"
             quarantinedCount <- quarantinedCount + 1
+
+        let startupReplayRowsDurablyTerminal =
+            if startupReplaySequencesToQuarantine.Length > 0 then
+                try
+                    let advancedThrough =
+                        (quarantineWatchJournalSequencesForWatch startupReplaySequencesToQuarantine $"confidence loss discarded startup replay work: {reason}")
+                            .GetAwaiter()
+                            .GetResult()
+
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Grace Watch durably quarantined {startupReplaySequencesToQuarantine.Length} startup replay journal rows through applied boundary {advancedThrough} after confidence loss."
+
+                    true
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch could not durably quarantine startup replay journal rows after confidence loss; Watch will remain suspended so the old startup replay sequence cannot block later applied-boundary advancement silently: {Markup.Escape(ex.Message)}."
+
+                    false
+            else
+                true
 
         uploadedFileVersions.Clear()
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
@@ -1839,6 +2028,8 @@ module Watch =
 
         if quarantinedCount > 0 then
             logToAnsiConsole Colors.Important $"Grace Watch quarantined {quarantinedCount} pending observations after confidence loss: {reason}."
+
+        startupReplayRowsDurablyTerminal
 
     /// Reads the active explicit-resync attempt token used to reject stale recovery side effects.
     let private currentGraceWatchResyncAttempt () = Volatile.Read(&graceWatchResyncGeneration)
@@ -2147,7 +2338,8 @@ module Watch =
     /// Suspends only the resync attempt that observed the failure, preserving newer overflow requests.
     let private suspendGraceWatchAttemptAfterFailedRecovery attempt reason =
         if isGraceWatchResyncAttemptActive attempt then
-            quarantinePendingWatchWork reason
+            quarantinePendingWatchWork reason |> ignore
+
             setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
 
             if tryClearGraceWatchResyncAttempt attempt then
@@ -2162,14 +2354,24 @@ module Watch =
 
     /// Requests a scan-derived resync and quarantines observations captured under the previous root confidence.
     let private requestGraceWatchExplicitResync reason =
-        quarantinePendingWatchWork reason
+        let startupReplayRowsDurablyTerminal = quarantinePendingWatchWork reason
 
         Interlocked.Increment(&graceWatchResyncGeneration)
         |> ignore
 
-        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+        if startupReplayRowsDurablyTerminal then
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+        else
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+
         publishGraceWatchResyncRequired ()
-        logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
+
+        if startupReplayRowsDurablyTerminal then
+            logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
+        else
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch suspended incremental processing because startup replay journal rows could not be made terminal after confidence loss: {reason}."
 
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
@@ -2387,10 +2589,7 @@ module Watch =
 
         let addIfMissing (difference: FileSystemDifference) =
             if not
-               <| merged.Exists (fun existing ->
-                   existing.RelativePath = difference.RelativePath
-                   && existing.DifferenceType = difference.DifferenceType
-                   && existing.FileSystemEntryType = difference.FileSystemEntryType) then
+               <| merged.Exists(fun existing -> statusDifferenceMatches existing difference) then
                 merged.Add(difference)
 
         for difference in first do
@@ -2400,12 +2599,6 @@ module Watch =
             addIfMissing difference
 
         merged
-
-    /// Checks whether two status differences represent the same repository path observation.
-    let private statusDifferenceMatches (left: FileSystemDifference) (right: FileSystemDifference) =
-        left.DifferenceType = right.DifferenceType
-        && left.FileSystemEntryType = right.FileSystemEntryType
-        && String.Equals(normalizeRelativePath left.RelativePath, normalizeRelativePath right.RelativePath, watchPathComparison)
 
     /// Checks whether a difference came from uploaded file work that newer event-derived upload state can supersede.
     let private isUploadedFileAddOrChangeDifference (difference: FileSystemDifference) =
@@ -2459,6 +2652,7 @@ module Watch =
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
         lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
         clearPendingStatusDifferencesForTests ()
+        lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
         clearGraceWatchResyncPending ()
 
         Interlocked.Exchange(&quarantinedWatchObservationCount, 0)
@@ -3708,6 +3902,16 @@ module Watch =
                     return true
         }
 
+    /// Combines durable journal sequences without reordering the first observation for each sequence.
+    let private combineWatchJournalSequences (first: int64 array) (second: int64 array) =
+        seq {
+            yield! first
+            yield! second
+        }
+        |> Seq.filter (fun sequence -> sequence > 0L)
+        |> Seq.distinct
+        |> Seq.toArray
+
     /// Converges appended journal rows after status side effects commit so recovery never resumes from stale pending rows.
     let private convergeWatchJournalAfterStatusApplication (appendedWatchJournalSequences: int64 array) =
         task {
@@ -3952,6 +4156,9 @@ module Watch =
 
                         let statusApplicationLegal = statusApplicationModeStillTrusted ()
                         let mutable appendedWatchJournalSequences = Array.empty<int64>
+                        let mutable newlyAppendedWatchJournalSequences = Array.empty<int64>
+                        let mutable newlyAppendedWatchJournalReplayRows = Array.empty<int64 * FileSystemDifference>
+                        let mutable startupReplayRowsParticipated = false
                         let mutable appendedWatchJournalConverged = false
 
                         let statusUpdateStillTrusted () =
@@ -3984,19 +4191,37 @@ module Watch =
                                     let! appendResult =
                                         task {
                                             try
-                                                let! sequences =
+                                                let startupReplaySequences =
                                                     statusDifferencesForApply.Applicable
-                                                    |> Seq.map journalObservationForDifference
-                                                    |> appendWatchJournalObservationsForWatch
+                                                    |> Seq.collect startupReplaySequencesForDifference
+                                                    |> Seq.toArray
 
-                                                return Ok sequences
+                                                let differencesNeedingJournalAppend =
+                                                    statusDifferencesForApply.Applicable
+                                                    |> Seq.filter (fun difference ->
+                                                        tryPeekStartupReplaySequence difference
+                                                        |> Option.isNone)
+                                                    |> Seq.toArray
+
+                                                let! sequences =
+                                                    if Array.isEmpty differencesNeedingJournalAppend then
+                                                        Task.FromResult(Array.empty<int64>)
+                                                    else
+                                                        differencesNeedingJournalAppend
+                                                        |> Seq.map journalObservationForDifference
+                                                        |> appendWatchJournalObservationsForWatch
+
+                                                return Ok(startupReplaySequences, sequences, differencesNeedingJournalAppend)
                                             with
                                             | ex -> return Error ex
                                         }
 
                                     match appendResult with
-                                    | Ok sequences ->
-                                        appendedWatchJournalSequences <- sequences
+                                    | Ok (startupReplaySequences, sequences, newlyAppendedDifferences) ->
+                                        startupReplayRowsParticipated <- startupReplaySequences.Length > 0
+                                        newlyAppendedWatchJournalSequences <- sequences
+                                        newlyAppendedWatchJournalReplayRows <- Array.zip sequences newlyAppendedDifferences
+                                        appendedWatchJournalSequences <- combineWatchJournalSequences startupReplaySequences sequences
 
                                         try
                                             return!
@@ -4044,6 +4269,13 @@ module Watch =
                         | Some newGraceStatus ->
                             let commitRuntimeMode = currentGraceWatchRuntimeMode ()
 
+                            let resolvedStartupReplaySequences =
+                                startupReplaySequencesForTerminalDifferences (
+                                    mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved
+                                )
+
+                            appendedWatchJournalSequences <- combineWatchJournalSequences appendedWatchJournalSequences resolvedStartupReplaySequences
+
                             let statusUpdateCanCommit =
                                 statusUpdateStillTrusted ()
                                 && (startupPendingDifferences.Count > 0
@@ -4073,10 +4305,12 @@ module Watch =
                                     clearCanceledFileUploadDeleteRelativePaths canceledFileUploadDeletePathsToClear
 
                                     clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
+                                    clearStartupReplaySequences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
                                     clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
                                     removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
                             else
                                 clearPendingStatusDifferences pendingDifferencesToClear
+                                clearStartupReplaySequences pendingDifferencesToClear
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
                                 removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
 
@@ -4084,9 +4318,19 @@ module Watch =
                                     Colors.Important
                                     $"Grace Status file update completed while newer file upload work was pending; status-only triggers will retry."
                         | None ->
-                            if appendedWatchJournalSequences.Length > 0
-                               && not appendedWatchJournalConverged then
-                                let! noDurableStatusRepairFailed = clearWatchJournalAfterNoDurableStatus appendedWatchJournalSequences
+                            if startupReplayRowsParticipated then
+                                for sequence, difference in newlyAppendedWatchJournalReplayRows do
+                                    rememberDeferredStartupReplaySequence sequence difference
+
+                                appendedWatchJournalConverged <- true
+
+                                if newlyAppendedWatchJournalReplayRows.Length > 0 then
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch kept existing startup replay rows durable after status application deferred; newly appended rows will retry without duplicate journal append."
+                            elif newlyAppendedWatchJournalSequences.Length > 0
+                                 && not appendedWatchJournalConverged then
+                                let! noDurableStatusRepairFailed = clearWatchJournalAfterNoDurableStatus newlyAppendedWatchJournalSequences
                                 appendedWatchJournalConverged <- true
 
                                 if noDurableStatusRepairFailed then
@@ -4190,6 +4434,251 @@ module Watch =
         | File, _ ->
             enqueueFileUpload difference.RelativePath
             |> ignore
+
+    /// Finds the parent directory path that must exist before a replayed directory add can be materialized.
+    let private tryParentRelativePathForDirectoryReplayAdd (relativePath: RelativePath) =
+        let segments =
+            (normalizeRelativePath relativePath)
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+
+        if segments.Length <= 1 then
+            None
+        else
+            Some(RelativePath(String.Join("/", segments[0 .. segments.Length - 2])))
+
+    /// Checks whether startup replay can provide an untracked directory add's missing parent in the same batch.
+    let private replayRowsContainDirectoryAdd (rows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        rows
+        |> Array.exists (fun row ->
+            row.EntryType = FileSystemEntryType.Directory
+            && row.DifferenceType = DifferenceType.Add
+            && String.Equals(normalizeRelativePath row.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Checks whether a replayed directory add can link to a tracked parent or one replayed by the same startup batch.
+    let private replayDirectoryAddHasParentContinuity
+        (status: GraceStatus)
+        (replayRows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array)
+        (relativePath: RelativePath)
+        =
+        match tryParentRelativePathForDirectoryReplayAdd relativePath with
+        | None -> true
+        | Some parentRelativePath ->
+            isTrackedDirectory status parentRelativePath
+            || replayRowsContainDirectoryAdd replayRows parentRelativePath
+
+    /// Classifies compatible durable replay rows against current startup scan applicability before status mutation.
+    let private tryStartupReplayRetirementReason
+        (status: GraceStatus)
+        (compatibleReplayRows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array)
+        (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay)
+        =
+        let fullPath = Path.Combine(Current().RootDirectory, $"{row.RelativePath}")
+
+        match row.EntryType, row.DifferenceType, finalPathKind row.RelativePath with
+        | FileSystemEntryType.File,
+          (DifferenceType.Add
+          | DifferenceType.Change),
+          FinalPathFile ->
+            if shouldIgnoreFile fullPath then
+                Some "current startup replay file content ignored before status application"
+            elif row.DifferenceType = DifferenceType.Add
+                 && isTrackedFile status row.RelativePath then
+                Some "startup replay file add already tracked"
+            elif
+                row.DifferenceType = DifferenceType.Change
+                && not (isTrackedFile status row.RelativePath)
+            then
+                Some "startup replay file change is not tracked"
+            else
+                None
+        | FileSystemEntryType.File,
+          (DifferenceType.Add
+          | DifferenceType.Change),
+          (FinalPathMissing
+          | FinalPathDirectory) -> Some "stale startup replay file content missing before status application"
+        | FileSystemEntryType.File, DifferenceType.Delete, FinalPathDirectory -> Some "startup replay file delete now targets a directory"
+        | FileSystemEntryType.File, DifferenceType.Delete, _ ->
+            if isTrackedFile status row.RelativePath then
+                None
+            else
+                Some "startup replay file delete is not tracked"
+        | FileSystemEntryType.Directory, DifferenceType.Add, FinalPathDirectory ->
+            if shouldIgnoreDirectory fullPath then
+                Some "current startup replay directory ignored before status application"
+            elif isTrackedDirectory status row.RelativePath then
+                Some "startup replay directory add already tracked"
+            elif not (replayDirectoryAddHasParentContinuity status compatibleReplayRows row.RelativePath) then
+                Some "startup replay directory add parent is not tracked or replayed"
+            else
+                None
+        | FileSystemEntryType.Directory,
+          DifferenceType.Add,
+          (FinalPathMissing
+          | FinalPathFile) -> Some "stale startup replay directory missing before status application"
+        | FileSystemEntryType.Directory, DifferenceType.Change, _ -> Some "directory change rows are not emitted by Watch startup scan"
+        | FileSystemEntryType.Directory, DifferenceType.Delete, FinalPathFile -> Some "startup replay directory delete now targets a file"
+        | FileSystemEntryType.Directory, DifferenceType.Delete, _ ->
+            if isTrackedDirectory status row.RelativePath then
+                None
+            else
+                Some "startup replay directory delete is not tracked"
+
+    /// Records a startup lifecycle event as diagnostics that cannot be replayed as Watch correctness data.
+    let private recordStartupLifecycleEvent status eventType message =
+        recordWatchLifecycleEventForWatch (
+            { Scope = currentWatchJournalScope status; EventType = eventType; Message = message }: Grace.CLI.LocalStateDb.WatchLifecycleEvent
+        )
+
+    /// Replays compatible pending journal rows after startup reconciliation and quarantines rows from stale scopes.
+    let private recoverStartupWatchJournalAfterReconciliation status =
+        task {
+            do! recordStartupLifecycleEvent status "startup-reconciliation-complete" "Startup scan reconciliation completed before journal replay."
+            let! recovery = recoverWatchJournalForStartupForWatch (currentWatchJournalScope status)
+
+            if recovery.QuarantinedRows.Length > 0 then
+                Interlocked.Add(&quarantinedWatchObservationCount, recovery.QuarantinedRows.Length)
+                |> ignore
+
+                logToAnsiConsole Colors.Important $"Grace Watch quarantined {recovery.QuarantinedRows.Length} incompatible startup journal rows before replay."
+
+            let startupReplayClassifications =
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row, tryStartupReplayRetirementReason status recovery.CompatibleReplayRows row)
+
+            let retiredReplayRows =
+                startupReplayClassifications
+                |> Array.choose (fun (row, reason) ->
+                    reason
+                    |> Option.map (fun retirementReason -> row, retirementReason))
+
+            let replayRows =
+                startupReplayClassifications
+                |> Array.choose (fun (row, reason) ->
+                    match reason with
+                    | Some _ -> None
+                    | None -> Some row)
+
+            if retiredReplayRows.Length > 0 then
+                for row, reason in
+                    retiredReplayRows
+                    |> Array.sortBy (fun (row, _) -> row.Sequence) do
+                    let! _ = quarantineWatchJournalSequencesForWatch [| row.Sequence |] reason
+
+                    let lifecycleEventType, lifecycleMessage =
+                        match reason with
+                        | "stale startup replay file content missing before status application" ->
+                            "startup-stale-file-replay-retired",
+                            $"Startup replay retired stale file add/change row {row.Sequence} because its final file content was missing."
+                        | "current startup replay file content ignored before status application" ->
+                            "startup-ignored-file-replay-retired",
+                            $"Startup replay retired file add/change row {row.Sequence} because current startup ignore rules skip its final file content."
+                        | "current startup replay directory ignored before status application" ->
+                            "startup-ignored-directory-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because current startup ignore rules skip that directory."
+                        | "stale startup replay directory missing before status application" ->
+                            "startup-stale-directory-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because its final directory was missing."
+                        | "startup replay file delete now targets a directory" ->
+                            "startup-file-delete-replay-retired",
+                            $"Startup replay retired file delete row {row.Sequence} because the current path is a directory."
+                        | "startup replay directory delete now targets a file" ->
+                            "startup-directory-delete-replay-retired",
+                            $"Startup replay retired directory delete row {row.Sequence} because the current path is a file."
+                        | "startup replay file add already tracked" ->
+                            "startup-tracked-file-add-replay-retired",
+                            $"Startup replay retired file add row {row.Sequence} because GraceStatus already tracks that file."
+                        | "startup replay file change is not tracked" ->
+                            "startup-untracked-file-change-replay-retired",
+                            $"Startup replay retired file change row {row.Sequence} because GraceStatus does not track that file."
+                        | "startup replay file delete is not tracked" ->
+                            "startup-untracked-file-delete-replay-retired",
+                            $"Startup replay retired file delete row {row.Sequence} because GraceStatus does not track that file."
+                        | "startup replay directory add already tracked" ->
+                            "startup-tracked-directory-add-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because GraceStatus already tracks that directory."
+                        | "startup replay directory add parent is not tracked or replayed" ->
+                            "startup-orphan-directory-add-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because its parent directory was not tracked or replayed."
+                        | "startup replay directory delete is not tracked" ->
+                            "startup-untracked-directory-delete-replay-retired",
+                            $"Startup replay retired directory delete row {row.Sequence} because GraceStatus does not track that directory."
+                        | _ -> "startup-replay-retired", $"Startup replay retired row {row.Sequence} because current startup rules would not apply it."
+
+                    do! recordStartupLifecycleEvent status lifecycleEventType lifecycleMessage
+
+                Interlocked.Add(&quarantinedWatchObservationCount, retiredReplayRows.Length)
+                |> ignore
+
+                logToAnsiConsole Colors.Important $"Grace Watch retired {retiredReplayRows.Length} startup replay rows before status application."
+
+            for row in replayRows do
+                let difference = FileSystemDifference.Create row.DifferenceType row.EntryType row.RelativePath
+                addStartupReplayedStatusDifference row.Sequence difference
+
+            if replayRows.Length > 0 then
+                logToAnsiConsole Colors.Important $"Grace Watch replayed {replayRows.Length} compatible pending journal rows after startup reconciliation."
+
+            do!
+                recordStartupLifecycleEvent
+                    status
+                    "startup-replay-complete"
+                    $"Startup replay queued {replayRows.Length} compatible rows, retired {retiredReplayRows.Length} replay rows, and quarantined {recovery.QuarantinedRows.Length} incompatible rows."
+
+            return recovery
+        }
+
+    /// Exposes startup journal recovery to tests without starting the foreground watcher loop.
+    let internal recoverStartupWatchJournalAfterReconciliationForWatchTests status = recoverStartupWatchJournalAfterReconciliation status
+
+    /// Re-enters startup replay and promotion after delayed startup work drains on a later timer pass.
+    let private completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient =
+        task {
+            let mutable attemptedStartupCompletion = false
+
+            if
+                not (hasPendingWatchWork ())
+                && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
+            then
+                attemptedStartupCompletion <- true
+                let! reconciledStartupStatus = readGraceStatusFileClient ()
+                graceStatus <- reconciledStartupStatus
+                updateGraceStatusDirectoryIds reconciledStartupStatus
+                let! startupRecovery = recoverStartupWatchJournalAfterReconciliation reconciledStartupStatus
+
+                if startupRecovery.CompatibleReplayRows.Length > 0 then
+                    graceStatus <- GraceStatus.Default
+                    do! processChangedFilesClient ()
+
+            if
+                attemptedStartupCompletion
+                && not (hasPendingWatchWork ())
+            then
+                promoteStartupModeIfRecoverySucceeded ()
+
+            if
+                attemptedStartupCompletion
+                && not (hasPendingWatchWork ())
+            then
+                let! startupCatchUpStatus = readGraceStatusFileClient ()
+                updateGraceStatusDirectoryIds startupCatchUpStatus
+
+                do!
+                    publishGraceWatchInterprocessFileForCurrentConfidence
+                        startupCatchUpStatus
+                        graceStatusDirectoryIds
+                        updateGraceWatchInterprocessFileClient
+                        "startup catch-up"
+        }
+
+    /// Exposes delayed startup replay completion to tests without starting the foreground watcher loop.
+    let internal completeStartupRecoveryIfPendingWorkDrainedForWatchTests
+        readGraceStatusFileClient
+        updateGraceWatchInterprocessFileClient
+        processChangedFilesClient
+        =
+        completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient
 
     /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
@@ -4420,6 +4909,11 @@ module Watch =
 
                         logToAnsiConsole Colors.Error $"{Markup.Escape(error.ToString())}"
 
+                    let! startupRecovery = recoverStartupWatchJournalAfterReconciliation graceStatus
+
+                    if startupRecovery.CompatibleReplayRows.Length > 0 then
+                        logToAnsiConsole Colors.Verbose $"Grace Watch recovered startup journal rows before scanning for offline differences."
+
                     // Check for changes that occurred while not running.
                     logToAnsiConsole Colors.Verbose $"Scanning for differences."
 
@@ -4442,18 +4936,7 @@ module Watch =
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
-                    promoteStartupModeIfRecoverySucceeded ()
-
-                    if not (hasPendingWatchWork ()) then
-                        let! startupCatchUpStatus = readGraceStatusFile ()
-                        updateGraceStatusDirectoryIds startupCatchUpStatus
-
-                        do!
-                            publishGraceWatchInterprocessFileForCurrentConfidence
-                                startupCatchUpStatus
-                                graceStatusDirectoryIds
-                                updateGraceWatchInterprocessFile
-                                "startup catch-up"
+                    do! completeStartupRecoveryIfPendingWorkDrained readGraceStatusFile updateGraceWatchInterprocessFile processChangedFiles
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -4472,6 +4955,7 @@ module Watch =
                             do! publishGraceStatusRefreshSnapshot refreshGeneration updatedGraceStatus updateGraceWatchInterprocessFile
 
                         do! processChangedFiles ()
+                        do! completeStartupRecoveryIfPendingWorkDrained readGraceStatusFile updateGraceWatchInterprocessFile processChangedFiles
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 

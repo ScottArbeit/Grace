@@ -1056,6 +1056,26 @@ module CommandOutputContractRegistryTests =
             |> should equal "correlation-id"
         | None -> Assert.Fail("authenticate.logout should have a registry entry.")
 
+    /// Verifies that maintenance show journal examples include every required journal row property.
+    [<Test>]
+    let ``maintenance show journal example includes quarantine reason`` () =
+        let identity = CommandOutputContract.commandIdentity [ "maintenance" ] "show-journal"
+
+        match CommandOutputContract.tryFind identity with
+        | Some entry ->
+            let document = CommandOutputContract.introspectionDocument Examples entry
+            use success = JsonDocument.Parse(Grace.Shared.Utilities.serialize document.Examples[0].Document)
+
+            let row =
+                success
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")[0]
+
+            row.GetProperty("QuarantineReason").ValueKind
+            |> should equal JsonValueKind.Null
+        | None -> Assert.Fail("maintenance.show-journal should have a registry entry.")
+
     /// Verifies that all registry schema and example documents serialize as json.
     [<Test>]
     let ``all registry schema and example documents serialize as json`` () =
