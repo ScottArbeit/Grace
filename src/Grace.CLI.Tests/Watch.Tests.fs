@@ -13578,6 +13578,148 @@ module WatchTests =
             Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests { payload with BranchId = Guid.NewGuid() }
             |> should equal false)
 
+    /// Verifies that same-root same-branch References do not schedule remote materialization.
+    [<Test>]
+    let ``latest current branch decision no-ops when remote root matches local status`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let status = liveWatchStatus localRootId
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = localRootId
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                    ReferenceType = ReferenceType.Save
+                }
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) [| payload |]
+
+            decision.NeedsMaterialization
+            |> should equal false
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.SameRoot
+
+            decision.Reference
+            |> Option.map (fun reference -> reference.ReferenceId)
+            |> should equal (Some payload.ReferenceId))
+
+    /// Verifies that the helper chooses the latest applicable current-branch Reference without scans or remote lookups.
+    [<Test>]
+    let ``latest current branch decision collapses notifications to latest applicable reference`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let olderApplicable =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "older-root"
+                    Blake3Hash = Blake3Hash "older-root-blake3"
+                    ReferenceType = ReferenceType.Save
+                }
+
+            let staleBranch =
+                { olderApplicable with
+                    ReferenceId = Guid.NewGuid()
+                    BranchId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "stale-branch-root"
+                    Blake3Hash = Blake3Hash "stale-branch-root-blake3"
+                }
+
+            let latestApplicable =
+                { olderApplicable with
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "latest-root"
+                    Blake3Hash = Blake3Hash "latest-root-blake3"
+                }
+
+            let decision =
+                Services.decideLatestCurrentBranchReferenceMaterialization
+                    currentRepositoryId
+                    currentBranchId
+                    (Some status)
+                    [|
+                        olderApplicable
+                        staleBranch
+                        latestApplicable
+                    |]
+
+            decision.NeedsMaterialization |> should equal true
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            decision.Reference
+            |> Option.map (fun reference -> reference.ReferenceId)
+            |> should equal (Some latestApplicable.ReferenceId))
+
+    /// Verifies that root-hash equality is enough to make a deterministic no-op decision.
+    [<Test>]
+    let ``latest current branch decision compares local root hashes without scanning`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = status.RootDirectorySha256Hash
+                    Blake3Hash = status.RootDirectoryBlake3Hash
+                    ReferenceType = ReferenceType.Checkpoint
+                }
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) [| payload |]
+
+            decision.NeedsMaterialization
+            |> should equal false
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.SameRoot)
+
+    /// Verifies that dirty or pending local status cannot fall back to unsafe scan-oriented materialization.
+    [<Test>]
+    let ``latest current branch decision rejects materialization when local status has pending work`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let status = { liveWatchStatus (Guid.NewGuid()) with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+            Services.isGraceWatchScanLegal status.Mode
+            |> should equal false
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "remote-root"
+                    Blake3Hash = Blake3Hash "remote-root-blake3"
+                    ReferenceType = ReferenceType.Commit
+                }
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) [| payload |]
+
+            decision.NeedsMaterialization
+            |> should equal false
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync)
+
     /// Verifies that stale non-empty ids cannot be rescued by matching display names.
     [<Test>]
     let ``watch status rejects mismatched ids even when display names match`` () =
