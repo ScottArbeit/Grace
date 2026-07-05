@@ -502,6 +502,88 @@ module Services =
         | GraceWatchRuntimeMode.Stopping
         | _ -> false
 
+    /// Names the reason Watch either should or should not materialize a same-branch remote Reference.
+    type LatestCurrentBranchReferenceDecisionReason =
+        /// No supplied Reference notification applies to the requested repository, branch, and eligible Reference types.
+        | NoApplicableReference = 0
+        /// The latest applicable Reference does not include the remote root identity required for safe materialization.
+        | ReferenceRootIdentityUnavailable = 1
+        /// The local Watch status is unavailable, so remote materialization cannot proceed from a trusted boundary.
+        | LocalStatusUnavailable = 2
+        /// The local Watch status belongs to a different repository or branch than the chosen Reference.
+        | LocalStatusIdentityMismatch = 3
+        /// The local Watch status is not a clean healthy-incremental snapshot.
+        | LocalStatusRequiresResync = 4
+        /// The remote Reference already matches the local root identity, so materialization would be a no-op.
+        | SameRoot = 5
+        /// The remote Reference is the latest applicable current-branch Reference and differs from the local root.
+        | RemoteMaterializationRequired = 6
+
+    /// Carries the Watch decision for the latest applicable current-branch Reference notification.
+    type LatestCurrentBranchReferenceDecision =
+        {
+            NeedsMaterialization: bool
+            Reason: LatestCurrentBranchReferenceDecisionReason
+            Reference: CurrentBranchReferenceNotification option
+        }
+
+        /// Defines the deterministic no-reference decision used when all candidates are stale or unsupported.
+        static member NoApplicableReference =
+            { NeedsMaterialization = false; Reason = LatestCurrentBranchReferenceDecisionReason.NoApplicableReference; Reference = None }
+
+    /// Reports whether a current-branch Reference notification has enough root identity for a deterministic decision.
+    let private currentBranchReferenceHasRootIdentity (payload: CurrentBranchReferenceNotification) =
+        payload.DirectoryId <> DirectoryVersionId.Empty
+        && not (String.IsNullOrWhiteSpace($"{payload.Sha256Hash}"))
+        && not (String.IsNullOrWhiteSpace($"{payload.Blake3Hash}"))
+
+    /// Reports whether a current-branch Reference notification applies to this Watch repository and branch.
+    let private currentBranchReferenceAppliesToWatch repositoryId branchId (payload: CurrentBranchReferenceNotification) =
+        payload.RepositoryId = repositoryId
+        && payload.BranchId = branchId
+        && CurrentBranchReferenceNotification.IsEligibleReferenceType payload.ReferenceType
+
+    /// Reports whether a remote Reference points at the same root already held by the local Watch status.
+    let private currentBranchReferenceMatchesLocalRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
+        status.RootDirectoryId = payload.DirectoryId
+        || (status.RootDirectorySha256Hash = payload.Sha256Hash
+            && status.RootDirectoryBlake3Hash = payload.Blake3Hash)
+
+    /// Chooses whether the latest applicable current-branch Reference requires remote materialization.
+    let decideLatestCurrentBranchReferenceMaterialization
+        repositoryId
+        branchId
+        (localStatus: GraceWatchStatus option)
+        (payloads: CurrentBranchReferenceNotification seq)
+        =
+        let latestApplicable =
+            payloads
+            |> Seq.filter (currentBranchReferenceAppliesToWatch repositoryId branchId)
+            |> Seq.tryLast
+
+        match latestApplicable with
+        | None -> LatestCurrentBranchReferenceDecision.NoApplicableReference
+        | Some payload when not (currentBranchReferenceHasRootIdentity payload) ->
+            { NeedsMaterialization = false; Reason = LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable; Reference = Some payload }
+        | Some payload ->
+            match localStatus with
+            | None -> { NeedsMaterialization = false; Reason = LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable; Reference = Some payload }
+            | Some status when
+                status.RepositoryId <> repositoryId
+                || status.BranchId <> branchId
+                ->
+                { NeedsMaterialization = false; Reason = LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch; Reference = Some payload }
+            | Some status when
+                status.SafetyFlags
+                |> Array.exists (fun safetyFlag -> String.Equals(safetyFlag, "incrementalSafe", StringComparison.Ordinal))
+                |> not
+                ->
+                { NeedsMaterialization = false; Reason = LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync; Reference = Some payload }
+            | Some status when currentBranchReferenceMatchesLocalRoot status payload ->
+                { NeedsMaterialization = false; Reason = LatestCurrentBranchReferenceDecisionReason.SameRoot; Reference = Some payload }
+            | Some _ ->
+                { NeedsMaterialization = true; Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired; Reference = Some payload }
+
     /// Converts the in-memory Watch status model to the IPC JSON contract written for commands and agents.
     let private toGraceWatchStatusContractWithPersistedMode persistedModeOverride (status: GraceWatchStatus) =
         {

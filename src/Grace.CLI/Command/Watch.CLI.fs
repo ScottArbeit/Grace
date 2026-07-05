@@ -3194,6 +3194,25 @@ module Watch =
                     logToAnsiConsole
                         Colors.Verbose
                         $"Skipped current-branch reference notification {payload.ReferenceId} because it targets repository {payload.RepositoryId}, branch {payload.BranchId}, not current branch {Current().BranchId}."
+                else
+                    let current = Current()
+                    let! localStatus = getGraceWatchStatus ()
+
+                    let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus [| payload |]
+
+                    match decision.Reason with
+                    | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
+                        logToAnsiConsole
+                            Colors.Verbose
+                            $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
+                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                        logToAnsiConsole
+                            Colors.Highlighted
+                            $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
+                    | reason ->
+                        logToAnsiConsole
+                            Colors.Verbose
+                            $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
             with
             | ex -> logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
         }
