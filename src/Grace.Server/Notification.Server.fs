@@ -191,27 +191,6 @@ module Notification =
             }
             :> Task
 
-        /// Broadcasts a same-branch Reference payload to clients registered for the current branch group.
-        member this.NotifyCurrentBranchReference(payload: Reference.CurrentBranchReferenceNotification) =
-            task {
-                log.LogInformation(
-                    "{CurrentInstant}: Node: {HostName}; Notifying current-branch clients in RepositoryId {RepositoryId}, BranchId {BranchId} of {ReferenceType} ReferenceId: {ReferenceId}.",
-                    getCurrentInstantExtended (),
-                    getMachineName,
-                    payload.RepositoryId,
-                    payload.BranchId,
-                    payload.ReferenceType,
-                    payload.ReferenceId
-                )
-
-                do!
-                    this
-                        .Clients
-                        .Group(currentBranchGroupKey payload.RepositoryId payload.BranchId)
-                        .NotifyCurrentBranchReference(payload)
-            }
-            :> Task
-
         /// Broadcasts a save notification to clients watching the affected repository or branch.
         member this.NotifyOnSave((branchName: BranchName), (parentBranchName: BranchName), (parentBranchId: BranchId), (referenceId: ReferenceId)) =
             task {
@@ -309,6 +288,20 @@ module Notification =
                     logToConsole $"No SignalR clients connected."
             }
             :> Task
+
+    /// Broadcasts a same-branch Reference payload from trusted server-side event processing only.
+    let internal notifyCurrentBranchReferenceClients
+        (hubContext: IHubContext<NotificationHub, IGraceClientConnection>)
+        (payload: Reference.CurrentBranchReferenceNotification)
+        =
+        task {
+            if not <| isNull hubContext then
+                do!
+                    hubContext
+                        .Clients
+                        .Group(currentBranchGroupKey payload.RepositoryId payload.BranchId)
+                        .NotifyCurrentBranchReference(payload)
+        }
 
     /// Implements route automation event for the server request pipeline.
     let routeAutomationEvent (serviceProvider: IServiceProvider) (envelope: AutomationEventEnvelope) =
@@ -845,29 +838,25 @@ module Notification =
                         let emitCurrentBranchReference branchName =
                             task {
                                 if shouldNotifyCurrentBranchReference referenceType then
-                                    if not <| isNull hubContext then
-                                        let payload =
-                                            createCurrentBranchReferenceNotification
-                                                referenceId
-                                                ownerId
-                                                organizationId
-                                                repositoryId
-                                                branchId
-                                                branchName
-                                                directoryId
-                                                sha256Hash
-                                                blake3Hash
-                                                referenceType
-                                                referenceText
-                                                correlationId
+                                    let payload =
+                                        createCurrentBranchReferenceNotification
+                                            referenceId
+                                            ownerId
+                                            organizationId
+                                            repositoryId
+                                            branchId
+                                            branchName
+                                            directoryId
+                                            sha256Hash
+                                            blake3Hash
+                                            referenceType
+                                            referenceText
+                                            correlationId
 
-                                        do!
-                                            hubContext
-                                                .Clients
-                                                .Group(currentBranchGroupKey repositoryId branchId)
-                                                .NotifyCurrentBranchReference(payload)
-                                    else
+                                    if isNull hubContext then
                                         log.LogWarning("No SignalR hub context available; cannot notify current branch clients of reference.")
+                                    else
+                                        do! notifyCurrentBranchReferenceClients hubContext payload
                             }
 
                         match referenceType with

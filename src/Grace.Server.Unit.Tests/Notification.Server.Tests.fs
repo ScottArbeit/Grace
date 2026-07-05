@@ -5,9 +5,11 @@ open Grace.Server.Security
 open Grace.Types.Common
 open Grace.Types.Authorization
 open Grace.Types.Reference
+open Microsoft.AspNetCore.SignalR
 open NUnit.Framework
 open System
 open System.Security.Claims
+open System.Threading
 open System.Threading.Tasks
 
 /// Covers notification Server behavior in no-Aspire server unit tests.
@@ -25,6 +27,54 @@ type NotificationServerTests() =
     /// Creates a branch dto with stable identity for subscription authorization tests.
     let subscriptionBranch ownerId organizationId repositoryId branchId : Grace.Types.Branch.BranchDto =
         { Grace.Types.Branch.BranchDto.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; BranchId = branchId }
+
+    /// Creates a fake SignalR hub context that records current-branch group sends without a hosted server.
+    let recordingHubContext (observedGroups: ResizeArray<string>) (observedPayloads: ResizeArray<CurrentBranchReferenceNotification>) =
+        let client =
+            { new IGraceClientConnection with
+                member _.RegisterRepository _ = Task.CompletedTask
+                member _.RegisterParentBranch _ _ = Task.CompletedTask
+                member _.RegisterCurrentBranch _ _ = Task.CompletedTask
+                member _.NotifyRepository(_, _) = Task.CompletedTask
+
+                member _.NotifyCurrentBranchReference payload =
+                    observedPayloads.Add payload
+                    Task.CompletedTask
+
+                member _.NotifyOnCommit(_, _, _, _) = Task.CompletedTask
+                member _.NotifyOnCheckpoint(_, _, _, _) = Task.CompletedTask
+                member _.NotifyOnSave(_, _, _, _) = Task.CompletedTask
+                member _.NotifyAutomationEvent _ = Task.CompletedTask
+                member _.ServerToClientMessage _ = Task.CompletedTask
+            }
+
+        let clients =
+            { new IHubClients<IGraceClientConnection> with
+                member _.All = client
+                member _.AllExcept _ = client
+                member _.Client _ = client
+                member _.Clients _ = client
+
+                member _.Group groupName =
+                    observedGroups.Add groupName
+                    client
+
+                member _.GroupExcept(_, _) = client
+                member _.Groups _ = client
+                member _.User _ = client
+                member _.Users _ = client
+            }
+
+        let groups =
+            { new IGroupManager with
+                member _.AddToGroupAsync(_, _, _: CancellationToken) = Task.CompletedTask
+                member _.RemoveFromGroupAsync(_, _, _: CancellationToken) = Task.CompletedTask
+            }
+
+        { new IHubContext<NotificationHub, IGraceClientConnection> with
+            member _.Clients = clients
+            member _.Groups = groups
+        }
 
     /// Verifies that branch Name Glob Matching Is Case Insensitive And Supports Wildcard.
     [<TestCase("main", "main", true)>]
@@ -217,6 +267,46 @@ type NotificationServerTests() =
                 Assert.That(payload.ReferenceText, Is.EqualTo(ReferenceText "checkpoint"))
                 Assert.That(payload.CorrelationId, Is.EqualTo("corr-current")))
         )
+
+    /// Verifies that clients cannot forge current-branch Reference broadcasts through a public hub method.
+    [<Test>]
+    member _.NotificationHubDoesNotExposeCurrentBranchBroadcastAsClientInvokableMethod() =
+        let hubMethodNames =
+            typeof<NotificationHub>.GetMethods ()
+            |> Array.map (fun methodInfo -> methodInfo.Name)
+            |> Set.ofArray
+
+        Assert.That(hubMethodNames, Does.Not.Contain("NotifyCurrentBranchReference"))
+
+    /// Verifies that trusted server-side code can still emit current-branch Reference notifications.
+    [<Test>]
+    member _.ServerSideCurrentBranchBroadcastTargetsCurrentBranchGroup() =
+        task {
+            let observedGroups = ResizeArray<string>()
+            let observedPayloads = ResizeArray<CurrentBranchReferenceNotification>()
+            let repositoryId = Guid.Parse("44444444-4444-4444-4444-444444444444")
+            let branchId = Guid.Parse("55555555-5555-5555-5555-555555555555")
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = repositoryId
+                    BranchId = branchId
+                    ReferenceId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+                    ReferenceType = ReferenceType.Save
+                }
+
+            let hubContext = recordingHubContext observedGroups observedPayloads
+
+            do! notifyCurrentBranchReferenceClients hubContext payload
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(observedGroups, Has.Count.EqualTo(1))
+                    Assert.That(observedGroups[0], Is.EqualTo(currentBranchGroupKey repositoryId branchId))
+                    Assert.That(observedPayloads, Has.Count.EqualTo(1))
+                    Assert.That(observedPayloads[0], Is.EqualTo(payload)))
+            )
+        }
 
     /// Verifies that the additive current-branch contract does not remove parent-branch notification methods.
     [<Test>]
