@@ -71,7 +71,8 @@ update the issue before editing the new paths.
   verify the scoped diff and that no unexpected deletions are present, run the chosen validation gate, then wait for
   Codex Code Review Bot to review the refreshed PR head. A bot signal on a stale commit does not satisfy the completion
   gate. For sub-issue PRs targeting an epic integration branch, run that freshness gate against the current epic branch;
-  for the final epic-to-`main` PR, run it against current `origin/main`.
+  for mini-epic integration branch PRs, run it against the current parent epic branch; for the final epic-to-`main` PR,
+  run it against current `origin/main`.
 - Never sleep or poll for more than 120 seconds in one command. This applies to `Start-Sleep`, `wait_agent`,
   long-polling commands, watch loops, and tool waits; use repeated shorter checks instead, with status updates between
   checks during long workflows.
@@ -99,18 +100,21 @@ update the issue before editing the new paths.
   likely bot/fix/re-review loop; this does not replace the bot as the blocking review gate.
 - For epic-branch pull requests, classify each fresh latest-head finding against the current leaf issue's scope before
   assigning a fix worker. If a finding is valid but explicitly belongs to a named future leaf issue in the same epic,
-  reply with that future issue ownership, record the deferred disposition in `Review Status`, resolve the conversation,
-  and do not broaden the current PR to absorb that future scope. Update the future sibling issue's detail gate before
+  defer it only after that future issue already exists or is created, the issue records the exact finding, invariant,
+  and proof obligation, and the PR reply and `Review Status` name that future issue before resolving the conversation.
+  Do not broaden the current PR to absorb that future scope. Update the future sibling issue's detail gate before
   assigning it when the finding reveals missing acceptance criteria, adversarial cases, or risk-surface traps.
 - Do not defer a finding to a future leaf issue when it challenges the current leaf's trust contract. If later leaves
   consume a fact, authority signal, persisted field, status flag, or trust predicate produced by the current leaf, the
   current leaf owns making that surface reliable before merge.
-- Track substantive Codex Code Review Bot cycles. After one substantive cycle, continue the normal fix loop; after two,
-  add a repeated-theme prevention note to `Review Status`; after three, stop one-off patching and post a review
-  stabilization ledger to the issue and PR; after four, hard stop until the ledger is implemented, proven, and
-  self-reviewed. Start stabilization after two substantive cycles for high-risk surfaces such as Watch state, IPC/status
-  contracts, branch-switch safety, storage, actors, authorization, public contracts, persisted shapes, concurrency,
-  recovery, or side-effect ordering.
+- Track substantive Codex Code Review Bot cycles. Do not count duplicate findings, stale findings from previous review
+  passes whether resolved or unresolved, formatting-only comments, administrative comments, CI flakes, invalid findings,
+  or maintainer-accepted deferrals. After one substantive cycle, continue the normal fix loop; after two, add a
+  repeated-theme prevention note to `Review Status`; after three, stop one-off patching and post a review stabilization
+  ledger to the issue and PR; after four, hard stop until the ledger is implemented, proven, and self-reviewed. Start
+  stabilization after two substantive cycles for high-risk surfaces such as Watch state, IPC/status contracts,
+  branch-switch safety, storage, actors, authorization, public contracts, persisted shapes, concurrency, recovery, or
+  side-effect ordering.
 - If a pull request has more than three Codex Code Review Bot review sessions even without three counted substantive
   cycles, pause before assigning another routine fix worker. Audit the timeline, separate stale/duplicate/invalid
   sessions from fresh findings, and decide whether a missing invariant, sibling-issue deferral, or structural ledger is

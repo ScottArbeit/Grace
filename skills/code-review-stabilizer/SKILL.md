@@ -25,8 +25,9 @@ Count a **substantive review cycle** as:
 1. A worker pushes a fix commit or fix series.
 1. The next review reports another substantive finding on the new head.
 
-Do not count purely administrative comments, duplicate comments, formatting-only nits, CI flakes, stale review threads,
-maintainer-accepted future-leaf deferrals, or reviewer comments that the orchestrator explicitly classifies as invalid.
+Do not count purely administrative comments, duplicate comments, formatting-only nits, CI flakes, stale review threads
+from previous review passes whether resolved or unresolved, maintainer-accepted future-leaf deferrals, or reviewer
+comments that the orchestrator explicitly classifies as invalid.
 
 ### Default threshold
 

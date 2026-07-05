@@ -116,8 +116,8 @@ Repeated review cycles need structural handling, not endless one-off fixes:
 
 - A substantive cycle is a fresh latest-head behavior, correctness, concurrency, recovery, durability, authority,
   contract, or maintainability finding, followed by a worker fix, followed by another substantive latest-head finding.
-- Do not count stale threads, duplicates, formatting-only comments, administrative comments, CI flakes, invalid
-  findings, or maintainer-accepted deferrals.
+- Do not count stale threads from previous review passes whether resolved or unresolved, duplicates, formatting-only
+  comments, administrative comments, CI flakes, invalid findings, or maintainer-accepted deferrals.
 - After one substantive cycle, continue the normal fix loop. After two, add a repeated-theme prevention note to
   `Review Status`. After three, pause one-off fixes and post a stabilization ledger to the issue and PR. After four,
   hard stop until the ledger is implemented, proven, and self-reviewed.
@@ -131,8 +131,8 @@ Repeated review cycles need structural handling, not endless one-off fixes:
   audit the timeline before assigning another routine fix worker. Decide whether the issue is missing invariants,
   needs a future leaf deferral, or requires a structural ledger before the next review request.
 - In an epic-branch PR, a valid finding may be resolved as future work only when it is explicitly outside the current
-  leaf, the future issue already exists or is created first, the future issue body receives the exact finding and proof
-  obligation, the PR reply names the future issue, and `Review Status` records the deferral.
+  leaf, the future issue already exists or is created first, the future issue body receives the exact finding,
+  invariant, and proof obligation, the PR reply names the future issue, and `Review Status` records the deferral.
 - Do not defer prerequisites that make the current leaf trustworthy. If later leaves consume a fact, authority signal,
   persisted field, status flag, or trust predicate produced by the current leaf, the current leaf owns that reliability.
 
@@ -177,9 +177,10 @@ rule: formatting or freshness checks first, then one final build/test gate.
 
 Before the Grace completion review gate, update the branch against its required base: current `origin/main` for
 standalone non-epic issue branches, current `origin/epic/...` for sub-issue branches targeting an epic integration
-branch, and current `origin/main` for the final epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that
-no unexpected deletions are present, run the chosen validation gate, then wait for Codex Code Review Bot on the
-refreshed PR head. A bot reaction or comment on a stale commit does not satisfy completion.
+branch, the current parent epic branch for mini-epic integration branch PRs, and current `origin/main` for the final
+epic-to-`main` PR. Verify ahead/behind, verify the scoped diff and that no unexpected deletions are present, run the
+chosen validation gate, then wait for Codex Code Review Bot on the refreshed PR head. A bot reaction or comment on a
+stale commit does not satisfy completion.
 
 ## Merge Cleanup
 
