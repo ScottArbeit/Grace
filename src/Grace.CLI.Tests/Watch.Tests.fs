@@ -5,10 +5,13 @@ open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
 open Grace.Shared.Client.Configuration
+open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Types.Automation
 open Grace.Types.Common
+open Grace.Types.Reference
+open Microsoft.AspNetCore.SignalR
 open NodaTime
 open NUnit.Framework
 open Spectre.Console
@@ -1020,6 +1023,123 @@ module WatchTests =
                 |> should equal true
             finally
                 Watch.resetSignalRSubscriptionRefreshForWatchTests ())
+
+    /// Verifies that stale reconnect refreshes cannot replace the hub's active current-branch group.
+    [<Test>]
+    let ``stale signalr refresh does not invoke current branch hub registration`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchAId = Guid.NewGuid()
+            let branchBId = Guid.NewGuid()
+            let parentAId = Guid.NewGuid()
+            let parentBId = Guid.NewGuid()
+            let repositoryName = "transition-signalr-hub-authority-repo"
+
+            try
+                writeRepositoryConfiguration root repositoryId repositoryName branchAId "branch-a"
+                resetConfiguration ()
+                Current() |> ignore
+
+                let parentBranchDto =
+                    { Grace.Types.Branch.BranchDto.Default with RepositoryId = repositoryId; BranchId = parentAId; BranchName = BranchName "parent-a" }
+
+                /// Advances local branch identity while an old-branch SignalR refresh is awaiting parent metadata.
+                let getParentBranch (_: GetBranchParameters) =
+                    writeRepositoryConfiguration root repositoryId repositoryName branchBId "branch-b"
+                    resetConfiguration ()
+                    Current() |> ignore
+
+                    Watch.clearSignalRBranchSubscriptionForTransitionForWatchTests ()
+                    Watch.setSignalRBranchSubscriptionForWatchTests branchBId parentBId
+
+                    Task.FromResult(Ok(GraceReturnValue.Create parentBranchDto "stale-refresh-test"))
+
+                let currentRegistrations = ResizeArray<RepositoryId * BranchId>()
+                let parentRegistrations = ResizeArray<BranchId * BranchId>()
+
+                /// Records current-branch group registrations only when the refresh has local authority.
+                let registerCurrentBranch repositoryId branchId _ =
+                    currentRegistrations.Add(repositoryId, branchId)
+                    Task.CompletedTask
+
+                /// Records parent-branch group registrations only when the refresh has local authority.
+                let registerParentBranch branchId parentBranchId _ =
+                    parentRegistrations.Add(branchId, parentBranchId)
+                    Task.CompletedTask
+
+                let result =
+                    (Watch.registerCurrentSignalRParentBranchWithClientsForWatchTests
+                        getParentBranch
+                        registerCurrentBranch
+                        registerParentBranch
+                        CancellationToken.None)
+                        .GetAwaiter()
+                        .GetResult()
+
+                match result with
+                | Ok _ -> ()
+                | Error error -> Assert.Fail($"Expected stale refresh to return the parent lookup result without hub side effects: {error}")
+
+                currentRegistrations.ToArray()
+                |> should equal Array.empty<RepositoryId * BranchId>
+
+                parentRegistrations.ToArray()
+                |> should equal Array.empty<BranchId * BranchId>
+
+                let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+
+                subscription.BranchId |> should equal branchBId
+
+                subscription.ParentBranchId
+                |> should equal parentBId
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentAId
+                |> should equal false
+
+                Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentBId
+                |> should equal true
+            finally
+                Watch.resetSignalRSubscriptionRefreshForWatchTests ())
+
+    /// Verifies that reconnect refresh invokes registration and clears local trust when registration fails.
+    [<Test>]
+    let ``signalr reconnect refresh reruns current branch registration and fails closed`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let parentId = Guid.NewGuid()
+
+            writeRepositoryConfiguration root repositoryId "reconnect-refresh-repo" branchId "feature/reconnect"
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setSignalRBranchSubscriptionForWatchTests branchId parentId
+
+            let mutable refreshCalls = 0
+
+            let refreshed =
+                Watch.refreshSignalRSubscriptionsForActiveConnectionForWatchTests (fun () ->
+                    task {
+                        refreshCalls <- refreshCalls + 1
+                        let _ = Watch.beginSignalRBranchSubscriptionRefreshForWatchTests ()
+                        return Error(GraceError.Create "test registration failed" "signalr-reconnect-test")
+                    })
+
+            refreshed |> should equal false
+            refreshCalls |> should equal 1
+
+            Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentId
+            |> should equal false)
+
+    /// Verifies that Watch uses Grace JSON options for typed SignalR payloads.
+    [<Test>]
+    let ``signalr json protocol uses grace serializer options`` () =
+        let options = JsonHubProtocolOptions()
+
+        Watch.configureGraceSignalRJsonProtocolForWatchTests options
+
+        obj.ReferenceEquals(options.PayloadSerializerOptions, Constants.JsonSerializerOptions)
+        |> should equal true
 
     /// Verifies that ordinary scan-derived resync recovery does not depend on transition SignalR refresh success.
     [<Test>]
@@ -12773,6 +12893,30 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> Option.isSome
             |> should equal true)
+
+    /// Verifies that current-branch SignalR payloads must match the current repository and branch identity.
+    [<Test>]
+    let WatchCurrentBranchSignalRPayloadRejectsStaleRepositoryOrBranchIdentity () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    BranchName = BranchName "current-branch"
+                    ReferenceId = Guid.NewGuid()
+                    ReferenceType = ReferenceType.Save
+                }
+
+            Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload
+            |> should equal true
+
+            Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests { payload with RepositoryId = Guid.NewGuid() }
+            |> should equal false
+
+            Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests { payload with BranchId = Guid.NewGuid() }
+            |> should equal false)
 
     /// Verifies that stale non-empty ids cannot be rescued by matching display names.
     [<Test>]
