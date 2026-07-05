@@ -8,7 +8,9 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
 open Grace.Server.DerivedComputation
+open Grace.Server.Security
 open Grace.Shared
+open Grace.Shared.Authorization
 open Grace.Shared.AzureEnvironment
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
@@ -18,6 +20,7 @@ open Grace.Types.Events
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Authorization
 open Grace.Types.Validation
 open Microsoft.AspNetCore.Builder
 open Microsoft.AspNetCore.SignalR
@@ -40,6 +43,29 @@ module Notification =
 
     /// Builds the SignalR group key for same-branch Reference notifications without colliding with raw GUID groups.
     let internal currentBranchGroupKey (repositoryId: RepositoryId) (branchId: BranchId) = $"current-branch:{repositoryId:N}:{branchId:N}"
+
+    /// Checks whether the caller can subscribe to same-branch notifications for the stored branch identity.
+    let internal canRegisterCurrentBranchSubscription
+        (evaluator: IGracePermissionEvaluator)
+        principal
+        (repositoryId: RepositoryId)
+        (branchId: BranchId)
+        (branchDto: Branch.BranchDto)
+        =
+        task {
+            if obj.ReferenceEquals(evaluator, null)
+               || branchDto.RepositoryId <> repositoryId
+               || branchDto.BranchId <> branchId then
+                return false
+            else
+                let principals = PrincipalMapper.getPrincipals principal
+                let claims = PrincipalMapper.getEffectiveClaims principal
+                let resource = Resource.Branch(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId, branchDto.BranchId)
+
+                match! evaluator.CheckAsync(principals, claims, Operation.BranchRead, resource) with
+                | Allowed _ -> return true
+                | Denied _ -> return false
+        }
 
     /// Defines the contract for igrace client connection.
     type IGraceClientConnection =
@@ -118,6 +144,30 @@ module Notification =
                     branchId,
                     repositoryId
                 )
+
+                let correlationId = generateCorrelationId ()
+                let branchActorProxy = Branch.CreateActorProxy branchId repositoryId correlationId
+                let! branchDto = branchActorProxy.Get correlationId
+
+                let evaluator =
+                    this
+                        .Context
+                        .GetHttpContext()
+                        .RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+                let! allowed = canRegisterCurrentBranchSubscription evaluator this.Context.User repositoryId branchId branchDto
+
+                if not allowed then
+                    log.LogWarning(
+                        "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} denied current-branch SignalR registration for BranchId: {BranchId} in RepositoryId: {RepositoryId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        this.Context.ConnectionId,
+                        branchId,
+                        repositoryId
+                    )
+
+                    raise (HubException("Current-branch SignalR registration requires branch read permission."))
 
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, currentBranchGroupKey repositoryId branchId)
             }

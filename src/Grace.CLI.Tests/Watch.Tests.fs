@@ -10,6 +10,7 @@ open Grace.Shared.Utilities
 open Grace.Types.Automation
 open Grace.Types.Common
 open Grace.Types.Reference
+open Microsoft.AspNetCore.SignalR
 open NodaTime
 open NUnit.Framework
 open Spectre.Console
@@ -1006,6 +1007,46 @@ module WatchTests =
                 |> should equal true
             finally
                 Watch.resetSignalRSubscriptionRefreshForWatchTests ())
+
+    /// Verifies that reconnect refresh invokes registration and clears local trust when registration fails.
+    [<Test>]
+    let ``signalr reconnect refresh reruns current branch registration and fails closed`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let parentId = Guid.NewGuid()
+
+            writeRepositoryConfiguration root repositoryId "reconnect-refresh-repo" branchId "feature/reconnect"
+            resetConfiguration ()
+            Current() |> ignore
+
+            Watch.setSignalRBranchSubscriptionForWatchTests branchId parentId
+
+            let mutable refreshCalls = 0
+
+            let refreshed =
+                Watch.refreshSignalRSubscriptionsForActiveConnectionForWatchTests (fun () ->
+                    task {
+                        refreshCalls <- refreshCalls + 1
+                        let _ = Watch.beginSignalRBranchSubscriptionRefreshForWatchTests ()
+                        return Error(GraceError.Create "test registration failed" "signalr-reconnect-test")
+                    })
+
+            refreshed |> should equal false
+            refreshCalls |> should equal 1
+
+            Watch.signalRAutomationEventTargetsWatchedParentBranchForWatchTests parentId
+            |> should equal false)
+
+    /// Verifies that Watch uses Grace JSON options for typed SignalR payloads.
+    [<Test>]
+    let ``signalr json protocol uses grace serializer options`` () =
+        let options = JsonHubProtocolOptions()
+
+        Watch.configureGraceSignalRJsonProtocolForWatchTests options
+
+        obj.ReferenceEquals(options.PayloadSerializerOptions, Constants.JsonSerializerOptions)
+        |> should equal true
 
     /// Verifies that ordinary scan-derived resync recovery does not depend on transition SignalR refresh success.
     [<Test>]

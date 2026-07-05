@@ -12,6 +12,7 @@ open Grace.Types.Common
 open Grace.Types.Reference
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http.Connections
+open Microsoft.AspNetCore.SignalR
 open Microsoft.AspNetCore.SignalR.Client
 open NodaTime
 open Spectre.Console
@@ -41,6 +42,7 @@ open System.Text
 open Grace.Shared.Parameters.Storage
 open Grace.CLI.Text
 open Grace.Types.Automation
+open Microsoft.Extensions.DependencyInjection
 
 /// Groups the watch command parser, handlers, and output helpers.
 module Watch =
@@ -724,6 +726,28 @@ module Watch =
     let private refreshSignalRSubscriptionsAfterTransitionCompletion () =
         let refresh = lock signalRSubscriptionRefreshLock (fun () -> refreshSignalRBranchSubscriptionsForTransitionCompletion)
         refresh ()
+
+    /// Refreshes SignalR branch groups after reconnect or branch transition recovery.
+    let private refreshSignalRSubscriptionsForActiveConnection (refresh: unit -> Task<Result<Grace.Types.Branch.BranchDto, GraceError>>) =
+        try
+            match refresh().GetAwaiter().GetResult() with
+            | Ok _ -> true
+            | Error error ->
+                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+                logToAnsiConsole Colors.Error $"Failed to refresh SignalR parent branch subscription: {Markup.Escape(error.ToString())}"
+                false
+        with
+        | ex ->
+            completeSignalRBranchSubscriptionRefreshWithoutTrust ()
+
+            logToAnsiConsole
+                Colors.Error
+                $"Failed to refresh SignalR parent branch subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}."
+
+            false
+
+    /// Exposes SignalR reconnect refresh behavior to Watch tests without opening a HubConnection.
+    let internal refreshSignalRSubscriptionsForActiveConnectionForWatchTests refresh = refreshSignalRSubscriptionsForActiveConnection refresh
 
     /// Installs the SignalR parent-branch refresh operation used by transition-completion tests.
     let internal setSignalRSubscriptionRefreshForWatchTests refresh =
@@ -2722,6 +2746,12 @@ module Watch =
         Error(GraceError.Create message (getCorrelationId parseResult))
         |> renderOutput parseResult
 
+    /// Applies Grace's F#-aware JSON serializer options to the SignalR protocol used by Watch.
+    let private configureGraceSignalRJsonProtocol (options: JsonHubProtocolOptions) = options.PayloadSerializerOptions <- Constants.JsonSerializerOptions
+
+    /// Exposes SignalR JSON protocol configuration to Watch tests without opening a connection.
+    let internal configureGraceSignalRJsonProtocolForWatchTests options = configureGraceSignalRJsonProtocol options
+
     /// Opens the SignalR connection Grace Watch uses to receive server-side notifications.
     let private createSignalRConnection (signalRUrl: Uri) =
         HubConnectionBuilder()
@@ -2741,6 +2771,7 @@ module Watch =
                                 | Error message -> return raise (InvalidOperationException(message))
                             })
             )
+            .AddJsonProtocol(configureGraceSignalRJsonProtocol)
             .Build()
 
     /// Reads a GUID-valued property from a SignalR automation event payload without throwing on unsupported input.
@@ -4250,22 +4281,8 @@ module Watch =
 
                     use refreshSignalRSubscriptions =
                         registerSignalRSubscriptionRefresh (fun () ->
-                            try
-                                match (registerCurrentSignalRParentBranch signalRConnection cancellationToken)
-                                    .GetAwaiter()
-                                    .GetResult()
-                                    with
-                                | Ok _ -> ()
-                                | Error error ->
-                                    completeSignalRBranchSubscriptionRefreshWithoutTrust ()
-                                    logToAnsiConsole Colors.Error $"Failed to refresh SignalR parent branch subscription: {Markup.Escape(error.ToString())}"
-                            with
-                            | ex ->
-                                completeSignalRBranchSubscriptionRefreshWithoutTrust ()
-
-                                logToAnsiConsole
-                                    Colors.Error
-                                    $"Failed to refresh SignalR parent branch subscription; parent-triggered auto-rebase is disabled until the next successful registration: {Markup.Escape(ex.Message)}.")
+                            refreshSignalRSubscriptionsForActiveConnection (fun () -> registerCurrentSignalRParentBranch signalRConnection cancellationToken)
+                            |> ignore)
 
                     use notifyRepository =
                         signalRConnection.On<RepositoryId, ReferenceId>(
@@ -4342,7 +4359,12 @@ module Watch =
                     signalRConnection.add_Reconnecting (fun ex -> task { logToAnsiConsole Colors.Important $"SignalR connection reconnecting: {ex.Message}." })
 
                     signalRConnection.add_Reconnected (fun connectionId ->
-                        task { logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}." })
+                        task {
+                            logToAnsiConsole Colors.Important $"SignalR connection reconnected: {connectionId}."
+
+                            refreshSignalRSubscriptionsForActiveConnection (fun () -> registerCurrentSignalRParentBranch signalRConnection cancellationToken)
+                            |> ignore
+                        })
 
                     do! signalRConnection.StartAsync(cancellationToken)
                     // Repository-wide notifications are keyed only by RepositoryId, so same-process branch switches do not change this group.

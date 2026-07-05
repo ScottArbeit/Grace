@@ -1,14 +1,30 @@
 namespace Grace.Server.Tests
 
 open Grace.Server.Notification
+open Grace.Server.Security
 open Grace.Types.Common
+open Grace.Types.Authorization
 open Grace.Types.Reference
 open NUnit.Framework
 open System
+open System.Security.Claims
+open System.Threading.Tasks
 
 /// Covers notification Server behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type NotificationServerTests() =
+
+    /// Creates a fake permission evaluator that records the requested authorization resource.
+    let evaluatorReturning decision (observed: ResizeArray<Operation * Resource>) =
+        { new IGracePermissionEvaluator with
+            member _.CheckAsync(_, _, operation, resource) =
+                observed.Add(operation, resource)
+                Task.FromResult decision
+        }
+
+    /// Creates a branch dto with stable identity for subscription authorization tests.
+    let subscriptionBranch ownerId organizationId repositoryId branchId : Grace.Types.Branch.BranchDto =
+        { Grace.Types.Branch.BranchDto.Default with OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId; BranchId = branchId }
 
     /// Verifies that branch Name Glob Matching Is Case Insensitive And Supports Wildcard.
     [<TestCase("main", "main", true)>]
@@ -35,6 +51,102 @@ type NotificationServerTests() =
                 Assert.That(groupKey, Is.Not.EqualTo($"{repositoryId}"))
                 Assert.That(groupKey, Is.Not.EqualTo($"{branchId}")))
         )
+
+    /// Verifies that current-branch SignalR subscriptions require branch read authorization.
+    [<Test>]
+    member _.CurrentBranchSubscriptionRequiresBranchReadAuthorization() =
+        task {
+            let ownerId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            let organizationId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+            let repositoryId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+            let branchId = Guid.Parse("44444444-4444-4444-4444-444444444444")
+            let observed = ResizeArray<Operation * Resource>()
+            let evaluator = evaluatorReturning (Allowed "allowed") observed
+
+            let principal =
+                ClaimsPrincipal(
+                    ClaimsIdentity(
+                        [|
+                            Claim(PrincipalMapper.GraceUserIdClaim, "watch-user")
+                        |],
+                        "test"
+                    )
+                )
+
+            let branchDto = subscriptionBranch ownerId organizationId repositoryId branchId
+
+            let! allowed = canRegisterCurrentBranchSubscription evaluator principal repositoryId branchId branchDto
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(allowed, Is.True)
+                    Assert.That(observed, Has.Count.EqualTo(1))
+
+                    let operation, resource = observed[0]
+                    Assert.That(operation, Is.EqualTo(Operation.BranchRead))
+                    Assert.That(resource, Is.EqualTo(Resource.Branch(ownerId, organizationId, repositoryId, branchId))))
+            )
+        }
+
+    /// Verifies that denied branch read permission blocks current-branch SignalR subscriptions.
+    [<Test>]
+    member _.CurrentBranchSubscriptionRejectsDeniedBranchRead() =
+        task {
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let observed = ResizeArray<Operation * Resource>()
+            let evaluator = evaluatorReturning (Denied "denied") observed
+
+            let principal =
+                ClaimsPrincipal(
+                    ClaimsIdentity(
+                        [|
+                            Claim(PrincipalMapper.GraceUserIdClaim, "watch-user")
+                        |],
+                        "test"
+                    )
+                )
+
+            let branchDto = subscriptionBranch (Guid.NewGuid()) (Guid.NewGuid()) repositoryId branchId
+
+            let! allowed = canRegisterCurrentBranchSubscription evaluator principal repositoryId branchId branchDto
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(allowed, Is.False)
+                    Assert.That(observed, Has.Count.EqualTo(1)))
+            )
+        }
+
+    /// Verifies that caller-supplied ids cannot authorize a different stored branch identity.
+    [<Test>]
+    member _.CurrentBranchSubscriptionRejectsMismatchedStoredBranchIdentity() =
+        task {
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let observed = ResizeArray<Operation * Resource>()
+            let evaluator = evaluatorReturning (Allowed "allowed") observed
+
+            let principal =
+                ClaimsPrincipal(
+                    ClaimsIdentity(
+                        [|
+                            Claim(PrincipalMapper.GraceUserIdClaim, "watch-user")
+                        |],
+                        "test"
+                    )
+                )
+
+            let branchDto = subscriptionBranch (Guid.NewGuid()) (Guid.NewGuid()) repositoryId (Guid.NewGuid())
+
+            let! allowed = canRegisterCurrentBranchSubscription evaluator principal repositoryId branchId branchDto
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(allowed, Is.False)
+                    Assert.That(observed, Has.Count.EqualTo(0)))
+            )
+        }
 
     /// Verifies that current-branch Reference notifications are restricted to materializable branch history events.
     [<Test>]
