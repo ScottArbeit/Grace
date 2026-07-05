@@ -8,6 +8,8 @@ open Grace.Types.Reference
 open Microsoft.AspNetCore.SignalR
 open NUnit.Framework
 open System
+open System.Collections.Generic
+open System.IO
 open System.Security.Claims
 open System.Threading
 open System.Threading.Tasks
@@ -76,6 +78,18 @@ type NotificationServerTests() =
             member _.Groups = groups
         }
 
+    /// Creates a fake SignalR group manager that records add/remove operations in order.
+    let recordingGroupManager (operations: ResizeArray<string * string>) =
+        { new IGroupManager with
+            member _.AddToGroupAsync(_, groupName, _: CancellationToken) =
+                operations.Add("add", groupName)
+                Task.CompletedTask
+
+            member _.RemoveFromGroupAsync(_, groupName, _: CancellationToken) =
+                operations.Add("remove", groupName)
+                Task.CompletedTask
+        }
+
     /// Verifies that branch Name Glob Matching Is Case Insensitive And Supports Wildcard.
     [<TestCase("main", "main", true)>]
     [<TestCase("MAIN", "main", true)>]
@@ -101,6 +115,50 @@ type NotificationServerTests() =
                 Assert.That(groupKey, Is.Not.EqualTo($"{repositoryId}"))
                 Assert.That(groupKey, Is.Not.EqualTo($"{branchId}")))
         )
+
+    /// Verifies that current-branch registration replaces stale group membership for a reused connection.
+    [<Test>]
+    member _.CurrentBranchRegistrationReplacesPriorCurrentBranchGroup() =
+        task {
+            let repositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            let oldBranchId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+            let newBranchId = Guid.Parse("33333333-3333-3333-3333-333333333333")
+            let items = Dictionary<obj, obj>()
+            let operations = ResizeArray<string * string>()
+            let groups = recordingGroupManager operations
+
+            do! replaceCurrentBranchGroupMembership groups "connection-1" items repositoryId oldBranchId CancellationToken.None
+            do! replaceCurrentBranchGroupMembership groups "connection-1" items repositoryId newBranchId CancellationToken.None
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(operations, Has.Count.EqualTo(3))
+                    Assert.That(operations[0], Is.EqualTo(("add", currentBranchGroupKey repositoryId oldBranchId)))
+                    Assert.That(operations[1], Is.EqualTo(("remove", currentBranchGroupKey repositoryId oldBranchId)))
+                    Assert.That(operations[2], Is.EqualTo(("add", currentBranchGroupKey repositoryId newBranchId))))
+            )
+        }
+
+    /// Verifies that repeating current-branch registration for the same branch does not churn group membership.
+    [<Test>]
+    member _.CurrentBranchRegistrationDoesNotRemoveWhenBranchIsUnchanged() =
+        task {
+            let repositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            let branchId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+            let items = Dictionary<obj, obj>()
+            let operations = ResizeArray<string * string>()
+            let groups = recordingGroupManager operations
+
+            do! replaceCurrentBranchGroupMembership groups "connection-1" items repositoryId branchId CancellationToken.None
+            do! replaceCurrentBranchGroupMembership groups "connection-1" items repositoryId branchId CancellationToken.None
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(operations, Has.Count.EqualTo(2))
+                    Assert.That(operations[0], Is.EqualTo(("add", currentBranchGroupKey repositoryId branchId)))
+                    Assert.That(operations[1], Is.EqualTo(("add", currentBranchGroupKey repositoryId branchId))))
+            )
+        }
 
     /// Verifies that current-branch SignalR subscriptions require branch read authorization.
     [<Test>]
@@ -307,6 +365,46 @@ type NotificationServerTests() =
                     Assert.That(observedPayloads[0], Is.EqualTo(payload)))
             )
         }
+
+    /// Verifies that commit current-branch broadcasts are ordered after zip generation and derived diff work.
+    [<Test>]
+    member _.CommitCurrentBranchNotificationRunsAfterZipAndDiffReadiness() =
+        let notificationServerPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Server", "Notification.Server.fs"))
+        let notificationSource = File.ReadAllText notificationServerPath
+        let commitStart = notificationSource.IndexOf("| ReferenceType.Commit ->", StringComparison.Ordinal)
+        let checkpointStart = notificationSource.IndexOf("| ReferenceType.Checkpoint ->", commitStart, StringComparison.Ordinal)
+
+        Assert.That(commitStart, Is.GreaterThanOrEqualTo(0), "Notification subscriber must handle Commit references.")
+        Assert.That(checkpointStart, Is.GreaterThan(commitStart), "Commit branch must be bounded by the Checkpoint branch.")
+
+        let commitBranch = notificationSource.Substring(commitStart, checkpointStart - commitStart)
+        let zipIndex = commitBranch.IndexOf("directoryVersionActorProxy.GetZipFileUri correlationId", StringComparison.Ordinal)
+        let commitDiffIndex = commitBranch.IndexOf("let! latestTwoCommits = getCommits repositoryId branchId 2 correlationId", StringComparison.Ordinal)
+
+        let parentPromotionDiffIndex =
+            commitBranch.IndexOf("match! getLatestPromotion branchDto.RepositoryId branchDto.ParentBranchId", StringComparison.Ordinal)
+
+        let parentNotificationIndex = commitBranch.IndexOf(".NotifyOnCommit(", StringComparison.Ordinal)
+        let currentBranchNotificationIndex = commitBranch.IndexOf("do! emitCurrentBranchReference branchDto.BranchName", StringComparison.Ordinal)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(zipIndex, Is.GreaterThanOrEqualTo(0), "Commit handling must create the directory-version zip before notifying Watch.")
+                Assert.That(commitDiffIndex, Is.GreaterThan(zipIndex), "Commit diff work should remain after zip generation.")
+                Assert.That(parentPromotionDiffIndex, Is.GreaterThan(commitDiffIndex), "Parent-promotion diff work should remain before notifications.")
+
+                Assert.That(
+                    parentNotificationIndex,
+                    Is.GreaterThan(parentPromotionDiffIndex),
+                    "Parent-branch commit notifications must not run before commit artifact and diff readiness."
+                )
+
+                Assert.That(
+                    currentBranchNotificationIndex,
+                    Is.GreaterThan(parentNotificationIndex),
+                    "Current-branch commit payloads must not run before commit notifications are ready."
+                ))
+        )
 
     /// Verifies that the additive current-branch contract does not remove parent-branch notification methods.
     [<Test>]
