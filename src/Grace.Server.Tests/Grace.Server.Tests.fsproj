@@ -70,7 +70,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
+    <ProjectReference Include="..\Grace.Operations\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
     <ProjectReference Include="..\Grace.Aspire.AppHost\Grace.Aspire.AppHost.csproj" />
     <ProjectReference Include="..\Grace.SDK\Grace.SDK.fsproj" />
     <ProjectReference Include="..\Grace.Server\Grace.Server.fsproj" />

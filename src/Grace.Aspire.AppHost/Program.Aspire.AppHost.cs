@@ -334,7 +334,7 @@ public partial class Program
                             .WithEnvironment(OperationalFactsProcessorSubscriptionSettingName, OperationalFactsProcessorSubscriptionName)
                             .WithEnvironment(EnvironmentVariables.AzureServiceBusSubscription, serviceBusSubscriptionName);
 
-                        _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
+                        _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
                             .WithParentRelationship(serviceBusSql)
                             .WithParentRelationship(serviceBusEmulator)
                             .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
@@ -440,7 +440,7 @@ public partial class Program
                         .WithEnvironment(EnvironmentVariables.GraceLogDirectory, logDirectory)
                         .WithEnvironment(EnvironmentVariables.DebugEnvironment, "Azure");
 
-                    _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
+                    _ = builder.AddProject("grace-operations-worker", "..\\Grace.Operations\\Grace.Operations.Worker\\Grace.Operations.Worker.fsproj")
                         .WithEnvironment("DOTNET_ENVIRONMENT", "Development")
                         .WithEnvironment("OTLP_ENDPOINT_URL", otlpEndpoint)
                         .WithEnvironment(EnvironmentVariables.AzureServiceBusConnectionString, serviceBusConnectionString)
