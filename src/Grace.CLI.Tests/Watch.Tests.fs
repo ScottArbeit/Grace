@@ -3046,26 +3046,45 @@ module WatchTests =
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
-    /// Verifies that failed status application leaves appended observations pending.
+    /// Verifies that failed status application clears appended observations before retry.
     [<Test>]
-    let ``watch does not advance journal boundary when status application returns none`` () =
+    let ``watch clears journal for retry when status application returns none after append`` () =
         withTempRepo (fun root ->
             let relativePath = "journal-status-none-delete.txt"
             let filePath = Path.Combine(root, relativePath)
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
             let mutable appendCalls = 0
             let mutable advanceCalls = 0
+            let mutable recoveryCalls = 0
+            let mutable pruneCalls = 0
+            let mutable recoveredAdvancedThrough = -1L
+            let mutable recoveredRequiredThrough = -1L
 
             Watch.OnDeleted(deletedEvent filePath)
 
             try
                 Watch.setWatchJournalClientsForWatchTests
-                    (fun _ ->
+                    (fun observations ->
                         appendCalls <- appendCalls + 1
-                        Task.FromResult([| 1L |]))
+                        LocalStateDb.appendWatchJournalObservations dbPath observations)
                     (fun _ ->
                         advanceCalls <- advanceCalls + 1
                         Task.FromResult(1L))
+
+                Watch.setWatchJournalMaintenanceClientsForWatchTests
+                    (fun advancedThrough requiredThrough ->
+                        recoveryCalls <- recoveryCalls + 1
+                        recoveredAdvancedThrough <- advancedThrough
+                        recoveredRequiredThrough <- requiredThrough
+
+                        task {
+                            let! _ = LocalStateDb.clearWatchJournal dbPath
+                            return ()
+                        })
+                    (fun () ->
+                        pruneCalls <- pruneCalls + 1
+                        Task.FromResult(()))
 
                 /// Reads status needed by the status-failure scenario.
                 let readStatus () = Task.FromResult(status)
@@ -3094,6 +3113,24 @@ module WatchTests =
 
                 appendCalls |> should equal 1
                 advanceCalls |> should equal 0
+                recoveryCalls |> should equal 1
+                recoveredAdvancedThrough |> should equal 0L
+                recoveredRequiredThrough |> should equal 1L
+                pruneCalls |> should equal 0
+
+                let repairedJournalSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "all" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                repairedJournalSnapshot.TotalRows
+                |> should equal 0
+
+                repairedJournalSnapshot.AppliedThroughSequence
+                |> should equal 0L
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
 
                 Watch
                     .pendingWatchWorkSnapshotForTests()
@@ -3134,6 +3171,12 @@ module WatchTests =
                         recoveryCalls <- recoveryCalls + 1
                         recoveredAdvancedThrough <- advancedThrough
                         recoveredRequiredThrough <- requiredThrough
+
+                        Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                        |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                        Watch.isGraceWatchResyncPendingForWatchTests ()
+                        |> should equal true
 
                         task {
                             let! _ = LocalStateDb.clearWatchJournal dbPath
@@ -3362,6 +3405,12 @@ module WatchTests =
                         recoveredAdvancedThrough <- advancedThrough
                         recoveredRequiredThrough <- requiredThrough
 
+                        Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                        |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                        Watch.isGraceWatchResyncPendingForWatchTests ()
+                        |> should equal true
+
                         task {
                             let! _ = LocalStateDb.clearWatchJournal dbPath
                             return ()
@@ -3465,6 +3514,12 @@ module WatchTests =
                         recoveredAdvancedThrough <- advancedThrough
                         recoveredRequiredThrough <- requiredThrough
 
+                        Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                        |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                        Watch.isGraceWatchResyncPendingForWatchTests ()
+                        |> should equal true
+
                         task {
                             let! _ = LocalStateDb.clearWatchJournal dbPath
                             return ()
@@ -3526,6 +3581,100 @@ module WatchTests =
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
+    /// Verifies that resync is published before fallible repair after status side effects commit.
+    [<Test>]
+    let ``watch requests resync before failed journal repair after status write`` () =
+        withTempRepo (fun root ->
+            let relativePath = "journal-repair-throw-after-status-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let mutable appendCalls = 0
+            let mutable applyCalls = 0
+            let mutable advanceCalls = 0
+            let mutable recoveryCalls = 0
+            let mutable recoveryObservedResync = false
+            let mutable updateIpcCalls = 0
+            let mutable updateIpcSawNonIncremental = false
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            try
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun observations ->
+                        appendCalls <- appendCalls + 1
+                        LocalStateDb.appendWatchJournalObservations dbPath observations)
+                    (fun sequences ->
+                        advanceCalls <- advanceCalls + 1
+                        sequences |> Seq.toArray |> should equal [| 1L |]
+                        Task.FromException<int64>(InvalidOperationException("test boundary failure before repair")))
+
+                Watch.setWatchJournalMaintenanceClientsForWatchTests
+                    (fun _ _ ->
+                        recoveryCalls <- recoveryCalls + 1
+
+                        recoveryObservedResync <-
+                            Watch.currentGraceWatchRuntimeModeForWatchTests () = Services.GraceWatchRuntimeMode.Resynchronizing
+                            && Watch.isGraceWatchResyncPendingForWatchTests ()
+
+                        Task.FromException<unit>(InvalidOperationException("test repair failure after resync request")))
+                    (fun () -> Task.FromResult(()))
+
+                /// Reads status needed by the repair-failure publication scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this status-only observation scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Simulates successful status application before the boundary repair fails.
+                let updateGraceStatusFromDifferences currentStatus _ _ =
+                    applyCalls <- applyCalls + 1
+                    Task.FromResult(Some currentStatus)
+
+                /// Leaves incremental status writes outside this status-only observation scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+
+                /// Tracks the final non-incremental IPC publication after repair failure.
+                let updateIpc (_: GraceStatus) (directoryIds: HashSet<DirectoryVersionId> option) =
+                    updateIpcCalls <- updateIpcCalls + 1
+
+                    if directoryIds
+                       |> Option.exists (fun ids -> ids.Count = 0) then
+                        updateIpcSawNonIncremental <- true
+
+                    Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                appendCalls |> should equal 1
+                applyCalls |> should equal 1
+                advanceCalls |> should equal 1
+                recoveryCalls |> should equal 1
+                recoveryObservedResync |> should equal true
+                updateIpcCalls |> should equal 1
+                updateIpcSawNonIncremental |> should equal true
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                Watch
+                    .pendingWatchWorkSnapshotForTests()
+                    .StatusUpdateTriggers
+                |> should equal Array.empty<string>
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
     /// Verifies that confidence loss after a status write still advances the applied journal boundary.
     [<Test>]
     let ``watch advances journal boundary when confidence is lost after status write`` () =
@@ -3536,6 +3685,8 @@ module WatchTests =
             let mutable appendCalls = 0
             let mutable applyCalls = 0
             let mutable advanceCalls = 0
+            let mutable recoveryCalls = 0
+            let mutable pruneCalls = 0
 
             Watch.OnDeleted(deletedEvent filePath)
 
@@ -3547,6 +3698,14 @@ module WatchTests =
                     (fun _ ->
                         advanceCalls <- advanceCalls + 1
                         Task.FromResult(1L))
+
+                Watch.setWatchJournalMaintenanceClientsForWatchTests
+                    (fun _ _ ->
+                        recoveryCalls <- recoveryCalls + 1
+                        Task.FromResult(()))
+                    (fun () ->
+                        pruneCalls <- pruneCalls + 1
+                        Task.FromResult(()))
 
                 /// Reads status needed by the confidence-loss scenario.
                 let readStatus () = Task.FromResult(status)
@@ -3581,6 +3740,8 @@ module WatchTests =
                 appendCalls |> should equal 1
                 applyCalls |> should equal 1
                 advanceCalls |> should equal 1
+                recoveryCalls |> should equal 0
+                pruneCalls |> should equal 1
 
                 Watch.currentGraceWatchRuntimeModeForWatchTests ()
                 |> should equal Services.GraceWatchRuntimeMode.Resynchronizing

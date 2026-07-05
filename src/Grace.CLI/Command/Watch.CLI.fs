@@ -3566,6 +3566,52 @@ module Watch =
                 return None
         }
 
+    /// Prunes applied Watch journal rows immediately after a trusted applied-boundary advance.
+    let private pruneWatchJournalAfterTrustedBoundaryAdvance (appendedWatchJournalSequences: int64 array) =
+        task {
+            if appendedWatchJournalSequences.Length > 0 then
+                try
+                    do! pruneWatchJournalRetentionForWatch ()
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Grace Watch could not prune applied journal rows after a trusted boundary advance; retention will retry after later status work: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Requests resync before fallible journal repair so non-incremental IPC is published even when repair fails.
+    let private repairWatchJournalAfterStatusTrustLoss advancedThrough requiredAppliedThrough resyncReason repairFailureContext =
+        task {
+            requestGraceWatchExplicitResync resyncReason
+
+            try
+                do! recoverWatchJournalBoundaryGapForWatch advancedThrough requiredAppliedThrough
+            with
+            | ex -> logToAnsiConsole Colors.Error $"{repairFailureContext}; resync was already requested before repair failed: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Clears appended journal rows after status returns no durable result so the pending retry can reappend them.
+    let private clearWatchJournalAfterNoDurableStatus appendedWatchJournalSequences =
+        task {
+            if Array.isEmpty appendedWatchJournalSequences then
+                return false
+            else
+                let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
+
+                try
+                    do! recoverWatchJournalBoundaryGapForWatch 0L requiredAppliedThrough
+                    return false
+                with
+                | ex ->
+                    requestGraceWatchExplicitResync $"Watch status application returned no durable status and journal repair failed: {ex.Message}"
+
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch appended normalized observations and status application returned no durable status, but journal repair failed; resync is required before incremental work can resume: {Markup.Escape(ex.Message)}."
+
+                    return true
+        }
+
     /// Converges appended journal rows after status side effects commit so recovery never resumes from stale pending rows.
     let private convergeWatchJournalAfterStatusApplication (appendedWatchJournalSequences: int64 array) =
         task {
@@ -3578,10 +3624,12 @@ module Watch =
                     let! advancedThrough = advanceWatchJournalAppliedThroughSequencesForWatch appendedWatchJournalSequences
 
                     if advancedThrough < requiredAppliedThrough then
-                        do! recoverWatchJournalBoundaryGapForWatch advancedThrough requiredAppliedThrough
-
-                        requestGraceWatchExplicitResync
-                            $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
+                        do!
+                            repairWatchJournalAfterStatusTrustLoss
+                                advancedThrough
+                                requiredAppliedThrough
+                                $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
+                                "Grace Watch applied status but could not repair the durable journal boundary through the appended observations"
 
                         logToAnsiConsole
                             Colors.Error
@@ -3589,16 +3637,20 @@ module Watch =
 
                         return false
                     else
+                        do! pruneWatchJournalAfterTrustedBoundaryAdvance appendedWatchJournalSequences
                         return true
                 with
                 | ex ->
-                    do! recoverWatchJournalBoundaryGapForWatch 0L requiredAppliedThrough
-
-                    requestGraceWatchExplicitResync $"Watch journal applied boundary advancement failed after status application: {ex.Message}"
+                    do!
+                        repairWatchJournalAfterStatusTrustLoss
+                            0L
+                            requiredAppliedThrough
+                            $"Watch journal applied boundary advancement failed after status application: {ex.Message}"
+                            "Grace Watch applied status but could not repair the durable journal boundary after advancement failed"
 
                     logToAnsiConsole
                         Colors.Error
-                        $"Grace Watch applied status but could not advance the durable journal boundary; the journal was repaired before resync so incremental shortcuts cannot replay already-applied work: {Markup.Escape(ex.Message)}."
+                        $"Grace Watch applied status but could not advance the durable journal boundary; resync was requested before journal repair so incremental shortcuts cannot replay already-applied work: {Markup.Escape(ex.Message)}."
 
                     return false
         }
@@ -3804,6 +3856,7 @@ module Watch =
 
                         let statusApplicationLegal = statusApplicationModeStillTrusted ()
                         let mutable appendedWatchJournalSequences = Array.empty<int64>
+                        let mutable appendedWatchJournalConverged = false
 
                         let statusUpdateStillTrusted () =
                             filesToProcess.IsEmpty
@@ -3865,13 +3918,18 @@ module Watch =
                                                 else
                                                     appendedWatchJournalSequences |> Array.max
 
-                                            do! recoverWatchJournalBoundaryGapForWatch 0L requiredAppliedThrough
+                                            do!
+                                                repairWatchJournalAfterStatusTrustLoss
+                                                    0L
+                                                    requiredAppliedThrough
+                                                    $"Watch status application failed after journal append: {ex.Message}"
+                                                    "Grace Watch appended normalized observations but could not repair the journal after status application failed"
 
-                                            requestGraceWatchExplicitResync $"Watch status application failed after journal append: {ex.Message}"
+                                            appendedWatchJournalConverged <- true
 
                                             logToAnsiConsole
                                                 Colors.Error
-                                                $"Grace Watch appended normalized observations but status application failed; the journal was repaired before resync so pending rows cannot replay as still-unapplied work: {Markup.Escape(ex.Message)}."
+                                                $"Grace Watch appended normalized observations but status application failed; resync was requested before journal repair so pending rows cannot replay as still-unapplied work: {Markup.Escape(ex.Message)}."
 
                                             return None
                                     | Error ex ->
@@ -3896,6 +3954,7 @@ module Watch =
                                     || isGraceWatchObservationApplicationLegal commitRuntimeMode)
 
                             let! watchJournalBoundaryTrusted = convergeWatchJournalAfterStatusApplication appendedWatchJournalSequences
+                            appendedWatchJournalConverged <- true
 
                             if statusUpdateCanCommit then
                                 if watchJournalBoundaryTrusted then
@@ -3920,15 +3979,6 @@ module Watch =
                                     clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
                                     clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
                                     removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
-
-                                    if appendedWatchJournalSequences.Length > 0 then
-                                        try
-                                            do! pruneWatchJournalRetentionForWatch ()
-                                        with
-                                        | ex ->
-                                            logToAnsiConsole
-                                                Colors.Verbose
-                                                $"Grace Watch could not prune applied journal rows after a trusted boundary advance; retention will retry after later status work: {Markup.Escape(ex.Message)}."
                             else
                                 clearPendingStatusDifferences pendingDifferencesToClear
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
@@ -3938,6 +3988,20 @@ module Watch =
                                     Colors.Important
                                     $"Grace Status file update completed while newer file upload work was pending; status-only triggers will retry."
                         | None ->
+                            if appendedWatchJournalSequences.Length > 0
+                               && not appendedWatchJournalConverged then
+                                let! noDurableStatusRepairFailed = clearWatchJournalAfterNoDurableStatus appendedWatchJournalSequences
+                                appendedWatchJournalConverged <- true
+
+                                if noDurableStatusRepairFailed then
+                                    logToAnsiConsole
+                                        Colors.Error
+                                        $"Grace Watch appended normalized observations but status application returned no durable status; repair failed and resync is required before incremental work can resume."
+                                else
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch appended normalized observations but status application returned no durable status; appended journal rows were cleared so the pending status work can retry."
+
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
 
