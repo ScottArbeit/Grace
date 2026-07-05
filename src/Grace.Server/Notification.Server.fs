@@ -38,14 +38,21 @@ module Notification =
     let log = loggerFactory.CreateLogger("Notification.Server")
     let private defaultAzureCredential = lazy (DefaultAzureCredential())
 
+    /// Builds the SignalR group key for same-branch Reference notifications without colliding with raw GUID groups.
+    let internal currentBranchGroupKey (repositoryId: RepositoryId) (branchId: BranchId) = $"current-branch:{repositoryId:N}:{branchId:N}"
+
     /// Defines the contract for igrace client connection.
     type IGraceClientConnection =
         /// Defines the register repository operation for implementers.
         abstract member RegisterRepository: RepositoryId -> Task
         /// Defines the register parent branch operation for implementers.
         abstract member RegisterParentBranch: BranchId -> BranchId -> Task
+        /// Defines the register current branch operation for implementers.
+        abstract member RegisterCurrentBranch: RepositoryId -> BranchId -> Task
         /// Defines the notify repository operation for implementers.
         abstract member NotifyRepository: RepositoryId * ReferenceId -> Task
+        /// Defines the notify current branch reference operation for implementers.
+        abstract member NotifyCurrentBranchReference: Reference.CurrentBranchReferenceNotification -> Task
         /// Defines the notify on commit operation for implementers.
         abstract member NotifyOnCommit: BranchName * BranchName * BranchId * ReferenceId -> Task
         /// Defines the notify on checkpoint operation for implementers.
@@ -100,6 +107,21 @@ module Notification =
                 do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, $"{parentBranchId}")
             }
 
+        /// Adds the current SignalR connection to the current-branch group used for same-branch Reference notifications.
+        member this.RegisterCurrentBranch(repositoryId: RepositoryId, branchId: BranchId) =
+            task {
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} registering for current BranchId: {BranchId} in RepositoryId: {RepositoryId}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    this.Context.ConnectionId,
+                    branchId,
+                    repositoryId
+                )
+
+                do! this.Groups.AddToGroupAsync(this.Context.ConnectionId, currentBranchGroupKey repositoryId branchId)
+            }
+
         /// Broadcasts repository-scoped notifications to clients registered for the repository group.
         member this.NotifyRepository((repositoryId: RepositoryId), (referenceId: ReferenceId)) =
             task {
@@ -116,6 +138,27 @@ module Notification =
                         .Clients
                         .Group($"{repositoryId}")
                         .NotifyRepository(repositoryId, referenceId)
+            }
+            :> Task
+
+        /// Broadcasts a same-branch Reference payload to clients registered for the current branch group.
+        member this.NotifyCurrentBranchReference(payload: Reference.CurrentBranchReferenceNotification) =
+            task {
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; Notifying current-branch clients in RepositoryId {RepositoryId}, BranchId {BranchId} of {ReferenceType} ReferenceId: {ReferenceId}.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    payload.RepositoryId,
+                    payload.BranchId,
+                    payload.ReferenceType,
+                    payload.ReferenceId
+                )
+
+                do!
+                    this
+                        .Clients
+                        .Group(currentBranchGroupKey payload.RepositoryId payload.BranchId)
+                        .NotifyCurrentBranchReference(payload)
             }
             :> Task
 
@@ -409,6 +452,39 @@ module Notification =
                 RegexOptions.IgnoreCase
                 ||| RegexOptions.CultureInvariant
             )
+
+        /// Reports whether a Reference creation should wake clients watching that same branch.
+        let internal shouldNotifyCurrentBranchReference referenceType = Reference.CurrentBranchReferenceNotification.IsEligibleReferenceType referenceType
+
+        /// Builds the same-branch Reference notification payload after branch state has been recomputed.
+        let internal createCurrentBranchReferenceNotification
+            referenceId
+            ownerId
+            organizationId
+            repositoryId
+            branchId
+            branchName
+            directoryId
+            sha256Hash
+            blake3Hash
+            referenceType
+            referenceText
+            correlationId
+            =
+            { Reference.CurrentBranchReferenceNotification.Default with
+                ReferenceId = referenceId
+                OwnerId = ownerId
+                OrganizationId = organizationId
+                RepositoryId = repositoryId
+                BranchId = branchId
+                BranchName = branchName
+                DirectoryId = directoryId
+                Sha256Hash = sha256Hash
+                Blake3Hash = blake3Hash
+                ReferenceType = referenceType
+                ReferenceText = referenceText
+                CorrelationId = correlationId
+            }
 
         /// Gets try get promotion set id from metadata data needed by the server flow.
         let private tryGetPromotionSetIdFromMetadata (metadata: EventMetadata) =
@@ -715,6 +791,35 @@ module Notification =
                                                   referenceType,
                                                   referenceText,
                                                   links) ->
+                        /// Emits the same-branch notification after Reference replay and branch recomputation complete.
+                        let emitCurrentBranchReference branchName =
+                            task {
+                                if shouldNotifyCurrentBranchReference referenceType then
+                                    if not <| isNull hubContext then
+                                        let payload =
+                                            createCurrentBranchReferenceNotification
+                                                referenceId
+                                                ownerId
+                                                organizationId
+                                                repositoryId
+                                                branchId
+                                                branchName
+                                                directoryId
+                                                sha256Hash
+                                                blake3Hash
+                                                referenceType
+                                                referenceText
+                                                correlationId
+
+                                        do!
+                                            hubContext
+                                                .Clients
+                                                .Group(currentBranchGroupKey repositoryId branchId)
+                                                .NotifyCurrentBranchReference(payload)
+                                    else
+                                        log.LogWarning("No SignalR hub context available; cannot notify current branch clients of reference.")
+                            }
+
                         match referenceType with
                         | ReferenceType.Promotion ->
                             let! branchDto = getBranchDto branchId repositoryId correlationId
@@ -760,6 +865,8 @@ module Notification =
                             else
                                 log.LogWarning("No SignalR hub context available; cannot notify clients of commit.")
 
+                            do! emitCurrentBranchReference branchDto.BranchName
+
                             let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId correlationId
                             let! exists = directoryVersionActorProxy.Exists correlationId
 
@@ -803,6 +910,8 @@ module Notification =
                                         .Group($"{branchDto.ParentBranchId}")
                                         .NotifyOnCheckpoint(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
 
+                            do! emitCurrentBranchReference branchDto.BranchName
+
                             // Create the diff between the two most recent checkpoints.
                             let! checkpoints = getCheckpoints repositoryId branchId 2 correlationId
 
@@ -841,6 +950,8 @@ module Notification =
                                         .NotifyOnSave(branchDto.BranchName, parentBranchDto.BranchName, parentBranchDto.ParentBranchId, referenceId)
                             else
                                 log.LogWarning("No SignalR hub context available; cannot notify clients of save.")
+
+                            do! emitCurrentBranchReference branchDto.BranchName
 
                             // Create the diff between the new save and the previous save.
                             let! latestTwoSaves = getSaves branchDto.RepositoryId branchId 2 correlationId

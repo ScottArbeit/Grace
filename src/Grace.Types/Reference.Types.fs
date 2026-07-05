@@ -210,3 +210,49 @@ module Reference =
                 | Undeleted -> { currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty }
 
             { newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp }
+
+    /// Describes a same-branch Reference that current-branch Watch clients may inspect after server-side recomputation.
+    [<CLIMutable; GenerateSerializer>]
+    type CurrentBranchReferenceNotification =
+        {
+            ReferenceId: ReferenceId
+            OwnerId: OwnerId
+            OrganizationId: OrganizationId
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            BranchName: BranchName
+            DirectoryId: DirectoryVersionId
+            Sha256Hash: Sha256Hash
+            Blake3Hash: Blake3Hash
+            ReferenceType: ReferenceType
+            ReferenceText: ReferenceText
+            CorrelationId: CorrelationId
+        }
+
+        /// Represents an initialized notification payload for serializers and tests.
+        static member Default =
+            {
+                ReferenceId = ReferenceId.Empty
+                OwnerId = OwnerId.Empty
+                OrganizationId = OrganizationId.Empty
+                RepositoryId = RepositoryId.Empty
+                BranchId = BranchId.Empty
+                BranchName = BranchName String.Empty
+                DirectoryId = DirectoryVersionId.Empty
+                Sha256Hash = Sha256Hash String.Empty
+                Blake3Hash = Blake3Hash String.Empty
+                ReferenceType = ReferenceType.Save
+                ReferenceText = ReferenceText String.Empty
+                CorrelationId = String.Empty
+            }
+
+        /// Reports whether the Reference can wake same-branch Watch clients for remote materialization.
+        static member IsEligibleReferenceType referenceType =
+            match referenceType with
+            | ReferenceType.Commit
+            | ReferenceType.Checkpoint
+            | ReferenceType.Save -> true
+            | ReferenceType.Promotion
+            | ReferenceType.Tag
+            | ReferenceType.External
+            | ReferenceType.Rebase -> false

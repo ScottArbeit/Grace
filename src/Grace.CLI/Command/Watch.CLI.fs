@@ -9,6 +9,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Services
 open Grace.Types.Common
+open Grace.Types.Reference
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http.Connections
 open Microsoft.AspNetCore.SignalR.Client
@@ -2814,12 +2815,37 @@ module Watch =
     let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
         handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
 
+    /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
+    let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
+        let current = Current()
+
+        payload.RepositoryId = current.RepositoryId
+        && payload.BranchId = current.BranchId
+
+    /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
+    let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+        task {
+            try
+                if not
+                   <| currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Skipped current-branch reference notification {payload.ReferenceId} because it targets repository {payload.RepositoryId}, branch {payload.BranchId}, not current branch {Current().BranchId}."
+            with
+            | ex -> logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
+    let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
+
     /// Registers the current repository branch with its parent-branch SignalR group and refreshes local event trust.
     let private registerCurrentSignalRParentBranch (signalRConnection: HubConnection) cancellationToken =
         task {
             let refreshAuthority = beginSignalRBranchSubscriptionRefresh ()
 
             let current = Current()
+
+            do! signalRConnection.InvokeAsync("RegisterCurrentBranch", current.RepositoryId, refreshAuthority.BranchId, cancellationToken)
 
             let branchGetParameters =
                 GetBranchParameters(
@@ -4267,6 +4293,12 @@ module Watch =
                                         })
                                     envelope)
                                 :> Task
+                        )
+
+                    use notifyCurrentBranchReference =
+                        signalRConnection.On<CurrentBranchReferenceNotification>(
+                            "NotifyCurrentBranchReference",
+                            fun payload -> (handleCurrentBranchReferenceNotification payload) :> Task
                         )
 
                     use notifyOnSave =

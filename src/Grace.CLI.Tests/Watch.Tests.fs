@@ -9,6 +9,7 @@ open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
 open Grace.Types.Automation
 open Grace.Types.Common
+open Grace.Types.Reference
 open NodaTime
 open NUnit.Framework
 open Spectre.Console
@@ -11215,6 +11216,30 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> Option.isSome
             |> should equal true)
+
+    /// Verifies that current-branch SignalR payloads must match the current repository and branch identity.
+    [<Test>]
+    let WatchCurrentBranchSignalRPayloadRejectsStaleRepositoryOrBranchIdentity () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let payload =
+                { CurrentBranchReferenceNotification.Default with
+                    RepositoryId = currentRepositoryId
+                    BranchId = currentBranchId
+                    BranchName = BranchName "current-branch"
+                    ReferenceId = Guid.NewGuid()
+                    ReferenceType = ReferenceType.Save
+                }
+
+            Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload
+            |> should equal true
+
+            Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests { payload with RepositoryId = Guid.NewGuid() }
+            |> should equal false
+
+            Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests { payload with BranchId = Guid.NewGuid() }
+            |> should equal false)
 
     /// Verifies that stale non-empty ids cannot be rescued by matching display names.
     [<Test>]
