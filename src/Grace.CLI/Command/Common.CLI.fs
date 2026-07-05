@@ -152,7 +152,15 @@ module Common =
             }
 
         /// Models one durable Watch journal row emitted by maintenance show-journal.
-        type MaintenanceJournalRowDto = { Sequence: int64; CreatedAtUnixTicks: int64; State: string; RelativePath: string option }
+        type MaintenanceJournalRowDto =
+            {
+                Sequence: int64
+                CreatedAtUnixTicks: int64
+                State: string
+                DifferenceType: string
+                FileSystemEntryType: string
+                RelativePath: string option
+            }
 
         /// Models filtered durable Watch journal diagnostics for maintenance show-journal.
         type MaintenanceShowJournalDto =

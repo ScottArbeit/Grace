@@ -19,7 +19,7 @@ open SQLitePCL
 /// Groups the local state db command parser, handlers, and output helpers.
 module LocalStateDb =
     [<Literal>]
-    let private SchemaVersion = "5"
+    let private SchemaVersion = "6"
 
     /// Identifies the single local Watch journal metadata row that records applied-through progress.
     [<Literal>]
@@ -186,7 +186,7 @@ module LocalStateDb =
             "CREATE INDEX IF NOT EXISTS ix_object_cache_children_parent ON object_cache_directory_children(parent_directory_version_id);"
             "CREATE TABLE IF NOT EXISTS object_cache_directory_files (directory_version_id TEXT NOT NULL, relative_path TEXT NOT NULL, sha256_hash TEXT NOT NULL, blake3_hash TEXT NOT NULL, is_binary INTEGER NOT NULL, size_bytes INTEGER NOT NULL, created_at_unix_ticks INTEGER NOT NULL, uploaded_to_object_storage INTEGER NOT NULL, last_write_time_utc_ticks INTEGER NOT NULL, PRIMARY KEY (directory_version_id, relative_path), FOREIGN KEY (directory_version_id) REFERENCES object_cache_directories(directory_version_id) ON DELETE CASCADE);"
             "CREATE INDEX IF NOT EXISTS ix_object_cache_files_path_hash ON object_cache_directory_files(relative_path, sha256_hash);"
-            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL);"
         |]
 
     let private requiredTableNames =
@@ -417,7 +417,7 @@ module LocalStateDb =
         reader.Read()
 
     /// Captures the SQLite column shape that writable schema checks must trust before using a table.
-    type private TableColumnShape = { Name: string; TypeName: string; NotNull: bool; PrimaryKeyOrdinal: int }
+    type private TableColumnShape = { Name: string; TypeName: string; NotNull: bool; DefaultValueSql: string option; PrimaryKeyOrdinal: int }
 
     /// Reads SQLite table column metadata so schema-version checks can reject partially created local databases.
     let private readTableColumnShapes (connection: SqliteConnection) tableName =
@@ -428,7 +428,13 @@ module LocalStateDb =
 
         while reader.Read() do
             columns.Add(
-                { Name = reader.GetString(1); TypeName = reader.GetString(2); NotNull = reader.GetInt32(3) <> 0; PrimaryKeyOrdinal = reader.GetInt32(5) }
+                {
+                    Name = reader.GetString(1)
+                    TypeName = reader.GetString(2)
+                    NotNull = reader.GetInt32(3) <> 0
+                    DefaultValueSql = if reader.IsDBNull(4) then None else Some(reader.GetString(4))
+                    PrimaryKeyOrdinal = reader.GetInt32(5)
+                }
             )
 
         columns |> Seq.toArray
@@ -692,15 +698,30 @@ module LocalStateDb =
     let private hasRequiredWatchJournalShape (connection: SqliteConnection) =
         let columns = readTableColumnShapes connection "watch_journal"
 
+        let expectedColumnNames =
+            [|
+                "sequence"
+                "created_at_unix_ticks"
+                "difference_type"
+                "entry_type"
+                "relative_path"
+            |]
+
         let tryFindColumn columnName =
             columns
             |> Array.tryFind (fun column -> StringComparer.OrdinalIgnoreCase.Equals(column.Name, columnName))
+
+        let hasExpectedColumnSet =
+            columns.Length = expectedColumnNames.Length
+            && expectedColumnNames
+               |> Array.forall (fun columnName -> tryFindColumn columnName |> Option.isSome)
 
         let hasSequenceColumn =
             match tryFindColumn "sequence" with
             | Some column ->
                 isIntegerColumnType column.TypeName
                 && column.PrimaryKeyOrdinal = 1
+                && column.DefaultValueSql.IsNone
             | None -> false
 
         let hasCreatedAtColumn =
@@ -709,10 +730,24 @@ module LocalStateDb =
                 isIntegerColumnType column.TypeName
                 && column.NotNull
                 && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
             | None -> false
 
-        hasSequenceColumn
+        let hasRequiredTextColumn columnName =
+            match tryFindColumn columnName with
+            | Some column ->
+                isTextColumnType column.TypeName
+                && column.NotNull
+                && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
+            | None -> false
+
+        hasExpectedColumnSet
+        && hasSequenceColumn
         && hasCreatedAtColumn
+        && hasRequiredTextColumn "difference_type"
+        && hasRequiredTextColumn "entry_type"
+        && hasRequiredTextColumn "relative_path"
         && watchJournalUsesAutoincrement connection
 
     /// Reports whether the Watch journal contains rows that require trustworthy recovery metadata.
@@ -1005,7 +1040,7 @@ module LocalStateDb =
             | None -> false
         | _ -> false
 
-    /// Verifies that existing Watch recovery metadata can be trusted before accepting schema version 5.
+    /// Verifies that existing Watch recovery metadata can be trusted before accepting the current schema.
     let private hasValidWatchJournalAppliedThroughSequenceMeta (connection: SqliteConnection) =
         match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
         | 1 -> hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection
@@ -1043,7 +1078,7 @@ module LocalStateDb =
 
         executeNonQuery
             connection
-            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL);"
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL);"
 
     /// Replaces malformed or missing Watch recovery metadata with the clear-journal reset watermark.
     let private resetWatchJournalAppliedThroughSequenceForClear (connection: SqliteConnection) =
@@ -1059,7 +1094,18 @@ module LocalStateDb =
         | Pending
 
     /// Models one durable Watch journal sequence row for diagnostics.
-    type WatchJournalRow = { Sequence: int64; CreatedAtUnixTicks: int64; State: WatchJournalRowState; RelativePath: string option }
+    type WatchJournalRow =
+        {
+            Sequence: int64
+            CreatedAtUnixTicks: int64
+            State: WatchJournalRowState
+            DifferenceType: string
+            EntryType: string
+            RelativePath: string option
+        }
+
+    /// Models the replayable normalized Watch observation persisted before status application.
+    type WatchJournalObservation = { DifferenceType: DifferenceType; EntryType: FileSystemEntryType; RelativePath: RelativePath }
 
     /// Models a filtered Watch journal diagnostic snapshot.
     type WatchJournalSnapshot =
@@ -1344,24 +1390,45 @@ module LocalStateDb =
             let normalizedPathFilter =
                 pathFilter
                 |> Option.bind (fun value -> if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim()))
+                |> Option.map normalizeFilePath
 
             use command = connection.CreateCommand()
 
+            let whereClauses = List<string>()
+
+            match normalizedStateFilter with
+            | "applied" ->
+                whereClauses.Add("sequence <= $applied_through")
+
+                command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+                |> ignore
+            | "pending" ->
+                whereClauses.Add("sequence > $applied_through")
+
+                command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+                |> ignore
+            | _ -> ()
+
+            match normalizedPathFilter with
+            | Some filter ->
+                whereClauses.Add("instr(lower(relative_path), lower($path_filter)) > 0")
+
+                command.Parameters.AddWithValue("$path_filter", filter)
+                |> ignore
+            | None -> ()
+
+            let whereSql =
+                if whereClauses.Count = 0 then
+                    String.Empty
+                else
+                    let joinedWhereClauses = String.Join(" AND ", whereClauses)
+                    $" WHERE {joinedWhereClauses}"
+
             command.CommandText <-
-                match normalizedStateFilter with
-                | "applied" ->
-                    "SELECT sequence, created_at_unix_ticks FROM watch_journal WHERE sequence <= $applied_through ORDER BY sequence DESC LIMIT $limit;"
-                | "pending" ->
-                    "SELECT sequence, created_at_unix_ticks FROM watch_journal WHERE sequence > $applied_through ORDER BY sequence DESC LIMIT $limit;"
-                | _ -> "SELECT sequence, created_at_unix_ticks FROM watch_journal ORDER BY sequence DESC LIMIT $limit;"
+                $"SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path FROM watch_journal{whereSql} ORDER BY sequence DESC LIMIT $limit;"
 
             command.Parameters.AddWithValue("$limit", limit)
             |> ignore
-
-            if normalizedStateFilter = "applied"
-               || normalizedStateFilter = "pending" then
-                command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
-                |> ignore
 
             use reader = command.ExecuteReader()
             let rows = ResizeArray<WatchJournalRow>()
@@ -1371,7 +1438,15 @@ module LocalStateDb =
 
                 let state = if sequence <= appliedThroughSequence then Applied else Pending
 
-                let row = { Sequence = sequence; CreatedAtUnixTicks = reader.GetInt64(1); State = state; RelativePath = None }
+                let row =
+                    {
+                        Sequence = sequence
+                        CreatedAtUnixTicks = reader.GetInt64(1)
+                        State = state
+                        DifferenceType = reader.GetString(2)
+                        EntryType = reader.GetString(3)
+                        RelativePath = Some(reader.GetString(4))
+                    }
 
                 if watchJournalRowMatches normalizedStateFilter normalizedPathFilter row then
                     rows.Add(row)
@@ -1456,6 +1531,118 @@ module LocalStateDb =
                 match result with
                 | Some result -> return result
                 | None -> return failwith "Watch journal clear did not produce a result."
+        }
+
+    /// Appends replayable normalized Watch observations before the corresponding status application begins.
+    let appendWatchJournalObservations (dbPath: string) (observations: IEnumerable<WatchJournalObservation>) =
+        task {
+            let observationArray = observations |> Seq.toArray
+
+            if observationArray.Length = 0 then
+                return Array.empty<int64>
+            else
+                do! ensureDbInitialized dbPath
+                let mutable sequences = Array.empty<int64>
+
+                do!
+                    executeWithRetry (fun () ->
+                        task {
+                            use connection = openConnection dbPath
+                            executeNonQuery connection "BEGIN IMMEDIATE;"
+                            let mutable committed = false
+
+                            try
+                                use command = connection.CreateCommand()
+
+                                command.CommandText <-
+                                    "INSERT INTO watch_journal (created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES ($created_at, $difference_type, $entry_type, $relative_path) RETURNING sequence;"
+
+                                command.Parameters.Add("$created_at", SqliteType.Integer)
+                                |> ignore
+
+                                command.Parameters.Add("$difference_type", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$entry_type", SqliteType.Text)
+                                |> ignore
+
+                                command.Parameters.Add("$relative_path", SqliteType.Text)
+                                |> ignore
+
+                                let appendedSequences = ResizeArray<int64>()
+
+                                for observation in observationArray do
+                                    command.Parameters["$created_at"].Value <- getCurrentInstant().ToUnixTimeTicks()
+                                    command.Parameters["$difference_type"].Value <- getDiscriminatedUnionCaseName observation.DifferenceType
+                                    command.Parameters["$entry_type"].Value <- getDiscriminatedUnionCaseName observation.EntryType
+                                    command.Parameters["$relative_path"].Value <- string observation.RelativePath
+                                    appendedSequences.Add(Convert.ToInt64(command.ExecuteScalar()))
+
+                                executeNonQuery connection "COMMIT;"
+                                committed <- true
+                                sequences <- appendedSequences.ToArray()
+                            finally
+                                if not committed then
+                                    try
+                                        executeNonQuery connection "ROLLBACK;"
+                                    with
+                                    | _ -> ()
+                        })
+
+                return sequences
+        }
+
+    /// Advances the Watch journal watermark only across applied sequences that are contiguous from the current boundary.
+    let advanceWatchJournalAppliedThroughContiguousSequences (dbPath: string) (appliedSequences: IEnumerable<int64>) =
+        task {
+            let appliedSequenceSet =
+                appliedSequences
+                |> Seq.filter (fun sequence -> sequence > 0L)
+                |> HashSet<int64>
+
+            if appliedSequenceSet.Count = 0 then
+                return 0L
+            else
+                do! ensureDbInitialized dbPath
+                let mutable advancedThrough = 0L
+
+                do!
+                    executeWithRetry (fun () ->
+                        task {
+                            use connection = openConnection dbPath
+                            executeNonQuery connection "BEGIN IMMEDIATE;"
+                            let mutable committed = false
+
+                            try
+                                let currentSequence = readWatchJournalAppliedThroughSequenceInternal connection
+                                let mutable candidate = currentSequence + 1L
+                                let mutable targetSequence = currentSequence
+
+                                while appliedSequenceSet.Contains(candidate) do
+                                    targetSequence <- candidate
+                                    candidate <- candidate + 1L
+
+                                if targetSequence > currentSequence then
+                                    let allocatedSequence = readAllocatedWatchJournalSequence connection
+
+                                    if targetSequence > allocatedSequence then
+                                        invalidOp
+                                            $"Applied-through sequence cannot advance to {targetSequence} because the Watch journal has only allocated through {allocatedSequence}."
+
+                                    setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey $"{targetSequence}"
+
+                                executeNonQuery connection "COMMIT;"
+                                committed <- true
+                                advancedThrough <- targetSequence
+                            finally
+                                if not committed then
+                                    try
+                                        executeNonQuery connection "ROLLBACK;"
+                                    with
+                                    | _ -> ()
+                        })
+
+                return advancedThrough
         }
 
     /// Persists the local Watch journal recovery watermark without changing journal rows.

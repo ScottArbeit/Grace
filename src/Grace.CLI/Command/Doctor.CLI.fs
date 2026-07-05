@@ -105,7 +105,7 @@ module Doctor =
     let private ServerAuthPrincipalAvailableCheckId = "server.auth-principal.available"
 
     [<Literal>]
-    let private ExpectedLocalStateSchemaVersion = "5"
+    let private ExpectedLocalStateSchemaVersion = "6"
 
     [<Literal>]
     let private DoctorServerProbeTimeoutMilliseconds = 1500
@@ -1094,7 +1094,7 @@ module Doctor =
                 | Some true, Some true -> ok "Watch journal table shape and applied-through metadata match the local-state schema contract."
                 | Some false, _ ->
                     failed
-                        "Watch journal table shape is invalid; expected sequence INTEGER PRIMARY KEY AUTOINCREMENT and created_at_unix_ticks INTEGER NOT NULL. Doctor did not repair or recreate local state."
+                        "Watch journal table shape is invalid; expected sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, and normalized observation payload columns. Doctor did not repair or recreate local state."
                 | Some true, Some false ->
                     failed
                         "Watch journal applied-through metadata is missing while journal rows exist, malformed, or negative. Doctor did not write default metadata."

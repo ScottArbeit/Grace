@@ -64,6 +64,48 @@ module Watch =
     /// Checks whether the current runtime mode can record filesystem observations.
     let private canCaptureFilesystemObservation () = isGraceWatchObservationCaptureLegal (currentGraceWatchRuntimeMode ())
 
+    let mutable private appendWatchJournalObservationsForWatch =
+        fun observations -> Grace.CLI.LocalStateDb.appendWatchJournalObservations (Current().GraceStatusFile) observations
+
+    let mutable private advanceWatchJournalAppliedThroughSequencesForWatch =
+        fun sequences -> Grace.CLI.LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences (Current().GraceStatusFile) sequences
+
+    let mutable private recoverWatchJournalBoundaryGapForWatch =
+        fun _ _ ->
+            task {
+                let! _ = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
+                return ()
+            }
+
+    let mutable private pruneWatchJournalRetentionForWatch = fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
+
+    /// Installs durable journal clients used by append-before-apply ordering tests.
+    let internal setWatchJournalClientsForWatchTests appendObservations advanceAppliedSequences =
+        appendWatchJournalObservationsForWatch <- appendObservations
+        advanceWatchJournalAppliedThroughSequencesForWatch <- advanceAppliedSequences
+
+    /// Installs durable journal maintenance clients used by boundary repair and retention tests.
+    let internal setWatchJournalMaintenanceClientsForWatchTests recoverBoundaryGap pruneRetention =
+        recoverWatchJournalBoundaryGapForWatch <- recoverBoundaryGap
+        pruneWatchJournalRetentionForWatch <- pruneRetention
+
+    /// Restores durable journal clients after tests replace append or boundary behavior.
+    let internal resetWatchJournalClientsForWatchTests () =
+        appendWatchJournalObservationsForWatch <-
+            fun observations -> Grace.CLI.LocalStateDb.appendWatchJournalObservations (Current().GraceStatusFile) observations
+
+        advanceWatchJournalAppliedThroughSequencesForWatch <-
+            fun sequences -> Grace.CLI.LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences (Current().GraceStatusFile) sequences
+
+        recoverWatchJournalBoundaryGapForWatch <-
+            fun _ _ ->
+                task {
+                    let! _ = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
+                    return ()
+                }
+
+        pruneWatchJournalRetentionForWatch <- fun () -> Grace.CLI.LocalStateDb.pruneWatchJournalRetention (Current().GraceStatusFile)
+
     /// Reports that a filesystem observation was ignored because the current runtime mode cannot capture it.
     let private logObservationSuppressed fullPath =
         logToAnsiConsole Colors.Verbose $"Grace Watch ignored filesystem observation for {fullPath} while runtime mode is {currentGraceWatchRuntimeMode ()}."
@@ -1319,6 +1361,10 @@ module Watch =
     /// Models the differences that can be applied and the queued work they resolve.
     type private StatusDifferencesForApply = { Applicable: List<FileSystemDifference>; Resolved: List<FileSystemDifference> }
 
+    /// Converts an already-normalized status difference into the replay payload owned by the local Watch journal.
+    let private journalObservationForDifference (difference: FileSystemDifference) : Grace.CLI.LocalStateDb.WatchJournalObservation =
+        { DifferenceType = difference.DifferenceType; EntryType = difference.FileSystemEntryType; RelativePath = difference.RelativePath }
+
     /// Checks whether a pending uploaded file difference must be dropped because final path state no longer has a file.
     let private isStaleUploadedFileDifference (difference: FileSystemDifference) =
         difference.FileSystemEntryType = FileSystemEntryType.File
@@ -2414,6 +2460,7 @@ module Watch =
         clearShouldIgnoreCache ()
         resetBranchTransitionCompletionAfterRetireProbeForWatchTests ()
         resetSignalRSubscriptionRefreshForWatchTests ()
+        resetWatchJournalClientsForWatchTests ()
         enumerateFilesForDirectoryUpload <- fun directoryPath -> Directory.EnumerateFiles(directoryPath, "*", SearchOption.AllDirectories)
         enumerateDirectoriesForDirectoryStatusAdd <- enumerateDirectoriesForDirectoryStatusAddWithPruning
         clearGraceUpdateMarkerDeletedUtcForReset ()
@@ -3519,6 +3566,95 @@ module Watch =
                 return None
         }
 
+    /// Prunes applied Watch journal rows immediately after a trusted applied-boundary advance.
+    let private pruneWatchJournalAfterTrustedBoundaryAdvance (appendedWatchJournalSequences: int64 array) =
+        task {
+            if appendedWatchJournalSequences.Length > 0 then
+                try
+                    do! pruneWatchJournalRetentionForWatch ()
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Grace Watch could not prune applied journal rows after a trusted boundary advance; retention will retry after later status work: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Requests resync before fallible journal repair so non-incremental IPC is published even when repair fails.
+    let private repairWatchJournalAfterStatusTrustLoss advancedThrough requiredAppliedThrough resyncReason repairFailureContext =
+        task {
+            requestGraceWatchExplicitResync resyncReason
+
+            try
+                do! recoverWatchJournalBoundaryGapForWatch advancedThrough requiredAppliedThrough
+            with
+            | ex -> logToAnsiConsole Colors.Error $"{repairFailureContext}; resync was already requested before repair failed: {Markup.Escape(ex.Message)}."
+        }
+
+    /// Clears appended journal rows after status returns no durable result so the pending retry can reappend them.
+    let private clearWatchJournalAfterNoDurableStatus appendedWatchJournalSequences =
+        task {
+            if Array.isEmpty appendedWatchJournalSequences then
+                return false
+            else
+                let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
+
+                try
+                    do! recoverWatchJournalBoundaryGapForWatch 0L requiredAppliedThrough
+                    return false
+                with
+                | ex ->
+                    requestGraceWatchExplicitResync $"Watch status application returned no durable status and journal repair failed: {ex.Message}"
+
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch appended normalized observations and status application returned no durable status, but journal repair failed; resync is required before incremental work can resume: {Markup.Escape(ex.Message)}."
+
+                    return true
+        }
+
+    /// Converges appended journal rows after status side effects commit so recovery never resumes from stale pending rows.
+    let private convergeWatchJournalAfterStatusApplication (appendedWatchJournalSequences: int64 array) =
+        task {
+            if appendedWatchJournalSequences.Length = 0 then
+                return true
+            else
+                let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
+
+                try
+                    let! advancedThrough = advanceWatchJournalAppliedThroughSequencesForWatch appendedWatchJournalSequences
+
+                    if advancedThrough < requiredAppliedThrough then
+                        do!
+                            repairWatchJournalAfterStatusTrustLoss
+                                advancedThrough
+                                requiredAppliedThrough
+                                $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
+                                "Grace Watch applied status but could not repair the durable journal boundary through the appended observations"
+
+                        logToAnsiConsole
+                            Colors.Error
+                            $"Grace Watch applied status but could not advance the durable journal boundary through the appended observations; resync is required before status work is drained."
+
+                        return false
+                    else
+                        do! pruneWatchJournalAfterTrustedBoundaryAdvance appendedWatchJournalSequences
+                        return true
+                with
+                | ex ->
+                    do!
+                        repairWatchJournalAfterStatusTrustLoss
+                            0L
+                            requiredAppliedThrough
+                            $"Watch journal applied boundary advancement failed after status application: {ex.Message}"
+                            "Grace Watch applied status but could not repair the durable journal boundary after advancement failed"
+
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch applied status but could not advance the durable journal boundary; resync was requested before journal repair so incremental shortcuts cannot replay already-applied work: {Markup.Escape(ex.Message)}."
+
+                    return false
+        }
+
     /// Processes any changed files since the last timer tick.
     let internal processChangedFilesWithClients
         readGraceStatusMetaClient
@@ -3719,6 +3855,8 @@ module Watch =
                                 isGraceWatchObservationApplicationLegal runtimeModeBeforeStatusApplication
 
                         let statusApplicationLegal = statusApplicationModeStillTrusted ()
+                        let mutable appendedWatchJournalSequences = Array.empty<int64>
+                        let mutable appendedWatchJournalConverged = false
 
                         let statusUpdateStillTrusted () =
                             filesToProcess.IsEmpty
@@ -3746,12 +3884,63 @@ module Watch =
 
                                 Task.FromResult(None)
                             elif statusDifferencesForApply.Applicable.Count > 0 then
-                                updateGraceStatusFromDifferencesWhenTrusted
-                                    statusUpdateStillTrusted
-                                    updateGraceStatusFromDifferencesClient
-                                    graceStatus
-                                    statusDifferencesForApply.Applicable
-                                    correlationId
+                                task {
+                                    let! appendResult =
+                                        task {
+                                            try
+                                                let! sequences =
+                                                    statusDifferencesForApply.Applicable
+                                                    |> Seq.map journalObservationForDifference
+                                                    |> appendWatchJournalObservationsForWatch
+
+                                                return Ok sequences
+                                            with
+                                            | ex -> return Error ex
+                                        }
+
+                                    match appendResult with
+                                    | Ok sequences ->
+                                        appendedWatchJournalSequences <- sequences
+
+                                        try
+                                            return!
+                                                updateGraceStatusFromDifferencesWhenTrusted
+                                                    statusUpdateStillTrusted
+                                                    updateGraceStatusFromDifferencesClient
+                                                    graceStatus
+                                                    statusDifferencesForApply.Applicable
+                                                    correlationId
+                                        with
+                                        | ex ->
+                                            let requiredAppliedThrough =
+                                                if appendedWatchJournalSequences.Length = 0 then
+                                                    0L
+                                                else
+                                                    appendedWatchJournalSequences |> Array.max
+
+                                            do!
+                                                repairWatchJournalAfterStatusTrustLoss
+                                                    0L
+                                                    requiredAppliedThrough
+                                                    $"Watch status application failed after journal append: {ex.Message}"
+                                                    "Grace Watch appended normalized observations but could not repair the journal after status application failed"
+
+                                            appendedWatchJournalConverged <- true
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch appended normalized observations but status application failed; resync was requested before journal repair so pending rows cannot replay as still-unapplied work: {Markup.Escape(ex.Message)}."
+
+                                            return None
+                                    | Error ex ->
+                                        requestGraceWatchExplicitResync $"Watch journal append failed before status application: {ex.Message}"
+
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"Grace Watch could not append normalized observations to the durable journal; unjournaled status application was skipped and resync is required: {Markup.Escape(ex.Message)}."
+
+                                        return None
+                                }
                             else
                                 Task.FromResult(Some graceStatus)
 
@@ -3764,28 +3953,32 @@ module Watch =
                                 && (startupPendingDifferences.Count > 0
                                     || isGraceWatchObservationApplicationLegal commitRuntimeMode)
 
+                            let! watchJournalBoundaryTrusted = convergeWatchJournalAfterStatusApplication appendedWatchJournalSequences
+                            appendedWatchJournalConverged <- true
+
                             if statusUpdateCanCommit then
-                                graceStatus <- newGraceStatus
+                                if watchJournalBoundaryTrusted then
+                                    graceStatus <- newGraceStatus
 
-                                if startupPendingDifferences.Count = 0 then
-                                    drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
-                                else
-                                    drainAppliedStatusWork directorySnapshot statusTriggerSnapshot statusDifferencesForApply.Resolved
-
-                                let canceledFileUploadDeletePathsToClear =
                                     if startupPendingDifferences.Count = 0 then
-                                        statusTriggerSnapshot
-                                        |> Seq.map (fun statusTrigger -> RelativePath statusTrigger.RelativePath)
+                                        drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
                                     else
-                                        statusDifferencesForApply.Resolved
-                                        |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
-                                        |> Seq.map (fun difference -> difference.RelativePath)
+                                        drainAppliedStatusWork directorySnapshot statusTriggerSnapshot statusDifferencesForApply.Resolved
 
-                                clearCanceledFileUploadDeleteRelativePaths canceledFileUploadDeletePathsToClear
+                                    let canceledFileUploadDeletePathsToClear =
+                                        if startupPendingDifferences.Count = 0 then
+                                            statusTriggerSnapshot
+                                            |> Seq.map (fun statusTrigger -> RelativePath statusTrigger.RelativePath)
+                                        else
+                                            statusDifferencesForApply.Resolved
+                                            |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
+                                            |> Seq.map (fun difference -> difference.RelativePath)
 
-                                clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
-                                clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
-                                removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
+                                    clearCanceledFileUploadDeleteRelativePaths canceledFileUploadDeletePathsToClear
+
+                                    clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
+                                    clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
+                                    removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
                             else
                                 clearPendingStatusDifferences pendingDifferencesToClear
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
@@ -3795,6 +3988,20 @@ module Watch =
                                     Colors.Important
                                     $"Grace Status file update completed while newer file upload work was pending; status-only triggers will retry."
                         | None ->
+                            if appendedWatchJournalSequences.Length > 0
+                               && not appendedWatchJournalConverged then
+                                let! noDurableStatusRepairFailed = clearWatchJournalAfterNoDurableStatus appendedWatchJournalSequences
+                                appendedWatchJournalConverged <- true
+
+                                if noDurableStatusRepairFailed then
+                                    logToAnsiConsole
+                                        Colors.Error
+                                        $"Grace Watch appended normalized observations but status application returned no durable status; repair failed and resync is required before incremental work can resume."
+                                else
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch appended normalized observations but status application returned no durable status; appended journal rows were cleared so the pending status work can retry."
+
                             logToAnsiConsole Colors.Important $"Grace Status file was not updated."
                             () // Something went wrong, don't update the in-memory Grace Status.
 

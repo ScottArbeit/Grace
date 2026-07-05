@@ -97,7 +97,9 @@ module MaintenanceCliTests =
         connection.Open()
 
         for sequence in [| 1L .. throughSequence |] do
-            executeNonQuery connection $"INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES ({sequence}, {sequence});"
+            executeNonQuery
+                connection
+                $"INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES ({sequence}, {sequence}, 'Change', 'File', 'file-{sequence}.txt');"
 
         executeNonQuery connection $"UPDATE meta SET value = '{appliedThrough}' WHERE key = 'AppliedThroughSequence';"
 
@@ -580,6 +582,13 @@ module MaintenanceCliTests =
         withTempRepo (fun root ->
             seedWatchJournalRows root 4L 2L
 
+            let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            use setupConnection = new SqliteConnection($"Data Source={dbPath}")
+            setupConnection.Open()
+
+            executeNonQuery setupConnection "UPDATE watch_journal SET relative_path = 'src/file-2.txt' WHERE sequence = 2;"
+
             /// Verifies that the CLI maintenance scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runJsonMaintenance [| "show-journal"
@@ -624,6 +633,15 @@ module MaintenanceCliTests =
             row.GetProperty("State").GetString()
             |> should equal "pending"
 
+            row.GetProperty("DifferenceType").GetString()
+            |> should equal "Change"
+
+            row.GetProperty("FileSystemEntryType").GetString()
+            |> should equal "File"
+
+            row.GetProperty("RelativePath").GetString()
+            |> should equal "file-4.txt"
+
             /// Verifies that state filtering happens before limit selection.
             let appliedExitCode, appliedStandardOut, appliedStandardError =
                 runJsonMaintenance [| "show-journal"
@@ -644,7 +662,36 @@ module MaintenanceCliTests =
                     .GetProperty("Rows")[0]
 
             appliedRow.GetProperty("Sequence").GetInt64()
-            |> should equal 2L)
+            |> should equal 2L
+
+            /// Verifies that path filtering happens before limit selection.
+            let pathExitCode, pathStandardOut, pathStandardError =
+                runJsonMaintenance [| "show-journal"
+                                      "--path"
+                                      "src\\file-2"
+                                      "--limit"
+                                      "1" |]
+
+            pathExitCode |> should equal 0
+            pathStandardError |> should equal String.Empty
+
+            use pathDocument = assertCleanJsonStdout pathStandardOut
+
+            let pathRows =
+                pathDocument
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")
+
+            pathRows.GetArrayLength() |> should equal 1
+
+            let pathRow = pathRows[0]
+
+            pathRow.GetProperty("Sequence").GetInt64()
+            |> should equal 2L
+
+            pathRow.GetProperty("RelativePath").GetString()
+            |> should equal "src/file-2.txt")
 
     /// Verifies that maintenance show journal reports unhealthy local state without repairing or rotating the DB.
     [<Test>]
