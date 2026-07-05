@@ -52,9 +52,10 @@ When implementing an epic, always use an explicit epic integration branch. Creat
 sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR as
 the production release candidate. Do not use direct-to-`main` epic slices. Ensure CI or recorded validation covers PRs
 targeting `epic/**` before relying on the integration branch flow.
-For top-level epics split into mini-epics, route leaf pull requests to their mini-epic integration branches, then route
-each mini-epic pull request to the top-level epic branch. For Operations, leaf pull requests target their WS mini-epic
-branches and WS mini-epic pull requests target `epic/554-grace-operations`.
+For top-level epics split into mini-epics, each mini-epic gets its own integration branch. Route leaf pull requests to
+their mini-epic integration branches, then merge each mini-epic integration branch into the parent epic integration
+branch. For Operations, leaf pull requests target their WS mini-epic branches and WS mini-epic pull requests target
+`epic/554-grace-operations`.
 Every pull request must link its related GitHub issue in the PR body. When a PR targets the default branch and should
 close an issue, use one of GitHub's supported closing keywords: `close`, `closes`, `closed`, `fix`, `fixes`, `fixed`,
 `resolve`, `resolves`, or `resolved`. Use `docs/Development process.md` for default-branch versus epic-branch wording

@@ -30,9 +30,10 @@ Re-read these files during the current session before relying on older memory or
 - When implementing an epic, always use an explicit `epic-integration-branch`. Create
   `epic/<parent-issue>-<short-slug>` from `origin/main`, route sub-issue pull requests to that branch, and use the
   final epic-to-`main` pull request as the production release candidate. Do not use direct-to-`main` epic slices.
-- For top-level epics split into mini-epics, route leaf pull requests to their mini-epic integration branches, then
-  route each mini-epic pull request to the top-level epic branch. For Operations, leaf pull requests target their WS
-  mini-epic branches and WS mini-epic pull requests target `epic/554-grace-operations`.
+- For top-level epics split into mini-epics, each mini-epic gets its own integration branch. Route leaf pull requests to
+  their mini-epic integration branches, then merge each mini-epic integration branch into the parent epic integration
+  branch. For Operations, leaf pull requests target their WS mini-epic branches and WS mini-epic pull requests target
+  `epic/554-grace-operations`.
 - Before assigning a sub-issue, require the minimum detail gate:
   - invariant tuple
   - forbidden implementation shapes
@@ -72,10 +73,10 @@ preparatory compile-item or file-scaffold slice before later branches edit separ
 For standalone non-epic issues, create issue branches from `origin/main` and target pull requests to `main`. For epics,
 create `epic/<parent-issue>-<short-slug>` from `origin/main`, create sub-issue branches from the current
 `origin/epic/...`, target sub-issue PRs to the epic branch, and use the final epic-to-`main` PR as the production
-release candidate. For mini-epic topologies, create leaf branches from the current mini-epic branch, target leaf PRs to
-that branch, and target the mini-epic PR to its top-level epic branch. Keep the epic branch refreshed from its parent
-branch; ensure CI validates PRs targeting `epic/**`, or record the CI gap and required local validation before
-assigning workers.
+release candidate. For mini-epic topologies, create one integration branch per mini-epic, create leaf branches from the
+current mini-epic branch, target leaf PRs to that branch, and target the mini-epic PR to its parent epic integration
+branch. Keep each integration branch refreshed from its parent branch; ensure CI validates PRs targeting `epic/**`, or
+record the CI gap and required local validation before assigning workers.
 
 ## Orchestration And Review
 

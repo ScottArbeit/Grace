@@ -35,9 +35,10 @@ update the issue before editing the new paths.
   `epic/<parent-issue>-<slug>` from `origin/main`, branch sub-issue worktrees from the current `origin/epic/...`, open
   sub-issue PRs to the epic branch, keep that branch refreshed from `origin/main`, and use the final epic-to-`main` PR
   as the production release candidate. Do not use direct-to-`main` epic slices.
-- For top-level epics split into mini-epics, route leaf pull requests to their mini-epic integration branches, then
-  route each mini-epic pull request to the top-level epic branch. For Operations, leaf pull requests target their WS
-  mini-epic branches and WS mini-epic pull requests target `epic/554-grace-operations`.
+- For top-level epics split into mini-epics, each mini-epic gets its own integration branch. Route leaf pull requests to
+  their mini-epic integration branches, then merge each mini-epic integration branch into the parent epic integration
+  branch. For Operations, leaf pull requests target their WS mini-epic branches and WS mini-epic pull requests target
+  `epic/554-grace-operations`.
 - Before assigning or starting a coding issue or sub-issue, require the minimum detail gate from
   `docs/Development process.md`: invariant tuple, forbidden implementation shapes, positive/negative/regression/boundary
   tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. The issue should be

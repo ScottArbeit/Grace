@@ -229,10 +229,10 @@ current `origin/epic/<parent-issue>-<short-slug>`, and sub-issue pull requests t
 is an integration branch, not a production deployment branch. The final ready-for-review pull request from the epic
 branch to `main` is the production release candidate for the epic.
 
-When a top-level epic is split into mini-epics, treat each mini-epic as its own integration branch. Leaf issue branches
-start from and target the current mini-epic branch. Mini-epic branches start from and target the top-level epic branch.
-For Operations, leaf pull requests target their WS mini-epic branches, and WS mini-epic pull requests target
-`epic/554-grace-operations`.
+When a top-level epic is split into mini-epics, each mini-epic must have its own integration branch. Leaf issue branches
+start from and target the current mini-epic integration branch. Mini-epic integration branches start from and merge into
+the parent epic integration branch. For Operations, leaf pull requests target their WS mini-epic branches, and WS
+mini-epic pull requests target `epic/554-grace-operations`.
 
 When using an epic integration branch:
 
