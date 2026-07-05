@@ -274,7 +274,14 @@ module Maintenance =
 
     /// Converts one durable Watch journal row into the maintenance command output contract.
     let private toJournalRowDto (row: Grace.CLI.LocalStateDb.WatchJournalRow) : LocalOutputDto.MaintenanceJournalRowDto =
-        { Sequence = row.Sequence; CreatedAtUnixTicks = row.CreatedAtUnixTicks; State = $"{row.State}".ToLowerInvariant(); RelativePath = row.RelativePath }
+        {
+            Sequence = row.Sequence
+            CreatedAtUnixTicks = row.CreatedAtUnixTicks
+            State = $"{row.State}".ToLowerInvariant()
+            DifferenceType = row.DifferenceType
+            FileSystemEntryType = row.EntryType
+            RelativePath = row.RelativePath
+        }
 
     /// Converts a Watch journal diagnostic snapshot into the maintenance command output contract.
     let private toShowJournalDto (snapshot: Grace.CLI.LocalStateDb.WatchJournalSnapshot) : LocalOutputDto.MaintenanceShowJournalDto =

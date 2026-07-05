@@ -431,12 +431,16 @@ module CommandOutputContract =
                 "Sequence", scalarSchema "integer"
                 "CreatedAtUnixTicks", scalarSchema "integer"
                 "State", scalarSchema "string"
-                "RelativePath", nullableStringSchema "Repository-relative path when the durable journal row stores path metadata."
+                "DifferenceType", scalarSchema "string"
+                "FileSystemEntryType", scalarSchema "string"
+                "RelativePath", nullableStringSchema "Repository-relative path for the normalized replay observation."
             ]
             [|
                 "Sequence"
                 "CreatedAtUnixTicks"
                 "State"
+                "DifferenceType"
+                "FileSystemEntryType"
                 "RelativePath"
             |]
 
@@ -479,7 +483,14 @@ module CommandOutputContract =
                 Limit = 1
                 Rows =
                     [|
-                        {| Sequence = 4L; CreatedAtUnixTicks = 4L; State = "pending"; RelativePath = null |}
+                        {|
+                            Sequence = 4L
+                            CreatedAtUnixTicks = 4L
+                            State = "pending"
+                            DifferenceType = "Change"
+                            FileSystemEntryType = "File"
+                            RelativePath = "src/Program.fs"
+                        |}
                     |]
             |}
 

@@ -2601,7 +2601,7 @@ module DoctorCliTests =
                 (findCheckById checks "state.db.schema-version")
                     .GetProperty("Summary")
                     .GetString()
-                |> should contain "schema_version is 5"
+                |> should contain "schema_version is 6"
 
                 (findCheckById checks "object-cache.index-readable")
                     .GetProperty("Summary")
@@ -2661,7 +2661,11 @@ module DoctorCliTests =
 
                 do
                     use connection = openRawConnection dbPath
-                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (1, 1);"
+
+                    executeNonQuery
+                        connection
+                        "INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES (1, 1, 'Change', 'File', 'doctor-one.txt');"
+
                     executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
 
                 let beforeRoot = snapshotFiles root
@@ -2747,8 +2751,10 @@ module DoctorCliTests =
                     use connection = openRawConnection dbPath
                     executeNonQuery connection "DROP TABLE meta;"
                     executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '6');"
+
                     executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
+
                     executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '1');"
 
                 let beforeRoot = snapshotFiles root
@@ -2792,7 +2798,8 @@ module DoctorCliTests =
                     use connection = openRawConnection dbPath
                     executeNonQuery connection "DROP TABLE meta;"
                     executeNonQuery connection "CREATE TABLE meta (key TEXT NOT NULL, value TEXT NOT NULL);"
-                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '5');"
+                    executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('schema_version', '6');"
+
                     executeNonQuery connection "INSERT INTO meta (key, value) VALUES ('AppliedThroughSequence', '0');"
 
                 let beforeRoot = snapshotFiles root
@@ -2885,8 +2892,15 @@ module DoctorCliTests =
 
                 do
                     use connection = openRawConnection dbPath
-                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (1, 1);"
-                    executeNonQuery connection "INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES (2, 2);"
+
+                    executeNonQuery
+                        connection
+                        "INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES (1, 1, 'Change', 'File', 'doctor-one.txt');"
+
+                    executeNonQuery
+                        connection
+                        "INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES (2, 2, 'Delete', 'File', 'doctor-two.txt');"
+
                     executeNonQuery connection "UPDATE sqlite_sequence SET seq = 1 WHERE name = 'watch_journal';"
 
                 let beforeRoot = snapshotFiles root
@@ -3047,7 +3061,7 @@ module DoctorCliTests =
                         |> should equal "Ok"
 
                         checks[ 0 ].GetProperty("Summary").GetString()
-                        |> should contain "schema_version is 5"
+                        |> should contain "schema_version is 6"
 
                         let trace = readTrace tracePath
                         trace |> should contain repoDbPath

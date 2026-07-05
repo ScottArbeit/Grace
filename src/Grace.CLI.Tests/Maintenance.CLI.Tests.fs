@@ -97,7 +97,9 @@ module MaintenanceCliTests =
         connection.Open()
 
         for sequence in [| 1L .. throughSequence |] do
-            executeNonQuery connection $"INSERT INTO watch_journal (sequence, created_at_unix_ticks) VALUES ({sequence}, {sequence});"
+            executeNonQuery
+                connection
+                $"INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path) VALUES ({sequence}, {sequence}, 'Change', 'File', 'file-{sequence}.txt');"
 
         executeNonQuery connection $"UPDATE meta SET value = '{appliedThrough}' WHERE key = 'AppliedThroughSequence';"
 
@@ -623,6 +625,15 @@ module MaintenanceCliTests =
 
             row.GetProperty("State").GetString()
             |> should equal "pending"
+
+            row.GetProperty("DifferenceType").GetString()
+            |> should equal "Change"
+
+            row.GetProperty("FileSystemEntryType").GetString()
+            |> should equal "File"
+
+            row.GetProperty("RelativePath").GetString()
+            |> should equal "file-4.txt"
 
             /// Verifies that state filtering happens before limit selection.
             let appliedExitCode, appliedStandardOut, appliedStandardError =
