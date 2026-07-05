@@ -3566,6 +3566,43 @@ module Watch =
                 return None
         }
 
+    /// Converges appended journal rows after status side effects commit so recovery never resumes from stale pending rows.
+    let private convergeWatchJournalAfterStatusApplication (appendedWatchJournalSequences: int64 array) =
+        task {
+            if appendedWatchJournalSequences.Length = 0 then
+                return true
+            else
+                let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
+
+                try
+                    let! advancedThrough = advanceWatchJournalAppliedThroughSequencesForWatch appendedWatchJournalSequences
+
+                    if advancedThrough < requiredAppliedThrough then
+                        do! recoverWatchJournalBoundaryGapForWatch advancedThrough requiredAppliedThrough
+
+                        requestGraceWatchExplicitResync
+                            $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
+
+                        logToAnsiConsole
+                            Colors.Error
+                            $"Grace Watch applied status but could not advance the durable journal boundary through the appended observations; resync is required before status work is drained."
+
+                        return false
+                    else
+                        return true
+                with
+                | ex ->
+                    do! recoverWatchJournalBoundaryGapForWatch 0L requiredAppliedThrough
+
+                    requestGraceWatchExplicitResync $"Watch journal applied boundary advancement failed after status application: {ex.Message}"
+
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch applied status but could not advance the durable journal boundary; the journal was repaired before resync so incremental shortcuts cannot replay already-applied work: {Markup.Escape(ex.Message)}."
+
+                    return false
+        }
+
     /// Processes any changed files since the last timer tick.
     let internal processChangedFilesWithClients
         readGraceStatusMetaClient
@@ -3832,35 +3869,9 @@ module Watch =
                                 && (startupPendingDifferences.Count > 0
                                     || isGraceWatchObservationApplicationLegal commitRuntimeMode)
 
+                            let! watchJournalBoundaryTrusted = convergeWatchJournalAfterStatusApplication appendedWatchJournalSequences
+
                             if statusUpdateCanCommit then
-                                let mutable watchJournalBoundaryTrusted = true
-
-                                if appendedWatchJournalSequences.Length > 0 then
-                                    try
-                                        let! advancedThrough = advanceWatchJournalAppliedThroughSequencesForWatch appendedWatchJournalSequences
-                                        let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
-
-                                        if advancedThrough < requiredAppliedThrough then
-                                            watchJournalBoundaryTrusted <- false
-                                            do! recoverWatchJournalBoundaryGapForWatch advancedThrough requiredAppliedThrough
-
-                                            requestGraceWatchExplicitResync
-                                                $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
-
-                                            logToAnsiConsole
-                                                Colors.Error
-                                                $"Grace Watch applied status but could not advance the durable journal boundary through the appended observations; resync is required before status work is drained."
-                                    with
-                                    | ex ->
-                                        watchJournalBoundaryTrusted <- false
-
-                                        requestGraceWatchExplicitResync
-                                            $"Watch journal applied boundary advancement failed after status application: {ex.Message}"
-
-                                        logToAnsiConsole
-                                            Colors.Error
-                                            $"Grace Watch applied status but could not advance the durable journal boundary; resync is required before incremental shortcuts are trusted: {Markup.Escape(ex.Message)}."
-
                                 if watchJournalBoundaryTrusted then
                                     graceStatus <- newGraceStatus
 

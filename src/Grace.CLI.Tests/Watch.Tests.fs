@@ -3332,9 +3332,104 @@ module WatchTests =
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
-    /// Verifies that confidence loss after append keeps the applied boundary unchanged.
+    /// Verifies that an applied status write repairs appended journal rows when boundary advancement throws.
     [<Test>]
-    let ``watch does not advance journal boundary when confidence is lost after append`` () =
+    let ``watch repairs journal before resync when boundary advancement throws after status write`` () =
+        withTempRepo (fun root ->
+            let relativePath = "journal-advance-throw-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let mutable appendCalls = 0
+            let mutable applyCalls = 0
+            let mutable advanceCalls = 0
+            let mutable recoveryCalls = 0
+            let mutable pruneCalls = 0
+            let mutable recoveredAdvancedThrough = -1L
+            let mutable recoveredRequiredThrough = -1L
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            try
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun observations ->
+                        appendCalls <- appendCalls + 1
+                        LocalStateDb.appendWatchJournalObservations dbPath observations)
+                    (fun sequences ->
+                        advanceCalls <- advanceCalls + 1
+                        sequences |> Seq.toArray |> should equal [| 1L |]
+                        Task.FromException<int64>(InvalidOperationException("test boundary failure")))
+
+                Watch.setWatchJournalMaintenanceClientsForWatchTests
+                    (fun advancedThrough requiredThrough ->
+                        recoveryCalls <- recoveryCalls + 1
+                        recoveredAdvancedThrough <- advancedThrough
+                        recoveredRequiredThrough <- requiredThrough
+
+                        task {
+                            let! _ = LocalStateDb.clearWatchJournal dbPath
+                            return ()
+                        })
+                    (fun () ->
+                        pruneCalls <- pruneCalls + 1
+                        Task.FromResult(()))
+
+                /// Reads status needed by the boundary-throw journal repair scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this status-only observation scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Simulates successful status application before the boundary advancement failure.
+                let updateGraceStatusFromDifferences currentStatus _ _ =
+                    applyCalls <- applyCalls + 1
+                    Task.FromResult(Some currentStatus)
+
+                /// Leaves incremental status writes outside this status-only observation scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the boundary-throw journal repair scenario.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                appendCalls |> should equal 1
+                applyCalls |> should equal 1
+                advanceCalls |> should equal 1
+                recoveryCalls |> should equal 1
+                recoveredAdvancedThrough |> should equal 0L
+                recoveredRequiredThrough |> should equal 1L
+                pruneCalls |> should equal 0
+
+                let repairedJournalSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "all" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                repairedJournalSnapshot.TotalRows
+                |> should equal 0
+
+                repairedJournalSnapshot.AppliedThroughSequence
+                |> should equal 0L
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
+    /// Verifies that confidence loss after a status write still advances the applied journal boundary.
+    [<Test>]
+    let ``watch advances journal boundary when confidence is lost after status write`` () =
         withTempRepo (fun root ->
             let relativePath = "journal-confidence-loss-delete.txt"
             let filePath = Path.Combine(root, relativePath)
@@ -3386,10 +3481,15 @@ module WatchTests =
 
                 appendCalls |> should equal 1
                 applyCalls |> should equal 1
-                advanceCalls |> should equal 0
+                advanceCalls |> should equal 1
 
                 Watch.currentGraceWatchRuntimeModeForWatchTests ()
                 |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                Watch
+                    .pendingWatchWorkSnapshotForTests()
+                    .StatusUpdateTriggers
+                |> should equal [| relativePath |]
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 

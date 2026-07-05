@@ -1366,6 +1366,7 @@ module LocalStateDb =
             let normalizedPathFilter =
                 pathFilter
                 |> Option.bind (fun value -> if String.IsNullOrWhiteSpace(value) then None else Some(value.Trim()))
+                |> Option.map normalizeFilePath
 
             use command = connection.CreateCommand()
 

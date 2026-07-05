@@ -582,6 +582,13 @@ module MaintenanceCliTests =
         withTempRepo (fun root ->
             seedWatchJournalRows root 4L 2L
 
+            let dbPath = Path.Combine(root, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+            use setupConnection = new SqliteConnection($"Data Source={dbPath}")
+            setupConnection.Open()
+
+            executeNonQuery setupConnection "UPDATE watch_journal SET relative_path = 'src/file-2.txt' WHERE sequence = 2;"
+
             /// Verifies that the CLI maintenance scenario exits with the expected process status.
             let exitCode, standardOut, standardError =
                 runJsonMaintenance [| "show-journal"
@@ -661,7 +668,7 @@ module MaintenanceCliTests =
             let pathExitCode, pathStandardOut, pathStandardError =
                 runJsonMaintenance [| "show-journal"
                                       "--path"
-                                      "file-2"
+                                      "src\\file-2"
                                       "--limit"
                                       "1" |]
 
@@ -684,7 +691,7 @@ module MaintenanceCliTests =
             |> should equal 2L
 
             pathRow.GetProperty("RelativePath").GetString()
-            |> should equal "file-2.txt")
+            |> should equal "src/file-2.txt")
 
     /// Verifies that maintenance show journal reports unhealthy local state without repairing or rotating the DB.
     [<Test>]
