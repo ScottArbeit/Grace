@@ -3810,14 +3810,26 @@ module Watch =
                                     || isGraceWatchObservationApplicationLegal commitRuntimeMode)
 
                             if statusUpdateCanCommit then
-                                graceStatus <- newGraceStatus
+                                let mutable watchJournalBoundaryTrusted = true
 
                                 if appendedWatchJournalSequences.Length > 0 then
                                     try
-                                        let! _ = advanceWatchJournalAppliedThroughSequencesForWatch appendedWatchJournalSequences
-                                        ()
+                                        let! advancedThrough = advanceWatchJournalAppliedThroughSequencesForWatch appendedWatchJournalSequences
+                                        let requiredAppliedThrough = appendedWatchJournalSequences |> Array.max
+
+                                        if advancedThrough < requiredAppliedThrough then
+                                            watchJournalBoundaryTrusted <- false
+
+                                            requestGraceWatchExplicitResync
+                                                $"Watch journal applied boundary advanced only through {advancedThrough} after status application required {requiredAppliedThrough}."
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch applied status but could not advance the durable journal boundary through the appended observations; resync is required before status work is drained."
                                     with
                                     | ex ->
+                                        watchJournalBoundaryTrusted <- false
+
                                         requestGraceWatchExplicitResync
                                             $"Watch journal applied boundary advancement failed after status application: {ex.Message}"
 
@@ -3825,25 +3837,28 @@ module Watch =
                                             Colors.Error
                                             $"Grace Watch applied status but could not advance the durable journal boundary; resync is required before incremental shortcuts are trusted: {Markup.Escape(ex.Message)}."
 
-                                if startupPendingDifferences.Count = 0 then
-                                    drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
-                                else
-                                    drainAppliedStatusWork directorySnapshot statusTriggerSnapshot statusDifferencesForApply.Resolved
+                                if watchJournalBoundaryTrusted then
+                                    graceStatus <- newGraceStatus
 
-                                let canceledFileUploadDeletePathsToClear =
                                     if startupPendingDifferences.Count = 0 then
-                                        statusTriggerSnapshot
-                                        |> Seq.map (fun statusTrigger -> RelativePath statusTrigger.RelativePath)
+                                        drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot
                                     else
-                                        statusDifferencesForApply.Resolved
-                                        |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
-                                        |> Seq.map (fun difference -> difference.RelativePath)
+                                        drainAppliedStatusWork directorySnapshot statusTriggerSnapshot statusDifferencesForApply.Resolved
 
-                                clearCanceledFileUploadDeleteRelativePaths canceledFileUploadDeletePathsToClear
+                                    let canceledFileUploadDeletePathsToClear =
+                                        if startupPendingDifferences.Count = 0 then
+                                            statusTriggerSnapshot
+                                            |> Seq.map (fun statusTrigger -> RelativePath statusTrigger.RelativePath)
+                                        else
+                                            statusDifferencesForApply.Resolved
+                                            |> Seq.filter (fun difference -> difference.FileSystemEntryType = FileSystemEntryType.File)
+                                            |> Seq.map (fun difference -> difference.RelativePath)
 
-                                clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
-                                clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
-                                removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
+                                    clearCanceledFileUploadDeleteRelativePaths canceledFileUploadDeletePathsToClear
+
+                                    clearPendingStatusDifferences (mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved)
+                                    clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus
+                                    removeUploadedFileVersionsForPaths processedFileRelativePathsForStatus
                             else
                                 clearPendingStatusDifferences pendingDifferencesToClear
                                 clearProcessedFileRelativePathsPendingStatus processedFileRelativePathsForStatus

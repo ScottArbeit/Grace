@@ -1369,22 +1369,41 @@ module LocalStateDb =
 
             use command = connection.CreateCommand()
 
+            let whereClauses = List<string>()
+
+            match normalizedStateFilter with
+            | "applied" ->
+                whereClauses.Add("sequence <= $applied_through")
+
+                command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+                |> ignore
+            | "pending" ->
+                whereClauses.Add("sequence > $applied_through")
+
+                command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
+                |> ignore
+            | _ -> ()
+
+            match normalizedPathFilter with
+            | Some filter ->
+                whereClauses.Add("instr(lower(relative_path), lower($path_filter)) > 0")
+
+                command.Parameters.AddWithValue("$path_filter", filter)
+                |> ignore
+            | None -> ()
+
+            let whereSql =
+                if whereClauses.Count = 0 then
+                    String.Empty
+                else
+                    let joinedWhereClauses = String.Join(" AND ", whereClauses)
+                    $" WHERE {joinedWhereClauses}"
+
             command.CommandText <-
-                match normalizedStateFilter with
-                | "applied" ->
-                    "SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path FROM watch_journal WHERE sequence <= $applied_through ORDER BY sequence DESC LIMIT $limit;"
-                | "pending" ->
-                    "SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path FROM watch_journal WHERE sequence > $applied_through ORDER BY sequence DESC LIMIT $limit;"
-                | _ ->
-                    "SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path FROM watch_journal ORDER BY sequence DESC LIMIT $limit;"
+                $"SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path FROM watch_journal{whereSql} ORDER BY sequence DESC LIMIT $limit;"
 
             command.Parameters.AddWithValue("$limit", limit)
             |> ignore
-
-            if normalizedStateFilter = "applied"
-               || normalizedStateFilter = "pending" then
-                command.Parameters.AddWithValue("$applied_through", appliedThroughSequence)
-                |> ignore
 
             use reader = command.ExecuteReader()
             let rows = ResizeArray<WatchJournalRow>()

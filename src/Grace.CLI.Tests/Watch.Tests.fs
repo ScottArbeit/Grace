@@ -3098,6 +3098,75 @@ module WatchTests =
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
+    /// Verifies that a non-contiguous journal boundary result forces resync instead of healthy status draining.
+    [<Test>]
+    let ``watch quarantines status work when journal boundary cannot advance through appended sequence`` () =
+        withTempRepo (fun root ->
+            let relativePath = "journal-non-contiguous-retry-delete.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let mutable appendCalls = 0
+            let mutable applyCalls = 0
+            let mutable advanceCalls = 0
+
+            Watch.OnDeleted(deletedEvent filePath)
+
+            try
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun _ ->
+                        appendCalls <- appendCalls + 1
+                        Task.FromResult([| 2L |]))
+                    (fun sequences ->
+                        advanceCalls <- advanceCalls + 1
+                        sequences |> Seq.toArray |> should equal [| 2L |]
+                        Task.FromResult(0L))
+
+                /// Reads status needed by the non-contiguous journal retry scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this status-only observation scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Simulates a successful status application after only a later journal sequence was appended.
+                let updateGraceStatusFromDifferences currentStatus _ _ =
+                    applyCalls <- applyCalls + 1
+                    Task.FromResult(Some currentStatus)
+
+                /// Leaves incremental status writes outside this status-only observation scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the non-contiguous journal retry scenario.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                appendCalls |> should equal 1
+                applyCalls |> should equal 1
+                advanceCalls |> should equal 1
+
+                Watch.currentGraceWatchRuntimeModeForWatchTests ()
+                |> should equal Services.GraceWatchRuntimeMode.Resynchronizing
+
+                Watch.quarantinedWatchObservationCountForWatchTests ()
+                |> should equal 2
+
+                Watch
+                    .pendingWatchWorkSnapshotForTests()
+                    .StatusUpdateTriggers
+                |> should equal Array.empty<string>
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
     /// Verifies that confidence loss after append keeps the applied boundary unchanged.
     [<Test>]
     let ``watch does not advance journal boundary when confidence is lost after append`` () =

@@ -655,7 +655,36 @@ module MaintenanceCliTests =
                     .GetProperty("Rows")[0]
 
             appliedRow.GetProperty("Sequence").GetInt64()
-            |> should equal 2L)
+            |> should equal 2L
+
+            /// Verifies that path filtering happens before limit selection.
+            let pathExitCode, pathStandardOut, pathStandardError =
+                runJsonMaintenance [| "show-journal"
+                                      "--path"
+                                      "file-2"
+                                      "--limit"
+                                      "1" |]
+
+            pathExitCode |> should equal 0
+            pathStandardError |> should equal String.Empty
+
+            use pathDocument = assertCleanJsonStdout pathStandardOut
+
+            let pathRows =
+                pathDocument
+                    .RootElement
+                    .GetProperty("ReturnValue")
+                    .GetProperty("Rows")
+
+            pathRows.GetArrayLength() |> should equal 1
+
+            let pathRow = pathRows[0]
+
+            pathRow.GetProperty("Sequence").GetInt64()
+            |> should equal 2L
+
+            pathRow.GetProperty("RelativePath").GetString()
+            |> should equal "file-2.txt")
 
     /// Verifies that maintenance show journal reports unhealthy local state without repairing or rotating the DB.
     [<Test>]
