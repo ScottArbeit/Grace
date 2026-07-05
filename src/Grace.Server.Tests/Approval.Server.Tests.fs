@@ -16,8 +16,8 @@ open System.Threading.Tasks
 /// Groups shared helpers for approval test helpers.
 module private ApprovalTestHelpers =
 
-    /// Restarts grace server to verify durability across process restarts.
-    let restartGraceServerAsync () =
+    /// Restarts Grace.Server with a scenario label for process-local approval assertions.
+    let restartGraceServerAsync restartContext =
         let state =
             match App with
             | Some app ->
@@ -34,7 +34,7 @@ module private ApprovalTestHelpers =
                 Assert.Fail("Aspire test host was not started by the shared setup fixture.")
                 Unchecked.defaultof<TestHostState>
 
-        AspireTestHost.restartGraceServerAsync state
+        AspireTestHost.restartGraceServerAsync state restartContext
 
     /// Builds a deterministic authenticated client for integration setup fixture for the server integration approval assertions.
     let createAuthenticatedClient (userId: string) =
@@ -335,7 +335,7 @@ type ApprovalApiIntegrationTests() =
                 Does.Contain(created.ApprovalPolicyId)
             )
 
-            do! ApprovalTestHelpers.restartGraceServerAsync ()
+            do! ApprovalTestHelpers.restartGraceServerAsync "Approval.ApprovalPolicyStoreIsProcessLocalWhileGeneratedRequestsRemainActorBackedAcrossRestart"
 
             // Contract: approval policies are process-local configuration and are intentionally lost on Grace.Server restart.
             let! listPoliciesAfterRestart =
