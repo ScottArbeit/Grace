@@ -261,6 +261,12 @@ module LocalStateDbTests =
             connection
             $"INSERT OR REPLACE INTO status_meta (id, root_directory_version_id, root_directory_sha256_hash, root_directory_blake3_hash, last_successful_file_upload_unix_ticks, last_successful_directory_version_upload_unix_ticks) VALUES (1, '{rootId}', '{rootSha256Hash}', '{rootBlake3Hash}', {ticks}, {ticks});"
 
+    /// Seeds an unrelated object-cache row so journal-only resets prove they do not recreate local state.
+    let private seedObjectCacheDirectory (connection: SqliteConnection) directoryVersionId relativePath sha256Hash blake3Hash =
+        executeNonQuery
+            connection
+            $"INSERT OR REPLACE INTO object_cache_directories (directory_version_id, relative_path, sha256_hash, blake3_hash, size_bytes, created_at_unix_ticks, last_write_time_utc_ticks) VALUES ('{directoryVersionId}', '{relativePath}', '{sha256Hash}', '{blake3Hash}', 10, 11, 12);"
+
     /// Builds seed partial v4 without root blake3 column test data used to exercise CLI local State Db behavior.
     let private seedPartialV4WithoutRootBlake3Column (dbPath: string) (rootId: Guid) rootSha256Hash ticks =
         Directory.CreateDirectory(Path.GetDirectoryName(dbPath))
@@ -537,6 +543,64 @@ module LocalStateDbTests =
 
                 statusAfter.RootDirectorySha256Hash
                 |> should equal rootHash
+            })
+
+    /// Verifies that journal-only clear repairs untrusted Watch metadata without recreating unrelated local state.
+    [<TestCase("missing")>]
+    [<TestCase("malformed")>]
+    let ``clear watch journal repairs journal metadata without recreating status or object cache`` metadataCase =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let objectCacheId = Guid.NewGuid()
+                let rootHash = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+                let rootBlake3Hash = "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+                let objectHash = "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"
+                let objectBlake3Hash = "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId rootHash rootBlake3Hash 123L
+
+                do
+                    use connection = openRawConnection configuration.GraceStatusFile
+                    insertWatchJournalRows connection 2L
+                    seedObjectCacheDirectory connection objectCacheId "cache" objectHash objectBlake3Hash
+
+                    match metadataCase with
+                    | "missing" -> executeNonQuery connection "DELETE FROM meta WHERE key = 'AppliedThroughSequence';"
+                    | "malformed" -> executeNonQuery connection "UPDATE meta SET value = 'not-a-sequence' WHERE key = 'AppliedThroughSequence';"
+                    | value -> failwith $"Unsupported metadata case: {value}"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                let! result = LocalStateDb.clearWatchJournal configuration.GraceStatusFile
+
+                result.RowsDeleted |> should equal 2L
+
+                result.AppliedThroughSequenceAfter
+                |> should equal 0L
+
+                result.AllocatedSequenceAfter |> should equal 0L
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let journalRows = executeScalarInt connection "SELECT COUNT(*) FROM watch_journal;"
+                let allocationRows = executeScalarInt connection "SELECT COUNT(*) FROM sqlite_sequence WHERE name = 'watch_journal';"
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+                let statusRootId = executeScalarString connection "SELECT root_directory_version_id FROM status_meta WHERE id = 1;"
+                let objectCacheRows = executeScalarInt connection "SELECT COUNT(*) FROM object_cache_directories;"
+
+                journalRows |> should equal 0
+                allocationRows |> should equal 0
+                appliedThrough |> should equal "0"
+                statusRootId |> should equal (string rootId)
+                objectCacheRows |> should equal 1
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal corruptBefore
             })
 
     /// Verifies that concurrent Watch recovery watermark advances cannot let a lower stale write win.

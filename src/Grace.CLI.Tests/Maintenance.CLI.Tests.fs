@@ -138,6 +138,15 @@ module MaintenanceCliTests =
 
         File.WriteAllText(ipcFileName, Grace.Shared.Utilities.serialize status)
 
+    /// Writes an unreadable Watch IPC payload for conservative clear-journal refusal coverage.
+    let private writeUnreadableWatchIpc () =
+        let ipcFileName = Services.IpcFileName()
+
+        Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
+        |> ignore
+
+        File.WriteAllText(ipcFileName, "{")
+
     /// Asserts that clean json stdout matches the expected contract.
     let private assertCleanJsonStdout (standardOut: string) =
         standardOut |> should not' (contain "Elapsed:")
@@ -669,6 +678,35 @@ module MaintenanceCliTests =
                     .GetProperty("Error")
                     .GetString()
                 |> should contain "Grace Watch is running"
+
+                countRows root "watch_journal" |> should equal 2
+            finally
+                let ipcFileName = Services.IpcFileName()
+
+                if File.Exists(ipcFileName) then File.Delete(ipcFileName))
+
+    /// Verifies that maintenance clear journal treats unreadable Watch IPC as live to avoid racing a heartbeat write.
+    [<Test>]
+    let ``maintenance clear journal refuses when watch status exists but cannot be read`` () =
+        withTempRepo (fun root ->
+            seedWatchJournalRows root 2L 1L
+
+            try
+                writeUnreadableWatchIpc ()
+
+                /// Verifies that the CLI maintenance scenario exits with the expected process status.
+                let exitCode, standardOut, standardError = runJsonMaintenance [| "clear-journal" |]
+
+                exitCode |> should equal -1
+                standardError |> should equal String.Empty
+
+                use document = assertCleanJsonStdout standardOut
+
+                document
+                    .RootElement
+                    .GetProperty("Error")
+                    .GetString()
+                |> should contain "could not be read"
 
                 countRows root "watch_journal" |> should equal 2
             finally

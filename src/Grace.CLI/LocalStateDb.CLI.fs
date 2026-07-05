@@ -1018,6 +1018,35 @@ module LocalStateDb =
             | None -> raise (InvalidDataException($"{WatchJournalAppliedThroughSequenceMetaKey} must be a non-negative 64-bit integer."))
         | None -> 0L
 
+    /// Reads the clear-journal starting watermark without trusting malformed journal-only metadata.
+    let private readWatchJournalAppliedThroughSequenceForClear (connection: SqliteConnection) =
+        match countMetaValues connection WatchJournalAppliedThroughSequenceMetaKey with
+        | 1 ->
+            match tryGetMetaValue connection WatchJournalAppliedThroughSequenceMetaKey with
+            | Some value ->
+                match tryParseWatchJournalAppliedThroughSequence value with
+                | Some sequence -> sequence
+                | None -> 0L
+            | None -> 0L
+        | _ -> 0L
+
+    /// Ensures clear-journal has the minimal journal tables it mutates without recreating unrelated local state.
+    let private ensureWatchJournalClearSchema (connection: SqliteConnection) =
+        ensureJournalMode connection
+        executeNonQuery connection "CREATE TABLE IF NOT EXISTS meta (key TEXT PRIMARY KEY, value TEXT NOT NULL);"
+
+        executeNonQuery
+            connection
+            "CREATE TABLE IF NOT EXISTS watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL);"
+
+    /// Replaces malformed or missing Watch recovery metadata with the clear-journal reset watermark.
+    let private resetWatchJournalAppliedThroughSequenceForClear (connection: SqliteConnection) =
+        executeNonQueryWithParams connection "DELETE FROM meta WHERE key = $key;" (fun parameters ->
+            parameters.AddWithValue("$key", WatchJournalAppliedThroughSequenceMetaKey)
+            |> ignore)
+
+        setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey "0"
+
     /// Defines the derived state used when showing journal rows without storing raw watcher events.
     type WatchJournalRowState =
         | Applied
@@ -1336,24 +1365,24 @@ module LocalStateDb =
     /// Clears only the durable Watch journal rows, allocation metadata, and recovery watermark.
     let clearWatchJournal (dbPath: string) =
         task {
-            do! ensureDbInitialized dbPath
             let mutable result = None
 
             do!
                 executeWithRetry (fun () ->
                     task {
                         use connection = openConnection dbPath
+                        ensureWatchJournalClearSchema connection
                         executeNonQuery connection "BEGIN IMMEDIATE;"
                         let mutable committed = false
 
                         try
                             let rowsBefore = countWatchJournalRows connection
-                            let appliedBefore = readWatchJournalAppliedThroughSequenceInternal connection
+                            let appliedBefore = readWatchJournalAppliedThroughSequenceForClear connection
                             let allocatedBefore = readAllocatedWatchJournalSequence connection
 
                             executeNonQuery connection "DELETE FROM watch_journal;"
                             executeNonQuery connection "DELETE FROM sqlite_sequence WHERE name = 'watch_journal';"
-                            setMetaValue connection WatchJournalAppliedThroughSequenceMetaKey "0"
+                            resetWatchJournalAppliedThroughSequenceForClear connection
 
                             let rowsAfter = countWatchJournalRows connection
                             let appliedAfter = readWatchJournalAppliedThroughSequenceInternal connection

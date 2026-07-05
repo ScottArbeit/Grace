@@ -975,6 +975,11 @@ module Maintenance =
 
                     if inspection.IsLiveProcess then
                         return renderMaintenanceError parseResult "Grace Watch is running; stop grace watch before clearing the durable Watch journal."
+                    elif inspection.Exists && inspection.ReadError.IsSome then
+                        return
+                            renderMaintenanceError
+                                parseResult
+                                "Grace Watch status exists but could not be read; stop grace watch or remove stale Watch IPC before clearing the durable Watch journal."
                     else
                         let! result = Grace.CLI.LocalStateDb.clearWatchJournal (Current().GraceStatusFile)
                         let dto = toClearJournalDto result
