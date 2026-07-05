@@ -318,6 +318,7 @@ module Watch =
     let mutable graceStatusMemoryStream: MemoryStream = null
     let mutable graceStatusHasChanged = false
     let mutable private graceStatusRefreshGeneration = 0L
+    let mutable private deleteCurrentBranchMaterializationMarkerForWatch = fun markerFileName -> File.Delete(markerFileName)
     let private watchStatusPublishLock = obj ()
     let mutable private lastPublishedHasPendingWatchWork: bool option = None
 
@@ -1109,6 +1110,13 @@ module Watch =
     let internal setGraceStatusForWatchTests status = graceStatus <- status
     /// Replaces Watch's cached directory identity set after a trusted GraceStatus reload.
     let internal updateGraceStatusDirectoryIds (status: GraceStatus) = graceStatusDirectoryIds <- status.Index.Keys.ToHashSet()
+    /// Replaces the marker deletion operation so tests can prove deletion failure remains fail-closed.
+    let internal setCurrentBranchMaterializationMarkerDeleteForWatchTests deleteMarker = deleteCurrentBranchMaterializationMarkerForWatch <- deleteMarker
+
+    /// Restores the default marker deletion operation used by current-branch materialization.
+    let internal resetCurrentBranchMaterializationMarkerDeleteForWatchTests () =
+        deleteCurrentBranchMaterializationMarkerForWatch <- fun markerFileName -> File.Delete(markerFileName)
+
     /// Reads the in-memory Grace Status snapshot so transition-publication tests can prove state isolation.
     let internal graceStatusForWatchTests () = graceStatus
     /// Reads the in-memory Grace Status directory identities so transition-publication tests can prove state isolation.
@@ -3274,6 +3282,7 @@ module Watch =
     type private SupersededCurrentBranchMaterializationRoot = { ReferenceIds: HashSet<ReferenceId>; mutable AnonymousRejectionsRemaining: int }
 
     let private supersededCurrentBranchMaterializationRoots = Dictionary<string, SupersededCurrentBranchMaterializationRoot>(StringComparer.Ordinal)
+    let mutable private lastPublishedCurrentBranchCleanRoot: (RepositoryId * BranchId * DirectoryVersionId) option = None
     let private currentBranchMaterializationGate = new SemaphoreSlim(1, 1)
 
     /// Builds a process-local root-history key for current-branch materialization freshness checks.
@@ -3309,6 +3318,28 @@ module Watch =
                 let entry = supersededCurrentBranchMaterializationRootEntry authority.RepositoryId authority.BranchId authority.RootDirectoryId
 
                 entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1)
+
+    /// Records a locally published clean-root advancement so delayed remote roots cannot roll Watch backward.
+    let private recordPublishedCurrentBranchCleanRoot (updatedStatus: GraceStatus) =
+        let current = Current()
+        let updatedRoot = updatedStatus.RootDirectoryId
+
+        if updatedRoot <> DirectoryVersionId.Empty then
+            lock pendingCurrentBranchMaterializationLock (fun () ->
+                match lastPublishedCurrentBranchCleanRoot with
+                | Some (repositoryId, branchId, previousRoot) when
+                    repositoryId = current.RepositoryId
+                    && branchId = current.BranchId
+                    && previousRoot <> updatedRoot
+                    ->
+                    let entry = supersededCurrentBranchMaterializationRootEntry current.RepositoryId current.BranchId previousRoot
+                    entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1
+                | _ -> ()
+
+                lastPublishedCurrentBranchCleanRoot <- Some(current.RepositoryId, current.BranchId, updatedRoot))
+
+    /// Exposes published clean-root advancement to tests that prove stale remote notifications cannot roll back local saves.
+    let internal recordPublishedCurrentBranchCleanRootForWatchTests updatedStatus = recordPublishedCurrentBranchCleanRoot updatedStatus
 
     /// Reports whether a remote root is known stale by Reference identity or bounded root-only authority.
     let private isSupersededCurrentBranchMaterializationRoot (payload: CurrentBranchReferenceNotification) =
@@ -3425,7 +3456,8 @@ module Watch =
     let private clearPendingCurrentBranchMaterializations () =
         lock pendingCurrentBranchMaterializationLock (fun () ->
             pendingCurrentBranchMaterializations <- []
-            supersededCurrentBranchMaterializationRoots.Clear())
+            supersededCurrentBranchMaterializationRoots.Clear()
+            lastPublishedCurrentBranchCleanRoot <- None)
 
     /// Exposes pending current-branch materialization cleanup to deterministic Watch tests.
     let internal clearPendingCurrentBranchMaterializationsForWatchTests () = clearPendingCurrentBranchMaterializations ()
@@ -3491,12 +3523,39 @@ module Watch =
                     if
                         markerCreatedByThisInvocation
                         && File.Exists(markerFileName)
-                        && String.Equals(File.ReadAllText(markerFileName), markerText, StringComparison.Ordinal)
                     then
-                        File.Delete(markerFileName)
+                        if String.Equals(File.ReadAllText(markerFileName), markerText, StringComparison.Ordinal) then
+                            deleteCurrentBranchMaterializationMarkerForWatch markerFileName
+
+                            if File.Exists(markerFileName) then
+                                Error(
+                                    GraceError.Create
+                                        "Current-branch remote materialization could not prove its owned Grace update marker was deleted; incremental confidence is suspended until resync completes."
+                                        (generateCorrelationId ())
+                                )
+                            else
+                                Ok()
+                        else
+                            Error(
+                                GraceError.Create
+                                    "Current-branch remote materialization could not delete its owned Grace update marker because the marker lease changed before cleanup; incremental confidence is suspended until resync completes."
+                                    (generateCorrelationId ())
+                            )
+                    else
+                        Ok()
                 with
-                | :? IOException -> ()
-                | :? UnauthorizedAccessException -> ()
+                | :? IOException as ex ->
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization could not delete its owned Grace update marker; incremental confidence is suspended until resync completes: {ex.Message}"
+                            (generateCorrelationId ())
+                    )
+                | :? UnauthorizedAccessException as ex ->
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization could not delete its owned Grace update marker; incremental confidence is suspended until resync completes: {ex.Message}"
+                            (generateCorrelationId ())
+                    )
 
             let markerCreationResult =
                 try
@@ -3522,25 +3581,31 @@ module Watch =
 
                     match result with
                     | Ok _ ->
-                        let completedSidecar = markerFileName + ".completed"
-                        let completedUtc = DateTime.UtcNow
+                        match deleteMarkerIfOwned () with
+                        | Ok () ->
+                            let completedSidecar = markerFileName + ".completed"
+                            let completedUtc = DateTime.UtcNow
 
-                        File.WriteAllText(completedSidecar, completedUtc.ToString("O", CultureInfo.InvariantCulture))
-                        recordCurrentBranchMaterializationCompletedMarker markerFileName completedUtc
-                        recordGraceUpdateMarkerCompletedUtc completedUtc
+                            File.WriteAllText(completedSidecar, completedUtc.ToString("O", CultureInfo.InvariantCulture))
+                            recordCurrentBranchMaterializationCompletedMarker markerFileName completedUtc
+                            recordGraceUpdateMarkerCompletedUtc completedUtc
+
+                            return result
+                        | Error error ->
+                            requestGraceWatchExplicitResync error.Error
+                            return Error error
                     | Error _ ->
                         requestGraceWatchExplicitResync
                             "current-branch materialization aborted after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes"
 
-                    deleteMarkerIfOwned ()
-
-                    return result
+                        deleteMarkerIfOwned () |> ignore
+                        return result
                 with
                 | ex ->
                     requestGraceWatchExplicitResync
                         $"current-branch materialization threw after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes: {ex.Message}"
 
-                    deleteMarkerIfOwned ()
+                    deleteMarkerIfOwned () |> ignore
                     return raise ex
         }
 
@@ -3564,6 +3629,7 @@ module Watch =
                     })
 
             if wasPublished then
+                recordPublishedCurrentBranchCleanRoot graceStatus
                 return Ok()
             else
                 requestGraceWatchExplicitResync
@@ -4680,6 +4746,8 @@ module Watch =
                     "Grace Status refresh"
 
             if publicationVerified then
+                recordPublishedCurrentBranchCleanRoot graceStatus
+
                 tryClearGraceStatusRefreshGeneration observedRefreshGeneration
                 |> ignore
             else
@@ -4977,6 +5045,7 @@ module Watch =
                         | Some newGraceStatus when resyncStatusUpdateStillTrusted () ->
                             graceStatus <- newGraceStatus
                             updateGraceStatusDirectoryIds graceStatus
+                            recordPublishedCurrentBranchCleanRoot graceStatus
 
                             setGraceWatchRuntimeMode GraceWatchRuntimeMode.HealthyIncremental
 
@@ -5226,6 +5295,7 @@ module Watch =
                             if statusUpdateCanCommit then
                                 if watchJournalBoundaryTrusted then
                                     graceStatus <- newGraceStatus
+                                    recordPublishedCurrentBranchCleanRoot graceStatus
 
                                     if startupPendingDifferences.Count = 0 then
                                         drainStatusOnlyTriggers directorySnapshot statusTriggerSnapshot

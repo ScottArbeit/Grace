@@ -14244,6 +14244,70 @@ module WatchTests =
                 .Count
             |> should equal 0)
 
+    /// Verifies that normal local clean-root advancement makes the previous root stale for delayed remote notifications.
+    [<Test>]
+    let ``current branch materialization rejects delayed older root after local save advancement`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let olderLocalRootId = Guid.NewGuid()
+            let newerLocalRootId = Guid.NewGuid()
+
+            let olderLocalStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = olderLocalRootId
+                    RootDirectorySha256Hash = Sha256Hash "older-local-save"
+                    RootDirectoryBlake3Hash = Blake3Hash "older-local-save-blake3"
+                }
+
+            let newerLocalStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = newerLocalRootId
+                    RootDirectorySha256Hash = Sha256Hash "newer-local-save"
+                    RootDirectoryBlake3Hash = Blake3Hash "newer-local-save-blake3"
+                }
+
+            Watch.recordPublishedCurrentBranchCleanRootForWatchTests olderLocalStatus
+            Watch.recordPublishedCurrentBranchCleanRootForWatchTests newerLocalStatus
+
+            let cleanStatusAfterLocalSave =
+                { liveWatchStatus newerLocalRootId with
+                    RootDirectorySha256Hash = newerLocalStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = newerLocalStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| newerLocalRootId |])
+                }
+
+            let delayedOlderPayload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    olderLocalRootId
+                    olderLocalStatus.RootDirectorySha256Hash
+                    olderLocalStatus.RootDirectoryBlake3Hash
+
+            let operations, fetchedRoots, downloadBatches, appliedPayloads, publishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None cleanStatusAfterLocalSave))
+                    newerLocalStatus
+                    olderLocalStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests operations true [| delayedOlderPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            fetchedRoots.Count |> should equal 0
+            downloadBatches.Count |> should equal 0
+            appliedPayloads.Count |> should equal 0
+            publishedStatuses.Count |> should equal 0
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0)
+
     /// Verifies that a delayed older root is rejected even after newer materialization replaces the tree.
     [<Test>]
     let ``current branch materialization rejects delayed older root after tree replacement`` () =
@@ -14416,6 +14480,39 @@ module WatchTests =
 
             File.Exists(markerFileName + ".completed")
             |> should equal false)
+
+    /// Verifies that success cannot be reported while an owned materialization marker remains undeleted.
+    [<Test>]
+    let ``current branch materialization marker deletion failure prevents success evidence`` () =
+        withTempRepo (fun _ ->
+            let markerFileName = Services.updateInProgressFileName ()
+            let markerText = "`grace watch` current-branch materialization is in progress."
+            let operationCalled = ref false
+
+            try
+                Watch.setCurrentBranchMaterializationMarkerDeleteForWatchTests (fun _ -> raise (IOException("simulated marker delete failure")))
+
+                let result =
+                    (Watch.runCurrentBranchMaterializationWithMarkerForWatchTests markerFileName markerText (fun () ->
+                        operationCalled.Value <- true
+                        Task.FromResult<Result<unit, GraceError>>(Ok())))
+                        .GetAwaiter()
+                        .GetResult()
+
+                operationCalled.Value |> should equal true
+                result.IsError |> should equal true
+
+                File.Exists(markerFileName) |> should equal true
+
+                File.Exists(markerFileName + ".completed")
+                |> should equal false
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal true
+            finally
+                Watch.resetCurrentBranchMaterializationMarkerDeleteForWatchTests ()
+
+                if File.Exists(markerFileName) then File.Delete(markerFileName))
 
     /// Verifies that failed materialization removes its owned marker without writing completion evidence.
     [<Test>]
