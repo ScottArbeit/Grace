@@ -339,6 +339,7 @@ module Watch =
     let private graceUpdateMarkerDeletedObservationWindow = TimeSpan.FromSeconds(30.0)
     let private recentGraceUpdateMarkerCompletedUtc = List<DateTime>()
     let private observedGraceUpdateMarkerLastWriteUtc = Dictionary<string, DateTime>(StringComparer.OrdinalIgnoreCase)
+    let private materializationCompletedMarkerSidecars = HashSet<string>(StringComparer.OrdinalIgnoreCase)
 
     /// Gets the completion sidecar written before the Grace update marker is removed.
     let private updateMarkerCompletedFileName () = updateInProgressFileName () + ".completed"
@@ -363,7 +364,8 @@ module Watch =
     let private clearGraceUpdateMarkerDeletedUtcForReset () =
         lock graceUpdateMarkerDeletionLock (fun () ->
             recentGraceUpdateMarkerCompletedUtc.Clear()
-            observedGraceUpdateMarkerLastWriteUtc.Clear())
+            observedGraceUpdateMarkerLastWriteUtc.Clear()
+            materializationCompletedMarkerSidecars.Clear())
 
     /// Removes the current marker sidecar when a new marker supersedes stale sidecar evidence.
     let private clearCurrentGraceUpdateMarkerCompletedSidecar () =
@@ -455,6 +457,16 @@ module Watch =
                 else
                     ObservedStaleMarker
             | false, _ -> UnobservedMarker)
+
+    /// Records that the marker sidecar belongs to current-branch materialization, not branch transition completion.
+    let private recordCurrentBranchMaterializationCompletedMarker markerFileName =
+        lock graceUpdateMarkerDeletionLock (fun () ->
+            materializationCompletedMarkerSidecars.Add(markerFileName)
+            |> ignore)
+
+    /// Consumes materialization marker authority so deletion cannot run branch-transition completion.
+    let private tryConsumeCurrentBranchMaterializationCompletedMarker markerFileName =
+        lock graceUpdateMarkerDeletionLock (fun () -> materializationCompletedMarkerSidecars.Remove(markerFileName))
 
     /// Reports whether a deleted marker path is the current transition marker Watch was expected to observe.
     let private deletedMarkerIsCurrentMarker markerFileName = String.Equals(markerFileName, updateInProgressFileName (), StringComparison.OrdinalIgnoreCase)
@@ -3186,6 +3198,16 @@ module Watch =
         payload.RepositoryId = current.RepositoryId
         && payload.BranchId = current.BranchId
 
+    /// Captures the clean Watch boundary that authorizes one current-branch remote materialization decision.
+    type internal CurrentBranchMaterializationAuthority =
+        {
+            RepositoryId: RepositoryId
+            BranchId: BranchId
+            RootDirectoryId: DirectoryVersionId
+            RootDirectorySha256Hash: Sha256Hash
+            RootDirectoryBlake3Hash: Blake3Hash
+        }
+
     /// Carries the injectable clients used to materialize a current-branch remote Reference from Watch.
     type internal CurrentBranchRemoteMaterializationOperations =
         {
@@ -3196,6 +3218,7 @@ module Watch =
                 -> Task<Result<Grace.Types.DirectoryVersion.DirectoryVersionDto array, GraceError>>
             DownloadDirectoryFiles: Grace.Types.DirectoryVersion.DirectoryVersionDto array -> CorrelationId -> Task<Result<unit, GraceError>>
             ApplyRemoteDirectory: CurrentBranchReferenceNotification
+                -> CurrentBranchMaterializationAuthority
                 -> GraceStatus
                 -> Grace.Types.DirectoryVersion.DirectoryVersionDto array
                 -> CorrelationId
@@ -3295,23 +3318,85 @@ module Watch =
     /// Exposes pending current-branch materialization cleanup to deterministic Watch tests.
     let internal clearPendingCurrentBranchMaterializationsForWatchTests () = clearPendingCurrentBranchMaterializations ()
 
-    /// Confirms that a fetched remote root still applies to the same clean local root observed before network work began.
-    let internal currentBranchMaterializationPreFetchRootStillCurrent (previousGraceStatus: GraceStatus) (currentGraceStatus: GraceStatus) =
-        currentGraceStatus.RootDirectoryId = previousGraceStatus.RootDirectoryId
-        && currentGraceStatus.RootDirectorySha256Hash = previousGraceStatus.RootDirectorySha256Hash
-        && currentGraceStatus.RootDirectoryBlake3Hash = previousGraceStatus.RootDirectoryBlake3Hash
+    /// Captures the repository, branch, and clean local root that authorized a materialization decision.
+    let private currentBranchMaterializationAuthorityFromStatus repositoryId branchId (status: GraceWatchStatus) : CurrentBranchMaterializationAuthority =
+        {
+            RepositoryId = repositoryId
+            BranchId = branchId
+            RootDirectoryId = status.RootDirectoryId
+            RootDirectorySha256Hash = status.RootDirectorySha256Hash
+            RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
+        }
+
+    /// Confirms that a GraceStatus snapshot still matches the clean root that authorized remote materialization.
+    let internal currentBranchMaterializationRootMatchesAuthority (authority: CurrentBranchMaterializationAuthority) (currentGraceStatus: GraceStatus) =
+        currentGraceStatus.RootDirectoryId = authority.RootDirectoryId
+        && currentGraceStatus.RootDirectorySha256Hash = authority.RootDirectorySha256Hash
+        && currentGraceStatus.RootDirectoryBlake3Hash = authority.RootDirectoryBlake3Hash
+
+    /// Confirms that the active configuration and GraceStatus still match the captured materialization authority.
+    let internal currentBranchMaterializationAuthorityStillCurrent (authority: CurrentBranchMaterializationAuthority) (currentGraceStatus: GraceStatus) =
+        let current = Current()
+
+        current.RepositoryId = authority.RepositoryId
+        && current.BranchId = authority.BranchId
+        && currentBranchMaterializationRootMatchesAuthority authority currentGraceStatus
+
+    /// Reports whether the remote root is already known as an older non-current root in the inspected clean snapshot.
+    let private currentBranchReferenceTargetsKnownNonCurrentRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
+        status.RootDirectoryId <> payload.DirectoryId
+        && not (isNull status.DirectoryIds)
+        && status.DirectoryIds.Contains(payload.DirectoryId)
+
+    /// Runs Grace-owned materialization writes under an update marker without emitting branch-transition completion evidence.
+    let private runCurrentBranchMaterializationWithMarker (markerFileName: string) (markerText: string) operation =
+        task {
+            Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
+            |> ignore
+
+            File.WriteAllText(markerFileName, markerText)
+
+            try
+                return! operation ()
+            finally
+                let completedSidecar = markerFileName + ".completed"
+                let completedUtc = DateTime.UtcNow
+
+                recordCurrentBranchMaterializationCompletedMarker markerFileName
+                recordGraceUpdateMarkerCompletedUtc completedUtc
+                File.WriteAllText(completedSidecar, completedUtc.ToString("O", CultureInfo.InvariantCulture))
+                if File.Exists(markerFileName) then File.Delete(markerFileName)
+        }
+
+    /// Exposes materialization marker handling to tests without invoking branch-transition helpers.
+    let internal runCurrentBranchMaterializationWithMarkerForWatchTests markerFileName markerText operation =
+        runCurrentBranchMaterializationWithMarker markerFileName markerText operation
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
-    let private publishCurrentBranchMaterializedStatus (graceStatus: GraceStatus) =
+    let private publishCurrentBranchMaterializedStatusWithWriter
+        (graceStatus: GraceStatus)
+        (writeWatchInterprocessFile: GraceStatus -> HashSet<DirectoryVersionId> option -> Task<unit>)
+        =
         task {
             let directoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
-            updateGraceStatusDirectoryIds graceStatus
 
-            publishWatchIpcWithFreshPendingWorkProbe graceStatus directoryIds (fun () -> updateGraceWatchInterprocessFile graceStatus (Some directoryIds))
+            publishWatchIpcWithFreshPendingWorkProbe graceStatus directoryIds (fun () ->
+                task {
+                    updateGraceStatusDirectoryIds graceStatus
+                    do! writeWatchInterprocessFile graceStatus (Some directoryIds)
+                })
         }
+
+    /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
+    let private publishCurrentBranchMaterializedStatus graceStatus =
+        publishCurrentBranchMaterializedStatusWithWriter graceStatus updateGraceWatchInterprocessFile
 
     /// Exposes current-branch materialized status publication to deterministic Watch tests.
     let internal publishCurrentBranchMaterializedStatusForWatchTests graceStatus = publishCurrentBranchMaterializedStatus graceStatus
+
+    /// Publishes materialized status through an injected IPC writer so tests can prove cache/write serialization.
+    let internal publishCurrentBranchMaterializedStatusWithWriterForWatchTests graceStatus writeWatchInterprocessFile =
+        publishCurrentBranchMaterializedStatusWithWriter graceStatus writeWatchInterprocessFile
 
     /// Builds the default live clients that fetch, download, and apply remote current-branch directory versions.
     let private defaultCurrentBranchRemoteMaterializationOperations () =
@@ -3365,7 +3450,7 @@ module Watch =
                 | None -> return Ok()
             }
 
-        let applyRemoteDirectory payload (previousGraceStatus: GraceStatus) directoryVersionDtos correlationId =
+        let applyRemoteDirectory payload authority (previousGraceStatus: GraceStatus) directoryVersionDtos correlationId =
             task {
                 let updatedGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer previousGraceStatus directoryVersionDtos
 
@@ -3386,40 +3471,26 @@ module Watch =
                     let markerFileName = updateInProgressFileName ()
                     let markerText = $"`grace watch` current-branch materialization is in progress. Lease: {Guid.NewGuid():N}"
 
-                    let preflightOperations: Grace.CLI.Command.Branch.BranchSwitchWatchCleanPreflightOperations =
-                        {
-                            UpdateMarkerExists = fun () -> File.Exists(markerFileName)
-                            InspectWatchStatus = inspectGraceWatchStatus
-                            ReadPendingJournalSummary =
-                                fun () -> Grace.CLI.LocalStateDb.readWatchJournalPendingWorkSummaryForTransitionCheck (Current().GraceStatusFile)
-                        }
-
                     match!
-                        Grace.CLI.Command.Branch.runBranchSwitchWorkingTreeUpdateWithMarker
-                            preflightOperations
-                            correlationId
-                            markerFileName
-                            markerText
-                            (fun () ->
-                                task {
-                                    let! currentGraceStatus = readGraceStatusFile ()
+                        runCurrentBranchMaterializationWithMarker markerFileName markerText (fun () ->
+                            task {
+                                let! currentGraceStatus = readGraceStatusFile ()
 
-                                    if not (currentBranchMaterializationPreFetchRootStillCurrent previousGraceStatus currentGraceStatus) then
-                                        return
-                                            Error(
-                                                GraceError.Create
-                                                    $"Current-branch remote materialization refused because local root changed after notification preflight; retry will re-evaluate Reference {payload.ReferenceId}."
-                                                    correlationId
-                                            )
-                                    else
-                                        do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
-                                        do! writeGraceStatusFile updatedGraceStatus
-                                        do! upsertObjectCache updatedGraceStatus.Index.Values
-                                        return Ok updatedGraceStatus
-                                })
+                                if not (currentBranchMaterializationAuthorityStillCurrent authority currentGraceStatus) then
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                $"Current-branch remote materialization refused because repository, branch, or local root changed after notification preflight; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                correlationId
+                                        )
+                                else
+                                    do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
+                                    do! writeGraceStatusFile updatedGraceStatus
+                                    do! upsertObjectCache updatedGraceStatus.Index.Values
+                                    return Ok updatedGraceStatus
+                            })
                         with
-                    | Ok (Ok updatedStatus) -> return Ok updatedStatus
-                    | Ok (Error error) -> return Error error
+                    | Ok updatedStatus -> return Ok updatedStatus
                     | Error error -> return Error error
             }
 
@@ -3460,31 +3531,77 @@ module Watch =
                             rememberPendingCurrentBranchMaterialization payload decision.Reason
 
                         let correlationId = generateCorrelationId ()
-                        let! previousGraceStatus = operations.ReadGraceStatus()
 
-                        match! operations.GetDirectoryVersionsRecursive payload.DirectoryId correlationId with
-                        | Error error ->
-                            logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                        let authority =
+                            localStatus
+                            |> Option.map (currentBranchMaterializationAuthorityFromStatus current.RepositoryId current.BranchId)
+
+                        match authority with
+                        | None ->
+                            logToAnsiConsole
+                                Colors.Error
+                                $"Current-branch remote materialization refused because the clean Watch authority was unavailable for Reference {payload.ReferenceId}."
+
                             return decision
-                        | Ok directoryVersionDtos ->
-                            match! operations.DownloadDirectoryFiles directoryVersionDtos correlationId with
-                            | Error error ->
-                                logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                        | Some authority when
+                            localStatus
+                            |> Option.exists (fun status -> currentBranchReferenceTargetsKnownNonCurrentRoot status payload)
+                            ->
+                            clearPendingCurrentBranchMaterializations ()
+
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Skipped delayed current-branch reference notification {payload.ReferenceId} because root {payload.DirectoryId} is already a known non-current local root."
+
+                            return decision
+                        | Some authority ->
+                            let! previousGraceStatus = operations.ReadGraceStatus()
+
+                            if not (currentBranchMaterializationRootMatchesAuthority authority previousGraceStatus) then
+                                logToAnsiConsole
+                                    Colors.Error
+                                    $"Current-branch remote materialization refused because GraceStatus root changed before remote fetch; retry will re-evaluate Reference {payload.ReferenceId}."
+
                                 return decision
-                            | Ok () ->
-                                match! operations.ApplyRemoteDirectory payload previousGraceStatus directoryVersionDtos correlationId with
+                            elif not (currentBranchMaterializationAuthorityStillCurrent authority previousGraceStatus) then
+                                logToAnsiConsole
+                                    Colors.Error
+                                    $"Current-branch remote materialization refused because repository or branch changed before remote fetch; retry will re-evaluate Reference {payload.ReferenceId}."
+
+                                return decision
+                            else
+                                match! operations.GetDirectoryVersionsRecursive payload.DirectoryId correlationId with
                                 | Error error ->
                                     logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                                     return decision
-                                | Ok updatedStatus ->
-                                    do! operations.PublishWatchStatus updatedStatus
-                                    clearPendingCurrentBranchMaterializations ()
+                                | Ok directoryVersionDtos ->
+                                    match! operations.DownloadDirectoryFiles directoryVersionDtos correlationId with
+                                    | Error error ->
+                                        logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                                        return decision
+                                    | Ok () ->
+                                        let! markerTimeGraceStatus = operations.ReadGraceStatus()
 
-                                    logToAnsiConsole
-                                        Colors.Highlighted
-                                        $"Materialized current-branch reference notification {payload.ReferenceId} for root {payload.DirectoryId}."
+                                        if not (currentBranchMaterializationAuthorityStillCurrent authority markerTimeGraceStatus) then
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Current-branch remote materialization refused because repository, branch, or local root changed before write; retry will re-evaluate Reference {payload.ReferenceId}."
 
-                                    return decision
+                                            return decision
+                                        else
+                                            match! operations.ApplyRemoteDirectory payload authority previousGraceStatus directoryVersionDtos correlationId with
+                                            | Error error ->
+                                                logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
+                                                return decision
+                                            | Ok updatedStatus ->
+                                                do! operations.PublishWatchStatus updatedStatus
+                                                clearPendingCurrentBranchMaterializations ()
+
+                                                logToAnsiConsole
+                                                    Colors.Highlighted
+                                                    $"Materialized current-branch reference notification {payload.ReferenceId} for root {payload.DirectoryId}."
+
+                                                return decision
                     | LatestCurrentBranchReferenceDecisionReason.SameRoot, _ ->
                         clearPendingCurrentBranchMaterializations ()
                         return decision
@@ -3883,33 +4000,47 @@ module Watch =
             if not (File.Exists(args.FullPath)) then
                 match tryReadGraceUpdateMarkerCompletedUtcForMarker args.FullPath with
                 | Some completedUtc ->
-                    match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
-                    | ObservedCurrentMarker ->
-                        if deletedMarkerCanCompleteCurrentTransition args.FullPath then
-                            completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
-                            logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
-                        else
+                    if tryConsumeCurrentBranchMaterializationCompletedMarker args.FullPath then
+                        match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
+                        | ObservedCurrentMarker
+                        | UnobservedMarker ->
                             recordGraceUpdateMarkerCompletedUtc completedUtc
 
                             logToAnsiConsole
                                 Colors.Important
-                                $"Ignored stale update marker deletion for {args.FullPath}; current marker {updateInProgressFileName ()} is still live."
-                    | UnobservedMarker when
-                        deletedMarkerIsCurrentMarker args.FullPath
-                        && isRecentGraceUpdateMarkerCompletion completedUtc
-                        && persistedConfigurationChangedSinceWatchCached ()
-                        ->
-                        requestGraceWatchExplicitResync "branch transition marker deletion had a fresh completion sidecar but no observed marker creation"
-                        completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+                                $"Current-branch materialization marker ended for {args.FullPath}; delayed Grace-owned observations remain suppressed without branch-transition completion."
+                        | ObservedStaleMarker ->
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Current-branch materialization marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
+                    else
+                        match classifyDeletedMarkerCompletedSidecar args.FullPath completedUtc with
+                        | ObservedCurrentMarker ->
+                            if deletedMarkerCanCompleteCurrentTransition args.FullPath then
+                                completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+                                logToAnsiConsole Colors.Important $"Update has finished in another Grace instance."
+                            else
+                                recordGraceUpdateMarkerCompletedUtc completedUtc
 
-                        logToAnsiConsole
-                            Colors.Important
-                            $"Update marker ended with an unobserved fresh completed sidecar for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
-                    | ObservedStaleMarker
-                    | UnobservedMarker ->
-                        logToAnsiConsole
-                            Colors.Important
-                            $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Ignored stale update marker deletion for {args.FullPath}; current marker {updateInProgressFileName ()} is still live."
+                        | UnobservedMarker when
+                            deletedMarkerIsCurrentMarker args.FullPath
+                            && isRecentGraceUpdateMarkerCompletion completedUtc
+                            && persistedConfigurationChangedSinceWatchCached ()
+                            ->
+                            requestGraceWatchExplicitResync "branch transition marker deletion had a fresh completion sidecar but no observed marker creation"
+                            completeGraceUpdateTransitionAfterMarkerDeletion completedUtc
+
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Update marker ended with an unobserved fresh completed sidecar for {args.FullPath}; grace watch is resynchronizing before incremental work resumes."
+                        | ObservedStaleMarker
+                        | UnobservedMarker ->
+                            logToAnsiConsole
+                                Colors.Important
+                                $"Update marker ended with a stale completed sidecar for {args.FullPath}; delayed observations will be processed normally."
                 | None ->
                     forgetObservedGraceUpdateMarkerInstance args.FullPath
                     logToAnsiConsole Colors.Important $"Update marker ended without a completed sidecar; delayed observations will be processed normally."
