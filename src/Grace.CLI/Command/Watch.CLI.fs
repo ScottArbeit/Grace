@@ -1877,6 +1877,12 @@ module Watch =
     /// Reports the replay sequence queued for a difference in startup recovery tests.
     let internal tryPeekStartupReplaySequenceForWatchTests difference = tryPeekStartupReplaySequence difference
 
+    /// Reads the replay sequences represented by differences that reached a durable terminal outcome.
+    let private startupReplaySequencesForTerminalDifferences (differences: seq<FileSystemDifference>) =
+        differences
+        |> Seq.collect startupReplaySequencesForDifference
+        |> Seq.toArray
+
     /// Removes replay metadata for one pending difference and returns the durable rows it represented.
     let private takeStartupReplaySequencesForDifference (difference: FileSystemDifference) =
         let key = pendingStatusDifferenceReplayKey difference
@@ -4264,9 +4270,9 @@ module Watch =
                             let commitRuntimeMode = currentGraceWatchRuntimeMode ()
 
                             let resolvedStartupReplaySequences =
-                                statusDifferencesForApply.Resolved
-                                |> Seq.collect startupReplaySequencesForDifference
-                                |> Seq.toArray
+                                startupReplaySequencesForTerminalDifferences (
+                                    mergeStatusDifferences pendingDifferencesToClear statusDifferencesForApply.Resolved
+                                )
 
                             appendedWatchJournalSequences <- combineWatchJournalSequences appendedWatchJournalSequences resolvedStartupReplaySequences
 
@@ -4429,8 +4435,45 @@ module Watch =
             enqueueFileUpload difference.RelativePath
             |> ignore
 
+    /// Finds the parent directory path that must exist before a replayed directory add can be materialized.
+    let private tryParentRelativePathForDirectoryReplayAdd (relativePath: RelativePath) =
+        let segments =
+            (normalizeRelativePath relativePath)
+                .Split('/', StringSplitOptions.RemoveEmptyEntries)
+
+        if segments.Length <= 1 then
+            None
+        else
+            Some(RelativePath(String.Join("/", segments[0 .. segments.Length - 2])))
+
+    /// Checks whether startup replay can provide an untracked directory add's missing parent in the same batch.
+    let private replayRowsContainDirectoryAdd (rows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array) (relativePath: RelativePath) =
+        let normalizedRelativePath = normalizeRelativePath relativePath
+
+        rows
+        |> Array.exists (fun row ->
+            row.EntryType = FileSystemEntryType.Directory
+            && row.DifferenceType = DifferenceType.Add
+            && String.Equals(normalizeRelativePath row.RelativePath, normalizedRelativePath, watchPathComparison))
+
+    /// Checks whether a replayed directory add can link to a tracked parent or one replayed by the same startup batch.
+    let private replayDirectoryAddHasParentContinuity
+        (status: GraceStatus)
+        (replayRows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array)
+        (relativePath: RelativePath)
+        =
+        match tryParentRelativePathForDirectoryReplayAdd relativePath with
+        | None -> true
+        | Some parentRelativePath ->
+            isTrackedDirectory status parentRelativePath
+            || replayRowsContainDirectoryAdd replayRows parentRelativePath
+
     /// Classifies compatible durable replay rows against current startup scan applicability before status mutation.
-    let private tryStartupReplayRetirementReason (status: GraceStatus) (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay) =
+    let private tryStartupReplayRetirementReason
+        (status: GraceStatus)
+        (compatibleReplayRows: Grace.CLI.LocalStateDb.WatchJournalPendingReplay array)
+        (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay)
+        =
         let fullPath = Path.Combine(Current().RootDirectory, $"{row.RelativePath}")
 
         match row.EntryType, row.DifferenceType, finalPathKind row.RelativePath with
@@ -4466,6 +4509,8 @@ module Watch =
                 Some "current startup replay directory ignored before status application"
             elif isTrackedDirectory status row.RelativePath then
                 Some "startup replay directory add already tracked"
+            elif not (replayDirectoryAddHasParentContinuity status compatibleReplayRows row.RelativePath) then
+                Some "startup replay directory add parent is not tracked or replayed"
             else
                 None
         | FileSystemEntryType.Directory,
@@ -4500,7 +4545,7 @@ module Watch =
 
             let startupReplayClassifications =
                 recovery.CompatibleReplayRows
-                |> Array.map (fun row -> row, tryStartupReplayRetirementReason status row)
+                |> Array.map (fun row -> row, tryStartupReplayRetirementReason status recovery.CompatibleReplayRows row)
 
             let retiredReplayRows =
                 startupReplayClassifications
@@ -4553,6 +4598,9 @@ module Watch =
                         | "startup replay directory add already tracked" ->
                             "startup-tracked-directory-add-replay-retired",
                             $"Startup replay retired directory add row {row.Sequence} because GraceStatus already tracks that directory."
+                        | "startup replay directory add parent is not tracked or replayed" ->
+                            "startup-orphan-directory-add-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because its parent directory was not tracked or replayed."
                         | "startup replay directory delete is not tracked" ->
                             "startup-untracked-directory-delete-replay-retired",
                             $"Startup replay retired directory delete row {row.Sequence} because GraceStatus does not track that directory."

@@ -12,6 +12,7 @@ open Grace.Types.Automation
 open Grace.Types.Common
 open Grace.Types.Reference
 open Microsoft.AspNetCore.SignalR
+open Microsoft.Data.Sqlite
 open NodaTime
 open NUnit.Framework
 open Spectre.Console
@@ -3474,6 +3475,305 @@ module WatchTests =
 
                 pendingWork.StatusUpdateTriggers
                 |> should equal Array.empty<string>
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
+    /// Verifies that same-content replayed changes advance their durable journal sequence when upload cleanup drains them.
+    [<Test>]
+    let ``watch startup replay retires same-content uploaded change sequence durably`` () =
+        withTempRepo (fun root ->
+            let relativePath = "startup-replay-same-content.txt"
+            let filePath = Path.Combine(root, relativePath)
+            let dbPath = Current().GraceStatusFile
+            let mutable uploadCalls = 0
+            let mutable applyFromDifferencesCalls = 0
+
+            File.WriteAllText(filePath, "same content")
+
+            let trackedFile =
+                (Services.createLocalFileVersion (FileInfo(filePath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            let status = graceStatusTrackingFileVersions [| trackedFile |]
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            try
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [|
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Change
+                            EntryType = FileSystemEntryType.File
+                            RelativePath = RelativePath relativePath
+                        }
+                    |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun recoveryScope -> LocalStateDb.recoverWatchJournalForStartup dbPath recoveryScope)
+                    (fun _ -> Task.FromResult(()))
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.queueStartupDifferenceForWatch (FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File (RelativePath relativePath))
+
+                Watch.setWatchJournalClientsForWatchTests
+                    (fun _ -> Task.FromException<int64 array>(InvalidOperationException("same-content replay must not append duplicate rows")))
+                    (fun sequences ->
+                        task {
+                            sequences |> Seq.toArray |> should equal [| 1L |]
+
+                            return! LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences dbPath sequences
+                        })
+
+                /// Reads status needed by the same-content replay scenario.
+                let readStatus () = Task.FromResult(status)
+
+                /// Records the replayed upload while leaving content equivalent to GraceStatus.
+                let upload _ pendingFilePath =
+                    uploadCalls <- uploadCalls + 1
+                    recordUploadedFileVersion $"{pendingFilePath}"
+                    Task.FromResult(())
+
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Fails if same-content replay reaches status mutation instead of retiring through cleanup.
+                let updateGraceStatusFromDifferences _ _ _ =
+                    applyFromDifferencesCalls <- applyFromDifferencesCalls + 1
+                    Task.FromException<GraceStatus option>(InvalidOperationException("same-content replay should not apply a status difference"))
+
+                /// Leaves incremental status writes outside this same-content replay scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the same-content replay test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                let appliedSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "applied" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                let pendingSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "pending" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                uploadCalls |> should equal 1
+                applyFromDifferencesCalls |> should equal 0
+
+                appliedSnapshot.AppliedThroughSequence
+                |> should equal 1L
+
+                pendingSnapshot.Rows |> should haveLength 0
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File (RelativePath relativePath)
+                )
+                |> should equal None
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
+    /// Verifies that malformed SQLite payload types quarantine instead of aborting startup replay recovery.
+    [<Test>]
+    let ``watch startup recovery quarantines non-text replay payload fields`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            (LocalStateDb.recoverWatchJournalForStartup dbPath scope)
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            use connection = new SqliteConnection($"Data Source={dbPath}")
+            connection.Open()
+
+            /// Inserts one malformed replay row while preserving all scope fields needed to reach payload classification.
+            let insertMalformed differenceType entryType relativePath =
+                use command = connection.CreateCommand()
+
+                command.CommandText <-
+                    "INSERT INTO watch_journal (created_at_unix_ticks, repository_id, branch_id, workspace_root, watch_root, root_directory_version_id, root_directory_blake3_hash, watch_mode, difference_type, entry_type, relative_path) VALUES ($created_at, $repository_id, $branch_id, $workspace_root, $watch_root, $root_directory_version_id, $root_directory_blake3_hash, $watch_mode, $difference_type, $entry_type, $relative_path);"
+
+                command.Parameters.AddWithValue("$created_at", getCurrentInstant().ToUnixTimeTicks())
+                |> ignore
+
+                command.Parameters.AddWithValue("$repository_id", scope.RepositoryId.ToString())
+                |> ignore
+
+                command.Parameters.AddWithValue("$branch_id", scope.BranchId.ToString())
+                |> ignore
+
+                command.Parameters.AddWithValue("$workspace_root", scope.WorkspaceRoot)
+                |> ignore
+
+                command.Parameters.AddWithValue("$watch_root", scope.WatchRoot)
+                |> ignore
+
+                command.Parameters.AddWithValue("$root_directory_version_id", scope.RootDirectoryId.ToString())
+                |> ignore
+
+                command.Parameters.AddWithValue("$root_directory_blake3_hash", string scope.RootDirectoryBlake3Hash)
+                |> ignore
+
+                command.Parameters.AddWithValue("$watch_mode", scope.WatchMode)
+                |> ignore
+
+                command.Parameters.AddWithValue("$difference_type", differenceType)
+                |> ignore
+
+                command.Parameters.AddWithValue("$entry_type", entryType)
+                |> ignore
+
+                command.Parameters.AddWithValue("$relative_path", relativePath)
+                |> ignore
+
+                command.ExecuteNonQuery() |> ignore
+
+            insertMalformed [| 1uy |] "File" "non-text-difference.txt"
+            insertMalformed "Change" [| 2uy |] "non-text-entry.txt"
+            insertMalformed "Change" "File" [| 3uy |]
+
+            let recovery =
+                (LocalStateDb.recoverWatchJournalForStartup dbPath scope)
+                    .GetAwaiter()
+                    .GetResult()
+
+            recovery.CompatibleReplayRows
+            |> should haveLength 0
+
+            recovery.QuarantinedRows |> should haveLength 3
+
+            let quarantinedSnapshot =
+                (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                    .GetAwaiter()
+                    .GetResult()
+
+            quarantinedSnapshot.AppliedThroughSequence
+            |> should equal 3L
+
+            quarantinedSnapshot.Rows
+            |> Array.sortBy (fun row -> row.Sequence)
+            |> Array.map (fun row -> row.Sequence, row.QuarantineReason)
+            |> should
+                equal
+                [|
+                    1L, Some "non-text difference_type"
+                    2L, Some "non-text entry_type"
+                    3L, Some "non-text relative_path"
+                |])
+
+    /// Verifies that replayed nested directory adds quarantine when their parent is neither tracked nor replayed.
+    [<Test>]
+    let ``watch startup recovery quarantines orphan replayed directory add`` () =
+        withTempRepo (fun root ->
+            let relativePath = "new/child"
+            let directoryPath = Path.Combine(root, "new", "child")
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            Directory.CreateDirectory(directoryPath) |> ignore
+
+            try
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [|
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Add
+                            EntryType = FileSystemEntryType.Directory
+                            RelativePath = RelativePath relativePath
+                        }
+                    |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun recoveryScope -> LocalStateDb.recoverWatchJournalForStartup dbPath recoveryScope)
+                    (fun _ -> Task.FromResult(()))
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory (RelativePath relativePath)
+                )
+                |> should equal None
+
+                /// Reads status needed by the orphan directory replay scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Keeps uploads out of this directory replay scenario.
+                let upload _ _ = Task.FromResult(())
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Fails the test if an orphan directory add reaches status construction.
+                let updateGraceStatusFromDifferences _ _ _ =
+                    Task.FromException<GraceStatus option>(InvalidOperationException("orphan directory add should not apply status"))
+
+                /// Leaves incremental status writes outside this orphan directory scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the orphan directory test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                let quarantinedSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                quarantinedSnapshot.AppliedThroughSequence
+                |> should equal 1L
+
+                quarantinedSnapshot.Rows
+                |> Array.map (fun row -> row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        Some "startup replay directory add parent is not tracked or replayed"
+                    |]
             finally
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())

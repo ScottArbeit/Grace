@@ -1677,6 +1677,24 @@ module LocalStateDb =
             use reader = command.ExecuteReader()
             let rows = ResizeArray<WatchJournalRow>()
 
+            /// Reads journal payload text for diagnostics without trusting SQLite dynamic typing.
+            let readDiagnosticText ordinal fieldName =
+                if reader.IsDBNull(ordinal) then
+                    $"<missing {fieldName}>"
+                else
+                    match reader.GetValue(ordinal) with
+                    | :? string as value -> value
+                    | _ -> $"<non-text {fieldName}>"
+
+            /// Reads optional journal payload text for diagnostics without throwing on malformed local rows.
+            let readOptionalDiagnosticText ordinal fieldName =
+                if reader.IsDBNull(ordinal) then
+                    None
+                else
+                    match reader.GetValue(ordinal) with
+                    | :? string as value -> Some value
+                    | _ -> Some $"<non-text {fieldName}>"
+
             while reader.Read() do
                 let sequence = reader.GetInt64(0)
 
@@ -1690,10 +1708,10 @@ module LocalStateDb =
                         Sequence = sequence
                         CreatedAtUnixTicks = reader.GetInt64(1)
                         State = state
-                        DifferenceType = reader.GetString(2)
-                        EntryType = reader.GetString(3)
-                        RelativePath = Some(reader.GetString(4))
-                        QuarantineReason = if reader.IsDBNull(6) then None else Some(reader.GetString(6))
+                        DifferenceType = readDiagnosticText 2 "difference_type"
+                        EntryType = readDiagnosticText 3 "entry_type"
+                        RelativePath = readOptionalDiagnosticText 4 "relative_path"
+                        QuarantineReason = readOptionalDiagnosticText 6 "quarantine_reason"
                     }
 
                 if watchJournalRowMatches normalizedStateFilter normalizedPathFilter row then
@@ -1981,6 +1999,36 @@ module LocalStateDb =
     /// Reads a nullable text column from a journal query without converting database null into a trusted value.
     let private readNullableText (reader: SqliteDataReader) ordinal = if reader.IsDBNull(ordinal) then None else Some(reader.GetString(ordinal))
 
+    /// Reads a nullable journal text field without trusting SQLite's dynamic type coercion.
+    let private tryReadNullableJournalText (reader: SqliteDataReader) ordinal fieldName =
+        if reader.IsDBNull(ordinal) then
+            Ok None
+        else
+            match reader.GetValue(ordinal) with
+            | :? string as value -> Ok(Some value)
+            | _ -> Error $"non-text {fieldName}"
+
+    /// Reads a required replay payload text field before parsing the row's Watch semantics.
+    let private tryReadRequiredJournalText (reader: SqliteDataReader) ordinal fieldName =
+        if reader.IsDBNull(ordinal) then
+            Error $"missing {fieldName}"
+        else
+            match reader.GetValue(ordinal) with
+            | :? string as value -> Ok value
+            | _ -> Error $"non-text {fieldName}"
+
+    /// Provides diagnostic text for rows already quarantined because their payload cannot be trusted.
+    let private readJournalDiagnosticText (reader: SqliteDataReader) ordinal fieldName =
+        match tryReadRequiredJournalText reader ordinal fieldName with
+        | Ok value -> value
+        | Error reason -> $"<{reason}>"
+
+    /// Provides optional diagnostic text for rows already quarantined because their payload cannot be trusted.
+    let private readOptionalJournalDiagnosticText (reader: SqliteDataReader) ordinal fieldName =
+        match tryReadNullableJournalText reader ordinal fieldName with
+        | Ok value -> value
+        | Error reason -> Some $"<{reason}>"
+
     /// Builds a diagnostic row for a startup quarantine decision.
     let private quarantinedJournalRowFromReader appliedThroughSequence (reader: SqliteDataReader) =
         let sequence = reader.GetInt64(0)
@@ -1989,11 +2037,46 @@ module LocalStateDb =
             Sequence = sequence
             CreatedAtUnixTicks = reader.GetInt64(1)
             State = Quarantined
-            DifferenceType = reader.GetString(9)
-            EntryType = reader.GetString(10)
-            RelativePath = Some(reader.GetString(11))
-            QuarantineReason = readNullableText reader 13
+            DifferenceType = readJournalDiagnosticText reader 9 "difference_type"
+            EntryType = readJournalDiagnosticText reader 10 "entry_type"
+            RelativePath = readOptionalJournalDiagnosticText reader 11 "relative_path"
+            QuarantineReason = readOptionalJournalDiagnosticText reader 13 "quarantine_reason"
         }
+
+    /// Reads the identity and payload fields needed to classify one startup replay row.
+    let private tryReadWatchJournalReplayFields (reader: SqliteDataReader) =
+        match tryReadNullableJournalText reader 2 "repository_id",
+              tryReadNullableJournalText reader 3 "branch_id",
+              tryReadNullableJournalText reader 4 "workspace_root",
+              tryReadNullableJournalText reader 5 "watch_root",
+              tryReadNullableJournalText reader 6 "root_directory_version_id",
+              tryReadNullableJournalText reader 7 "root_directory_blake3_hash",
+              tryReadNullableJournalText reader 8 "watch_mode",
+              tryReadRequiredJournalText reader 9 "difference_type",
+              tryReadRequiredJournalText reader 10 "entry_type",
+              tryReadRequiredJournalText reader 11 "relative_path"
+            with
+        | Ok repositoryId,
+          Ok branchId,
+          Ok workspaceRoot,
+          Ok watchRoot,
+          Ok rootDirectoryId,
+          Ok rootDirectoryBlake3Hash,
+          Ok watchMode,
+          Ok differenceType,
+          Ok entryType,
+          Ok relativePath ->
+            Ok(repositoryId, branchId, workspaceRoot, watchRoot, rootDirectoryId, rootDirectoryBlake3Hash, watchMode, differenceType, entryType, relativePath)
+        | Error reason, _, _, _, _, _, _, _, _, _
+        | _, Error reason, _, _, _, _, _, _, _, _
+        | _, _, Error reason, _, _, _, _, _, _, _
+        | _, _, _, Error reason, _, _, _, _, _, _
+        | _, _, _, _, Error reason, _, _, _, _, _
+        | _, _, _, _, _, Error reason, _, _, _, _
+        | _, _, _, _, _, _, Error reason, _, _, _
+        | _, _, _, _, _, _, _, Error reason, _, _
+        | _, _, _, _, _, _, _, _, Error reason, _
+        | _, _, _, _, _, _, _, _, _, Error reason -> Error reason
 
     /// Explains why an unapplied row cannot be trusted for startup replay in the current repository scope.
     let private tryFindWatchJournalReplayIncompatibility (scope: WatchJournalScope) row =
@@ -2138,40 +2221,31 @@ module LocalStateDb =
                             let rowsToQuarantine = ResizeArray<int64 * string>()
 
                             while reader.Read() do
-                                let differenceTypeValue = reader.GetString(9)
-                                let entryTypeValue = reader.GetString(10)
-                                let relativePath = reader.GetString(11)
+                                let sequence = reader.GetInt64(0)
 
-                                let rowIdentity =
-                                    (readNullableText reader 2,
-                                     readNullableText reader 3,
-                                     readNullableText reader 4,
-                                     readNullableText reader 5,
-                                     readNullableText reader 6,
-                                     readNullableText reader 7,
-                                     readNullableText reader 8,
-                                     differenceTypeValue,
-                                     entryTypeValue,
-                                     relativePath)
+                                match tryReadWatchJournalReplayFields reader with
+                                | Error reason -> rowsToQuarantine.Add(sequence, reason)
+                                | Ok rowIdentity ->
+                                    try
+                                        match tryFindWatchJournalReplayIncompatibility scope rowIdentity with
+                                        | Some reason -> rowsToQuarantine.Add(sequence, reason)
+                                        | None ->
+                                            let (_, _, _, _, _, _, _, differenceTypeValue, entryTypeValue, relativePath) = rowIdentity
 
-                                try
-                                    match tryFindWatchJournalReplayIncompatibility scope rowIdentity with
-                                    | Some reason -> rowsToQuarantine.Add(reader.GetInt64(0), reason)
-                                    | None ->
-                                        compatibleRows.Add(
-                                            {
-                                                Sequence = reader.GetInt64(0)
-                                                DifferenceType =
-                                                    tryParseWatchJournalDifferenceType differenceTypeValue
-                                                    |> Option.get
-                                                EntryType =
-                                                    tryParseWatchJournalEntryType entryTypeValue
-                                                    |> Option.get
-                                                RelativePath = RelativePath relativePath
-                                            }
-                                        )
-                                with
-                                | :? InvalidOperationException as ex -> rowsToQuarantine.Add(reader.GetInt64(0), ex.Message)
+                                            compatibleRows.Add(
+                                                {
+                                                    Sequence = sequence
+                                                    DifferenceType =
+                                                        tryParseWatchJournalDifferenceType differenceTypeValue
+                                                        |> Option.get
+                                                    EntryType =
+                                                        tryParseWatchJournalEntryType entryTypeValue
+                                                        |> Option.get
+                                                    RelativePath = RelativePath relativePath
+                                                }
+                                            )
+                                    with
+                                    | :? InvalidOperationException as ex -> rowsToQuarantine.Add(sequence, ex.Message)
 
                             reader.Close()
 
