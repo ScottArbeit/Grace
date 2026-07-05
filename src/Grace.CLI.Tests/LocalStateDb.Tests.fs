@@ -1210,6 +1210,7 @@ module LocalStateDbTests =
 
                 do
                     use connection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery connection "UPDATE meta SET value = '6' WHERE key = 'schema_version';"
                     executeNonQuery connection "DROP TABLE watch_journal;"
                     executeNonQuery connection "CREATE TABLE watch_journal (sequence TEXT PRIMARY KEY);"
 
@@ -2344,6 +2345,7 @@ module LocalStateDbTests =
                 seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId rootHash "root-blake3" ticks
 
                 use seedConnection = openRawConnection configuration.GraceStatusFile
+                executeNonQuery seedConnection "UPDATE meta SET value = '6' WHERE key = 'schema_version';"
                 executeNonQuery seedConnection "DROP TABLE watch_journal;"
                 seedConnection.Dispose()
 

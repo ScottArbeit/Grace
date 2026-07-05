@@ -1394,7 +1394,7 @@ module Watch =
         {
             RepositoryId = Current().RepositoryId
             BranchId = Current().BranchId
-            WorkspaceRoot = Path.GetFullPath(Directory.GetCurrentDirectory())
+            WorkspaceRoot = Path.GetFullPath(Current().RootDirectory)
             WatchRoot = Path.GetFullPath(Current().RootDirectory)
             RootDirectoryId = status.RootDirectoryId
             RootDirectoryBlake3Hash = rootDirectoryBlake3HashForWatchJournal status
@@ -1790,11 +1790,13 @@ module Watch =
 
             pendingStatusDifferenceReplaySequences <- replacement
 
-    /// Queues one startup-replayed difference without creating a duplicate durable journal row.
-    let private addStartupReplayedStatusDifference sequence (difference: FileSystemDifference) =
+    /// Records one replay sequence and optionally queues its difference for startup status application.
+    let private recordStartupReplaySequence queueDifference sequence (difference: FileSystemDifference) =
         lock pendingStatusDifferencesLock (fun () ->
             ensureStartupReplaySequenceComparer ()
-            addPendingStatusDifference difference
+
+            if queueDifference then addPendingStatusDifference difference
+
             let key = pendingStatusDifferenceReplayKey difference
             let mutable queue = Unchecked.defaultof<Queue<int64>>
 
@@ -1803,6 +1805,12 @@ module Watch =
                 pendingStatusDifferenceReplaySequences.Add(key, queue)
 
             queue.Enqueue(sequence))
+
+    /// Queues one startup-replayed difference without creating a duplicate durable journal row.
+    let private addStartupReplayedStatusDifference sequence (difference: FileSystemDifference) = recordStartupReplaySequence true sequence difference
+
+    /// Remembers a row appended during deferred replay so the next retry does not append it again.
+    let private rememberDeferredStartupReplaySequence sequence (difference: FileSystemDifference) = recordStartupReplaySequence false sequence difference
 
     /// Reads the existing startup replay sequence for a difference that should not be appended again.
     let private tryPeekStartupReplaySequence (difference: FileSystemDifference) =
@@ -3731,6 +3739,16 @@ module Watch =
                     return true
         }
 
+    /// Combines durable journal sequences without reordering the first observation for each sequence.
+    let private combineWatchJournalSequences (first: int64 array) (second: int64 array) =
+        seq {
+            yield! first
+            yield! second
+        }
+        |> Seq.filter (fun sequence -> sequence > 0L)
+        |> Seq.distinct
+        |> Seq.toArray
+
     /// Converges appended journal rows after status side effects commit so recovery never resumes from stale pending rows.
     let private convergeWatchJournalAfterStatusApplication (appendedWatchJournalSequences: int64 array) =
         task {
@@ -3975,6 +3993,9 @@ module Watch =
 
                         let statusApplicationLegal = statusApplicationModeStillTrusted ()
                         let mutable appendedWatchJournalSequences = Array.empty<int64>
+                        let mutable newlyAppendedWatchJournalSequences = Array.empty<int64>
+                        let mutable newlyAppendedWatchJournalReplayRows = Array.empty<int64 * FileSystemDifference>
+                        let mutable startupReplayRowsParticipated = false
                         let mutable appendedWatchJournalConverged = false
 
                         let statusUpdateStillTrusted () =
@@ -4027,14 +4048,17 @@ module Watch =
                                                         |> Seq.map journalObservationForDifference
                                                         |> appendWatchJournalObservationsForWatch
 
-                                                return Ok(Array.append startupReplaySequences sequences)
+                                                return Ok(startupReplaySequences, sequences, differencesNeedingJournalAppend)
                                             with
                                             | ex -> return Error ex
                                         }
 
                                     match appendResult with
-                                    | Ok sequences ->
-                                        appendedWatchJournalSequences <- sequences
+                                    | Ok (startupReplaySequences, sequences, newlyAppendedDifferences) ->
+                                        startupReplayRowsParticipated <- startupReplaySequences.Length > 0
+                                        newlyAppendedWatchJournalSequences <- sequences
+                                        newlyAppendedWatchJournalReplayRows <- Array.zip sequences newlyAppendedDifferences
+                                        appendedWatchJournalSequences <- combineWatchJournalSequences startupReplaySequences sequences
 
                                         try
                                             return!
@@ -4082,6 +4106,13 @@ module Watch =
                         | Some newGraceStatus ->
                             let commitRuntimeMode = currentGraceWatchRuntimeMode ()
 
+                            let resolvedStartupReplaySequences =
+                                statusDifferencesForApply.Resolved
+                                |> Seq.choose tryPeekStartupReplaySequence
+                                |> Seq.toArray
+
+                            appendedWatchJournalSequences <- combineWatchJournalSequences appendedWatchJournalSequences resolvedStartupReplaySequences
+
                             let statusUpdateCanCommit =
                                 statusUpdateStillTrusted ()
                                 && (startupPendingDifferences.Count > 0
@@ -4124,9 +4155,19 @@ module Watch =
                                     Colors.Important
                                     $"Grace Status file update completed while newer file upload work was pending; status-only triggers will retry."
                         | None ->
-                            if appendedWatchJournalSequences.Length > 0
-                               && not appendedWatchJournalConverged then
-                                let! noDurableStatusRepairFailed = clearWatchJournalAfterNoDurableStatus appendedWatchJournalSequences
+                            if startupReplayRowsParticipated then
+                                for sequence, difference in newlyAppendedWatchJournalReplayRows do
+                                    rememberDeferredStartupReplaySequence sequence difference
+
+                                appendedWatchJournalConverged <- true
+
+                                if newlyAppendedWatchJournalReplayRows.Length > 0 then
+                                    logToAnsiConsole
+                                        Colors.Important
+                                        $"Grace Watch kept existing startup replay rows durable after status application deferred; newly appended rows will retry without duplicate journal append."
+                            elif newlyAppendedWatchJournalSequences.Length > 0
+                                 && not appendedWatchJournalConverged then
+                                let! noDurableStatusRepairFailed = clearWatchJournalAfterNoDurableStatus newlyAppendedWatchJournalSequences
                                 appendedWatchJournalConverged <- true
 
                                 if noDurableStatusRepairFailed then
@@ -4269,6 +4310,54 @@ module Watch =
 
     /// Exposes startup journal recovery to tests without starting the foreground watcher loop.
     let internal recoverStartupWatchJournalAfterReconciliationForWatchTests status = recoverStartupWatchJournalAfterReconciliation status
+
+    /// Re-enters startup replay and promotion after delayed startup work drains on a later timer pass.
+    let private completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient =
+        task {
+            let mutable attemptedStartupCompletion = false
+
+            if
+                not (hasPendingWatchWork ())
+                && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
+            then
+                attemptedStartupCompletion <- true
+                let! reconciledStartupStatus = readGraceStatusFileClient ()
+                graceStatus <- reconciledStartupStatus
+                updateGraceStatusDirectoryIds reconciledStartupStatus
+                let! startupRecovery = recoverStartupWatchJournalAfterReconciliation reconciledStartupStatus
+
+                if startupRecovery.CompatibleReplayRows.Length > 0 then
+                    graceStatus <- GraceStatus.Default
+                    do! processChangedFilesClient ()
+
+            if
+                attemptedStartupCompletion
+                && not (hasPendingWatchWork ())
+            then
+                promoteStartupModeIfRecoverySucceeded ()
+
+            if
+                attemptedStartupCompletion
+                && not (hasPendingWatchWork ())
+            then
+                let! startupCatchUpStatus = readGraceStatusFileClient ()
+                updateGraceStatusDirectoryIds startupCatchUpStatus
+
+                do!
+                    publishGraceWatchInterprocessFileForCurrentConfidence
+                        startupCatchUpStatus
+                        graceStatusDirectoryIds
+                        updateGraceWatchInterprocessFileClient
+                        "startup catch-up"
+        }
+
+    /// Exposes delayed startup replay completion to tests without starting the foreground watcher loop.
+    let internal completeStartupRecoveryIfPendingWorkDrainedForWatchTests
+        readGraceStatusFileClient
+        updateGraceWatchInterprocessFileClient
+        processChangedFilesClient
+        =
+        completeStartupRecoveryIfPendingWorkDrained readGraceStatusFileClient updateGraceWatchInterprocessFileClient processChangedFilesClient
 
     /// Executes the watch command by binding ParseResult values to the SDK request and CLI output contract.
     type Watch() =
@@ -4524,32 +4613,7 @@ module Watch =
                     // Process any changes that occurred while not running.
                     graceStatus <- GraceStatus.Default
                     do! processChangedFiles ()
-
-                    if
-                        not (hasPendingWatchWork ())
-                        && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
-                    then
-                        let! reconciledStartupStatus = readGraceStatusFile ()
-                        graceStatus <- reconciledStartupStatus
-                        updateGraceStatusDirectoryIds reconciledStartupStatus
-                        let! startupRecovery = recoverStartupWatchJournalAfterReconciliation reconciledStartupStatus
-
-                        if startupRecovery.CompatibleReplayRows.Length > 0 then
-                            graceStatus <- GraceStatus.Default
-                            do! processChangedFiles ()
-
-                    if not (hasPendingWatchWork ()) then promoteStartupModeIfRecoverySucceeded ()
-
-                    if not (hasPendingWatchWork ()) then
-                        let! startupCatchUpStatus = readGraceStatusFile ()
-                        updateGraceStatusDirectoryIds startupCatchUpStatus
-
-                        do!
-                            publishGraceWatchInterprocessFileForCurrentConfidence
-                                startupCatchUpStatus
-                                graceStatusDirectoryIds
-                                updateGraceWatchInterprocessFile
-                                "startup catch-up"
+                    do! completeStartupRecoveryIfPendingWorkDrained readGraceStatusFile updateGraceWatchInterprocessFile processChangedFiles
 
                     // Create a timer to process the file changes detected by the FileSystemWatcher.
                     // This timer is the reason that there's a delay in stopping `grace watch`.
@@ -4568,6 +4632,7 @@ module Watch =
                             do! publishGraceStatusRefreshSnapshot refreshGeneration updatedGraceStatus updateGraceWatchInterprocessFile
 
                         do! processChangedFiles ()
+                        do! completeStartupRecoveryIfPendingWorkDrained readGraceStatusFile updateGraceWatchInterprocessFile processChangedFiles
                         let! tick = periodicTimer.WaitForNextTickAsync()
                         ticked <- tick
 

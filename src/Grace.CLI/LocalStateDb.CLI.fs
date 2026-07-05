@@ -1395,10 +1395,14 @@ module LocalStateDb =
                                                 match tryGetMetaValue connection "schema_version" with
                                                 | Some version when version = SchemaVersion -> ()
                                                 | Some "6" ->
-                                                    if hasRequiredMetaKeyValueShape connection then
-                                                        logTrace "migrating local state DB schema from v6 to v7"
-                                                        migrateWatchJournalV6ToV7 connection
-                                                        setMetaValue connection "schema_version" SchemaVersion
+                                                    if hasRequiredMetaKeyValueShape connection
+                                                       && tableExists connection "watch_journal" then
+                                                        try
+                                                            logTrace "migrating local state DB schema from v6 to v7"
+                                                            migrateWatchJournalV6ToV7 connection
+                                                            setMetaValue connection "schema_version" SchemaVersion
+                                                        with
+                                                        | :? SqliteException -> recreate <- true
                                                     else
                                                         recreate <- true
                                                 | Some _ -> recreate <- true
