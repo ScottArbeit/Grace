@@ -1918,6 +1918,37 @@ module LocalStateDb =
         with
         | _ -> Some "invalid relative path"
 
+    /// Checks whether a durable Watch replay path names the repository root instead of a child path.
+    let private isWatchJournalRootRelativePath (relativePath: string) =
+        let trimmedPath = relativePath.Trim()
+
+        String.Equals(trimmedPath, ".", StringComparison.Ordinal)
+
+    /// Checks whether a durable Watch replay path uses directory-target spelling that file rows cannot consume.
+    let private isWatchJournalDirectoryShapedRelativePath (relativePath: string) =
+        relativePath.EndsWith(string Path.DirectorySeparatorChar, StringComparison.Ordinal)
+        || relativePath.EndsWith(string Path.AltDirectorySeparatorChar, StringComparison.Ordinal)
+
+    /// Applies the Watch startup replay shape table that is independent of current filesystem state.
+    let private tryFindWatchJournalReplayShapeIncompatibility differenceType entryType (relativePath: string) =
+        match tryParseWatchJournalDifferenceType differenceType, tryParseWatchJournalEntryType entryType with
+        | Some differenceType, Some entryType ->
+            if isWatchJournalRootRelativePath relativePath then
+                Some "watch root path cannot be replayed as a status difference"
+            else
+                match entryType, differenceType with
+                | FileSystemEntryType.Directory, DifferenceType.Change -> Some "directory change rows are not emitted by Watch startup scan"
+                | FileSystemEntryType.File, _ when isWatchJournalDirectoryShapedRelativePath relativePath ->
+                    Some "file replay row targets a directory-shaped path"
+                | FileSystemEntryType.File,
+                  (DifferenceType.Add
+                  | DifferenceType.Change
+                  | DifferenceType.Delete)
+                | FileSystemEntryType.Directory,
+                  (DifferenceType.Add
+                  | DifferenceType.Delete) -> None
+        | _ -> None
+
     /// Reads a nullable text column from a journal query without converting database null into a trusted value.
     let private readNullableText (reader: SqliteDataReader) ordinal = if reader.IsDBNull(ordinal) then None else Some(reader.GetString(ordinal))
 
@@ -1996,6 +2027,8 @@ module LocalStateDb =
                     Some "invalid entry type"
 
                 tryFindWatchJournalRelativePathIncompatibility scope.WatchRoot relativePath
+
+                tryFindWatchJournalReplayShapeIncompatibility differenceType entryType relativePath
             |]
 
         checks |> Array.tryPick id

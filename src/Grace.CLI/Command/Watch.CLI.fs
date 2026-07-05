@@ -4278,23 +4278,38 @@ module Watch =
             enqueueFileUpload difference.RelativePath
             |> ignore
 
-    /// Classifies replayed startup file content that current Watch startup rules would not scan or upload.
-    let private tryStartupFileReplayRetirementReason (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay) =
-        if row.EntryType = FileSystemEntryType.File
-           && (row.DifferenceType = DifferenceType.Add
-               || row.DifferenceType = DifferenceType.Change) then
-            match finalPathKind row.RelativePath with
-            | FinalPathFile ->
-                let fullPath = Path.Combine(Current().RootDirectory, $"{row.RelativePath}")
+    /// Classifies compatible durable replay rows against current startup scan applicability before status mutation.
+    let private tryStartupReplayRetirementReason (row: Grace.CLI.LocalStateDb.WatchJournalPendingReplay) =
+        let fullPath = Path.Combine(Current().RootDirectory, $"{row.RelativePath}")
 
-                if shouldIgnoreFile fullPath then
-                    Some "current startup replay file content ignored before status application"
-                else
-                    None
-            | FinalPathMissing
-            | FinalPathDirectory -> Some "stale startup replay file content missing before status application"
-        else
-            None
+        match row.EntryType, row.DifferenceType, finalPathKind row.RelativePath with
+        | FileSystemEntryType.File,
+          (DifferenceType.Add
+          | DifferenceType.Change),
+          FinalPathFile ->
+            if shouldIgnoreFile fullPath then
+                Some "current startup replay file content ignored before status application"
+            else
+                None
+        | FileSystemEntryType.File,
+          (DifferenceType.Add
+          | DifferenceType.Change),
+          (FinalPathMissing
+          | FinalPathDirectory) -> Some "stale startup replay file content missing before status application"
+        | FileSystemEntryType.File, DifferenceType.Delete, FinalPathDirectory -> Some "startup replay file delete now targets a directory"
+        | FileSystemEntryType.File, DifferenceType.Delete, _ -> None
+        | FileSystemEntryType.Directory, DifferenceType.Add, FinalPathDirectory ->
+            if shouldIgnoreDirectory fullPath then
+                Some "current startup replay directory ignored before status application"
+            else
+                None
+        | FileSystemEntryType.Directory,
+          DifferenceType.Add,
+          (FinalPathMissing
+          | FinalPathFile) -> Some "stale startup replay directory missing before status application"
+        | FileSystemEntryType.Directory, DifferenceType.Change, _ -> Some "directory change rows are not emitted by Watch startup scan"
+        | FileSystemEntryType.Directory, DifferenceType.Delete, FinalPathFile -> Some "startup replay directory delete now targets a file"
+        | FileSystemEntryType.Directory, DifferenceType.Delete, _ -> None
 
     /// Records a startup lifecycle event as diagnostics that cannot be replayed as Watch correctness data.
     let private recordStartupLifecycleEvent status eventType message =
@@ -4316,9 +4331,9 @@ module Watch =
 
             let startupReplayClassifications =
                 recovery.CompatibleReplayRows
-                |> Array.map (fun row -> row, tryStartupFileReplayRetirementReason row)
+                |> Array.map (fun row -> row, tryStartupReplayRetirementReason row)
 
-            let retiredFileReplayRows =
+            let retiredReplayRows =
                 startupReplayClassifications
                 |> Array.choose (fun (row, reason) ->
                     reason
@@ -4331,9 +4346,9 @@ module Watch =
                     | Some _ -> None
                     | None -> Some row)
 
-            if retiredFileReplayRows.Length > 0 then
+            if retiredReplayRows.Length > 0 then
                 for row, reason in
-                    retiredFileReplayRows
+                    retiredReplayRows
                     |> Array.sortBy (fun (row, _) -> row.Sequence) do
                     let! _ = quarantineWatchJournalSequencesForWatch [| row.Sequence |] reason
 
@@ -4345,16 +4360,26 @@ module Watch =
                         | "current startup replay file content ignored before status application" ->
                             "startup-ignored-file-replay-retired",
                             $"Startup replay retired file add/change row {row.Sequence} because current startup ignore rules skip its final file content."
-                        | _ ->
-                            "startup-file-replay-retired",
-                            $"Startup replay retired file add/change row {row.Sequence} because current startup rules would not apply it."
+                        | "current startup replay directory ignored before status application" ->
+                            "startup-ignored-directory-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because current startup ignore rules skip that directory."
+                        | "stale startup replay directory missing before status application" ->
+                            "startup-stale-directory-replay-retired",
+                            $"Startup replay retired directory add row {row.Sequence} because its final directory was missing."
+                        | "startup replay file delete now targets a directory" ->
+                            "startup-file-delete-replay-retired",
+                            $"Startup replay retired file delete row {row.Sequence} because the current path is a directory."
+                        | "startup replay directory delete now targets a file" ->
+                            "startup-directory-delete-replay-retired",
+                            $"Startup replay retired directory delete row {row.Sequence} because the current path is a file."
+                        | _ -> "startup-replay-retired", $"Startup replay retired row {row.Sequence} because current startup rules would not apply it."
 
                     do! recordStartupLifecycleEvent status lifecycleEventType lifecycleMessage
 
-                Interlocked.Add(&quarantinedWatchObservationCount, retiredFileReplayRows.Length)
+                Interlocked.Add(&quarantinedWatchObservationCount, retiredReplayRows.Length)
                 |> ignore
 
-                logToAnsiConsole Colors.Important $"Grace Watch retired {retiredFileReplayRows.Length} startup file replay rows before status application."
+                logToAnsiConsole Colors.Important $"Grace Watch retired {retiredReplayRows.Length} startup replay rows before status application."
 
             for row in replayRows do
                 let difference = FileSystemDifference.Create row.DifferenceType row.EntryType row.RelativePath
@@ -4367,7 +4392,7 @@ module Watch =
                 recordStartupLifecycleEvent
                     status
                     "startup-replay-complete"
-                    $"Startup replay queued {replayRows.Length} compatible rows, retired {retiredFileReplayRows.Length} file rows, and quarantined {recovery.QuarantinedRows.Length} incompatible rows."
+                    $"Startup replay queued {replayRows.Length} compatible rows, retired {retiredReplayRows.Length} replay rows, and quarantined {recovery.QuarantinedRows.Length} incompatible rows."
 
             return recovery
         }

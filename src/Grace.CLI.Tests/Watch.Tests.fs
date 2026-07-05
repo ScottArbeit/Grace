@@ -3581,6 +3581,239 @@ module WatchTests =
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())
 
+    /// Verifies that replayed directory Add rows ignored by current startup rules retire before status application.
+    [<Test>]
+    let ``watch startup recovery quarantines currently ignored replayed directory add rows`` () =
+        withTempRepo (fun root ->
+            let ignoredDirectory = Path.Combine(root, "ignored-dir")
+            let ignoredDirectoryRelativePath = "ignored-dir"
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+            let lifecycleEvents = ResizeArray<string>()
+
+            Directory.CreateDirectory(ignoredDirectory)
+            |> ignore
+
+            writeGraceIgnore root [| "ignored-dir/" |]
+
+            try
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [|
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Add
+                            EntryType = FileSystemEntryType.Directory
+                            RelativePath = RelativePath ignoredDirectoryRelativePath
+                        }
+                    |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun recoveryScope -> LocalStateDb.recoverWatchJournalForStartup dbPath recoveryScope)
+                    (fun event -> task { lifecycleEvents.Add(event.EventType) })
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.Directory (RelativePath ignoredDirectoryRelativePath)
+                )
+                |> should equal None
+
+                /// Reads status needed by the ignored directory replay scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Fails the test if ignored directory replay rows try to upload content.
+                let upload _ _ = Task.FromException<unit>(InvalidOperationException("ignored directory replay rows should not upload"))
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Fails the test if ignored directory replay rows reach status application after quarantine.
+                let updateGraceStatusFromDifferences _ _ _ =
+                    Task.FromException<GraceStatus option>(InvalidOperationException("ignored directory replay rows should not apply status"))
+
+                /// Leaves incremental status writes outside this ignored replay scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the ignored replay test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                let quarantinedSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                let pendingSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "pending" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                quarantinedSnapshot.AppliedThroughSequence
+                |> should equal 1L
+
+                quarantinedSnapshot.Rows
+                |> Array.map (fun row -> row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        Some "current startup replay directory ignored before status application"
+                    |]
+
+                pendingSnapshot.Rows |> should haveLength 0
+
+                Watch
+                    .pendingWatchWorkSnapshotForTests()
+                    .DirectoriesToProcess
+                |> should equal Array.empty<string>
+
+                lifecycleEvents.ToArray()
+                |> should contain "startup-ignored-directory-replay-retired"
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
+    /// Verifies that replayed delete rows retire when current final path kind contradicts the durable entry kind.
+    [<Test>]
+    let ``watch startup recovery quarantines delete replay rows whose current path kind changed`` () =
+        withTempRepo (fun root ->
+            let fileDeleteNowDirectory = "file-delete-now-directory"
+            let directoryDeleteNowFile = "directory-delete-now-file"
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+
+            Directory.CreateDirectory(Path.Combine(root, fileDeleteNowDirectory))
+            |> ignore
+
+            File.WriteAllText(Path.Combine(root, directoryDeleteNowFile), "live file payload")
+
+            try
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [|
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Delete
+                            EntryType = FileSystemEntryType.File
+                            RelativePath = RelativePath fileDeleteNowDirectory
+                        }
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Delete
+                            EntryType = FileSystemEntryType.Directory
+                            RelativePath = RelativePath directoryDeleteNowFile
+                        }
+                    |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun recoveryScope -> LocalStateDb.recoverWatchJournalForStartup dbPath recoveryScope)
+                    (fun _ -> Task.FromResult(()))
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath fileDeleteNowDirectory)
+                )
+                |> should equal None
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.Directory (RelativePath directoryDeleteNowFile)
+                )
+                |> should equal None
+
+                /// Reads status needed by the changed-kind replay scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Fails the test if changed-kind replay rows try to upload content.
+                let upload _ _ = Task.FromException<unit>(InvalidOperationException("changed-kind replay rows should not upload"))
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Fails the test if changed-kind replay rows reach status application after quarantine.
+                let updateGraceStatusFromDifferences _ _ _ =
+                    Task.FromException<GraceStatus option>(InvalidOperationException("changed-kind replay rows should not apply status"))
+
+                /// Leaves incremental status writes outside this changed-kind replay scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the changed-kind replay test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                let quarantinedSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                let pendingSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "pending" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                quarantinedSnapshot.AppliedThroughSequence
+                |> should equal 2L
+
+                quarantinedSnapshot.Rows
+                |> Array.sortBy (fun row -> row.Sequence)
+                |> Array.map (fun row -> row.Sequence, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some "startup replay file delete now targets a directory"
+                        2L, Some "startup replay directory delete now targets a file"
+                    |]
+
+                pendingSnapshot.Rows |> should haveLength 0
+
+                let pendingWork = Watch.pendingWatchWorkSnapshotForTests ()
+
+                pendingWork.FilesToProcess
+                |> should equal Array.empty<string>
+
+                pendingWork.DirectoriesToProcess
+                |> should equal Array.empty<string>
+
+                pendingWork.StatusUpdateTriggers
+                |> should equal Array.empty<string>
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
     /// Verifies that delayed startup replay runs after pending startup backlog drains on a later timer pass.
     [<Test>]
     let ``startup recovery runs after delayed backlog drains`` () =

@@ -870,6 +870,58 @@ module LocalStateDbTests =
                 appliedThrough |> should equal 2L
             })
 
+    /// Verifies that durable replay shape classification rejects rows Watch cannot emit before status mutation.
+    [<Test>]
+    let ``watch journal startup recovery classifies durable replay shapes before replay`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = watchJournalScope configuration
+
+                let! sequences =
+                    LocalStateDb.appendWatchJournalObservations
+                        configuration.GraceStatusFile
+                        [
+                            scopedWatchJournalObservation scope DifferenceType.Delete FileSystemEntryType.File "."
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.Directory "changed-directory"
+                            scopedWatchJournalObservation scope DifferenceType.Delete FileSystemEntryType.File "deleted-directory/"
+                            scopedWatchJournalObservation scope DifferenceType.Add FileSystemEntryType.File "file-add.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "file-change.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Delete FileSystemEntryType.File "file-delete.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Add FileSystemEntryType.Directory "directory-add"
+                            scopedWatchJournalObservation scope DifferenceType.Delete FileSystemEntryType.Directory "directory-delete"
+                        ]
+
+                let! recovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
+
+                sequences
+                |> should equal [| 1L; 2L; 3L; 4L; 5L; 6L; 7L; 8L |]
+
+                recovery.QuarantinedRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some ".", Some "watch root path cannot be replayed as a status difference"
+                        2L, Some "changed-directory", Some "directory change rows are not emitted by Watch startup scan"
+                        3L, Some "deleted-directory/", Some "file replay row targets a directory-shaped path"
+                    |]
+
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row.Sequence, row.DifferenceType, row.EntryType, row.RelativePath)
+                |> should
+                    equal
+                    [|
+                        4L, DifferenceType.Add, FileSystemEntryType.File, RelativePath "file-add.txt"
+                        5L, DifferenceType.Change, FileSystemEntryType.File, RelativePath "file-change.txt"
+                        6L, DifferenceType.Delete, FileSystemEntryType.File, RelativePath "file-delete.txt"
+                        7L, DifferenceType.Add, FileSystemEntryType.Directory, RelativePath "directory-add"
+                        8L, DifferenceType.Delete, FileSystemEntryType.Directory, RelativePath "directory-delete"
+                    |]
+
+                let! appliedThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
+                appliedThrough |> should equal 3L
+            })
+
     /// Verifies that startup recovery quarantines malformed durable roots instead of throwing during classification.
     [<Test>]
     let ``watch journal startup recovery quarantines malformed durable roots`` () =
