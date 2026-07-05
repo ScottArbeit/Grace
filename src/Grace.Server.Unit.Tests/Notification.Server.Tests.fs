@@ -160,6 +160,31 @@ type NotificationServerTests() =
             )
         }
 
+    /// Verifies that disconnect cleanup removes only server-side current-branch bookkeeping for the connection.
+    [<Test>]
+    member _.CurrentBranchDisconnectClearsPerConnectionState() =
+        task {
+            let repositoryId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+            let branchId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+            let items = Dictionary<obj, obj>()
+            let operations = ResizeArray<string * string>()
+            let groups = recordingGroupManager operations
+
+            do! replaceCurrentBranchGroupMembership groups "connection-1" items repositoryId branchId CancellationToken.None
+
+            let cleared = clearCurrentBranchGroupMembershipState items
+            let clearedAgain = clearCurrentBranchGroupMembershipState items
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(cleared, Is.True)
+                    Assert.That(clearedAgain, Is.False)
+                    Assert.That(items, Is.Empty)
+                    Assert.That(operations, Has.Count.EqualTo(1))
+                    Assert.That(operations[0], Is.EqualTo(("add", currentBranchGroupKey repositoryId branchId))))
+            )
+        }
+
     /// Verifies that current-branch SignalR subscriptions require branch read authorization.
     [<Test>]
     member _.CurrentBranchSubscriptionRequiresBranchReadAuthorization() =

@@ -1122,6 +1122,64 @@ module WatchTests =
             finally
                 Watch.resetSignalRSubscriptionRefreshForWatchTests ())
 
+    /// Verifies that a successful SignalR refresh joins the current-branch group before the parent-branch group.
+    [<Test>]
+    let ``signalr refresh registers current branch before parent branch`` () =
+        withTempRepo (fun root ->
+            let repositoryId = Guid.NewGuid()
+            let branchId = Guid.NewGuid()
+            let parentId = Guid.NewGuid()
+            let repositoryName = "signalr-registration-order-repo"
+
+            writeRepositoryConfiguration root repositoryId repositoryName branchId "feature/current-registration"
+            resetConfiguration ()
+            Current() |> ignore
+
+            let parentBranchDto = { Grace.Types.Branch.BranchDto.Default with RepositoryId = repositoryId; BranchId = parentId; BranchName = BranchName "main" }
+
+            /// Returns parent metadata for the active branch without changing local branch identity.
+            let getParentBranch (_: GetBranchParameters) = Task.FromResult(Ok(GraceReturnValue.Create parentBranchDto "registration-order-test"))
+
+            let registrations = ResizeArray<string * Guid * Guid>()
+
+            /// Records current-branch group registration in call order.
+            let registerCurrentBranch repositoryId branchId _ =
+                registrations.Add("current", repositoryId, branchId)
+                Task.CompletedTask
+
+            /// Records parent-branch group registration in call order.
+            let registerParentBranch branchId parentBranchId _ =
+                registrations.Add("parent", branchId, parentBranchId)
+                Task.CompletedTask
+
+            let result =
+                (Watch.registerCurrentSignalRParentBranchWithClientsForWatchTests
+                    getParentBranch
+                    registerCurrentBranch
+                    registerParentBranch
+                    CancellationToken.None)
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Ok parentBranch -> parentBranch.BranchId |> should equal parentId
+            | Error error -> Assert.Fail($"Expected successful SignalR branch registration: {error}")
+
+            registrations.ToArray()
+            |> should
+                equal
+                [|
+                    "current", repositoryId, branchId
+                    "parent", branchId, parentId
+                |]
+
+            let subscription = Watch.signalRBranchSubscriptionForWatchTests ()
+
+            subscription.BranchId |> should equal branchId
+
+            subscription.ParentBranchId
+            |> should equal parentId)
+
     /// Verifies that reconnect refresh invokes registration and clears local trust when registration fails.
     [<Test>]
     let ``signalr reconnect refresh reruns current branch registration and fails closed`` () =

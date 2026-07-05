@@ -98,6 +98,12 @@ module Notification =
             items[CurrentBranchGroupItemKey] <- nextGroupKey
         }
 
+    /// Clears per-connection current-branch bookkeeping while leaving SignalR to clean up group membership on disconnect.
+    let internal clearCurrentBranchGroupMembershipState (items: IDictionary<obj, obj>) =
+        match isNull items with
+        | true -> false
+        | false -> items.Remove CurrentBranchGroupItemKey
+
     /// Checks whether the caller can subscribe to same-branch notifications for the stored branch identity.
     let internal canRegisterCurrentBranchSubscription
         (evaluator: IGracePermissionEvaluator)
@@ -158,6 +164,22 @@ module Notification =
                     this.Context.ConnectionId
                 )
             }
+
+        /// Clears per-connection current-branch bookkeeping during normal SignalR disconnect.
+        override this.OnDisconnectedAsync(ex: Exception) =
+            let items = this.Context.Items
+            let connectionId = this.Context.ConnectionId
+            let cleared = clearCurrentBranchGroupMembershipState items
+
+            if cleared then
+                log.LogInformation(
+                    "{CurrentInstant}: Node: {HostName}; ConnectionId: {ConnectionId} cleared current-branch SignalR subscription state on disconnect.",
+                    getCurrentInstantExtended (),
+                    getMachineName,
+                    connectionId
+                )
+
+            ``base``.OnDisconnectedAsync(ex)
 
         /// Adds the current SignalR connection to the repository group used for repository-wide notifications.
         member this.RegisterRepository(repositoryId: RepositoryId) =
