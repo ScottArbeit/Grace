@@ -141,20 +141,66 @@ function Test-BodyMentionsHead {
     return $Body.Contains($CurrentHeadSha) -or $Body.Contains($CurrentHeadSha.Substring(0, 7))
 }
 
+function ConvertFrom-GitHubUtcTimestamp {
+    param(
+        [Parameter(Mandatory = $true)]
+        [object] $Timestamp
+    )
+
+    if ($Timestamp -is [DateTimeOffset]) {
+        return ([DateTimeOffset]$Timestamp).ToUniversalTime()
+    }
+
+    if ($Timestamp -is [DateTime]) {
+        $dateTime = [DateTime]$Timestamp
+        if ($dateTime.Kind -eq [DateTimeKind]::Unspecified) {
+            $dateTime = [DateTime]::SpecifyKind($dateTime, [DateTimeKind]::Utc)
+        }
+
+        return ([DateTimeOffset]$dateTime.ToUniversalTime())
+    }
+
+    $timestampText = [string]$Timestamp
+    if ([string]::IsNullOrWhiteSpace($timestampText)) {
+        throw 'GitHub UTC timestamp was empty.'
+    }
+
+    $styles = [System.Globalization.DateTimeStyles]::AssumeUniversal -bor
+        [System.Globalization.DateTimeStyles]::AdjustToUniversal
+    $formats = [string[]]@(
+        "yyyy-MM-dd'T'HH:mm:ss'Z'",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFF'Z'",
+        "yyyy-MM-dd'T'HH:mm:ssK",
+        "yyyy-MM-dd'T'HH:mm:ss.FFFFFFFK"
+    )
+
+    $parsed = [DateTimeOffset]::MinValue
+    if ([DateTimeOffset]::TryParseExact(
+            $timestampText,
+            $formats,
+            [System.Globalization.CultureInfo]::InvariantCulture,
+            $styles,
+            [ref]$parsed)) {
+        return $parsed.ToUniversalTime()
+    }
+
+    throw "Could not parse GitHub UTC timestamp '$timestampText'."
+}
+
 function Test-TimestampOnOrAfter {
     param(
         [AllowNull()]
-        [string] $Timestamp,
+        [object] $Timestamp,
 
         [Parameter(Mandatory = $true)]
         [DateTimeOffset] $ReferenceTime
     )
 
-    if ([string]::IsNullOrWhiteSpace($Timestamp)) {
+    if ($null -eq $Timestamp -or ($Timestamp -is [string] -and [string]::IsNullOrWhiteSpace([string]$Timestamp))) {
         return $false
     }
 
-    return [DateTimeOffset]::Parse($Timestamp).ToUniversalTime() -ge $ReferenceTime
+    return (ConvertFrom-GitHubUtcTimestamp -Timestamp $Timestamp) -ge $ReferenceTime
 }
 
 try {
@@ -239,14 +285,15 @@ query($owner: String!, $name: String!, $number: Int!) {
     $lastCommit = @($pr.commits.nodes) | Select-Object -Last 1
     $commitTimeText = $null
     if ($null -ne $lastCommit -and $null -ne $lastCommit.commit) {
-        $commitTimeText = [string]$lastCommit.commit.committedDate
+        $commitTimeText = $lastCommit.commit.committedDate
     }
 
-    if ([string]::IsNullOrWhiteSpace($commitTimeText)) {
+    if ($null -eq $commitTimeText -or
+        ($commitTimeText -is [string] -and [string]::IsNullOrWhiteSpace([string]$commitTimeText))) {
         throw 'The pull request head commit timestamp could not be resolved.'
     }
 
-    $commitTime = [DateTimeOffset]::Parse($commitTimeText).ToUniversalTime()
+    $commitTime = ConvertFrom-GitHubUtcTimestamp -Timestamp $commitTimeText
     $now = [DateTimeOffset]::UtcNow
     $elapsedMinutes = ($now - $commitTime).TotalMinutes
 
@@ -254,8 +301,8 @@ query($owner: String!, $name: String!, $number: Int!) {
         (Test-IsCodexAuthor -Author $_.author) -and
         (
             (Test-BodyMentionsHead -Body ([string]$_.body) -CurrentHeadSha $currentHeadSha) -or
-            (Test-TimestampOnOrAfter -Timestamp ([string]$_.createdAt) -ReferenceTime $commitTime) -or
-            (Test-TimestampOnOrAfter -Timestamp ([string]$_.updatedAt) -ReferenceTime $commitTime)
+            (Test-TimestampOnOrAfter -Timestamp $_.createdAt -ReferenceTime $commitTime) -or
+            (Test-TimestampOnOrAfter -Timestamp $_.updatedAt -ReferenceTime $commitTime)
         )
     }
 
