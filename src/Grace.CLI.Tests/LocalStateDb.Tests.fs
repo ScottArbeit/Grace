@@ -187,6 +187,7 @@ module LocalStateDbTests =
             BranchId = configuration.BranchId
             WorkspaceRoot = configuration.RootDirectory
             WatchRoot = configuration.RootDirectory
+            PathComparison = StringComparison.Ordinal
             RootDirectoryId = DirectoryVersionId("11111111-1111-1111-1111-111111111111")
             RootDirectoryBlake3Hash = Blake3Hash "test-root-blake3"
             WatchMode = "repository-root"
@@ -868,6 +869,81 @@ module LocalStateDbTests =
 
                 let! appliedThrough = LocalStateDb.readWatchJournalAppliedThroughSequence configuration.GraceStatusFile
                 appliedThrough |> should equal 2L
+            })
+
+    /// Verifies that startup recovery uses the repository path comparison when matching durable replay roots.
+    [<Test>]
+    let ``watch journal startup recovery matches roots with repository path comparison`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = { watchJournalScope configuration with PathComparison = StringComparison.OrdinalIgnoreCase }
+
+                let differentlyCasedScope =
+                    { scope with WorkspaceRoot = configuration.RootDirectory.ToUpperInvariant(); WatchRoot = configuration.RootDirectory.ToUpperInvariant() }
+
+                let caseSensitiveScope = { watchJournalScope configuration with PathComparison = StringComparison.Ordinal }
+
+                let! sequences =
+                    LocalStateDb.appendWatchJournalObservations
+                        configuration.GraceStatusFile
+                        [
+                            scopedWatchJournalObservation differentlyCasedScope DifferenceType.Change FileSystemEntryType.File "compatible.txt"
+                        ]
+
+                let! insensitiveRecovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
+
+                sequences |> should equal [| 1L |]
+
+                insensitiveRecovery.QuarantinedRows
+                |> should haveLength 0
+
+                insensitiveRecovery.CompatibleReplayRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath)
+                |> should equal [| 1L, RelativePath "compatible.txt" |]
+
+                let! sensitiveRecovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile caseSensitiveScope
+
+                sensitiveRecovery.QuarantinedRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some "compatible.txt", Some "wrong workspace root"
+                    |]
+            })
+
+    /// Verifies that startup recovery rejects non-canonical durable replay paths before they can become status keys.
+    [<Test>]
+    let ``watch journal startup recovery quarantines non canonical relative paths`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let scope = watchJournalScope configuration
+
+                let! sequences =
+                    LocalStateDb.appendWatchJournalObservations
+                        configuration.GraceStatusFile
+                        [
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "./file.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "sub/../file.txt"
+                            scopedWatchJournalObservation scope DifferenceType.Change FileSystemEntryType.File "src/app.fs"
+                        ]
+
+                let! recovery = LocalStateDb.recoverWatchJournalForStartup configuration.GraceStatusFile scope
+
+                sequences |> should equal [| 1L; 2L; 3L |]
+
+                recovery.QuarantinedRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some "./file.txt", Some "relative path is not canonical"
+                        2L, Some "sub/../file.txt", Some "relative path is not canonical"
+                    |]
+
+                recovery.CompatibleReplayRows
+                |> Array.map (fun row -> row.Sequence, row.RelativePath)
+                |> should equal [| 3L, RelativePath "src/app.fs" |]
             })
 
     /// Verifies that durable replay shape classification rejects rows Watch cannot emit before status mutation.

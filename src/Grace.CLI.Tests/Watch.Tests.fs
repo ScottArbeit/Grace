@@ -418,6 +418,7 @@ module WatchTests =
             BranchId = current.BranchId
             WorkspaceRoot = current.RootDirectory
             WatchRoot = current.RootDirectory
+            PathComparison = StringComparison.Ordinal
             RootDirectoryId = DirectoryVersionId("11111111-1111-1111-1111-111111111111")
             RootDirectoryBlake3Hash = Blake3Hash "test-root-blake3"
             WatchMode = "repository-root"

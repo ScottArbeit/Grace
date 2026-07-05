@@ -1297,6 +1297,7 @@ module LocalStateDb =
             BranchId: BranchId
             WorkspaceRoot: string
             WatchRoot: string
+            PathComparison: StringComparison
             RootDirectoryId: DirectoryVersionId
             RootDirectoryBlake3Hash: Blake3Hash
             WatchMode: string
@@ -1896,21 +1897,15 @@ module LocalStateDb =
         with
         | ex -> Error ex.Message
 
-    /// Uses platform path rules when comparing workspace and watch roots from durable journal rows.
-    let private tryWatchJournalRootEquals expected actual =
-        let comparison =
-            if OperatingSystem.IsWindows() then
-                StringComparison.OrdinalIgnoreCase
-            else
-                StringComparison.Ordinal
-
+    /// Uses repository path rules when comparing workspace and watch roots from durable journal rows.
+    let private tryWatchJournalRootEquals comparison expected actual =
         match tryNormalizeWatchJournalRoot expected, tryNormalizeWatchJournalRoot actual with
         | Ok normalizedExpected, Ok normalizedActual -> Ok(String.Equals(normalizedExpected, normalizedActual, comparison))
         | Error reason, _
         | _, Error reason -> Error reason
 
-    /// Rejects persisted relative paths that would escape the current watch root during replay.
-    let private tryFindWatchJournalRelativePathIncompatibility watchRoot relativePath =
+    /// Rejects persisted relative paths that would escape the current watch root or use non-canonical replay spelling.
+    let private tryFindWatchJournalRelativePathIncompatibility watchRoot comparison relativePath =
         try
             if String.IsNullOrWhiteSpace(relativePath) then
                 Some "invalid relative path"
@@ -1925,12 +1920,6 @@ module LocalStateDb =
                             .GetFullPath(Path.Combine(normalizedWatchRoot, relativePath))
                             .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
 
-                    let comparison =
-                        if OperatingSystem.IsWindows() then
-                            StringComparison.OrdinalIgnoreCase
-                        else
-                            StringComparison.Ordinal
-
                     let rootWithSeparator =
                         normalizedWatchRoot
                         + string Path.DirectorySeparatorChar
@@ -1938,7 +1927,21 @@ module LocalStateDb =
                     if String.Equals(candidatePath, normalizedWatchRoot, comparison) then
                         Some "watch root path cannot be replayed as a status difference"
                     elif candidatePath.StartsWith(rootWithSeparator, comparison) then
-                        None
+                        let canonicalRelativePath =
+                            Path
+                                .GetRelativePath(normalizedWatchRoot, candidatePath)
+                                .Replace(Path.DirectorySeparatorChar, '/')
+                                .Replace(Path.AltDirectorySeparatorChar, '/')
+
+                        let normalizedRelativePath =
+                            relativePath
+                                .Replace(Path.DirectorySeparatorChar, '/')
+                                .Replace(Path.AltDirectorySeparatorChar, '/')
+
+                        if String.Equals(normalizedRelativePath, canonicalRelativePath, StringComparison.Ordinal) then
+                            None
+                        else
+                            Some "relative path is not canonical"
                     else
                         Some "relative path escapes watch root"
         with
@@ -2011,7 +2014,7 @@ module LocalStateDb =
 
                 match workspaceRoot with
                 | Some value ->
-                    match tryWatchJournalRootEquals scope.WorkspaceRoot value with
+                    match tryWatchJournalRootEquals scope.PathComparison scope.WorkspaceRoot value with
                     | Ok true -> None
                     | Ok false -> Some "wrong workspace root"
                     | Error _ -> Some "invalid workspace root"
@@ -2019,7 +2022,7 @@ module LocalStateDb =
 
                 match watchRoot with
                 | Some value ->
-                    match tryWatchJournalRootEquals scope.WatchRoot value with
+                    match tryWatchJournalRootEquals scope.PathComparison scope.WatchRoot value with
                     | Ok true -> None
                     | Ok false -> Some "wrong watch root"
                     | Error _ -> Some "invalid watch root"
@@ -2052,9 +2055,9 @@ module LocalStateDb =
                 else
                     Some "invalid entry type"
 
-                tryFindWatchJournalRelativePathIncompatibility scope.WatchRoot relativePath
-
                 tryFindWatchJournalReplayShapeIncompatibility differenceType entryType relativePath
+
+                tryFindWatchJournalRelativePathIncompatibility scope.WatchRoot scope.PathComparison relativePath
             |]
 
         checks |> Array.tryPick id

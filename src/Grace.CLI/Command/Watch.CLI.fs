@@ -1407,6 +1407,7 @@ module Watch =
             BranchId = Current().BranchId
             WorkspaceRoot = Path.GetFullPath(Current().RootDirectory)
             WatchRoot = Path.GetFullPath(Current().RootDirectory)
+            PathComparison = watchPathComparison
             RootDirectoryId = status.RootDirectoryId
             RootDirectoryBlake3Hash = rootDirectoryBlake3HashForWatchJournal status
             WatchMode = "repository-root"
