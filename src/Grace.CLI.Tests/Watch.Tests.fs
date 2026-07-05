@@ -4318,30 +4318,27 @@ module WatchTests =
         withTempRepo (fun _ ->
             let relativePath = "quarantined-startup-replay-delete.txt"
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
 
             try
-                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+                let replaySequences =
+                    (LocalStateDb.appendWatchJournalObservations
+                        dbPath
+                        [|
+                            {
+                                Scope = scope
+                                DifferenceType = DifferenceType.Delete
+                                EntryType = FileSystemEntryType.File
+                                RelativePath = RelativePath relativePath
+                            }
+                        |])
+                        .GetAwaiter()
+                        .GetResult()
 
-                Watch.setWatchJournalStartupClientsForWatchTests
-                    (fun _ ->
-                        task {
-                            return
-                                {
-                                    LocalStateDb.WatchJournalStartupRecovery.DbPath = Current().GraceStatusFile
-                                    AppliedThroughSequence = 0L
-                                    CompatibleReplayRows =
-                                        [|
-                                            {
-                                                LocalStateDb.WatchJournalPendingReplay.Sequence = 101L
-                                                DifferenceType = DifferenceType.Delete
-                                                EntryType = FileSystemEntryType.File
-                                                RelativePath = RelativePath relativePath
-                                            }
-                                        |]
-                                    QuarantinedRows = Array.empty
-                                }
-                        })
-                    (fun _ -> Task.FromResult(()))
+                replaySequences |> should equal [| 1L |]
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
 
                 (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
                     .GetAwaiter()
@@ -4351,12 +4348,35 @@ module WatchTests =
                 let difference = FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath relativePath)
 
                 Watch.tryPeekStartupReplaySequenceForWatchTests difference
-                |> should equal (Some 101L)
+                |> should equal (Some 1L)
 
                 Watch.requestGraceWatchExplicitResyncForWatchTests "test replay-key quarantine"
 
                 Watch.tryPeekStartupReplaySequenceForWatchTests difference
                 |> should equal None
+
+                let pendingSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "pending" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                pendingSnapshot.RowCount |> should equal 0
+
+                pendingSnapshot.AppliedThroughSequence
+                |> should equal 1L
+
+                let quarantinedSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                quarantinedSnapshot.Rows
+                |> Array.map (fun row -> row.Sequence, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L, Some "confidence loss discarded startup replay work: test replay-key quarantine"
+                    |]
             finally
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())
@@ -4368,32 +4388,29 @@ module WatchTests =
             let relativePath = "same-path-after-quarantine-delete.txt"
             let filePath = Path.Combine(root, relativePath)
             let status = graceStatusTracking [| relativePath |] Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
             let appendedDifferences = ResizeArray<FileSystemDifference>()
             let advancedSequences = ResizeArray<int64>()
 
             try
-                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+                let replaySequences =
+                    (LocalStateDb.appendWatchJournalObservations
+                        dbPath
+                        [|
+                            {
+                                Scope = scope
+                                DifferenceType = DifferenceType.Delete
+                                EntryType = FileSystemEntryType.File
+                                RelativePath = RelativePath relativePath
+                            }
+                        |])
+                        .GetAwaiter()
+                        .GetResult()
 
-                Watch.setWatchJournalStartupClientsForWatchTests
-                    (fun _ ->
-                        task {
-                            return
-                                {
-                                    LocalStateDb.WatchJournalStartupRecovery.DbPath = Current().GraceStatusFile
-                                    AppliedThroughSequence = 0L
-                                    CompatibleReplayRows =
-                                        [|
-                                            {
-                                                LocalStateDb.WatchJournalPendingReplay.Sequence = 102L
-                                                DifferenceType = DifferenceType.Delete
-                                                EntryType = FileSystemEntryType.File
-                                                RelativePath = RelativePath relativePath
-                                            }
-                                        |]
-                                    QuarantinedRows = Array.empty
-                                }
-                        })
-                    (fun _ -> Task.FromResult(()))
+                replaySequences |> should equal [| 1L |]
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
 
                 (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
                     .GetAwaiter()
@@ -4403,9 +4420,27 @@ module WatchTests =
                 let staleDifference = FileSystemDifference.Create DifferenceType.Delete FileSystemEntryType.File (RelativePath relativePath)
 
                 Watch.tryPeekStartupReplaySequenceForWatchTests staleDifference
-                |> should equal (Some 102L)
+                |> should equal (Some 1L)
 
                 Watch.requestGraceWatchExplicitResyncForWatchTests "test same-path replay quarantine"
+
+                let afterQuarantineSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "all" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                afterQuarantineSnapshot.AppliedThroughSequence
+                |> should equal 1L
+
+                afterQuarantineSnapshot.Rows
+                |> Array.map (fun row -> row.Sequence, row.State, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L,
+                        LocalStateDb.WatchJournalRowState.Quarantined,
+                        Some "confidence loss discarded startup replay work: test same-path replay quarantine"
+                    |]
 
                 /// Reads status needed while resync clears the confidence-loss boundary.
                 let readStatus () = Task.FromResult(status)
@@ -4455,12 +4490,12 @@ module WatchTests =
                         for observation in observationsArray do
                             appendedDifferences.Add(FileSystemDifference.Create observation.DifferenceType observation.EntryType observation.RelativePath)
 
-                        Task.FromResult([| 202L |]))
+                        LocalStateDb.appendWatchJournalObservations dbPath observations)
                     (fun sequences ->
                         for sequence in sequences do
                             advancedSequences.Add(sequence)
 
-                        Task.FromResult(202L))
+                        LocalStateDb.advanceWatchJournalAppliedThroughContiguousSequences dbPath sequences)
 
                 Watch.OnDeleted(deletedEvent filePath)
 
@@ -4480,7 +4515,27 @@ module WatchTests =
                 |> should equal [| staleDifference |]
 
                 advancedSequences.ToArray()
-                |> should equal [| 202L |]
+                |> should equal [| 2L |]
+
+                let finalSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "all" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                finalSnapshot.AppliedThroughSequence
+                |> should equal 2L
+
+                finalSnapshot.Rows
+                |> Array.sortBy (fun row -> row.Sequence)
+                |> Array.map (fun row -> row.Sequence, row.State, row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        1L,
+                        LocalStateDb.WatchJournalRowState.Quarantined,
+                        Some "confidence loss discarded startup replay work: test same-path replay quarantine"
+                        2L, LocalStateDb.WatchJournalRowState.Applied, None
+                    |]
 
                 Watch.tryPeekStartupReplaySequenceForWatchTests staleDifference
                 |> should equal None

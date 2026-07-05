@@ -1851,14 +1851,23 @@ module Watch =
     /// Reports the replay sequence queued for a difference in startup recovery tests.
     let internal tryPeekStartupReplaySequenceForWatchTests difference = tryPeekStartupReplaySequence difference
 
-    /// Removes replay metadata for one pending difference after it has reached a terminal local outcome.
-    let private clearStartupReplaySequenceForDifference (difference: FileSystemDifference) =
+    /// Removes replay metadata for one pending difference and returns the durable rows it represented.
+    let private takeStartupReplaySequencesForDifference (difference: FileSystemDifference) =
         let key = pendingStatusDifferenceReplayKey difference
         let mutable queue = Unchecked.defaultof<Queue<int64>>
 
         if pendingStatusDifferenceReplaySequences.TryGetValue(key, &queue) then
             pendingStatusDifferenceReplaySequences.Remove(key)
             |> ignore
+
+            queue.ToArray()
+        else
+            Array.empty<int64>
+
+    /// Removes replay metadata for one pending difference after it has reached a terminal local outcome.
+    let private clearStartupReplaySequenceForDifference (difference: FileSystemDifference) =
+        takeStartupReplaySequencesForDifference difference
+        |> ignore
 
     /// Consumes replay sequence metadata only after the corresponding pending status difference is cleared.
     let private clearStartupReplaySequences (differences: seq<FileSystemDifference>) =
@@ -1942,20 +1951,44 @@ module Watch =
                 quarantineWatchObservation reason "status-trigger" pendingTrigger.Key
                 quarantinedCount <- quarantinedCount + 1
 
-        let pendingDifferences =
+        let pendingDifferences, startupReplaySequencesToQuarantine =
             lock pendingStatusDifferencesLock (fun () ->
                 ensureStartupReplaySequenceComparer ()
                 let snapshot = pendingStatusDifferences.ToArray()
+                let replaySequences = ResizeArray<int64>()
 
                 for pendingDifference in snapshot do
-                    clearStartupReplaySequenceForDifference pendingDifference
+                    replaySequences.AddRange(takeStartupReplaySequencesForDifference pendingDifference)
 
                 pendingStatusDifferences.Clear()
-                snapshot)
+                snapshot, replaySequences.ToArray())
 
         for pendingDifference in pendingDifferences do
             quarantineWatchObservation reason "status-difference" $"{pendingDifference.RelativePath}"
             quarantinedCount <- quarantinedCount + 1
+
+        let startupReplayRowsDurablyTerminal =
+            if startupReplaySequencesToQuarantine.Length > 0 then
+                try
+                    let advancedThrough =
+                        (quarantineWatchJournalSequencesForWatch startupReplaySequencesToQuarantine $"confidence loss discarded startup replay work: {reason}")
+                            .GetAwaiter()
+                            .GetResult()
+
+                    logToAnsiConsole
+                        Colors.Verbose
+                        $"Grace Watch durably quarantined {startupReplaySequencesToQuarantine.Length} startup replay journal rows through applied boundary {advancedThrough} after confidence loss."
+
+                    true
+                with
+                | ex ->
+                    logToAnsiConsole
+                        Colors.Error
+                        $"Grace Watch could not durably quarantine startup replay journal rows after confidence loss; Watch will remain suspended so the old startup replay sequence cannot block later applied-boundary advancement silently: {Markup.Escape(ex.Message)}."
+
+                    false
+            else
+                true
 
         uploadedFileVersions.Clear()
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
@@ -1963,6 +1996,8 @@ module Watch =
 
         if quarantinedCount > 0 then
             logToAnsiConsole Colors.Important $"Grace Watch quarantined {quarantinedCount} pending observations after confidence loss: {reason}."
+
+        startupReplayRowsDurablyTerminal
 
     /// Reads the active explicit-resync attempt token used to reject stale recovery side effects.
     let private currentGraceWatchResyncAttempt () = Volatile.Read(&graceWatchResyncGeneration)
@@ -2271,7 +2306,8 @@ module Watch =
     /// Suspends only the resync attempt that observed the failure, preserving newer overflow requests.
     let private suspendGraceWatchAttemptAfterFailedRecovery attempt reason =
         if isGraceWatchResyncAttemptActive attempt then
-            quarantinePendingWatchWork reason
+            quarantinePendingWatchWork reason |> ignore
+
             setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
 
             if tryClearGraceWatchResyncAttempt attempt then
@@ -2286,14 +2322,24 @@ module Watch =
 
     /// Requests a scan-derived resync and quarantines observations captured under the previous root confidence.
     let private requestGraceWatchExplicitResync reason =
-        quarantinePendingWatchWork reason
+        let startupReplayRowsDurablyTerminal = quarantinePendingWatchWork reason
 
         Interlocked.Increment(&graceWatchResyncGeneration)
         |> ignore
 
-        setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+        if startupReplayRowsDurablyTerminal then
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Resynchronizing
+        else
+            setGraceWatchRuntimeMode GraceWatchRuntimeMode.Suspended
+
         publishGraceWatchResyncRequired ()
-        logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
+
+        if startupReplayRowsDurablyTerminal then
+            logToAnsiConsole Colors.Important $"Grace Watch requires an explicit resync before incremental observations can resume: {reason}."
+        else
+            logToAnsiConsole
+                Colors.Error
+                $"Grace Watch suspended incremental processing because startup replay journal rows could not be made terminal after confidence loss: {reason}."
 
     /// Requests explicit resync for tests that exercise confidence-loss and deferred-observation behavior.
     let internal requestGraceWatchExplicitResyncForWatchTests reason = requestGraceWatchExplicitResync reason
