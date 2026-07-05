@@ -1625,29 +1625,34 @@ module LocalStateDb =
             then
                 return { DbPath = normalizedPath; AppliedThroughSequence = 0L; PendingRowCount = 0L }
             else
-                let inspection = inspectReadOnly normalizedPath
+                let missingPartialWalSidecars = missingPartialWalSidecars normalizedPath
 
-                if not inspection.OpenedReadOnly then
-                    let detail =
-                        inspection.OpenError
-                        |> Option.defaultValue "local state database does not exist or could not be opened read-only."
+                if missingPartialWalSidecars.Length > 0 then
+                    let missingNames = String.concat ", " missingPartialWalSidecars
 
-                    raise (InvalidDataException($"Watch journal pending-work inspection requires a readable local state database: {detail}"))
-
-                if inspection.SchemaVersion <> Some SchemaVersion
-                   || inspection.MissingRequiredTables.Length > 0
-                   || inspection.MissingRequiredIndexes.Length > 0
-                   || inspection.WatchJournalShapeValid <> Some true
-                   || inspection.WatchJournalAppliedThroughMetadataValid
-                      <> Some true then
-                    raise (
-                        InvalidDataException(
-                            "Watch journal pending-work inspection requires a healthy local state database; run grace doctor or a writable command to repair local state."
-                        )
-                    )
+                    raise (InvalidDataException($"Watch journal pending-work inspection requires a complete WAL sidecar set; missing: {missingNames}."))
 
                 let immutableSnapshot = shouldUseImmutableReadOnlySnapshot normalizedPath
                 use connection = openReadOnlyConnection normalizedPath immutableSnapshot
+
+                let schemaVersion =
+                    try
+                        readSchemaVersionReadOnly connection
+                    with
+                    | _ -> None
+
+                if
+                    schemaVersion <> Some SchemaVersion
+                    || not (tableExists connection "watch_journal")
+                    || not (hasRequiredWatchJournalShape connection)
+                    || not (hasPersistedValidWatchJournalAppliedThroughSequenceMeta connection)
+                then
+                    raise (
+                        InvalidDataException(
+                            "Watch journal pending-work inspection requires readable journal schema and applied-boundary metadata; run grace doctor or a writable command to repair local state."
+                        )
+                    )
+
                 let appliedThroughSequence = readWatchJournalAppliedThroughSequenceInternal connection
                 let pendingRowCount = countPendingWatchJournalRows connection appliedThroughSequence
 

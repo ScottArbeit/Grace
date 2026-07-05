@@ -10766,6 +10766,54 @@ module WatchTests =
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
 
+    /// Verifies durable-only journal evidence does not enter the processable Watch work branch.
+    [<Test>]
+    let ``watch durable-only pending journal evidence publishes without processing`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+            let mutable uploads = 0
+            let mutable statusApplies = 0
+
+            try
+                Watch.setWatchJournalStatusClientForWatchTests (fun () ->
+                    Task.FromResult(
+                        { LocalStateDb.WatchJournalPendingWorkSummary.DbPath = Current().GraceStatusFile; AppliedThroughSequence = 1L; PendingRowCount = 1L }
+                    ))
+
+                Services.setGraceWatchHasPendingWorkForStatus false
+
+                (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                (Watch.processChangedFilesWithClients
+                    (fun () -> Task.FromResult(status))
+                    (fun () -> Task.FromResult(status))
+                    (fun _ _ ->
+                        uploads <- uploads + 1
+                        Task.FromResult(()))
+                    (fun currentStatus _ -> Task.FromResult(Some currentStatus))
+                    scannerHostileDifferenceDiscovery
+                    (fun currentStatus _ _ ->
+                        statusApplies <- statusApplies + 1
+                        Task.FromResult(Some currentStatus))
+                    (fun _ _ _ -> Task.FromResult(()))
+                    (fun currentStatus currentDirectoryIds -> Services.updateGraceWatchInterprocessFile currentStatus currentDirectoryIds))
+                    .GetAwaiter()
+                    .GetResult()
+
+                uploads |> should equal 0
+                statusApplies |> should equal 0
+
+                readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+                |> should equal true
+
+                readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+                |> should equal false
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ())
+
     /// Verifies that watch check JSON exposes durable-pending degradation without changing stdout/stderr routing.
     [<Test>]
     let ``watch check json reports durable pending journal evidence`` () =

@@ -2108,17 +2108,21 @@ module Watch =
 
             true
 
-    /// Evaluates has pending watch work against parsed options and command state.
-    let private hasPendingWatchWork () =
+    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
+    let private hasProcessablePendingWatchWork () =
         isGraceWatchResyncPending ()
         || graceStatusHasChanged
-        || hasPendingDurableWatchJournalEvidence ()
         || not (
             filesToProcess.IsEmpty
             && directoriesToProcess.IsEmpty
             && statusUpdateTriggers.IsEmpty
             && not (hasPendingStatusDifferences ())
         )
+
+    /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
+    let private hasPendingWatchWork () =
+        hasProcessablePendingWatchWork ()
+        || hasPendingDurableWatchJournalEvidence ()
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -4115,7 +4119,7 @@ module Watch =
                     logToAnsiConsole
                         Colors.Error
                         $"Error in processChangedFiles resync: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
-            elif hasPendingWatchWork () then
+            elif hasProcessablePendingWatchWork () then
                 try
                     let correlationId = generateCorrelationId ()
 
@@ -4397,6 +4401,8 @@ module Watch =
                     logToAnsiConsole
                         Colors.Error
                         $"Error in processChangedFiles: Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+            elif hasPendingDurableWatchJournalEvidence () then
+                publishPendingWatchWorkTransitionIfNeeded ()
             // Refresh the file every (just under) 5 minutes to indicate that `grace watch` is still alive.
             elif
                 graceWatchStatusUpdateTime
@@ -4662,7 +4668,7 @@ module Watch =
             let mutable attemptedStartupCompletion = false
 
             if
-                not (hasPendingWatchWork ())
+                not (hasProcessablePendingWatchWork ())
                 && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
             then
                 attemptedStartupCompletion <- true

@@ -136,6 +136,10 @@ module BranchCommandTests =
     let private branchSwitchWatchInspection persistedMode status =
         { Exists = true; Status = Some status; PersistedMode = persistedMode; SafetyFlags = status.SafetyFlags; ReadError = None }
 
+    /// Builds clean durable journal evidence for branch switch preflight tests.
+    let private cleanPendingJournalSummary () : LocalStateDb.WatchJournalPendingWorkSummary =
+        { DbPath = Current().GraceStatusFile; AppliedThroughSequence = 0L; PendingRowCount = 0L }
+
     /// Writes a Watch IPC status snapshot for branch switch preflight tests.
     let private writeBranchSwitchWatchStatus (fileName: string) status =
         Directory.CreateDirectory(Path.GetDirectoryName(fileName))
@@ -154,6 +158,7 @@ module BranchCommandTests =
                     fun () ->
                         inspected <- true
                         Task.FromResult inspection
+                ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
             }
 
         let result =
@@ -260,6 +265,7 @@ module BranchCommandTests =
                             |> should equal false
 
                             Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let result =
@@ -310,6 +316,7 @@ module BranchCommandTests =
                             File.Exists(switchLeaseFile) |> should equal true
 
                             Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let result =
@@ -359,6 +366,7 @@ module BranchCommandTests =
                         fun () ->
                             inspected <- true
                             Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let result =
@@ -422,6 +430,7 @@ module BranchCommandTests =
                         fun () ->
                             inspected <- true
                             Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let result =
@@ -500,6 +509,7 @@ module BranchCommandTests =
                             |> should equal false
 
                             Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) dirtyStatus)
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let result =
@@ -539,6 +549,7 @@ module BranchCommandTests =
                     UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
                     InspectWatchStatus =
                         fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let operation =
@@ -582,6 +593,7 @@ module BranchCommandTests =
                             false
                     InspectWatchStatus =
                         fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let updateTask =
@@ -616,6 +628,7 @@ module BranchCommandTests =
                     UpdateMarkerExists = fun () -> File.Exists(updateMarkerFile)
                     InspectWatchStatus =
                         fun () -> Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary = fun () -> Task.FromResult(cleanPendingJournalSummary ())
                 }
 
             let operation =
@@ -767,6 +780,46 @@ module BranchCommandTests =
                 inspected |> should equal true
             finally
                 if File.Exists(currentIpcFile) then File.Delete(currentIpcFile))
+
+    /// Verifies durable journal evidence blocks branch switch even before Watch republishes dirty IPC.
+    [<Test>]
+    let ``branch switch Watch preflight refuses durable pending rows after clean IPC`` () =
+        withTempBranchSwitchRepo (fun () ->
+            let mutable inspected = false
+            let mutable inspectedJournal = false
+
+            let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
+                {
+                    UpdateMarkerExists = fun () -> false
+                    InspectWatchStatus =
+                        fun () ->
+                            inspected <- true
+                            Task.FromResult(branchSwitchWatchInspection (Some GraceWatchRuntimeMode.HealthyIncremental) (branchSwitchWatchStatus ()))
+                    ReadPendingJournalSummary =
+                        fun () ->
+                            inspectedJournal <- true
+
+                            Task.FromResult(
+                                { DbPath = Current().GraceStatusFile; AppliedThroughSequence = 7L; PendingRowCount = 2L }: LocalStateDb.WatchJournalPendingWorkSummary
+                            )
+                }
+
+            let result =
+                (Branch.runBranchSwitchWatchCleanPreflight operations correlationId)
+                    .GetAwaiter()
+                    .GetResult()
+
+            match result with
+            | Error error ->
+                error.Error
+                |> should contain "Branch switch refused before mutation"
+
+                error.Error
+                |> should contain "unresolved durable journal rows"
+            | Ok _ -> Assert.Fail("Expected durable pending journal evidence to refuse branch switch.")
+
+            inspected |> should equal true
+            inspectedJournal |> should equal true)
 
     /// Verifies that untrusted Watch states refuse before branch switch marker creation.
     [<Test>]

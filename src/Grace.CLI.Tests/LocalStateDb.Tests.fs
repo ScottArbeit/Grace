@@ -838,6 +838,24 @@ module LocalStateDbTests =
                 cleanSummary.HasPendingRows |> should equal false
             })
 
+    /// Verifies the pending-work summary avoids full diagnostic schema/index inspection in Watch hot paths.
+    [<Test>]
+    let ``watch journal pending work summary ignores unrelated diagnostic index drift`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let pendingObservation = watchJournalObservation DifferenceType.Change FileSystemEntryType.File "pending.txt"
+                let! _ = LocalStateDb.appendWatchJournalObservations configuration.GraceStatusFile [ pendingObservation ]
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                executeNonQuery connection "DROP INDEX IF EXISTS ix_status_files_sha256;"
+
+                let! summary = LocalStateDb.readWatchJournalPendingWorkSummary configuration.GraceStatusFile
+
+                summary.AppliedThroughSequence |> should equal 0L
+                summary.PendingRowCount |> should equal 1L
+                summary.HasPendingRows |> should equal true
+            })
+
     /// Verifies that startup recovery returns compatible pending rows without mutating them before Watch replays them.
     [<Test>]
     let ``watch journal startup recovery returns compatible pending rows`` () =
