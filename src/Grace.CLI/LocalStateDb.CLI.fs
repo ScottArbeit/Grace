@@ -417,7 +417,7 @@ module LocalStateDb =
         reader.Read()
 
     /// Captures the SQLite column shape that writable schema checks must trust before using a table.
-    type private TableColumnShape = { Name: string; TypeName: string; NotNull: bool; PrimaryKeyOrdinal: int }
+    type private TableColumnShape = { Name: string; TypeName: string; NotNull: bool; DefaultValueSql: string option; PrimaryKeyOrdinal: int }
 
     /// Reads SQLite table column metadata so schema-version checks can reject partially created local databases.
     let private readTableColumnShapes (connection: SqliteConnection) tableName =
@@ -428,7 +428,13 @@ module LocalStateDb =
 
         while reader.Read() do
             columns.Add(
-                { Name = reader.GetString(1); TypeName = reader.GetString(2); NotNull = reader.GetInt32(3) <> 0; PrimaryKeyOrdinal = reader.GetInt32(5) }
+                {
+                    Name = reader.GetString(1)
+                    TypeName = reader.GetString(2)
+                    NotNull = reader.GetInt32(3) <> 0
+                    DefaultValueSql = if reader.IsDBNull(4) then None else Some(reader.GetString(4))
+                    PrimaryKeyOrdinal = reader.GetInt32(5)
+                }
             )
 
         columns |> Seq.toArray
@@ -692,15 +698,30 @@ module LocalStateDb =
     let private hasRequiredWatchJournalShape (connection: SqliteConnection) =
         let columns = readTableColumnShapes connection "watch_journal"
 
+        let expectedColumnNames =
+            [|
+                "sequence"
+                "created_at_unix_ticks"
+                "difference_type"
+                "entry_type"
+                "relative_path"
+            |]
+
         let tryFindColumn columnName =
             columns
             |> Array.tryFind (fun column -> StringComparer.OrdinalIgnoreCase.Equals(column.Name, columnName))
+
+        let hasExpectedColumnSet =
+            columns.Length = expectedColumnNames.Length
+            && expectedColumnNames
+               |> Array.forall (fun columnName -> tryFindColumn columnName |> Option.isSome)
 
         let hasSequenceColumn =
             match tryFindColumn "sequence" with
             | Some column ->
                 isIntegerColumnType column.TypeName
                 && column.PrimaryKeyOrdinal = 1
+                && column.DefaultValueSql.IsNone
             | None -> false
 
         let hasCreatedAtColumn =
@@ -709,6 +730,7 @@ module LocalStateDb =
                 isIntegerColumnType column.TypeName
                 && column.NotNull
                 && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
             | None -> false
 
         let hasRequiredTextColumn columnName =
@@ -717,9 +739,11 @@ module LocalStateDb =
                 isTextColumnType column.TypeName
                 && column.NotNull
                 && column.PrimaryKeyOrdinal = 0
+                && column.DefaultValueSql.IsNone
             | None -> false
 
-        hasSequenceColumn
+        hasExpectedColumnSet
+        && hasSequenceColumn
         && hasCreatedAtColumn
         && hasRequiredTextColumn "difference_type"
         && hasRequiredTextColumn "entry_type"

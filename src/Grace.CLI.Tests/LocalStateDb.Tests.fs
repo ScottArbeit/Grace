@@ -2227,6 +2227,59 @@ module LocalStateDbTests =
                 corruptAfter |> should equal (corruptBefore + 1)
             })
 
+    /// Verifies that ensure db initialized recreates current schema databases with append-incompatible journal columns.
+    [<Test>]
+    let ``ensureDbInitialized recreates schema v6 database with hidden required watch journal column`` () =
+        withTempDir (fun _ configuration ->
+            task {
+                let rootId = Guid.NewGuid()
+                let rootHash = "required-journal-column-root-hash"
+                let ticks = 1234567890L
+
+                seedCurrentSchemaWithStatusMeta configuration.GraceStatusFile rootId rootHash "root-blake3" ticks
+
+                do
+                    use seedConnection = openRawConnection configuration.GraceStatusFile
+                    executeNonQuery seedConnection "ALTER TABLE watch_journal RENAME TO watch_journal_valid;"
+
+                    executeNonQuery
+                        seedConnection
+                        "CREATE TABLE watch_journal (sequence INTEGER PRIMARY KEY AUTOINCREMENT, created_at_unix_ticks INTEGER NOT NULL, difference_type TEXT NOT NULL, entry_type TEXT NOT NULL, relative_path TEXT NOT NULL, hidden_required TEXT NOT NULL);"
+
+                    executeNonQuery
+                        seedConnection
+                        "INSERT INTO watch_journal (sequence, created_at_unix_ticks, difference_type, entry_type, relative_path, hidden_required) SELECT sequence, created_at_unix_ticks, difference_type, entry_type, relative_path, 'seeded' FROM watch_journal_valid;"
+
+                    executeNonQuery seedConnection "DROP TABLE watch_journal_valid;"
+
+                let corruptBefore =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                do! LocalStateDb.ensureDbInitialized configuration.GraceStatusFile
+
+                use connection = openRawConnection configuration.GraceStatusFile
+                let schemaVersion = executeScalarString connection "SELECT value FROM meta WHERE key = 'schema_version';"
+
+                let hiddenRequiredColumns =
+                    executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('watch_journal') WHERE name = 'hidden_required';"
+
+                let journalColumns = executeScalarInt connection "SELECT COUNT(*) FROM pragma_table_info('watch_journal');"
+
+                let appliedThrough = executeScalarString connection "SELECT value FROM meta WHERE key = 'AppliedThroughSequence';"
+
+                schemaVersion |> should equal "6"
+                hiddenRequiredColumns |> should equal 0
+                journalColumns |> should equal 5
+                appliedThrough |> should equal "0"
+
+                let corruptAfter =
+                    getCorruptBackups configuration.GraceStatusFile
+                    |> Array.length
+
+                corruptAfter |> should equal (corruptBefore + 1)
+            })
+
     /// Verifies that ensure db initialized recreates partial schema v4 database missing root blake3 column.
     [<Test>]
     let ``ensureDbInitialized recreates partial schema v4 database missing root blake3 column`` () =

@@ -3832,23 +3832,49 @@ module Watch =
                                 Task.FromResult(None)
                             elif statusDifferencesForApply.Applicable.Count > 0 then
                                 task {
-                                    try
-                                        let! sequences =
-                                            statusDifferencesForApply.Applicable
-                                            |> Seq.map journalObservationForDifference
-                                            |> appendWatchJournalObservationsForWatch
+                                    let! appendResult =
+                                        task {
+                                            try
+                                                let! sequences =
+                                                    statusDifferencesForApply.Applicable
+                                                    |> Seq.map journalObservationForDifference
+                                                    |> appendWatchJournalObservationsForWatch
 
+                                                return Ok sequences
+                                            with
+                                            | ex -> return Error ex
+                                        }
+
+                                    match appendResult with
+                                    | Ok sequences ->
                                         appendedWatchJournalSequences <- sequences
 
-                                        return!
-                                            updateGraceStatusFromDifferencesWhenTrusted
-                                                statusUpdateStillTrusted
-                                                updateGraceStatusFromDifferencesClient
-                                                graceStatus
-                                                statusDifferencesForApply.Applicable
-                                                correlationId
-                                    with
-                                    | ex ->
+                                        try
+                                            return!
+                                                updateGraceStatusFromDifferencesWhenTrusted
+                                                    statusUpdateStillTrusted
+                                                    updateGraceStatusFromDifferencesClient
+                                                    graceStatus
+                                                    statusDifferencesForApply.Applicable
+                                                    correlationId
+                                        with
+                                        | ex ->
+                                            let requiredAppliedThrough =
+                                                if appendedWatchJournalSequences.Length = 0 then
+                                                    0L
+                                                else
+                                                    appendedWatchJournalSequences |> Array.max
+
+                                            do! recoverWatchJournalBoundaryGapForWatch 0L requiredAppliedThrough
+
+                                            requestGraceWatchExplicitResync $"Watch status application failed after journal append: {ex.Message}"
+
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Grace Watch appended normalized observations but status application failed; the journal was repaired before resync so pending rows cannot replay as still-unapplied work: {Markup.Escape(ex.Message)}."
+
+                                            return None
+                                    | Error ex ->
                                         requestGraceWatchExplicitResync $"Watch journal append failed before status application: {ex.Message}"
 
                                         logToAnsiConsole
