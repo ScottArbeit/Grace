@@ -3442,6 +3442,145 @@ module WatchTests =
                 Watch.resetWatchJournalClientsForWatchTests ()
                 Watch.clearPendingWatchWorkForTests ())
 
+    /// Verifies that replayed file Add/Change rows ignored by current startup rules retire before status application.
+    [<Test>]
+    let ``watch startup recovery quarantines currently ignored replayed file add and change rows`` () =
+        withTempRepo (fun root ->
+            let ignoredFilePath = Path.Combine(root, "ignored-file.tmp")
+            let ignoredDirectory = Path.Combine(root, "ignored-dir")
+            let ignoredDirectoryFilePath = Path.Combine(ignoredDirectory, "live.txt")
+            let ignoredFileRelativePath = "ignored-file.tmp"
+            let ignoredDirectoryFileRelativePath = "ignored-dir/live.txt"
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let dbPath = Current().GraceStatusFile
+            let scope = { (watchJournalScope ()) with RootDirectoryId = status.RootDirectoryId; RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash }
+            let lifecycleEvents = ResizeArray<string>()
+
+            Directory.CreateDirectory(ignoredDirectory)
+            |> ignore
+
+            File.WriteAllText(ignoredFilePath, "ignored file payload")
+            File.WriteAllText(ignoredDirectoryFilePath, "ignored directory payload")
+
+            writeGraceIgnore
+                root
+                [|
+                    ignoredFileRelativePath
+                    "ignored-dir/"
+                |]
+
+            try
+                (LocalStateDb.appendWatchJournalObservations
+                    dbPath
+                    [|
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Add
+                            EntryType = FileSystemEntryType.File
+                            RelativePath = RelativePath ignoredFileRelativePath
+                        }
+                        {
+                            Scope = scope
+                            DifferenceType = DifferenceType.Change
+                            EntryType = FileSystemEntryType.File
+                            RelativePath = RelativePath ignoredDirectoryFileRelativePath
+                        }
+                    |])
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+                Watch.setWatchJournalStartupClientsForWatchTests
+                    (fun recoveryScope -> LocalStateDb.recoverWatchJournalForStartup dbPath recoveryScope)
+                    (fun event -> task { lifecycleEvents.Add(event.EventType) })
+
+                (Watch.recoverStartupWatchJournalAfterReconciliationForWatchTests status)
+                    .GetAwaiter()
+                    .GetResult()
+                |> ignore
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Add FileSystemEntryType.File (RelativePath ignoredFileRelativePath)
+                )
+                |> should equal None
+
+                Watch.tryPeekStartupReplaySequenceForWatchTests (
+                    FileSystemDifference.Create DifferenceType.Change FileSystemEntryType.File (RelativePath ignoredDirectoryFileRelativePath)
+                )
+                |> should equal None
+
+                /// Reads status needed by the ignored replay scenario.
+                let readStatus () = Task.FromResult(status)
+                /// Fails the test if ignored replay rows try to upload live but excluded content.
+                let upload _ _ = Task.FromException<unit>(InvalidOperationException("ignored replay rows should not upload"))
+                /// Keeps the legacy status helper unused by the current Watch path.
+                let updateGraceStatus currentStatus _ = Task.FromResult(Some currentStatus)
+
+                /// Fails the test if ignored replay rows reach status application after quarantine.
+                let updateGraceStatusFromDifferences _ _ _ =
+                    Task.FromException<GraceStatus option>(InvalidOperationException("ignored file replay rows should not apply status"))
+
+                /// Leaves incremental status writes outside this ignored replay scenario.
+                let applyIncremental _ _ _ = Task.FromResult(())
+                /// Keeps IPC publication deterministic for the ignored replay test.
+                let updateIpc _ _ = Task.FromResult(())
+
+                (Watch.processChangedFilesWithClients
+                    readStatus
+                    readStatus
+                    upload
+                    updateGraceStatus
+                    scannerHostileDifferenceDiscovery
+                    updateGraceStatusFromDifferences
+                    applyIncremental
+                    updateIpc)
+                    .GetAwaiter()
+                    .GetResult()
+
+                let quarantinedSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "quarantined" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                let pendingSnapshot =
+                    (LocalStateDb.readWatchJournalSnapshot dbPath "pending" None 10)
+                        .GetAwaiter()
+                        .GetResult()
+
+                quarantinedSnapshot.AppliedThroughSequence
+                |> should equal 2L
+
+                quarantinedSnapshot.Rows |> should haveLength 2
+
+                quarantinedSnapshot.Rows
+                |> Array.map (fun row -> row.QuarantineReason)
+                |> should
+                    equal
+                    [|
+                        Some "current startup replay file content ignored before status application"
+                        Some "current startup replay file content ignored before status application"
+                    |]
+
+                pendingSnapshot.Rows |> should haveLength 0
+
+                Watch
+                    .pendingWatchWorkSnapshotForTests()
+                    .FilesToProcess
+                |> should equal Array.empty<string>
+
+                Watch
+                    .pendingWatchWorkSnapshotForTests()
+                    .StatusUpdateTriggers
+                |> should equal Array.empty<string>
+
+                lifecycleEvents.ToArray()
+                |> should contain "startup-ignored-file-replay-retired"
+            finally
+                Watch.resetWatchJournalClientsForWatchTests ()
+                Watch.clearPendingWatchWorkForTests ())
+
     /// Verifies that delayed startup replay runs after pending startup backlog drains on a later timer pass.
     [<Test>]
     let ``startup recovery runs after delayed backlog drains`` () =
