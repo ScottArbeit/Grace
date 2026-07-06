@@ -65,6 +65,12 @@ module private ProjectStructureGraph =
     /// Resolves a solution project entry relative to the repository `src` directory.
     let solutionProjectPath (projectPath: string) = Path.GetFullPath(Path.Combine(ProjectStructureTestPaths.srcDirectory (), projectPath))
 
+    /// Normalizes MSBuild project-reference separators before platform-specific path resolution.
+    let normalizeProjectReferencePath (referencePath: string) =
+        referencePath
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar)
+
     /// Resolves a project reference relative to the project file that declares it.
     let projectReferencePath (projectPath: string) (referencePath: string) =
         let projectDirectory =
@@ -72,7 +78,7 @@ module private ProjectStructureGraph =
             | null -> failwith $"Project path has no directory: {projectPath}"
             | directory -> directory
 
-        Path.GetFullPath(Path.Combine(projectDirectory, referencePath))
+        Path.GetFullPath(Path.Combine(projectDirectory, normalizeProjectReferencePath referencePath))
 
     /// Returns every project-reference edge reachable from the supplied root solution projects.
     let projectReferenceClosure (rootProjects: string array) =
@@ -183,6 +189,17 @@ type ``Operations skeleton project graph``() =
             |> Array.map (fun dependency -> $"{dependency.ReferencingProject} -> {dependency.ReferencedProject} ({dependency.ReferencePath})")
 
         Assert.That(operationsReferences, Is.Empty)
+
+    /// Proves project-reference graph walking handles Windows-style MSBuild includes on every runner OS.
+    [<Test>]
+    member _.``Project reference resolution normalizes Windows separators``() =
+        let projectPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "RootProject", "RootProject.fsproj")
+
+        let resolvedPath = ProjectStructureGraph.projectReferencePath projectPath @"..\Grace.Operations\Grace.Operations.fsproj"
+
+        let expectedPath = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.WorkDirectory, "Grace.Operations", "Grace.Operations.fsproj"))
+
+        Assert.That(resolvedPath, Is.EqualTo(expectedPath))
 
     /// Proves Grace Server does not take a direct dependency on Operations application projects.
     [<Test>]
