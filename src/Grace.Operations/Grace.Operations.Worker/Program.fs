@@ -2,6 +2,7 @@ namespace Grace.Operations.Worker
 
 open Grace.Operations.Data
 open Microsoft.Extensions.DependencyInjection
+open Microsoft.Extensions.Diagnostics.HealthChecks
 open Microsoft.Extensions.Hosting
 open System
 
@@ -39,6 +40,14 @@ module Program =
                     services
                         .AddHealthChecks()
                         .AddCheck<OperationsUsageReadinessHealthCheck>("operations-usage-ingestion")
+                    |> ignore
+
+                    services.Configure<HealthCheckPublisherOptions> (fun (options: HealthCheckPublisherOptions) ->
+                        options.Delay <- TimeSpan.Zero
+                        options.Period <- TimeSpan.FromSeconds(30.0))
+                    |> ignore
+
+                    services.AddSingleton<IHealthCheckPublisher, OperationsUsageReadinessHealthCheckPublisher>()
                     |> ignore
 
                     services.AddSingleton<IOperationsUsageFactStore> (fun _ ->

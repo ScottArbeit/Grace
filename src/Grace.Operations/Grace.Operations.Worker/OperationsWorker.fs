@@ -190,6 +190,50 @@ type OperationsUsageReadinessHealthCheck(readiness: IOperationsUsageReadinessPro
 
             Task.FromResult result
 
+/// Publishes the Operations ingestion readiness check through worker-host health publishing.
+type OperationsUsageReadinessHealthCheckPublisher(logger: ILogger<OperationsUsageReadinessHealthCheckPublisher>) =
+
+    /// Reads one redacted health-check data field for structured publishing.
+    let tryReadDataField name (data: IReadOnlyDictionary<string, obj>) =
+        match data.TryGetValue name with
+        | true, value when not (isNull value) -> Some(string value)
+        | _ -> None
+
+    interface IHealthCheckPublisher with
+
+        /// Logs the readiness health-check result so worker hosts expose readiness without HTTP endpoints.
+        member _.PublishAsync(report, cancellationToken) =
+            cancellationToken.ThrowIfCancellationRequested()
+
+            match report.Entries.TryGetValue "operations-usage-ingestion" with
+            | true, entry ->
+                let supportedSchemaVersion =
+                    tryReadDataField "supportedUsageFactSchemaVersion" entry.Data
+                    |> Option.defaultValue "<unknown>"
+
+                let dependencyFailure =
+                    tryReadDataField "dependencyFailure" entry.Data
+                    |> Option.defaultValue "<none>"
+
+                let lastUnsupportedContract =
+                    tryReadDataField "lastUnsupportedContract" entry.Data
+                    |> Option.defaultValue "<none>"
+
+                logger.LogInformation(
+                    "Operations usage readiness published. Status: {HealthStatus}; SupportedUsageFactSchemaVersion: {SupportedUsageFactSchemaVersion}; DependencyFailure: {DependencyFailure}; LastUnsupportedContract: {LastUnsupportedContract}.",
+                    entry.Status,
+                    supportedSchemaVersion,
+                    dependencyFailure,
+                    lastUnsupportedContract
+                )
+            | false, _ ->
+                logger.LogWarning(
+                    "Operations usage readiness health check was not present in the published worker health report. OverallStatus: {HealthStatus}.",
+                    report.Status
+                )
+
+            Task.CompletedTask
+
 /// Reads Service Bus settings required by the operational usage ingestion worker.
 type OperationsWorkerSettings =
     {
@@ -358,10 +402,59 @@ type OperationsUsageIngestionProcessor
     let deadLetterAsync reason description (actions: IOperationsUsageMessageActions) cancellationToken =
         actions.DeadLetterAsync(reason, description, cancellationToken)
 
+    /// Reads the schema version before binding the body to the v1 UsageFact enum contract.
+    let tryReadUsageFactSchemaVersion (body: byte array) =
+        use document = JsonDocument.Parse(ReadOnlyMemory<byte>(body))
+        let root = document.RootElement
+
+        let tryGetProperty (name: string) =
+            let mutable property = Unchecked.defaultof<JsonElement>
+
+            if
+                root.ValueKind = JsonValueKind.Object
+                && root.TryGetProperty(name, &property)
+            then
+                Some property
+            else
+                None
+
+        match tryGetProperty "schemaVersion"
+              |> Option.orElseWith (fun () -> tryGetProperty "SchemaVersion")
+            with
+        | Some property when property.ValueKind = JsonValueKind.Number ->
+            match property.TryGetInt32() with
+            | true, value -> Some value
+            | false, _ -> None
+        | Some property when property.ValueKind = JsonValueKind.String ->
+            match Int32.TryParse(property.GetString()) with
+            | true, value -> Some value
+            | false, _ -> None
+        | _ -> None
+
     /// Deserializes a usage fact using the shared Grace JSON contract options.
     let deserializeUsageFact (body: byte array) =
         use stream = new MemoryStream(body)
         JsonSerializer.Deserialize<UsageFact>(stream, Constants.JsonSerializerOptions)
+
+    /// Builds the deterministic unsupported-schema description used for settlement and readiness.
+    let unsupportedSchemaDescription schemaVersion = $"UsageFact SchemaVersion '{schemaVersion}' is not supported. Expected '{UsageFactSchemaVersion}'."
+
+    /// Records unsupported schema readiness and dead-letters without exposing the message body.
+    let deadLetterUnsupportedSchemaAsync schemaVersion (message: OperationsUsageMessage) actions cancellationToken =
+        let description = unsupportedSchemaDescription schemaVersion
+
+        readiness.MarkUnsupportedContract(description)
+
+        logger.LogWarning(
+            "Dead-lettering unsupported UsageFact schema. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; SchemaVersion: {SchemaVersion}; SupportedSchemaVersion: {SupportedSchemaVersion}.",
+            message.MessageId,
+            message.CorrelationId,
+            message.DeliveryCount,
+            schemaVersion,
+            UsageFactSchemaVersion
+        )
+
+        deadLetterAsync "UnsupportedUsageFactSchema" description actions cancellationToken
 
     /// Builds a processor with an isolated readiness state for tests that only inspect settlement behavior.
     new(store, logger) = OperationsUsageIngestionProcessor(store, logger, OperationsUsageReadinessState() :> IOperationsUsageReadinessRecorder)
@@ -396,38 +489,15 @@ type OperationsUsageIngestionProcessor
                             actions
                             cancellationToken
                 else
-                    let usageFact = deserializeUsageFact message.Body
+                    match tryReadUsageFactSchemaVersion message.Body with
+                    | Some schemaVersion when schemaVersion <> UsageFactSchemaVersion ->
+                        do! deadLetterUnsupportedSchemaAsync schemaVersion message actions cancellationToken
+                    | _ ->
+                        let usageFact = deserializeUsageFact message.Body
 
-                    if isNull (box usageFact) then
-                        let errors = [ "UsageFact is required." ]
+                        if isNull (box usageFact) then
+                            let errors = [ "UsageFact is required." ]
 
-                        logger.LogWarning(
-                            "Dead-lettering invalid UsageFact. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
-                            message.MessageId,
-                            message.CorrelationId,
-                            message.DeliveryCount,
-                            describeErrors errors
-                        )
-
-                        do! deadLetterAsync "InvalidUsageFact" (describeErrors errors) actions cancellationToken
-                    elif usageFact.SchemaVersion <> UsageFactSchemaVersion then
-                        let description = $"UsageFact SchemaVersion '{usageFact.SchemaVersion}' is not supported. Expected '{UsageFactSchemaVersion}'."
-
-                        readiness.MarkUnsupportedContract(description)
-
-                        logger.LogWarning(
-                            "Dead-lettering unsupported UsageFact schema. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; SchemaVersion: {SchemaVersion}; SupportedSchemaVersion: {SupportedSchemaVersion}.",
-                            message.MessageId,
-                            message.CorrelationId,
-                            message.DeliveryCount,
-                            usageFact.SchemaVersion,
-                            UsageFactSchemaVersion
-                        )
-
-                        do! deadLetterAsync "UnsupportedUsageFactSchema" description actions cancellationToken
-                    else
-                        match UsageFact.Validate usageFact with
-                        | Error errors ->
                             logger.LogWarning(
                                 "Dead-lettering invalid UsageFact. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
                                 message.MessageId,
@@ -437,33 +507,47 @@ type OperationsUsageIngestionProcessor
                             )
 
                             do! deadLetterAsync "InvalidUsageFact" (describeErrors errors) actions cancellationToken
-                        | Ok () ->
-                            let! stored = store.StoreUsageFactAsync(usageFact, cancellationToken)
-
-                            match stored with
+                        elif usageFact.SchemaVersion <> UsageFactSchemaVersion then
+                            do! deadLetterUnsupportedSchemaAsync usageFact.SchemaVersion message actions cancellationToken
+                        else
+                            match UsageFact.Validate usageFact with
                             | Error errors ->
                                 logger.LogWarning(
-                                    "Dead-lettering UsageFact rejected by operations storage validation. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
-                                    usageFact.UsageFactId,
-                                    usageFact.CorrelationId,
+                                    "Dead-lettering invalid UsageFact. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
+                                    message.MessageId,
+                                    message.CorrelationId,
                                     message.DeliveryCount,
                                     describeErrors errors
                                 )
 
                                 do! deadLetterAsync "InvalidUsageFact" (describeErrors errors) actions cancellationToken
-                            | Ok result ->
-                                logger.LogInformation(
-                                    "Processed operational UsageFact. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Status: {Status}; BucketStart: {BucketStart}.",
-                                    result.UsageFactId,
-                                    usageFact.CorrelationId,
-                                    message.DeliveryCount,
-                                    result.Status,
-                                    result.Aggregate
-                                    |> Option.map (fun aggregate -> aggregate.Key.BucketStart)
-                                    |> Option.defaultValue Instant.MinValue
-                                )
+                            | Ok () ->
+                                let! stored = store.StoreUsageFactAsync(usageFact, cancellationToken)
 
-                                do! actions.CompleteAsync cancellationToken
+                                match stored with
+                                | Error errors ->
+                                    logger.LogWarning(
+                                        "Dead-lettering UsageFact rejected by operations storage validation. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
+                                        usageFact.UsageFactId,
+                                        usageFact.CorrelationId,
+                                        message.DeliveryCount,
+                                        describeErrors errors
+                                    )
+
+                                    do! deadLetterAsync "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                                | Ok result ->
+                                    logger.LogInformation(
+                                        "Processed operational UsageFact. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Status: {Status}; BucketStart: {BucketStart}.",
+                                        result.UsageFactId,
+                                        usageFact.CorrelationId,
+                                        message.DeliveryCount,
+                                        result.Status,
+                                        result.Aggregate
+                                        |> Option.map (fun aggregate -> aggregate.Key.BucketStart)
+                                        |> Option.defaultValue Instant.MinValue
+                                    )
+
+                                    do! actions.CompleteAsync cancellationToken
             with
             | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
                 logger.LogWarning(

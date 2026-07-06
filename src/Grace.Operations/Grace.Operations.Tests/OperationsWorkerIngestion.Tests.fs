@@ -8,6 +8,7 @@ open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Diagnostics.HealthChecks
+open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
 open NodaTime
 open NUnit.Framework
@@ -15,6 +16,7 @@ open System
 open System.Collections.Generic
 open System.Text
 open System.Text.Json
+open System.Text.Json.Nodes
 open System.Threading
 open System.Threading.Tasks
 
@@ -110,6 +112,24 @@ type private StubUsageFactStore(storeAsync: UsageFact -> CancellationToken -> Ta
             storedFacts.Add fact
             events.Add("store")
             storeAsync fact cancellationToken
+
+/// Records formatted log output from worker infrastructure tests.
+type private RecordingLogger<'T>() =
+    let messages = ResizeArray<string>()
+
+    /// Returns formatted log messages written through this logger.
+    member _.Messages = messages |> Seq.toList
+
+    interface ILogger<'T> with
+
+        member _.BeginScope<'TState>(_state: 'TState) =
+            { new IDisposable with
+                member _.Dispose() = ()
+            }
+
+        member _.IsEnabled(_logLevel) = true
+
+        member _.Log<'TState>(_logLevel, _eventId, state: 'TState, ex: exn, formatter: Func<'TState, exn, string>) = messages.Add(formatter.Invoke(state, ex))
 
 /// Fails if deterministic validation lets an invalid fact reach a storage transaction.
 type private FailingOperationsUsageTransactionScope() =
@@ -386,6 +406,43 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies the worker health publisher makes readiness log-visible without publishing payloads or secrets.
+    [<Test>]
+    member _.ReadinessHealthPublisherLogsRedactedStatus() =
+        task {
+            let data = Dictionary<string, obj>()
+            data["supportedUsageFactSchemaVersion"] <- box UsageFactSchemaVersion
+            data["dependencyFailure"] <- box "Dependency startup failed (SqlException)."
+            data["lastUnsupportedContract"] <- box "UsageFact SchemaVersion '2' is not supported. Expected '1'."
+            data["messageBody"] <- box "message-body-secret"
+            data["connectionString"] <- box "Endpoint=sb://example/;SharedAccessKey=secret"
+
+            let entry = HealthReportEntry(HealthStatus.Unhealthy, "Dependency startup failed (SqlException).", TimeSpan.Zero, null, data)
+
+            let entries = Dictionary<string, HealthReportEntry>()
+            entries["operations-usage-ingestion"] <- entry
+            let report = HealthReport(entries, TimeSpan.Zero)
+
+            let logger = RecordingLogger<OperationsUsageReadinessHealthCheckPublisher>()
+            let publisher = OperationsUsageReadinessHealthCheckPublisher(logger)
+
+            do!
+                (publisher :> IHealthCheckPublisher)
+                    .PublishAsync(report, CancellationToken.None)
+
+            let loggedText = String.Join("\n", logger.Messages)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(loggedText, Does.Contain("Operations usage readiness published"))
+                    Assert.That(loggedText, Does.Contain("Unhealthy"))
+                    Assert.That(loggedText, Does.Contain("Dependency startup failed (SqlException)."))
+                    Assert.That(loggedText, Does.Contain($"UsageFact SchemaVersion '2' is not supported. Expected '{UsageFactSchemaVersion}'."))
+                    Assert.That(loggedText, Does.Not.Contain("message-body-secret"))
+                    Assert.That(loggedText, Does.Not.Contain("SharedAccessKey=secret")))
+            )
+        }
+
     /// Verifies valid messages complete only after the data layer reports durable persistence.
     [<Test>]
     member _.ValidMessageIsPersistedBeforeCompletion() =
@@ -521,6 +578,41 @@ type OperationsWorkerIngestionTests() =
             let message =
                 fact
                 |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:UnsupportedUsageFactSchema"))
+                    Assert.That(lastUnsupportedContract readiness, Does.Contain("SchemaVersion '2' is not supported")))
+            )
+        }
+
+    /// Verifies future schemas with new enum tokens classify as unsupported schema before v1 enum deserialization.
+    [<Test>]
+    member _.FutureSchemaWithUnknownEnumsIsDeadLetteredAsUnsupportedSchema() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("17171717-1717-4717-8717-171717171717"))
+
+            let processor, store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let futureSchemaJson =
+                let document =
+                    JsonNode
+                        .Parse(JsonSerializer.Serialize(fact, Constants.JsonSerializerOptions))
+                        .AsObject()
+
+                document["SchemaVersion"] <- JsonValue.Create(UsageFactSchemaVersion + 1)
+                document["FactKind"] <- JsonValue.Create("futureUsageFactKind")
+                document["Confidence"] <- JsonValue.Create("futureConfidence")
+                document.ToJsonString(Constants.JsonSerializerOptions)
+
+            let message =
+                futureSchemaJson
+                |> Encoding.UTF8.GetBytes
                 |> OperationsWorkerIngestionTestData.message
 
             do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
