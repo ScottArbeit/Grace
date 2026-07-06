@@ -591,9 +591,9 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
-    /// Verifies future schemas with new enum tokens classify as unsupported schema before v1 enum deserialization.
+    /// Verifies future schemas with lenient JSON classify as unsupported schema before v1 enum deserialization.
     [<Test>]
-    member _.FutureSchemaWithUnknownEnumsIsDeadLetteredAsUnsupportedSchema() =
+    member _.FutureSchemaWithTrailingCommaAndUnknownEnumsIsDeadLetteredAsUnsupportedSchema() =
         task {
             let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("17171717-1717-4717-8717-171717171717"))
 
@@ -608,7 +608,14 @@ type OperationsWorkerIngestionTests() =
                 document["SchemaVersion"] <- JsonValue.Create(UsageFactSchemaVersion + 1)
                 document["FactKind"] <- JsonValue.Create("futureUsageFactKind")
                 document["Confidence"] <- JsonValue.Create("futureConfidence")
-                document.ToJsonString(Constants.JsonSerializerOptions)
+
+                let json =
+                    document
+                        .ToJsonString(Constants.JsonSerializerOptions)
+                        .TrimEnd()
+
+                json.Substring(0, json.Length - 1)
+                + $",{Environment.NewLine}  // future producers may send JSON accepted by Grace reader options{Environment.NewLine}}}"
 
             let message =
                 futureSchemaJson

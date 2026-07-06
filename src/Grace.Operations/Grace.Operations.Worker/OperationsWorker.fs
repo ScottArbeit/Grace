@@ -402,9 +402,17 @@ type OperationsUsageIngestionProcessor
     let deadLetterAsync reason description (actions: IOperationsUsageMessageActions) cancellationToken =
         actions.DeadLetterAsync(reason, description, cancellationToken)
 
+    /// Configures lightweight schema pre-parsing to match Grace's shared JSON reader leniency.
+    let usageFactSchemaDocumentOptions =
+        JsonDocumentOptions(
+            AllowTrailingCommas = Constants.JsonSerializerOptions.AllowTrailingCommas,
+            CommentHandling = Constants.JsonSerializerOptions.ReadCommentHandling,
+            MaxDepth = Constants.JsonSerializerOptions.MaxDepth
+        )
+
     /// Reads the schema version before binding the body to the v1 UsageFact enum contract.
     let tryReadUsageFactSchemaVersion (body: byte array) =
-        use document = JsonDocument.Parse(ReadOnlyMemory<byte>(body))
+        use document = JsonDocument.Parse(ReadOnlyMemory<byte>(body), usageFactSchemaDocumentOptions)
         let root = document.RootElement
 
         let tryGetProperty (name: string) =
@@ -418,8 +426,17 @@ type OperationsUsageIngestionProcessor
             else
                 None
 
+        let tryGetPropertyCaseInsensitive (name: string) =
+            if root.ValueKind = JsonValueKind.Object then
+                root.EnumerateObject()
+                |> Seq.tryFind (fun property -> String.Equals(property.Name, name, StringComparison.OrdinalIgnoreCase))
+                |> Option.map (fun property -> property.Value)
+            else
+                None
+
         match tryGetProperty "schemaVersion"
               |> Option.orElseWith (fun () -> tryGetProperty "SchemaVersion")
+              |> Option.orElseWith (fun () -> tryGetPropertyCaseInsensitive "schemaVersion")
             with
         | Some property when property.ValueKind = JsonValueKind.Number ->
             match property.TryGetInt32() with
