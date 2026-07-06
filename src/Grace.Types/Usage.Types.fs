@@ -9,12 +9,24 @@ open System
 /// Contains immutable usage fact contracts for Grace operations telemetry.
 module Usage =
 
+    /// Identifies the only UsageFact schema version supported by this Grace.Types contract.
+    [<Literal>]
+    let UsageFactSchemaVersion = 1
+
+    /// Identifies Grace Server as the source for repository storage usage facts emitted in v1.
+    [<Literal>]
+    let DefaultUsageFactSource = "Grace.Server"
+
     /// The durable identity of an immutable usage fact.
     type UsageFactId = Guid
 
     /// Identifies the known operational usage measurement carried by a usage fact.
     type UsageFactKind =
         | RepositoryStorageBytesMinute = 1
+
+    /// Identifies the evidence confidence attached to a usage fact.
+    type UsageFactConfidence =
+        | Observed = 1
 
     /// Identifies the Grace repository scope that owns a usage fact.
     [<GenerateSerializer>]
@@ -43,11 +55,14 @@ module Usage =
     type UsageFact =
         {
             Class: string
+            SchemaVersion: int
             UsageFactId: UsageFactId
             CorrelationId: CorrelationId
             FactKind: UsageFactKind
             Scope: UsageFactScope
             Resource: UsageFactResource
+            Source: string
+            Confidence: UsageFactConfidence
             Quantity: int64
             ObservedAt: Instant
         }
@@ -56,14 +71,23 @@ module Usage =
         static member Empty =
             {
                 Class = nameof UsageFact
+                SchemaVersion = UsageFactSchemaVersion
                 UsageFactId = UsageFactId.Empty
                 CorrelationId = String.Empty
                 FactKind = UsageFactKind.RepositoryStorageBytesMinute
                 Scope = UsageFactScope.Empty
                 Resource = UsageFactResource.Empty
+                Source = String.Empty
+                Confidence = UsageFactConfidence.Observed
                 Quantity = 0L
                 ObservedAt = Constants.DefaultTimestamp
             }
+
+        /// Lists the fact kinds that v1 consumers must understand before accepting a usage fact.
+        static member SupportedV1FactKinds =
+            [|
+                UsageFactKind.RepositoryStorageBytesMinute
+            |]
 
         /// Normalizes an observation timestamp to the minute bucket used by repository storage facts.
         static member NormalizeObservedAtToMinute(observedAt: Instant) =
@@ -88,11 +112,14 @@ module Usage =
             ) =
             {
                 Class = nameof UsageFact
+                SchemaVersion = UsageFactSchemaVersion
                 UsageFactId = usageFactId
                 CorrelationId = correlationId
                 FactKind = UsageFactKind.RepositoryStorageBytesMinute
                 Scope = { OwnerId = ownerId; OrganizationId = organizationId; RepositoryId = repositoryId }
                 Resource = { StoragePoolId = storagePoolId }
+                Source = DefaultUsageFactSource
+                Confidence = UsageFactConfidence.Observed
                 Quantity = quantity
                 ObservedAt = UsageFact.NormalizeObservedAtToMinute observedAt
             }
@@ -106,13 +133,16 @@ module Usage =
             else
                 if fact.Class <> nameof UsageFact then errors.Add("Class must be UsageFact.")
 
+                if fact.SchemaVersion <> UsageFactSchemaVersion then
+                    errors.Add($"SchemaVersion '{fact.SchemaVersion}' is not supported. Expected '{UsageFactSchemaVersion}'.")
+
                 if fact.UsageFactId = UsageFactId.Empty then
                     errors.Add("UsageFactId is required.")
 
                 if String.IsNullOrWhiteSpace fact.CorrelationId then
                     errors.Add("CorrelationId is required.")
 
-                if not (Enum.IsDefined(typeof<UsageFactKind>, fact.FactKind)) then
+                if not (Array.contains fact.FactKind UsageFact.SupportedV1FactKinds) then
                     errors.Add($"FactKind '{int fact.FactKind}' is not supported.")
 
                 if isNull (box fact.Scope) then
@@ -131,6 +161,11 @@ module Usage =
                     errors.Add("Resource is required.")
                 else if String.IsNullOrWhiteSpace fact.Resource.StoragePoolId then
                     errors.Add("Resource.StoragePoolId is required.")
+
+                if String.IsNullOrWhiteSpace fact.Source then errors.Add("Source is required.")
+
+                if not (Enum.IsDefined(typeof<UsageFactConfidence>, fact.Confidence)) then
+                    errors.Add($"Confidence '{int fact.Confidence}' is not supported.")
 
                 if fact.Quantity <= 0L then errors.Add("Quantity must be greater than zero.")
 
