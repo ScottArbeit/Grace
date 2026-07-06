@@ -9,6 +9,7 @@ open Grace.Shared.Utilities
 open Grace.Types.Usage
 open Microsoft.Data.SqlClient
 open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.Diagnostics.HealthChecks
 open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -80,6 +81,114 @@ type OperationsUsageFactStoreAdapter(store: OperationsUsageStore) =
     interface IOperationsUsageFactStore with
 
         member _.StoreUsageFactAsync(fact, cancellationToken) = store.StoreUsageFactAsync(fact, cancellationToken)
+
+/// Reports whether the operations usage worker is ready to consume durable ingestion messages.
+type OperationsUsageReadinessStatus =
+
+    /// Indicates the worker has started its ingestion dependencies successfully.
+    | Ready = 1
+
+    /// Indicates the worker has not yet proven that ingestion dependencies are available.
+    | NotReady = 2
+
+/// Describes the current ingestion readiness state without exposing secrets or message payloads.
+type OperationsUsageReadinessSnapshot =
+    {
+        Status: OperationsUsageReadinessStatus
+        SupportedUsageFactSchemaVersion: int
+        DependencyFailure: string option
+        LastUnsupportedContract: string option
+    }
+
+/// Exposes a snapshot of the Operations ingestion readiness state.
+type IOperationsUsageReadinessProbe =
+
+    /// Returns the latest readiness state recorded by the worker process.
+    abstract GetSnapshot: unit -> OperationsUsageReadinessSnapshot
+
+/// Records readiness signals from dependency startup and message contract classification.
+type IOperationsUsageReadinessRecorder =
+
+    /// Marks ingestion dependencies as ready after SQL initialization and Service Bus processor startup succeed.
+    abstract MarkReady: unit -> unit
+
+    /// Records a redacted dependency failure that prevents the worker from being ready.
+    abstract MarkDependencyFailure: description: string -> unit
+
+    /// Records the latest unsupported ingestion contract observed at the broker boundary.
+    abstract MarkUnsupportedContract: description: string -> unit
+
+/// Maintains the redacted readiness snapshot exposed by the Operations worker process.
+type OperationsUsageReadinessState() =
+    let gate = obj ()
+
+    let mutable status = OperationsUsageReadinessStatus.NotReady
+    let mutable dependencyFailure = Some "Operations usage worker has not completed dependency startup."
+    let mutable lastUnsupportedContract: string option = None
+
+    let snapshot () =
+        lock gate (fun () ->
+            {
+                Status = status
+                SupportedUsageFactSchemaVersion = UsageFactSchemaVersion
+                DependencyFailure = dependencyFailure
+                LastUnsupportedContract = lastUnsupportedContract
+            })
+
+    interface IOperationsUsageReadinessProbe with
+
+        member _.GetSnapshot() = snapshot ()
+
+    interface IOperationsUsageReadinessRecorder with
+
+        member _.MarkReady() =
+            lock gate (fun () ->
+                status <- OperationsUsageReadinessStatus.Ready
+                dependencyFailure <- None)
+
+        member _.MarkDependencyFailure(description) =
+            lock gate (fun () ->
+                status <- OperationsUsageReadinessStatus.NotReady
+                dependencyFailure <- Some description)
+
+        member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
+
+/// Adapts Operations ingestion readiness to the standard .NET health-check surface.
+type OperationsUsageReadinessHealthCheck(readiness: IOperationsUsageReadinessProbe) =
+
+    /// Builds redacted health-check data that operators can inspect without seeing payloads or secrets.
+    let healthData (snapshot: OperationsUsageReadinessSnapshot) =
+        let data = Dictionary<string, obj>()
+        data["supportedUsageFactSchemaVersion"] <- box snapshot.SupportedUsageFactSchemaVersion
+
+        match snapshot.DependencyFailure with
+        | Some dependencyFailure -> data["dependencyFailure"] <- box dependencyFailure
+        | None -> ()
+
+        match snapshot.LastUnsupportedContract with
+        | Some unsupportedContract -> data["lastUnsupportedContract"] <- box unsupportedContract
+        | None -> ()
+
+        data :> IReadOnlyDictionary<string, obj>
+
+    /// Builds the unhealthy readiness description without repeating sensitive dependency configuration.
+    let unhealthyDescription (snapshot: OperationsUsageReadinessSnapshot) =
+        snapshot.DependencyFailure
+        |> Option.defaultValue "Operations usage ingestion dependencies have not reported ready."
+
+    interface IHealthCheck with
+
+        /// Reports healthy only after the worker records successful SQL and Service Bus startup.
+        member _.CheckHealthAsync(_context, _cancellationToken) =
+            let snapshot = readiness.GetSnapshot()
+            let data = healthData snapshot
+
+            let result =
+                match snapshot.Status with
+                | OperationsUsageReadinessStatus.Ready -> HealthCheckResult(HealthStatus.Healthy, "Operations usage ingestion is ready.", null, data)
+                | _ -> HealthCheckResult(HealthStatus.Unhealthy, unhealthyDescription snapshot, null, data)
+
+            Task.FromResult result
 
 /// Reads Service Bus settings required by the operational usage ingestion worker.
 type OperationsWorkerSettings =
@@ -228,7 +337,12 @@ module OperationsWorkerSettings =
                 }
 
 /// Handles one usage fact message through validation, SQL persistence, and explicit Service Bus settlement.
-type OperationsUsageIngestionProcessor(store: IOperationsUsageFactStore, logger: ILogger<OperationsUsageIngestionProcessor>) =
+type OperationsUsageIngestionProcessor
+    (
+        store: IOperationsUsageFactStore,
+        logger: ILogger<OperationsUsageIngestionProcessor>,
+        readiness: IOperationsUsageReadinessRecorder
+    ) =
 
     /// Reads a string application property without exposing untrusted payload values in logs.
     let tryGetStringProperty propertyName (properties: IReadOnlyDictionary<string, obj>) =
@@ -249,6 +363,9 @@ type OperationsUsageIngestionProcessor(store: IOperationsUsageFactStore, logger:
         use stream = new MemoryStream(body)
         JsonSerializer.Deserialize<UsageFact>(stream, Constants.JsonSerializerOptions)
 
+    /// Builds a processor with an isolated readiness state for tests that only inspect settlement behavior.
+    new(store, logger) = OperationsUsageIngestionProcessor(store, logger, OperationsUsageReadinessState() :> IOperationsUsageReadinessRecorder)
+
     /// Processes a usage fact message and settles it only after the durable outcome is known.
     member _.ProcessMessageAsync(message: OperationsUsageMessage, actions: IOperationsUsageMessageActions, cancellationToken: CancellationToken) =
         task {
@@ -261,6 +378,8 @@ type OperationsUsageIngestionProcessor(store: IOperationsUsageFactStore, logger:
                    <> OperationalFactEnvelope.UsageFactSubject
                    || messageType
                       <> Some OperationalFactEnvelope.UsageFactMessageType then
+                    readiness.MarkUnsupportedContract("Unsupported Service Bus envelope for operations UsageFact ingestion.")
+
                     logger.LogWarning(
                         "Dead-lettering unsupported operational fact envelope. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Subject: {Subject}; MessageType: {MessageType}.",
                         message.MessageId,
@@ -279,8 +398,9 @@ type OperationsUsageIngestionProcessor(store: IOperationsUsageFactStore, logger:
                 else
                     let usageFact = deserializeUsageFact message.Body
 
-                    match UsageFact.Validate usageFact with
-                    | Error errors ->
+                    if isNull (box usageFact) then
+                        let errors = [ "UsageFact is required." ]
+
                         logger.LogWarning(
                             "Dead-lettering invalid UsageFact. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
                             message.MessageId,
@@ -290,33 +410,60 @@ type OperationsUsageIngestionProcessor(store: IOperationsUsageFactStore, logger:
                         )
 
                         do! deadLetterAsync "InvalidUsageFact" (describeErrors errors) actions cancellationToken
-                    | Ok () ->
-                        let! stored = store.StoreUsageFactAsync(usageFact, cancellationToken)
+                    elif usageFact.SchemaVersion <> UsageFactSchemaVersion then
+                        let description = $"UsageFact SchemaVersion '{usageFact.SchemaVersion}' is not supported. Expected '{UsageFactSchemaVersion}'."
 
-                        match stored with
+                        readiness.MarkUnsupportedContract(description)
+
+                        logger.LogWarning(
+                            "Dead-lettering unsupported UsageFact schema. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; SchemaVersion: {SchemaVersion}; SupportedSchemaVersion: {SupportedSchemaVersion}.",
+                            message.MessageId,
+                            message.CorrelationId,
+                            message.DeliveryCount,
+                            usageFact.SchemaVersion,
+                            UsageFactSchemaVersion
+                        )
+
+                        do! deadLetterAsync "UnsupportedUsageFactSchema" description actions cancellationToken
+                    else
+                        match UsageFact.Validate usageFact with
                         | Error errors ->
                             logger.LogWarning(
-                                "Dead-lettering UsageFact rejected by operations storage validation. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
-                                usageFact.UsageFactId,
-                                usageFact.CorrelationId,
+                                "Dead-lettering invalid UsageFact. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
+                                message.MessageId,
+                                message.CorrelationId,
                                 message.DeliveryCount,
                                 describeErrors errors
                             )
 
                             do! deadLetterAsync "InvalidUsageFact" (describeErrors errors) actions cancellationToken
-                        | Ok result ->
-                            logger.LogInformation(
-                                "Processed operational UsageFact. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Status: {Status}; BucketStart: {BucketStart}.",
-                                result.UsageFactId,
-                                usageFact.CorrelationId,
-                                message.DeliveryCount,
-                                result.Status,
-                                result.Aggregate
-                                |> Option.map (fun aggregate -> aggregate.Key.BucketStart)
-                                |> Option.defaultValue Instant.MinValue
-                            )
+                        | Ok () ->
+                            let! stored = store.StoreUsageFactAsync(usageFact, cancellationToken)
 
-                            do! actions.CompleteAsync cancellationToken
+                            match stored with
+                            | Error errors ->
+                                logger.LogWarning(
+                                    "Dead-lettering UsageFact rejected by operations storage validation. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Errors: {ValidationErrors}.",
+                                    usageFact.UsageFactId,
+                                    usageFact.CorrelationId,
+                                    message.DeliveryCount,
+                                    describeErrors errors
+                                )
+
+                                do! deadLetterAsync "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                            | Ok result ->
+                                logger.LogInformation(
+                                    "Processed operational UsageFact. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Status: {Status}; BucketStart: {BucketStart}.",
+                                    result.UsageFactId,
+                                    usageFact.CorrelationId,
+                                    message.DeliveryCount,
+                                    result.Status,
+                                    result.Aggregate
+                                    |> Option.map (fun aggregate -> aggregate.Key.BucketStart)
+                                    |> Option.defaultValue Instant.MinValue
+                                )
+
+                                do! actions.CompleteAsync cancellationToken
             with
             | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
                 logger.LogWarning(
@@ -385,6 +532,7 @@ type OperationsUsageWorkerService
         settings: OperationsWorkerSettings,
         schema: OperationsUsageSchema,
         processor: OperationsUsageIngestionProcessor,
+        readiness: IOperationsUsageReadinessRecorder,
         logger: ILogger<OperationsUsageWorkerService>
     ) =
     let credential = lazy (DefaultAzureCredential() :> TokenCredential)
@@ -473,6 +621,7 @@ type OperationsUsageWorkerService
                             settings.SubscriptionName
                         )
 
+                        readiness.MarkReady()
                         ready <- true
                     with
                     | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> ()
@@ -484,6 +633,8 @@ type OperationsUsageWorkerService
                         match createdClient with
                         | Some client -> do! client.DisposeAsync()
                         | None -> ()
+
+                        readiness.MarkDependencyFailure($"Dependency startup failed ({ex.GetType().Name}).")
 
                         logger.LogWarning(
                             ex,

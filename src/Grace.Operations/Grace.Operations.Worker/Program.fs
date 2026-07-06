@@ -25,6 +25,22 @@ module Program =
                     services.AddSingleton(OperationsUsageSchema(settings.SqlConnectionString, settings.SchemaBootstrapMode))
                     |> ignore
 
+                    services.AddSingleton<OperationsUsageReadinessState>()
+                    |> ignore
+
+                    services.AddSingleton<IOperationsUsageReadinessProbe> (fun serviceProvider ->
+                        serviceProvider.GetRequiredService<OperationsUsageReadinessState>() :> IOperationsUsageReadinessProbe)
+                    |> ignore
+
+                    services.AddSingleton<IOperationsUsageReadinessRecorder> (fun serviceProvider ->
+                        serviceProvider.GetRequiredService<OperationsUsageReadinessState>() :> IOperationsUsageReadinessRecorder)
+                    |> ignore
+
+                    services
+                        .AddHealthChecks()
+                        .AddCheck<OperationsUsageReadinessHealthCheck>("operations-usage-ingestion")
+                    |> ignore
+
                     services.AddSingleton<IOperationsUsageFactStore> (fun _ ->
                         let transactionScope = SqlOperationsUsageTransactionScope(settings.SqlConnectionString)
                         let store = OperationsUsageStore transactionScope

@@ -7,6 +7,7 @@ open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.Diagnostics.HealthChecks
 open Microsoft.Extensions.Logging.Abstractions
 open NodaTime
 open NUnit.Framework
@@ -128,16 +129,26 @@ type OperationsWorkerIngestionTests() =
             .AddInMemoryCollection(pairs)
             .Build()
 
-    /// Creates a processor with deterministic fake dependencies.
-    let createProcessor storeAsync =
+    /// Creates a processor with deterministic fake dependencies and an inspectable readiness state.
+    let createProcessorWithReadiness storeAsync =
         let events = List<string>()
         let store = StubUsageFactStore(storeAsync, events)
+        let readiness = OperationsUsageReadinessState()
 
         let logger =
             NullLogger<OperationsUsageIngestionProcessor>
                 .Instance
 
-        OperationsUsageIngestionProcessor(store, logger), store, RecordingMessageActions(events), events
+        OperationsUsageIngestionProcessor(store, logger, readiness :> IOperationsUsageReadinessRecorder),
+        store,
+        RecordingMessageActions(events),
+        events,
+        readiness
+
+    /// Creates a processor with deterministic fake dependencies.
+    let createProcessor storeAsync =
+        let processor, store, actions, events, _readiness = createProcessorWithReadiness storeAsync
+        processor, store, actions, events
 
     /// Creates a processor backed by the real data-layer validation path.
     let createProcessorWithRealStore () =
@@ -164,6 +175,15 @@ type OperationsWorkerIngestionTests() =
             | Some value -> $"{action}:{value}"
             | None -> action)
         |> fun values -> String.Join("|", values)
+
+    /// Returns the latest unsupported contract readiness note for focused worker assertions.
+    let lastUnsupportedContract (readiness: OperationsUsageReadinessState) =
+        let snapshot =
+            (readiness :> IOperationsUsageReadinessProbe)
+                .GetSnapshot()
+
+        snapshot.LastUnsupportedContract
+        |> Option.defaultValue String.Empty
 
     /// Creates an accepted persistence result for a fact.
     let accepted fact =
@@ -299,6 +319,73 @@ type OperationsWorkerIngestionTests() =
             )
         | Error errors -> Assert.Fail(String.Join("; ", errors))
 
+    /// Verifies readiness reports the supported UsageFact contract and dependency startup state.
+    [<Test>]
+    member _.ReadinessSnapshotReportsSupportedContractAndDependencyFailure() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+
+        recorder.MarkDependencyFailure("Dependency startup failed (SqlException).")
+        recorder.MarkUnsupportedContract("UsageFact SchemaVersion '2' is not supported. Expected '1'.")
+
+        let snapshot =
+            (readiness :> IOperationsUsageReadinessProbe)
+                .GetSnapshot()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(snapshot.SupportedUsageFactSchemaVersion, Is.EqualTo(UsageFactSchemaVersion))
+                Assert.That(snapshot.DependencyFailure, Is.EqualTo(Some "Dependency startup failed (SqlException)."))
+                Assert.That(snapshot.LastUnsupportedContract, Is.EqualTo(Some "UsageFact SchemaVersion '2' is not supported. Expected '1'.")))
+        )
+
+    /// Verifies readiness clears dependency failure after the worker proves startup dependencies.
+    [<Test>]
+    member _.ReadinessSnapshotMarksWorkerReadyAfterDependencyStartup() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+
+        recorder.MarkDependencyFailure("Dependency startup failed (ServiceBusException).")
+        recorder.MarkReady()
+
+        let snapshot =
+            (readiness :> IOperationsUsageReadinessProbe)
+                .GetSnapshot()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                Assert.That(snapshot.SupportedUsageFactSchemaVersion, Is.EqualTo(UsageFactSchemaVersion))
+                Assert.That(snapshot.DependencyFailure, Is.EqualTo(None)))
+        )
+
+    /// Verifies the standard health-check adapter exposes redacted readiness data.
+    [<Test>]
+    member _.ReadinessHealthCheckReportsDependencyFailureAndSupportedContract() =
+        task {
+            let readiness = OperationsUsageReadinessState()
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+
+            recorder.MarkDependencyFailure("Dependency startup failed (SqlException).")
+            recorder.MarkUnsupportedContract("UsageFact SchemaVersion '2' is not supported. Expected '1'.")
+
+            let healthCheck = OperationsUsageReadinessHealthCheck(readiness :> IOperationsUsageReadinessProbe)
+
+            let! result =
+                (healthCheck :> IHealthCheck)
+                    .CheckHealthAsync(HealthCheckContext(), CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(result.Status, Is.EqualTo(HealthStatus.Unhealthy))
+                    Assert.That(result.Description, Is.EqualTo("Dependency startup failed (SqlException)."))
+                    Assert.That(result.Data["supportedUsageFactSchemaVersion"], Is.EqualTo(UsageFactSchemaVersion))
+                    Assert.That(result.Data["dependencyFailure"], Is.EqualTo("Dependency startup failed (SqlException)."))
+                    Assert.That(result.Data["lastUnsupportedContract"], Is.EqualTo("UsageFact SchemaVersion '2' is not supported. Expected '1'.")))
+            )
+        }
+
     /// Verifies valid messages complete only after the data layer reports durable persistence.
     [<Test>]
     member _.ValidMessageIsPersistedBeforeCompletion() =
@@ -345,6 +432,60 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies unsupported Service Bus envelopes dead-letter before the worker reads the body.
+    [<Test>]
+    member _.UnsupportedEnvelopeIsDeadLetteredWithoutStorage() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("12121212-1212-4212-8212-121212121212"))
+
+            let processor, store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun value -> { value with Subject = "FutureOperationalFact" }
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:UnsupportedOperationalFactEnvelope"))
+                    Assert.That(lastUnsupportedContract readiness, Does.Contain("Unsupported Service Bus envelope")))
+            )
+        }
+
+    /// Verifies unsupported message type properties dead-letter as unsupported envelopes.
+    [<Test>]
+    member _.UnsupportedMessageTypeIsDeadLetteredWithoutStorage() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("16161616-1616-4616-8616-161616161616"))
+
+            let processor, store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let applicationProperties = Dictionary<string, obj>()
+            applicationProperties[OperationalFactEnvelope.UsageFactMessageTypeProperty] <- box "FutureUsageFact"
+            applicationProperties[OperationalFactEnvelope.UsageFactKindProperty] <- box "RepositoryStorageBytesMinute"
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun value -> { value with ApplicationProperties = applicationProperties }
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:UnsupportedOperationalFactEnvelope"))
+                    Assert.That(lastUnsupportedContract readiness, Does.Contain("Unsupported Service Bus envelope")))
+            )
+        }
+
     /// Verifies malformed JSON dead-letters without calling the data layer.
     [<Test>]
     member _.MalformedJsonIsDeadLetteredWithoutStorage() =
@@ -363,6 +504,79 @@ type OperationsWorkerIngestionTests() =
                     Assert.That(store.StoredFacts, Is.Empty)
                     Assert.That(eventText events, Is.EqualTo("dead-letter"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:MalformedUsageFactJson")))
+            )
+        }
+
+    /// Verifies future UsageFact schemas dead-letter with a deterministic reason before storage.
+    [<Test>]
+    member _.UnsupportedUsageFactSchemaIsDeadLetteredWithoutStorage() =
+        task {
+            let fact =
+                { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("13131313-1313-4313-8313-131313131313")) with
+                    SchemaVersion = UsageFactSchemaVersion + 1
+                }
+
+            let processor, store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:UnsupportedUsageFactSchema"))
+                    Assert.That(lastUnsupportedContract readiness, Does.Contain("SchemaVersion '2' is not supported")))
+            )
+        }
+
+    /// Verifies missing UsageFact identity is treated as impossible poison input.
+    [<Test>]
+    member _.MissingUsageFactIdIsDeadLetteredWithoutStorage() =
+        task {
+            let fact = { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("14141414-1414-4414-8414-141414141414")) with UsageFactId = Guid.Empty }
+
+            let processor, store, actions, events = createProcessor (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
+            )
+        }
+
+    /// Verifies non-positive quantities are treated as impossible poison input.
+    [<Test>]
+    member _.InvalidQuantityIsDeadLetteredWithoutStorage() =
+        task {
+            let fact = { OperationsWorkerIngestionTestData.usageFact (Guid.Parse("15151515-1515-4515-8515-151515151515")) with Quantity = 0L }
+
+            let processor, store, actions, events = createProcessor (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:InvalidUsageFact")))
             )
         }
 
