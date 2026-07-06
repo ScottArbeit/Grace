@@ -104,6 +104,17 @@ type ``Operations skeleton project graph``() =
 
         Assert.That(projectPaths, Is.EquivalentTo(expectedPaths))
 
+    /// Proves the root solution does not reabsorb Operations projects from the local Operations solution boundary.
+    [<Test>]
+    member _.``Root solution excludes Operations projects``() =
+        let solutionPath = ProjectStructureTestPaths.srcRelativePath "" "Grace.slnx"
+
+        let operationsProjectPaths =
+            ProjectStructureXml.solutionProjectPaths solutionPath
+            |> Array.filter (fun (projectPath: string) -> projectPath.Contains("Grace.Operations", StringComparison.OrdinalIgnoreCase))
+
+        Assert.That(operationsProjectPaths, Is.Empty)
+
     /// Proves Grace Server does not take a direct dependency on Operations application projects.
     [<Test>]
     member _.``Grace Server project does not reference Operations projects``() =

@@ -214,7 +214,6 @@ function Get-FastTestFilterTerms {
     $terms = @(
         "FullyQualifiedName~Grace.Authorization.Tests",
         "FullyQualifiedName~Grace.CLI.Tests",
-        "FullyQualifiedName~Grace.Operations.Tests",
         "FullyQualifiedName~Grace.Types.Tests"
     )
 
@@ -231,7 +230,11 @@ function Get-TestFilter([bool]$IncludeFullTests) {
     Join-TestFilter $terms
 }
 
-function Invoke-SolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
+function Get-OperationsTestFilter {
+    Join-TestFilter @("FullyQualifiedName~Grace.Operations.Tests")
+}
+
+function Invoke-RootSolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
     $testFilter = Get-TestFilter $IncludeFullTests
 
     Write-Host "Test target: src/Grace.slnx"
@@ -263,6 +266,18 @@ function Invoke-SolutionTests([string]$Configuration, [bool]$IncludeFullTests) {
                 $env:GRACE_TEST_SERVER_CLEANUP = $previousServerCleanup
             }
         }
+    }
+}
+
+function Invoke-OperationsSolutionTests([string]$Configuration) {
+    $testFilter = Get-OperationsTestFilter
+
+    Write-Host "Test target: src/Grace.Operations/Grace.Operations.slnx"
+    Write-Host ("Test filter: {0}" -f $testFilter)
+    Write-Host ("Running: dotnet test `"src/Grace.Operations/Grace.Operations.slnx`" -c {0} --no-build --filter `"{1}`"" -f $Configuration, $testFilter)
+
+    Invoke-External "Grace Operations solution tests" {
+        dotnet test "src/Grace.Operations/Grace.Operations.slnx" -c $Configuration --no-build --filter $testFilter
     }
 }
 
@@ -324,7 +339,8 @@ try {
             }
         }
         Write-Host ""
-        Invoke-External "Grace solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties }
+        Invoke-External "Grace root solution build" { dotnet build "src/Grace.slnx" -c $Configuration @graceBuildProperties }
+        Invoke-External "Grace Operations solution build" { dotnet build "src/Grace.Operations/Grace.Operations.slnx" -c $Configuration @graceBuildProperties }
     } else {
         Write-Section "Build"
         Write-Host "Skipped (-SkipBuild)."
@@ -332,7 +348,8 @@ try {
 
     if (-not $SkipTests) {
         Write-Section "Test"
-        Invoke-SolutionTests $Configuration $Full
+        Invoke-RootSolutionTests $Configuration $Full
+        Invoke-OperationsSolutionTests $Configuration
     } else {
         Write-Section "Test"
         Write-Host "Skipped (-SkipTests)."

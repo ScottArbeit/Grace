@@ -15,10 +15,6 @@
   <Project Path="Grace.CLI/Grace.CLI.fsproj" />
   <Project Path="Grace.Load/Grace.Load.fsproj" />
   <Project Path="Grace.Orleans.CodeGen/Grace.Orleans.CodeGen.csproj" />
-  <Project Path="Grace.Operations/Grace.Operations.Data/Grace.Operations.Data.fsproj" />
-  <Project Path="Grace.Operations/Grace.Operations.Tests/Grace.Operations.Tests.fsproj" />
-  <Project Path="Grace.Operations/Grace.Operations.Worker/Grace.Operations.Worker.fsproj" />
-  <Project Path="Grace.Operations/Grace.Operations.fsproj" />
   <Project Path="Grace.SDK/Grace.SDK.fsproj" />
   <Project Path="Grace.Server.Tests/Grace.Server.Tests.fsproj" />
   <Project Path="Grace.Server.Unit.Tests/Grace.Server.Unit.Tests.fsproj" />
