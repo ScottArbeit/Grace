@@ -3105,134 +3105,185 @@ module Services =
 
         updateInProgressFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
-    /// Updates the working directory to match the contents of new DirectoryVersions.
+    /// Describes one working-tree path that a remote directory update is about to replace or remove.
+    type WorkingDirectoryTargetMutation = { FullPath: string; IsDirectory: bool; DeletesExistingContent: bool }
+
+    /// Updates the working directory to match the contents of new DirectoryVersions after checking each mutation target.
     ///
     /// In general, this means copying new and changed files into place, and removing deleted files and directories.
-    let updateWorkingDirectory
+    let updateWorkingDirectoryWithTargetGuard
         (previousGraceStatus: GraceStatus)
         (updatedGraceStatus: GraceStatus)
         (newDirectoryVersionDtos: IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>)
         (correlationId: CorrelationId)
+        (verifyTargetMutation: WorkingDirectoryTargetMutation -> Task<Result<unit, GraceError>>)
         =
         task {
+            let mutable resultError: GraceError option = None
+
+            let verifyTarget fullPath isDirectory deletesExistingContent =
+                task {
+                    match resultError with
+                    | Some error -> return Error error
+                    | None ->
+                        let mutation = { FullPath = fullPath; IsDirectory = isDirectory; DeletesExistingContent = deletesExistingContent }
+
+                        match! verifyTargetMutation mutation with
+                        | Ok () -> return Ok()
+                        | Error error ->
+                            resultError <- Some error
+                            return Error error
+                }
+
             // Loop through each new DirectoryVersion.
             for newDirectoryVersionDto in newDirectoryVersionDtos do
-                let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion
-                // Get the previous DirectoryVersion, so we can compare contents below.
-                let previousDirectoryVersion =
-                    previousGraceStatus.Index.Values.FirstOrDefault(
-                        (fun dv -> dv.RelativePath = newDirectoryVersion.RelativePath),
-                        LocalDirectoryVersion.Default
-                    )
-                // Ensure that the directory exists on disk.
-                let directoryInfo = Directory.CreateDirectory(newDirectoryVersion.FullName)
+                if resultError.IsNone then
+                    let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion
+                    // Get the previous DirectoryVersion, so we can compare contents below.
+                    let previousDirectoryVersion =
+                        previousGraceStatus.Index.Values.FirstOrDefault(
+                            (fun dv -> dv.RelativePath = newDirectoryVersion.RelativePath),
+                            LocalDirectoryVersion.Default
+                        )
+                    // Ensure that the directory exists on disk.
+                    let directoryInfo = Directory.CreateDirectory(newDirectoryVersion.FullName)
 
-                // Copy new and existing files into place.
-                let sourceFileVersions = newDirectoryVersion.Files.ToArray()
+                    // Copy new and existing files into place.
+                    let sourceFileVersions = newDirectoryVersion.Files.ToArray()
 
-                let newLocalFileVersions =
-                    sourceFileVersions
-                    |> Array.map (fun file -> file.ToLocalFileVersion DateTime.UtcNow)
+                    let newLocalFileVersions =
+                        sourceFileVersions
+                        |> Array.map (fun file -> file.ToLocalFileVersion DateTime.UtcNow)
 
-                for index in 0 .. newLocalFileVersions.Length - 1 do
-                    let sourceFileVersion = sourceFileVersions[index]
-                    let fileVersion = newLocalFileVersions[index]
-                    let existingFileOnDisk = FileInfo(fileVersion.FullName)
-                    let objectFile = FileInfo(fileVersion.FullObjectPath)
+                    for index in 0 .. newLocalFileVersions.Length - 1 do
+                        if resultError.IsNone then
+                            let sourceFileVersion = sourceFileVersions[index]
+                            let fileVersion = newLocalFileVersions[index]
+                            let existingFileOnDisk = FileInfo(fileVersion.FullName)
+                            let objectFile = FileInfo(fileVersion.FullObjectPath)
 
-                    if not <| objectFile.Exists then
-                        // This is an error. There _should_ be a file in the object cache for every file in each DirectoryVersion.
-                        //   Anyway, we'll just download it from the server (again).
-                        let getDownloadUriParameters =
-                            Storage.GetDownloadUriParameters(
-                                OwnerId = $"{Current().OwnerId}",
-                                OwnerName = Current().OwnerName,
-                                OrganizationId = $"{Current().OrganizationId}",
-                                OrganizationName = Current().OrganizationName,
-                                RepositoryId = $"{Current().RepositoryId}",
-                                RepositoryName = Current().RepositoryName,
-                                CorrelationId = correlationId
-                            )
+                            if not <| objectFile.Exists then
+                                // This is an error. There _should_ be a file in the object cache for every file in each DirectoryVersion.
+                                //   Anyway, we'll just download it from the server (again).
+                                let getDownloadUriParameters =
+                                    Storage.GetDownloadUriParameters(
+                                        OwnerId = $"{Current().OwnerId}",
+                                        OwnerName = Current().OwnerName,
+                                        OrganizationId = $"{Current().OrganizationId}",
+                                        OrganizationName = Current().OrganizationName,
+                                        RepositoryId = $"{Current().RepositoryId}",
+                                        RepositoryName = Current().RepositoryName,
+                                        CorrelationId = correlationId
+                                    )
 
-                        match! downloadFileVersionsFromObjectStorage getDownloadUriParameters [| sourceFileVersion |] correlationId with
-                        | Ok _ ->
-                            logToAnsiConsole Colors.Verbose $"Downloaded {fileVersion.FullObjectPath} from the object storage provider."
+                                match! downloadFileVersionsFromObjectStorage getDownloadUriParameters [| sourceFileVersion |] correlationId with
+                                | Ok _ ->
+                                    logToAnsiConsole Colors.Verbose $"Downloaded {fileVersion.FullObjectPath} from the object storage provider."
 
-                            ()
-                        | Error error ->
-                            logToAnsiConsole
-                                Colors.Error
-                                $"An error occurred while downloading a file from the object storage provider. CorrelationId: {correlationId}."
+                                    ()
+                                | Error error ->
+                                    logToAnsiConsole
+                                        Colors.Error
+                                        $"An error occurred while downloading a file from the object storage provider. CorrelationId: {correlationId}."
 
-                            logToAnsiConsole Colors.Error $"{error}"
+                                    logToAnsiConsole Colors.Error $"{error}"
 
-                    if existingFileOnDisk.Exists then
-                        // Need to compare existing file to new version from the object cache.
-                        let findFileVersionFromPreviousGraceStatus = previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
+                            if existingFileOnDisk.Exists then
+                                // Need to compare existing file to new version from the object cache.
+                                let findFileVersionFromPreviousGraceStatus =
+                                    previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
 
-                        if findFileVersionFromPreviousGraceStatus.Count() > 0 then
-                            let fileVersionFromPreviousGraceStatus = findFileVersionFromPreviousGraceStatus.First()
-                            // If the length or content identity changes in the new version, we'll delete the
-                            //   file in the working directory, and copy the version from the object cache to replace it.
-                            if existingFileOnDisk.Length <> fileVersion.Size
-                               || fileVersionFromPreviousGraceStatus.Sha256Hash
-                                  <> fileVersion.Sha256Hash
-                               || (fileVersionFromPreviousGraceStatus.Blake3Hash
-                                   <> Blake3Hash String.Empty
-                                   && fileVersion.Blake3Hash <> Blake3Hash String.Empty
-                                   && fileVersionFromPreviousGraceStatus.Blake3Hash
-                                      <> fileVersion.Blake3Hash) then
-                                //logToAnsiConsole
-                                //    Colors.Verbose
-                                //    $"Replacing {fileVersion.FullName}; previous length: {fileVersionFromPreviousGraceStatus.Size}; new length: {fileVersion.Size}."
+                                if findFileVersionFromPreviousGraceStatus.Count() > 0 then
+                                    let fileVersionFromPreviousGraceStatus = findFileVersionFromPreviousGraceStatus.First()
+                                    // If the length or content identity changes in the new version, we'll delete the
+                                    //   file in the working directory, and copy the version from the object cache to replace it.
+                                    if existingFileOnDisk.Length <> fileVersion.Size
+                                       || fileVersionFromPreviousGraceStatus.Sha256Hash
+                                          <> fileVersion.Sha256Hash
+                                       || (fileVersionFromPreviousGraceStatus.Blake3Hash
+                                           <> Blake3Hash String.Empty
+                                           && fileVersion.Blake3Hash <> Blake3Hash String.Empty
+                                           && fileVersionFromPreviousGraceStatus.Blake3Hash
+                                              <> fileVersion.Blake3Hash) then
+                                        //logToAnsiConsole
+                                        //    Colors.Verbose
+                                        //    $"Replacing {fileVersion.FullName}; previous length: {fileVersionFromPreviousGraceStatus.Size}; new length: {fileVersion.Size}."
 
-                                existingFileOnDisk.Delete()
-                                File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
-                    else
-                        // No existing file, so just copy it into place.
-                        //logToAnsiConsole Colors.Verbose $"Copying file {fileVersion.FullName} from object cache; no existing file."
-                        File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
+                                        match! verifyTarget existingFileOnDisk.FullName false true with
+                                        | Ok () ->
+                                            existingFileOnDisk.Delete()
+                                            File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
+                                        | Error _ -> ()
+                            else
+                                // No existing file, so just copy it into place.
+                                //logToAnsiConsole Colors.Verbose $"Copying file {fileVersion.FullName} from object cache; no existing file."
+                                match! verifyTarget existingFileOnDisk.FullName false false with
+                                | Ok () -> File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
+                                | Error _ -> ()
 
-                // Delete unnecessary directories.
-                // Get DirectoryVersions for the subdirectories of the new DirectoryVersion.
-                //logToAnsiConsole
-                //    Colors.Verbose
-                //    $"Services.CLI.fs: updateWorkingDirectory(): {Markup.Escape(serialize (updatedGraceStatus.Index.Select(fun x -> x.Value.DirectoryVersionId)))}"
+                    // Delete unnecessary directories.
+                    // Get DirectoryVersions for the subdirectories of the new DirectoryVersion.
+                    //logToAnsiConsole
+                    //    Colors.Verbose
+                    //    $"Services.CLI.fs: updateWorkingDirectory(): {Markup.Escape(serialize (updatedGraceStatus.Index.Select(fun x -> x.Value.DirectoryVersionId)))}"
 
-                //logToAnsiConsole
-                //    Colors.Verbose
-                //    $"Services.CLI.fs: updateWorkingDirectory(): {Markup.Escape(serialize (newDirectoryVersions.Select(fun x -> x.DirectoryVersionId)))}"
+                    //logToAnsiConsole
+                    //    Colors.Verbose
+                    //    $"Services.CLI.fs: updateWorkingDirectory(): {Markup.Escape(serialize (newDirectoryVersions.Select(fun x -> x.DirectoryVersionId)))}"
 
-                //let previousDirectoryIds = previousGraceStatus.Index.Values.Select(fun dv -> (dv.DirectoryVersionId, dv.RelativePath))
-                //let updatedDirectoryIds = updatedGraceStatus.Index.Values.Select(fun dv -> (dv.DirectoryVersionId, dv.RelativePath))
-                //logToAnsiConsole Colors.Verbose $"{serialize previousDirectoryIds}"
-                //logToAnsiConsole Colors.Verbose $"{serialize updatedDirectoryIds}"
+                    //let previousDirectoryIds = previousGraceStatus.Index.Values.Select(fun dv -> (dv.DirectoryVersionId, dv.RelativePath))
+                    //let updatedDirectoryIds = updatedGraceStatus.Index.Values.Select(fun dv -> (dv.DirectoryVersionId, dv.RelativePath))
+                    //logToAnsiConsole Colors.Verbose $"{serialize previousDirectoryIds}"
+                    //logToAnsiConsole Colors.Verbose $"{serialize updatedDirectoryIds}"
 
-                let subdirectoryVersions = newDirectoryVersion.Directories.Select(fun directoryVersionId -> updatedGraceStatus.Index[directoryVersionId])
-                // Loop through the actual subdirectories on disk.
-                for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do
-                    // If we don't have this subdirectory listed in new parent DirectoryVersion, and it's a directory that we shouldn't ignore,
-                    //    that means that it was deleted, and we should delete it from the working directory.
-                    let relativeSubdirectoryPath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
+                    let subdirectoryVersions = newDirectoryVersion.Directories.Select(fun directoryVersionId -> updatedGraceStatus.Index[directoryVersionId])
+                    // Loop through the actual subdirectories on disk.
+                    for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do
+                        if resultError.IsNone then
+                            // If we don't have this subdirectory listed in new parent DirectoryVersion, and it's a directory that we shouldn't ignore,
+                            //    that means that it was deleted, and we should delete it from the working directory.
+                            let relativeSubdirectoryPath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
 
-                    if not
-                       <| (subdirectoryVersions
-                           |> Seq.exists (fun subdirectoryVersion -> subdirectoryVersion.RelativePath = relativeSubdirectoryPath))
-                       && shouldNotIgnoreDirectory subdirectoryInfo.FullName then
-                        //logToAnsiConsole Colors.Verbose $"Deleting directory {subdirectoryInfo.FullName}."
-                        subdirectoryInfo.Delete(true)
+                            if not
+                               <| (subdirectoryVersions
+                                   |> Seq.exists (fun subdirectoryVersion -> subdirectoryVersion.RelativePath = relativeSubdirectoryPath))
+                               && shouldNotIgnoreDirectory subdirectoryInfo.FullName then
+                                //logToAnsiConsole Colors.Verbose $"Deleting directory {subdirectoryInfo.FullName}."
+                                match! verifyTarget subdirectoryInfo.FullName true true with
+                                | Ok () -> subdirectoryInfo.Delete(true)
+                                | Error _ -> ()
 
-                // Delete unnecessary files.
-                // Loop through the actual files on disk.
-                for fileInfo in directoryInfo.EnumerateFiles() do
-                    // If we don't have this file in the new version of the directory, and it's a file that we shouldn't ignore,
-                    //   that means that it was deleted, and we should delete it from the working directory.
-                    // Ignored files get... ignored.
-                    if not
-                       <| newLocalFileVersions.Any(fun fileVersion -> fileVersion.FullName = fileInfo.FullName)
-                       && not <| shouldIgnoreFile fileInfo.FullName then
-                        //logToAnsiConsole Colors.Verbose $"Deleting file {fileInfo.FullName}."
-                        fileInfo.Delete()
+                    // Delete unnecessary files.
+                    // Loop through the actual files on disk.
+                    for fileInfo in directoryInfo.EnumerateFiles() do
+                        if resultError.IsNone then
+                            // If we don't have this file in the new version of the directory, and it's a file that we shouldn't ignore,
+                            //   that means that it was deleted, and we should delete it from the working directory.
+                            // Ignored files get... ignored.
+                            if not
+                               <| newLocalFileVersions.Any(fun fileVersion -> fileVersion.FullName = fileInfo.FullName)
+                               && not <| shouldIgnoreFile fileInfo.FullName then
+                                //logToAnsiConsole Colors.Verbose $"Deleting file {fileInfo.FullName}."
+                                match! verifyTarget fileInfo.FullName false true with
+                                | Ok () -> fileInfo.Delete()
+                                | Error _ -> ()
+
+            match resultError with
+            | Some error -> return Error error
+            | None -> return Ok()
+        }
+
+    /// Updates the working directory to match the contents of new DirectoryVersions.
+    ///
+    /// In general, this means copying new and changed files into place, and removing deleted files and directories.
+    let updateWorkingDirectory previousGraceStatus updatedGraceStatus newDirectoryVersionDtos correlationId =
+        task {
+            match!
+                updateWorkingDirectoryWithTargetGuard previousGraceStatus updatedGraceStatus newDirectoryVersionDtos correlationId (fun _ ->
+                    Task.FromResult(Ok()))
+                with
+            | Ok () -> ()
+            | Error error -> return raise (InvalidOperationException(error.Error))
         }
 
     /// Sends the current save message to the SDK and records the resulting Grace reference.
