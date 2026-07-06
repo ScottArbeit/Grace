@@ -14947,9 +14947,9 @@ module WatchTests =
             let pendingStatus = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
             pendingStatus.Count |> should equal 0)
 
-    /// Verifies that a newer rootless Reference retires older pending materialization work.
+    /// Verifies that a rootless Reference preserves pending materialization work when authority is ambiguous.
     [<Test>]
-    let ``current branch materialization rootless reference retires older pending materialization`` () =
+    let ``current branch materialization rootless reference preserves pending materialization`` () =
         withTempRepo (fun root ->
             Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
 
@@ -15004,13 +15004,27 @@ module WatchTests =
             Watch
                 .pendingCurrentBranchMaterializationStatusForWatchTests()
                 .Count
-            |> should equal 0
+            |> should equal 1
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = cleanStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = cleanStatus.RootDirectoryBlake3Hash
+                }
+
+            let materializedStatus =
+                { previousStatus with
+                    RootDirectoryId = olderRemoteRootId
+                    RootDirectorySha256Hash = olderPayload.Sha256Hash
+                    RootDirectoryBlake3Hash = olderPayload.Blake3Hash
+                }
 
             let retryOperations, retryFetchedRoots, retryDownloadBatches, retryAppliedPayloads, retryPublishedStatuses =
                 recordingMaterializationOperations
                     (ref (materializationInspection None cleanStatus))
-                    GraceStatus.Default
-                    GraceStatus.Default
+                    previousStatus
+                    materializedStatus
                     [| DirectoryVersionDto.Default |]
 
             (Watch.retryPendingCurrentBranchMaterializationForWatchTests retryOperations)
@@ -15018,10 +15032,17 @@ module WatchTests =
                 .GetResult()
             |> ignore
 
-            retryFetchedRoots.Count |> should equal 0
-            retryDownloadBatches.Count |> should equal 0
-            retryAppliedPayloads.Count |> should equal 0
-            retryPublishedStatuses.Count |> should equal 0)
+            retryFetchedRoots.ToArray()
+            |> should equal [| olderRemoteRootId |]
+
+            retryDownloadBatches.Count |> should equal 1
+
+            retryAppliedPayloads
+            |> Seq.map (fun payload -> payload.ReferenceId)
+            |> Seq.toArray
+            |> should equal [| olderPayload.ReferenceId |]
+
+            retryPublishedStatuses.Count |> should equal 1)
 
     /// Verifies that retry exceptions are contained so Watch can keep the deferred payload.
     [<Test>]
@@ -15394,24 +15415,15 @@ module WatchTests =
             delayedBAppliedPayloads.Count |> should equal 0
             delayedBPublishedStatuses.Count |> should equal 0)
 
-    /// Verifies that applying a Reference drains every queued copy through the applied boundary.
+    /// Verifies that applying a delayed duplicate Reference preserves newer distinct pending work.
     [<Test>]
-    let ``current branch materialization consumes every queued copy of applied reference`` () =
+    let ``current branch materialization duplicate applied reference preserves newer pending tail`` () =
         withTempRepo (fun root ->
             Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
 
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
-            let olderRootId = Guid.NewGuid()
             let appliedRootId = Guid.NewGuid()
             let newerTailRootId = Guid.NewGuid()
-
-            let olderPayload =
-                currentBranchReferencePayload
-                    currentRepositoryId
-                    currentBranchId
-                    olderRootId
-                    (Sha256Hash "duplicate-applied-older")
-                    (Blake3Hash "duplicate-applied-older-blake3")
 
             let appliedPayload =
                 currentBranchReferencePayload
@@ -15431,10 +15443,9 @@ module WatchTests =
 
             for payload in
                 [
-                    olderPayload
-                    appliedPayload
                     appliedPayload
                     newerTailPayload
+                    appliedPayload
                 ] do
                 Watch.rememberPendingCurrentBranchMaterializationForWatchTests
                     payload
@@ -15464,6 +15475,81 @@ module WatchTests =
                     [| DirectoryVersionDto.Default |]
 
             (Watch.processCurrentBranchReferenceMaterializationForWatchTests retryOperations true [| appliedPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            retryFetchedRoots.Count |> should equal 0
+            retryDownloadBatches.Count |> should equal 0
+            retryAppliedPayloads.Count |> should equal 0
+            retryPublishedStatuses.Count |> should equal 0)
+
+    /// Verifies that a post-status-write failure consumes the applied payload before retry can replay it.
+    [<Test>]
+    let ``current branch materialization status boundary failure consumes applied payload`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let appliedRootId = Guid.NewGuid()
+            let laterLocalRootId = Guid.NewGuid()
+
+            let payload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    appliedRootId
+                    (Sha256Hash "status-boundary-applied-root")
+                    (Blake3Hash "status-boundary-applied-root-blake3")
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                payload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            let markerFileName = Path.Combine(root, ".grace", "status-boundary-materialization.marker")
+            let markerText = "`grace watch` status boundary failure test."
+
+            let result =
+                (Watch.runDurablyAppliedCurrentBranchMaterializationWithMarkerAndCloseVerificationForWatchTests
+                    payload
+                    markerFileName
+                    markerText
+                    (fun () ->
+                        task {
+                            Watch.consumeDurablyAppliedCurrentBranchMaterializationBeforeResyncForWatchTests payload
+
+                            return Error(GraceError.Create "simulated object-cache failure after durable status write" (generateCorrelationId ()))
+                        })
+                    (fun _ -> Task.FromResult(Ok())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            result.IsError |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0
+
+            let localAfterResync =
+                { liveWatchStatus laterLocalRootId with
+                    RootDirectorySha256Hash = Sha256Hash "later-local-after-status-boundary"
+                    RootDirectoryBlake3Hash = Blake3Hash "later-local-after-status-boundary-blake3"
+                    DirectoryIds = HashSet<DirectoryVersionId>([| laterLocalRootId |])
+                }
+
+            let retryOperations, retryFetchedRoots, retryDownloadBatches, retryAppliedPayloads, retryPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None localAfterResync))
+                    GraceStatus.Default
+                    GraceStatus.Default
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests retryOperations true [| payload |])
                 .GetAwaiter()
                 .GetResult()
             |> ignore

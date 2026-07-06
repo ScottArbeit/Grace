@@ -3366,9 +3366,15 @@ module Watch =
             else
                 false)
 
-    /// Retires older deferred materializations when a newer unusable Reference supersedes the pending tail.
+    /// Reports whether a Reference notification carries enough root identity to supersede pending work.
+    let private currentBranchReferenceHasUsableRootIdentity (payload: CurrentBranchReferenceNotification) =
+        payload.DirectoryId <> DirectoryVersionId.Empty
+        && not (String.IsNullOrWhiteSpace($"{payload.Sha256Hash}"))
+
+    /// Retires older deferred materializations only when an unusable Reference still proves newer root authority.
     let private retirePendingCurrentBranchMaterializationsBeforeUnusableReference (payload: CurrentBranchReferenceNotification) =
-        if payload.ReferenceId <> ReferenceId.Empty then
+        if payload.ReferenceId <> ReferenceId.Empty
+           && currentBranchReferenceHasUsableRootIdentity payload then
             lock pendingCurrentBranchMaterializationLock (fun () ->
                 let superseded, retained =
                     pendingCurrentBranchMaterializations
@@ -3447,25 +3453,38 @@ module Watch =
     /// Removes deferred materializations through an applied or proven no-op Reference while preserving newer tail work.
     let private forgetPendingCurrentBranchMaterializationsThrough (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
-            let appliedBoundaryIndex =
+            let pendingByIndex =
                 pendingCurrentBranchMaterializations
                 |> List.indexed
-                |> List.filter (fun (_, candidate) -> candidate.Payload.ReferenceId = payload.ReferenceId)
-                |> List.tryLast
+
+            let appliedBoundaryIndex =
+                pendingByIndex
+                |> List.tryFind (fun (_, candidate) -> candidate.Payload.ReferenceId = payload.ReferenceId)
                 |> Option.map fst
 
             match appliedBoundaryIndex with
             | Some index ->
                 let consumedEntries =
-                    pendingCurrentBranchMaterializations
-                    |> List.take (index + 1)
+                    pendingByIndex
+                    |> List.choose (fun (candidateIndex, candidate) ->
+                        if candidateIndex <= index
+                           || candidate.Payload.ReferenceId = payload.ReferenceId then
+                            Some candidate
+                        else
+                            None)
 
                 for consumedEntry in consumedEntries do
                     recordSupersededCurrentBranchMaterializationPayload consumedEntry.Payload
 
                 pendingCurrentBranchMaterializations <-
-                    pendingCurrentBranchMaterializations
-                    |> List.skip (index + 1)
+                    pendingByIndex
+                    |> List.choose (fun (candidateIndex, candidate) ->
+                        if candidateIndex > index
+                           && candidate.Payload.ReferenceId
+                              <> payload.ReferenceId then
+                            Some candidate
+                        else
+                            None)
             | None -> ())
 
     /// Consumes a remote payload after durable status reached disk but before resync prevents completion.
@@ -3969,6 +3988,7 @@ module Watch =
                                             | Ok () ->
                                                 do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
                                                 do! writeGraceStatusFile updatedGraceStatus
+                                                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
                                                 do! upsertObjectCache updatedGraceStatus.Index.Values
 
                                                 return!
