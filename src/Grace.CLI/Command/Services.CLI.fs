@@ -3135,6 +3135,83 @@ module Services =
                             return Error error
                 }
 
+            /// Deletes a directory tree only after every child reaches the same overwrite boundary as the parent.
+            let deleteDirectoryTreeWithTargetGuard (directoryInfo: DirectoryInfo) =
+                task {
+                    try
+                        let childFiles =
+                            directoryInfo.EnumerateFiles("*", SearchOption.AllDirectories)
+                            |> Seq.sortByDescending (fun fileInfo -> fileInfo.FullName.Length)
+                            |> Seq.toArray
+
+                        let childDirectories =
+                            directoryInfo.EnumerateDirectories("*", SearchOption.AllDirectories)
+                            |> Seq.sortByDescending (fun childDirectoryInfo -> childDirectoryInfo.FullName.Length)
+                            |> Seq.toArray
+                            |> fun directories -> Array.append directories [| directoryInfo |]
+
+                        for fileInfo in childFiles do
+                            if resultError.IsNone then
+                                match! verifyTarget fileInfo.FullName false true with
+                                | Ok () ->
+                                    try
+                                        fileInfo.Delete()
+                                    with
+                                    | :? IOException as ex ->
+                                        resultError <-
+                                            Some(
+                                                GraceError.Create
+                                                    $"Working directory update could not delete verified child file {fileInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                                    correlationId
+                                            )
+                                    | :? UnauthorizedAccessException as ex ->
+                                        resultError <-
+                                            Some(
+                                                GraceError.Create
+                                                    $"Working directory update could not delete verified child file {fileInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                                    correlationId
+                                            )
+                                | Error _ -> ()
+
+                        for childDirectoryInfo in childDirectories do
+                            if resultError.IsNone then
+                                match! verifyTarget childDirectoryInfo.FullName true true with
+                                | Ok () ->
+                                    try
+                                        childDirectoryInfo.Delete(false)
+                                    with
+                                    | :? IOException as ex ->
+                                        resultError <-
+                                            Some(
+                                                GraceError.Create
+                                                    $"Working directory update could not delete verified directory {childDirectoryInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                                    correlationId
+                                            )
+                                    | :? UnauthorizedAccessException as ex ->
+                                        resultError <-
+                                            Some(
+                                                GraceError.Create
+                                                    $"Working directory update could not delete verified directory {childDirectoryInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                                    correlationId
+                                            )
+                                | Error _ -> ()
+                    with
+                    | :? IOException as ex ->
+                        resultError <-
+                            Some(
+                                GraceError.Create
+                                    $"Working directory update could not enumerate directory {directoryInfo.FullName} before deletion; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                    correlationId
+                            )
+                    | :? UnauthorizedAccessException as ex ->
+                        resultError <-
+                            Some(
+                                GraceError.Create
+                                    $"Working directory update could not enumerate directory {directoryInfo.FullName} before deletion; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                    correlationId
+                            )
+                }
+
             // Loop through each new DirectoryVersion.
             for newDirectoryVersionDto in newDirectoryVersionDtos do
                 if resultError.IsNone then
@@ -3250,7 +3327,7 @@ module Services =
                                && shouldNotIgnoreDirectory subdirectoryInfo.FullName then
                                 //logToAnsiConsole Colors.Verbose $"Deleting directory {subdirectoryInfo.FullName}."
                                 match! verifyTarget subdirectoryInfo.FullName true true with
-                                | Ok () -> subdirectoryInfo.Delete(true)
+                                | Ok () -> do! deleteDirectoryTreeWithTargetGuard subdirectoryInfo
                                 | Error _ -> ()
 
                     // Delete unnecessary files.

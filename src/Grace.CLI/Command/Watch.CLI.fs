@@ -3328,28 +3328,31 @@ module Watch =
                 entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1)
 
     /// Records a locally published clean-root advancement so delayed remote roots cannot roll Watch backward.
-    let private recordPublishedCurrentBranchCleanRoot (updatedStatus: GraceStatus) =
+    let private recordPublishedCurrentBranchCleanRootWithPendingPolicy retirePendingEntries (updatedStatus: GraceStatus) =
         let current = Current()
         let updatedRoot = updatedStatus.RootDirectoryId
 
         if updatedRoot <> DirectoryVersionId.Empty then
             lock pendingCurrentBranchMaterializationLock (fun () ->
                 let retiredPendingEntries =
-                    match lastPublishedCurrentBranchCleanRoot with
-                    | Some (repositoryId, branchId, previousRoot) when
-                        repositoryId = current.RepositoryId
-                        && branchId = current.BranchId
-                        && previousRoot <> updatedRoot
-                        ->
-                        let retired, retained =
-                            pendingCurrentBranchMaterializations
-                            |> List.partition (fun pending ->
-                                pending.RepositoryId = current.RepositoryId
-                                && pending.BranchId = current.BranchId)
+                    if retirePendingEntries then
+                        match lastPublishedCurrentBranchCleanRoot with
+                        | Some (repositoryId, branchId, previousRoot) when
+                            repositoryId = current.RepositoryId
+                            && branchId = current.BranchId
+                            && previousRoot <> updatedRoot
+                            ->
+                            let retired, retained =
+                                pendingCurrentBranchMaterializations
+                                |> List.partition (fun pending ->
+                                    pending.RepositoryId = current.RepositoryId
+                                    && pending.BranchId = current.BranchId)
 
-                        pendingCurrentBranchMaterializations <- retained
-                        retired
-                    | _ -> []
+                            pendingCurrentBranchMaterializations <- retained
+                            retired
+                        | _ -> []
+                    else
+                        []
 
                 match lastPublishedCurrentBranchCleanRoot with
                 | Some (repositoryId, branchId, previousRoot) when
@@ -3365,6 +3368,12 @@ module Watch =
                     recordSupersededCurrentBranchMaterializationPayload retiredEntry.Payload
 
                 lastPublishedCurrentBranchCleanRoot <- Some(current.RepositoryId, current.BranchId, updatedRoot))
+
+    /// Records a local clean-root publication and retires stale deferred same-branch payloads.
+    let private recordPublishedCurrentBranchCleanRoot updatedStatus = recordPublishedCurrentBranchCleanRootWithPendingPolicy true updatedStatus
+
+    /// Records a materialized clean root without discarding unrelated queued same-branch payloads.
+    let private recordMaterializedCurrentBranchCleanRoot updatedStatus = recordPublishedCurrentBranchCleanRootWithPendingPolicy false updatedStatus
 
     /// Exposes published clean-root advancement to tests that prove stale remote notifications cannot roll back local saves.
     let internal recordPublishedCurrentBranchCleanRootForWatchTests updatedStatus = recordPublishedCurrentBranchCleanRoot updatedStatus
@@ -3476,6 +3485,21 @@ module Watch =
                     |> Option.map (fun pending -> pending.Reason)
             })
 
+    /// Reports whether a pending payload is the exact notification a materialization boundary may consume.
+    let private currentBranchMaterializationPayloadMatchesConsumptionBoundary
+        (payload: CurrentBranchReferenceNotification)
+        (candidate: CurrentBranchReferenceNotification)
+        =
+        if payload.ReferenceId <> ReferenceId.Empty then
+            candidate.ReferenceId = payload.ReferenceId
+        else
+            candidate.ReferenceId = ReferenceId.Empty
+            && candidate.RepositoryId = payload.RepositoryId
+            && candidate.BranchId = payload.BranchId
+            && candidate.DirectoryId = payload.DirectoryId
+            && candidate.Sha256Hash = payload.Sha256Hash
+            && candidate.Blake3Hash = payload.Blake3Hash
+
     /// Removes deferred materializations through an applied or proven no-op Reference while preserving newer tail work.
     let private forgetPendingCurrentBranchMaterializationsThrough (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
@@ -3486,7 +3510,7 @@ module Watch =
             let appliedBoundaryIndex =
                 pendingByIndex
                 |> List.rev
-                |> List.tryFind (fun (_, candidate) -> candidate.Payload.ReferenceId = payload.ReferenceId)
+                |> List.tryFind (fun (_, candidate) -> currentBranchMaterializationPayloadMatchesConsumptionBoundary payload candidate.Payload)
                 |> Option.map fst
 
             match appliedBoundaryIndex with
@@ -3495,7 +3519,7 @@ module Watch =
                     pendingByIndex
                     |> List.choose (fun (candidateIndex, candidate) ->
                         if candidateIndex <= index
-                           || candidate.Payload.ReferenceId = payload.ReferenceId then
+                           || currentBranchMaterializationPayloadMatchesConsumptionBoundary payload candidate.Payload then
                             Some candidate
                         else
                             None)
@@ -3506,9 +3530,10 @@ module Watch =
                 pendingCurrentBranchMaterializations <-
                     pendingByIndex
                     |> List.choose (fun (candidateIndex, candidate) ->
-                        if candidateIndex > index
-                           && candidate.Payload.ReferenceId
-                              <> payload.ReferenceId then
+                        if
+                            candidateIndex > index
+                            && not (currentBranchMaterializationPayloadMatchesConsumptionBoundary payload candidate.Payload)
+                        then
                             Some candidate
                         else
                             None)
@@ -3795,7 +3820,7 @@ module Watch =
                     })
 
             if wasPublished then
-                recordPublishedCurrentBranchCleanRoot graceStatus
+                recordMaterializedCurrentBranchCleanRoot graceStatus
                 return Ok()
             else
                 requestGraceWatchExplicitResync
