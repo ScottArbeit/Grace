@@ -108,3 +108,10 @@ END;
 
         migrationBuilder.Sql("IF OBJECT_ID(N'ops.RawUsageFact', N'U') IS NOT NULL DROP TABLE ops.RawUsageFact;")
         |> ignore
+
+    /// Captures the raw fact and aggregate model that future migrations diff against.
+    override _.BuildTargetModel(modelBuilder: ModelBuilder) =
+        modelBuilder.HasAnnotation("ProductVersion", "10.0.9")
+        |> ignore
+
+        OperationsModel.configure modelBuilder

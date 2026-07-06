@@ -1,9 +1,11 @@
 namespace Grace.Operations.Tests
 
 open Grace.Operations.Data
+open Grace.Operations.Data.Migrations
 open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.EntityFrameworkCore
+open Microsoft.EntityFrameworkCore.Design
 open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
 open Microsoft.EntityFrameworkCore.Metadata
@@ -174,6 +176,24 @@ type OperationsUsageStorageTests() =
 
         context.Model.FindEntityType(typeof<UsageAggregateMinuteEntity>)
 
+    /// Verifies EF tooling can discover a concrete design-time context factory for reviewed migrations.
+    [<Test>]
+    member _.OperationsDesignTimeFactoryCreatesSqlServerContext() =
+        let factory = OperationsDesignTimeDbContextFactory() :> IDesignTimeDbContextFactory<OperationsDbContext>
+
+        use context =
+            factory.CreateDbContext(
+                [|
+                    "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsDesignTimeTests;Integrated Security=true;"
+                |]
+            )
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(context, Is.InstanceOf<OperationsDbContext>())
+                Assert.That(context.Database.ProviderName, Is.EqualTo("Microsoft.EntityFrameworkCore.SqlServer")))
+        )
+
     /// Verifies the EF model keeps raw fact identity as the durable dedupe boundary.
     [<Test>]
     member _.OperationsEfModelUsesUsageFactIdAsRawFactPrimaryKey() =
@@ -270,6 +290,33 @@ type OperationsUsageStorageTests() =
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_RawUsageFact_ScopeKindObservedAt"))
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_UsageAggregateMinute_ScopeKindBucket"))
                 Assert.That(script, Does.Contain("[ops].[__EFMigrationsHistory]")))
+        )
+
+    /// Verifies the initial migration records the target model used by future migration diffs.
+    [<Test>]
+    member _.BaselineMigrationTargetModelContainsOperationsEntities() =
+        let migration = InitialOperationsSchema()
+        let rawFact = migration.TargetModel.FindEntityType(typeof<RawUsageFactEntity>)
+        let aggregate = migration.TargetModel.FindEntityType(typeof<UsageAggregateMinuteEntity>)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(rawFact, Is.Not.Null)
+                Assert.That(rawFact.GetSchema(), Is.EqualTo(OperationsUsageSql.SchemaName))
+                Assert.That(rawFact.GetTableName(), Is.EqualTo(OperationsUsageSql.RawUsageFactTableName))
+                Assert.That(aggregate, Is.Not.Null)
+                Assert.That(aggregate.GetSchema(), Is.EqualTo(OperationsUsageSql.SchemaName))
+                Assert.That(aggregate.GetTableName(), Is.EqualTo(OperationsUsageSql.UsageAggregateMinuteTableName)))
+        )
+
+    /// Verifies schema bootstrap creates the schema before EF creates the schema-scoped history table.
+    [<Test>]
+    member _.SchemaBootstrapPreCreatesOpsSchemaWithoutCreatingDatabases() =
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(OperationsUsageSql.CreateSchemaIfMissing, Does.Contain("SCHEMA_ID(N'ops') IS NULL"))
+                Assert.That(OperationsUsageSql.CreateSchemaIfMissing, Does.Contain("CREATE SCHEMA [ops]"))
+                Assert.That(OperationsUsageSql.CreateSchemaIfMissing, Does.Not.Contain("CREATE DATABASE")))
         )
 
     /// Verifies SQL storage-pool keys stay case-sensitive under Azure SQL default collations.

@@ -47,6 +47,16 @@ BEGIN
 END;
 """
 
+    /// Creates the operations schema before EF Core touches the schema-scoped migration history table.
+    [<Literal>]
+    let CreateSchemaIfMissing =
+        """
+IF SCHEMA_ID(N'ops') IS NULL
+BEGIN
+    EXEC(N'CREATE SCHEMA [ops]');
+END;
+"""
+
     /// Inserts one raw usage fact only when its durable identity has not already been accepted.
     [<Literal>]
     let TryInsertRawUsageFact =

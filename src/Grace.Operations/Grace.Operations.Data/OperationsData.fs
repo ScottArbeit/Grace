@@ -306,10 +306,22 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
             | _ -> return ()
         }
 
+    /// Opens the target database and creates the operations schema before EF migrations touch history state.
+    let ensureSchemaCreatedAsync cancellationToken =
+        task {
+            use! connection = openConnectionAsync bootstrapPlan.SchemaConnectionString cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- OperationsUsageSql.CreateSchemaIfMissing
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
     /// Applies reviewed EF Core migrations for the operations usage schema.
     member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
         task {
             do! ensureDatabaseCreatedAsync cancellationToken
+            do! ensureSchemaCreatedAsync cancellationToken
             use context = OperationsDbContextFactory.create bootstrapPlan.SchemaConnectionString
             do! context.Database.MigrateAsync cancellationToken
         }

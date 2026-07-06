@@ -1,7 +1,9 @@
 namespace Grace.Operations.Data
 
 open Microsoft.EntityFrameworkCore
+open Microsoft.EntityFrameworkCore.Design
 open Microsoft.EntityFrameworkCore.Infrastructure
+open System
 
 /// Configures the Operations EF Core model without opening a database connection.
 [<RequireQualifiedAccess>]
@@ -196,6 +198,23 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
 [<RequireQualifiedAccess>]
 module OperationsDbContextFactory =
 
+    /// Provides the SQL Server connection string used when EF tooling builds migrations without opening the database.
+    let private defaultDesignTimeConnectionString = "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsDesignTime;Integrated Security=true;"
+
+    /// Resolves the design-time SQL Server connection string from EF command arguments, environment, or LocalDB.
+    let designTimeConnectionString (args: string array) =
+        match args
+              |> Array.tryFind (fun value -> not (String.IsNullOrWhiteSpace value))
+            with
+        | Some connectionString -> connectionString
+        | None ->
+            let environmentConnectionString = Environment.GetEnvironmentVariable("GRACE_OPERATIONS_SQL_CONNECTION_STRING")
+
+            if String.IsNullOrWhiteSpace environmentConnectionString then
+                defaultDesignTimeConnectionString
+            else
+                environmentConnectionString
+
     /// Creates EF Core options for the Operations SQL Server database.
     let options (connectionString: string) =
         DbContextOptionsBuilder<OperationsDbContext>()
@@ -209,3 +228,13 @@ module OperationsDbContextFactory =
 
     /// Creates a configured Operations EF context for the supplied SQL Server connection string.
     let create connectionString = new OperationsDbContext(options connectionString)
+
+/// Provides the discoverable EF Core design-time factory used by `dotnet ef migrations add`.
+type OperationsDesignTimeDbContextFactory() =
+
+    interface IDesignTimeDbContextFactory<OperationsDbContext> with
+
+        /// Creates an Operations context without relying on F# module discovery.
+        member _.CreateDbContext(args: string array) =
+            OperationsDbContextFactory.designTimeConnectionString args
+            |> OperationsDbContextFactory.create
