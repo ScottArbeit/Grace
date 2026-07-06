@@ -3447,18 +3447,25 @@ module Watch =
     /// Removes deferred materializations through an applied or proven no-op Reference while preserving newer tail work.
     let private forgetPendingCurrentBranchMaterializationsThrough (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
-            let rec splitThroughMatchedReference (skipped: PendingCurrentBranchMaterialization list) pending =
-                match pending with
-                | [] -> None
-                | candidate :: remaining when candidate.Payload.ReferenceId = payload.ReferenceId -> Some(List.rev skipped, remaining)
-                | candidate :: remaining -> splitThroughMatchedReference (candidate :: skipped) remaining
+            let appliedBoundaryIndex =
+                pendingCurrentBranchMaterializations
+                |> List.indexed
+                |> List.filter (fun (_, candidate) -> candidate.Payload.ReferenceId = payload.ReferenceId)
+                |> List.tryLast
+                |> Option.map fst
 
-            match splitThroughMatchedReference [] pendingCurrentBranchMaterializations with
-            | Some (skipped, pending) ->
-                for skippedEntry in skipped do
-                    recordSupersededCurrentBranchMaterializationPayload skippedEntry.Payload
+            match appliedBoundaryIndex with
+            | Some index ->
+                let consumedEntries =
+                    pendingCurrentBranchMaterializations
+                    |> List.take (index + 1)
 
-                pendingCurrentBranchMaterializations <- pending
+                for consumedEntry in consumedEntries do
+                    recordSupersededCurrentBranchMaterializationPayload consumedEntry.Payload
+
+                pendingCurrentBranchMaterializations <-
+                    pendingCurrentBranchMaterializations
+                    |> List.skip (index + 1)
             | None -> ())
 
     /// Consumes a remote payload after durable status reached disk but before resync prevents completion.
@@ -3522,12 +3529,10 @@ module Watch =
             && status.RootDirectoryBlake3Hash = authority.RootDirectoryBlake3Hash
         | _ -> false
 
-    /// Reports whether the remote root is already known as an older non-current root in the inspected clean snapshot.
+    /// Reports whether the remote reference is already known as stale by reference authority.
     let private currentBranchReferenceTargetsKnownNonCurrentRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
         status.RootDirectoryId <> payload.DirectoryId
-        && ((not (isNull status.DirectoryIds)
-             && status.DirectoryIds.Contains(payload.DirectoryId))
-            || isSupersededCurrentBranchMaterializationRoot payload)
+        && isSupersededCurrentBranchMaterializationRoot payload
 
     /// Runs Grace-owned materialization writes under an update marker without emitting branch-transition completion evidence.
     let private runCurrentBranchMaterializationWithMarkerAndCloseVerification (markerFileName: string) (markerText: string) operation verifyAfterMarkerClose =
@@ -3662,10 +3667,11 @@ module Watch =
                         requestGraceWatchExplicitResync
                             "current-branch materialization aborted after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes"
 
-                        deleteMarkerIfOwnedWithoutCompletionEvidence ()
-                        |> ignore
-
-                        return result
+                        match deleteMarkerIfOwnedWithoutCompletionEvidence () with
+                        | Ok () -> return result
+                        | Error cleanupError ->
+                            requestGraceWatchExplicitResync cleanupError.Error
+                            return Error cleanupError
                 with
                 | ex ->
                     requestGraceWatchExplicitResync
@@ -3675,6 +3681,33 @@ module Watch =
                     |> ignore
 
                     return raise ex
+        }
+
+    /// Consumes an applied payload if marker closure fails after the operation reached its durable boundary.
+    let private runDurablyAppliedCurrentBranchMaterializationWithMarkerAndCloseVerification payload markerFileName markerText operation verifyAfterMarkerClose =
+        task {
+            let reachedDurableApply = ref false
+
+            let! result =
+                runCurrentBranchMaterializationWithMarkerAndCloseVerification
+                    markerFileName
+                    markerText
+                    (fun () ->
+                        task {
+                            let! operationResult = operation ()
+
+                            match operationResult with
+                            | Ok _ -> reachedDurableApply.Value <- true
+                            | Error _ -> ()
+
+                            return operationResult
+                        })
+                    verifyAfterMarkerClose
+
+            if result.IsError && reachedDurableApply.Value then
+                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
+            return result
         }
 
     /// Runs a current-branch materialization marker lifecycle when no extra close proof is required by the caller.
@@ -3688,6 +3721,16 @@ module Watch =
     /// Exposes materialization marker close verification to tests without invoking branch-transition helpers.
     let internal runCurrentBranchMaterializationWithMarkerAndCloseVerificationForWatchTests markerFileName markerText operation verifyAfterMarkerClose =
         runCurrentBranchMaterializationWithMarkerAndCloseVerification markerFileName markerText operation verifyAfterMarkerClose
+
+    /// Exposes durable-applied marker handling to tests that prove post-apply cleanup failures consume retries.
+    let internal runDurablyAppliedCurrentBranchMaterializationWithMarkerAndCloseVerificationForWatchTests
+        payload
+        markerFileName
+        markerText
+        operation
+        verifyAfterMarkerClose
+        =
+        runDurablyAppliedCurrentBranchMaterializationWithMarkerAndCloseVerification payload markerFileName markerText operation verifyAfterMarkerClose
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
     let private publishCurrentBranchMaterializedStatusWithWriter
@@ -3894,7 +3937,8 @@ module Watch =
                     let markerText = $"`grace watch` current-branch materialization is in progress. Lease: {Guid.NewGuid():N}"
 
                     match!
-                        runCurrentBranchMaterializationWithMarkerAndCloseVerification
+                        runDurablyAppliedCurrentBranchMaterializationWithMarkerAndCloseVerification
+                            payload
                             markerFileName
                             markerText
                             (fun () ->
