@@ -167,9 +167,10 @@ Run `-Full` for Aspire integration, emulators, storage, Cosmos DB, Service Bus, 
 cross-service behavior.
 
 Use the validation ladder from `docs/Development process.md`: run targeted Fantomas formatting or checks before
-validation for touched F# files, run freshness checks when needed, then choose exactly one final build/test gate. If
-`validate -Fast` or `validate -Full` will run, do not also ask workers to routinely run project-specific
-`dotnet build` plus `dotnet test --no-build`; `validate` is the final build/test gate.
+validation for touched F# files, run freshness checks when needed, then choose exactly one final build/test gate.
+`validate -Fast` and `validate -Full` build and test the root Grace solution and the Operations-local solution as
+separate targets. If `validate -Fast` or `validate -Full` will run, do not also ask workers to routinely run
+project-specific `dotnet build` plus `dotnet test --no-build`; `validate` is the final build/test gate.
 
 Focused project build/test remains appropriate for RED evidence, failure diagnosis, skipped-validate workflows, tests
 outside the selected validate profile, or explicitly focused-only issues. Freshness/update workers follow the same

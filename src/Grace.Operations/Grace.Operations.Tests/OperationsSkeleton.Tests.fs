@@ -50,6 +50,65 @@ module private ProjectStructureXml =
             | includePath -> Some includePath.Value)
         |> Seq.toArray
 
+/// Walks solution project references so root-solution isolation includes transitive dependencies.
+module private ProjectStructureGraph =
+
+    /// Describes a project-reference edge discovered while walking a solution's project graph.
+    type ProjectDependency = { ReferencingProject: string; ReferencedProject: string; ReferencePath: string }
+
+    /// Converts an absolute project path into a stable repository `src`-relative path.
+    let srcRelativeProjectPath (projectPath: string) =
+        Path
+            .GetRelativePath(ProjectStructureTestPaths.srcDirectory (), projectPath)
+            .Replace(Path.DirectorySeparatorChar, '/')
+
+    /// Resolves a solution project entry relative to the repository `src` directory.
+    let solutionProjectPath (projectPath: string) = Path.GetFullPath(Path.Combine(ProjectStructureTestPaths.srcDirectory (), projectPath))
+
+    /// Normalizes MSBuild project-reference separators before platform-specific path resolution.
+    let normalizeProjectReferencePath (referencePath: string) =
+        referencePath
+            .Replace('\\', Path.DirectorySeparatorChar)
+            .Replace('/', Path.DirectorySeparatorChar)
+
+    /// Resolves a project reference relative to the project file that declares it.
+    let projectReferencePath (projectPath: string) (referencePath: string) =
+        let projectDirectory =
+            match Path.GetDirectoryName projectPath with
+            | null -> failwith $"Project path has no directory: {projectPath}"
+            | directory -> directory
+
+        Path.GetFullPath(Path.Combine(projectDirectory, normalizeProjectReferencePath referencePath))
+
+    /// Returns every project-reference edge reachable from the supplied root solution projects.
+    let projectReferenceClosure (rootProjects: string array) =
+        let visited = Collections.Generic.HashSet<string>(StringComparer.OrdinalIgnoreCase)
+        let dependencies = Collections.Generic.List<ProjectDependency>()
+
+        let rec visit projectPath =
+            let projectPath = Path.GetFullPath projectPath
+
+            if visited.Add projectPath then
+                if not (File.Exists projectPath) then
+                    failwith $"Project reference does not exist: {projectPath}"
+
+                ProjectStructureXml.projectReferenceIncludes projectPath
+                |> Array.iter (fun referencePath ->
+                    let referencedProjectPath = projectReferencePath projectPath referencePath
+
+                    dependencies.Add(
+                        {
+                            ReferencingProject = srcRelativeProjectPath projectPath
+                            ReferencedProject = srcRelativeProjectPath referencedProjectPath
+                            ReferencePath = referencePath
+                        }
+                    )
+
+                    visit referencedProjectPath)
+
+        rootProjects |> Array.iter visit
+        dependencies |> Seq.toArray
+
 /// Verifies that the operations skeleton projects compile into distinct assemblies.
 [<TestFixture>]
 type ``Operations skeleton project graph``() =
@@ -103,6 +162,44 @@ type ``Operations skeleton project graph``() =
             |]
 
         Assert.That(projectPaths, Is.EquivalentTo(expectedPaths))
+
+    /// Proves the root solution does not reabsorb Operations projects from the local Operations solution boundary.
+    [<Test>]
+    member _.``Root solution excludes Operations projects``() =
+        let solutionPath = ProjectStructureTestPaths.srcRelativePath "" "Grace.slnx"
+
+        let operationsProjectPaths =
+            ProjectStructureXml.solutionProjectPaths solutionPath
+            |> Array.filter (fun (projectPath: string) -> projectPath.Contains("Grace.Operations", StringComparison.OrdinalIgnoreCase))
+
+        Assert.That(operationsProjectPaths, Is.Empty)
+
+    /// Proves root validation cannot pull Operations projects through transitive project references.
+    [<Test>]
+    member _.``Root solution project graph excludes Operations project references``() =
+        let solutionPath = ProjectStructureTestPaths.srcRelativePath "" "Grace.slnx"
+
+        let rootProjects =
+            ProjectStructureXml.solutionProjectPaths solutionPath
+            |> Array.map ProjectStructureGraph.solutionProjectPath
+
+        let operationsReferences =
+            ProjectStructureGraph.projectReferenceClosure rootProjects
+            |> Array.filter (fun dependency -> dependency.ReferencedProject.Contains("Grace.Operations", StringComparison.OrdinalIgnoreCase))
+            |> Array.map (fun dependency -> $"{dependency.ReferencingProject} -> {dependency.ReferencedProject} ({dependency.ReferencePath})")
+
+        Assert.That(operationsReferences, Is.Empty)
+
+    /// Proves project-reference graph walking handles Windows-style MSBuild includes on every runner OS.
+    [<Test>]
+    member _.``Project reference resolution normalizes Windows separators``() =
+        let projectPath = Path.Combine(TestContext.CurrentContext.WorkDirectory, "RootProject", "RootProject.fsproj")
+
+        let resolvedPath = ProjectStructureGraph.projectReferencePath projectPath @"..\Grace.Operations\Grace.Operations.fsproj"
+
+        let expectedPath = Path.GetFullPath(Path.Combine(TestContext.CurrentContext.WorkDirectory, "Grace.Operations", "Grace.Operations.fsproj"))
+
+        Assert.That(resolvedPath, Is.EqualTo(expectedPath))
 
     /// Proves Grace Server does not take a direct dependency on Operations application projects.
     [<Test>]
