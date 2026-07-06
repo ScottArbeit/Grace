@@ -3890,6 +3890,20 @@ module Watch =
     let internal verifyCurrentBranchMaterializationPreWriteContentCleanForWatchTests referenceId previousGraceStatus correlationId =
         verifyCurrentBranchMaterializationPreWriteContentClean referenceId previousGraceStatus correlationId
 
+    /// Retires a remote payload when pre-write evidence proves local work superseded the materialization attempt.
+    let private verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayload payload previousGraceStatus correlationId =
+        task {
+            match! verifyCurrentBranchMaterializationPreWriteContentClean payload.ReferenceId previousGraceStatus correlationId with
+            | Ok () -> return Ok()
+            | Error error ->
+                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+                return Error error
+        }
+
+    /// Exposes stale-payload retirement for focused pre-write scan regression tests.
+    let internal verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayloadForWatchTests payload previousGraceStatus correlationId =
+        verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayload payload previousGraceStatus correlationId
+
     /// Builds the default live clients that fetch, download, and apply remote current-branch directory versions.
     let private defaultCurrentBranchRemoteMaterializationOperations () =
         let getDirectoryVersionsRecursive directoryVersionId correlationId =
@@ -3995,7 +4009,11 @@ module Watch =
                                                         correlationId
                                                 )
                                         else
-                                            match! verifyCurrentBranchMaterializationPreWriteContentClean payload.ReferenceId previousGraceStatus correlationId
+                                            match!
+                                                verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayload
+                                                    payload
+                                                    previousGraceStatus
+                                                    correlationId
                                                 with
                                             | Error error -> return Error error
                                             | Ok () ->
@@ -4103,9 +4121,11 @@ module Watch =
                             let! previousGraceStatus = operations.ReadGraceStatus()
 
                             if not (currentBranchMaterializationRootMatchesAuthority authority previousGraceStatus) then
+                                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
                                 logToAnsiConsole
                                     Colors.Error
-                                    $"Current-branch remote materialization refused because GraceStatus root changed before remote fetch; retry will re-evaluate Reference {payload.ReferenceId}."
+                                    $"Current-branch remote materialization refused because GraceStatus root changed before remote fetch; Reference {payload.ReferenceId} was retired as stale behind local work."
 
                                 return decision
                             elif not (currentBranchMaterializationAuthorityStillCurrent authority previousGraceStatus) then
@@ -4128,9 +4148,11 @@ module Watch =
                                         let! markerTimeGraceStatus = operations.ReadGraceStatus()
 
                                         if not (currentBranchMaterializationAuthorityStillCurrent authority markerTimeGraceStatus) then
+                                            consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
                                             logToAnsiConsole
                                                 Colors.Error
-                                                $"Current-branch remote materialization refused because repository, branch, or local root changed before write; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                $"Current-branch remote materialization refused because repository, branch, or local root changed before write; Reference {payload.ReferenceId} was retired as stale behind local work."
 
                                             return decision
                                         else

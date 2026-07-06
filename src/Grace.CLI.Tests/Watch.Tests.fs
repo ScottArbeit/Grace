@@ -14920,6 +14920,216 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true)
 
+    /// Verifies that an active remote payload is retired when a local save advances the root during remote download.
+    [<Test>]
+    let ``current branch materialization local root advance during download consumes remote payload`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let newerLocalRootId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+
+            let cleanStatus = liveWatchStatus localRootId
+
+            let newerLocalStatus =
+                { liveWatchStatus newerLocalRootId with
+                    RootDirectorySha256Hash = Sha256Hash "newer-local-save-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "newer-local-save-root-blake3"
+                    DirectoryIds = HashSet<DirectoryVersionId>([| newerLocalRootId |])
+                }
+
+            let payload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    remoteRootId
+                    (Sha256Hash "download-race-remote-root")
+                    (Blake3Hash "download-race-remote-root-blake3")
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = cleanStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = cleanStatus.RootDirectoryBlake3Hash
+                }
+
+            let newerLocalGraceStatus =
+                { previousStatus with
+                    RootDirectoryId = newerLocalRootId
+                    RootDirectorySha256Hash = newerLocalStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = newerLocalStatus.RootDirectoryBlake3Hash
+                }
+
+            let inspection = ref (materializationInspection None cleanStatus)
+
+            let operations, fetchedRoots, downloadBatches, appliedPayloads, publishedStatuses =
+                recordingMaterializationOperations inspection previousStatus GraceStatus.Default [| DirectoryVersionDto.Default |]
+
+            let readCount = ref 0
+
+            let racingOperations =
+                { operations with
+                    ReadGraceStatus =
+                        fun () ->
+                            incr readCount
+
+                            if readCount.Value = 1 then
+                                Task.FromResult(previousStatus)
+                            else
+                                inspection.Value <- materializationInspection None newerLocalStatus
+                                Task.FromResult(newerLocalGraceStatus)
+                }
+
+            let decision =
+                (Watch.processCurrentBranchReferenceMaterializationForWatchTests racingOperations true [| payload |])
+                    .GetAwaiter()
+                    .GetResult()
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            fetchedRoots.ToArray()
+            |> should equal [| remoteRootId |]
+
+            downloadBatches.Count |> should equal 1
+            appliedPayloads.Count |> should equal 0
+            publishedStatuses.Count |> should equal 0
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0
+
+            let retryOperations, retryFetchedRoots, retryDownloadBatches, retryAppliedPayloads, retryPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None newerLocalStatus))
+                    newerLocalGraceStatus
+                    GraceStatus.Default
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests retryOperations true [| payload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            retryFetchedRoots.Count |> should equal 0
+            retryDownloadBatches.Count |> should equal 0
+            retryAppliedPayloads.Count |> should equal 0
+            retryPublishedStatuses.Count |> should equal 0)
+
+    /// Verifies that marker-time local edit evidence retires the queued remote payload before resync.
+    [<Test>]
+    let ``current branch materialization pre write local edit consumes remote payload`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let previousStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            let payload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    remoteRootId
+                    (Sha256Hash "pre-write-local-edit-remote")
+                    (Blake3Hash "pre-write-local-edit-remote-blake3")
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                payload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            File.WriteAllText(Path.Combine(root, "pre-write-local-edit.txt"), "local edit before remote overwrite")
+
+            let result =
+                (Watch.verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayloadForWatchTests
+                    payload
+                    previousStatus
+                    (generateCorrelationId ()))
+                    .GetAwaiter()
+                    .GetResult()
+
+            result.IsError |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0
+
+            let localAfterResync =
+                { liveWatchStatus localRootId with
+                    RootDirectorySha256Hash = Sha256Hash "after-pre-write-local-edit"
+                    RootDirectoryBlake3Hash = Blake3Hash "after-pre-write-local-edit-blake3"
+                    DirectoryIds = HashSet<DirectoryVersionId>([| localRootId |])
+                }
+
+            let retryOperations, retryFetchedRoots, retryDownloadBatches, retryAppliedPayloads, retryPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None localAfterResync))
+                    GraceStatus.Default
+                    GraceStatus.Default
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests retryOperations true [| payload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            retryFetchedRoots.Count |> should equal 0
+            retryDownloadBatches.Count |> should equal 0
+            retryAppliedPayloads.Count |> should equal 0
+            retryPublishedStatuses.Count |> should equal 0)
+
+    /// Verifies that a clean marker-time scan does not falsely retire a queued remote payload.
+    [<Test>]
+    let ``current branch materialization clean pre write scan preserves remote payload`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let remoteRootId = Guid.NewGuid()
+            let previousStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            let payload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    remoteRootId
+                    (Sha256Hash "pre-write-clean-remote")
+                    (Blake3Hash "pre-write-clean-remote-blake3")
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                payload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            let result =
+                (Watch.verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayloadForWatchTests
+                    payload
+                    previousStatus
+                    (generateCorrelationId ()))
+                    .GetAwaiter()
+                    .GetResult()
+
+            result.IsOk |> should equal true
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false
+
+            let pendingStatus = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
+
+            pendingStatus.Count |> should equal 1
+
+            pendingStatus.LatestReferenceId
+            |> should equal (Some payload.ReferenceId))
+
     /// Verifies that a stale materialization tag cannot consume a later branch-switch deletion.
     [<Test>]
     let ``stale materialization tag with newer live marker does not skip branch transition completion`` () =
