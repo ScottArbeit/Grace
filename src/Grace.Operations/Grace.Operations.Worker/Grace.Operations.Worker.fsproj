@@ -19,9 +19,9 @@
 
   <ItemGroup>
     <ProjectReference Include="..\Grace.Operations.Data\Grace.Operations.Data.fsproj" />
-    <ProjectReference Include="..\Grace.Operations\Grace.Operations.fsproj" />
-    <ProjectReference Include="..\Grace.Shared\Grace.Shared.fsproj" />
-    <ProjectReference Include="..\Grace.Types\Grace.Types.fsproj" />
+    <ProjectReference Include="..\Grace.Operations.fsproj" />
+    <ProjectReference Include="..\..\Grace.Shared\Grace.Shared.fsproj" />
+    <ProjectReference Include="..\..\Grace.Types\Grace.Types.fsproj" />
   </ItemGroup>
 
   <ItemGroup>

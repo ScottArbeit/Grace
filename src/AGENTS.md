@@ -8,6 +8,9 @@ Treat this file as the canonical high-level brief; each project folder contains 
 - `pwsh ./scripts/bootstrap.ps1`
 - `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration tests)
 
+Both validation profiles restore, build, and test `src/Grace.slnx` and
+`src/Grace.Operations/Grace.Operations.slnx` as separate solution targets.
+
 Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit `validate -Fast` hook.
 
 ## Work Tracking
@@ -51,7 +54,8 @@ update the issue before editing the new paths.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
 - Prefer vertical slices that prove one public behavior at a time through the closest stable boundary.
-- Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage).
+- Validate changes with `pwsh ./scripts/validate.ps1 -Fast` (use `-Full` for Aspire integration coverage). The
+  validation script covers the root Grace solution and the Operations-local solution as separate build/test targets.
 - Order validation to avoid duplicate builds. Run targeted Fantomas formatting or checks before validation for touched
   F# files, then choose exactly one final build/test gate. If `validate -Fast` or `validate -Full` will run, do not also
   ask workers to routinely run project-specific `dotnet build` plus `dotnet test --no-build`; `validate` is the final
@@ -156,8 +160,10 @@ update the issue before editing the new paths.
 
 ## Test Parallelization And Validation
 
-- `pwsh ./scripts/validate.ps1 -Fast` and `-Full` run one solution-level `dotnet test "src/Grace.slnx"` command with
-  selection filters. Fast selects Authorization, CLI, Types, and Server.Unit tests. Full adds Server integration tests.
+- `pwsh ./scripts/validate.ps1 -Fast` and `-Full` restore and build `src/Grace.slnx` and
+  `src/Grace.Operations/Grace.Operations.slnx` as separate solution targets. The test phase runs root-solution tests
+  with selection filters, then runs Operations-local tests from the Operations solution. Fast selects Authorization,
+  CLI, Types, Server.Unit, and Operations tests. Full adds Server integration tests.
 - Do not reintroduce custom per-project process fan-out into validation unless a future issue owns that runner change.
 - Assembly-level NUnit parallel defaults are intentionally limited. `Grace.Authorization.Tests` and `Grace.Types.Tests`
   have bounded defaults. `Grace.Server.Unit.Tests` is deferred while process-static approval-store mutation remains in

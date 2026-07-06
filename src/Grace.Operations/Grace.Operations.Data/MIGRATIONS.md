@@ -1,0 +1,23 @@
+# Operations Data Migrations
+
+`Grace.Operations.Data` owns the EF Core model and migrations for the Azure SQL operations store. The current baseline
+schema is intentionally narrow:
+
+- `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary.
+- `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
+- The EF migrations history table lives in `ops.__EFMigrationsHistory` so operations schema state stays with the
+  operations schema.
+
+The ingestion hot path still uses reviewed raw SQL for the durable insert and aggregate update. That path preserves the
+`UsageFactId` idempotency lock and the aggregate `MERGE ... WITH (HOLDLOCK)` behavior that the worker depends on.
+
+## Raw SQL Escape Hatch
+
+Use EF migration builder APIs for ordinary tables, columns, keys, and indexes. Raw SQL is allowed only inside migration
+classes or reviewed helper modules used directly by migrations when SQL Server or Azure SQL physical design needs a
+shape EF cannot express clearly. Valid examples include provider-specific index options, partitioning, compression,
+online rebuild options, lock hints for data backfills, and guarded data movement for a future reviewed migration.
+
+Do not put SQL Server physical-design choices in worker startup, request handlers, or ad hoc runtime bootstrap code.
+When raw SQL is used in a migration, keep it deterministic, name the Grace invariant it protects, and cover the emitted
+schema or behavior with Operations migration tests.

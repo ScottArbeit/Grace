@@ -1,0 +1,6 @@
+<Solution>
+  <Project Path="Grace.Operations.fsproj" />
+  <Project Path="Grace.Operations.Data/Grace.Operations.Data.fsproj" />
+  <Project Path="Grace.Operations.Tests/Grace.Operations.Tests.fsproj" />
+  <Project Path="Grace.Operations.Worker/Grace.Operations.Worker.fsproj" />
+</Solution>

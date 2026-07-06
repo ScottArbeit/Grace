@@ -7,6 +7,7 @@ open Grace.Types.Usage
 open NodaTime
 open NUnit.Framework
 open System
+open System.IO
 open System.Text.Json
 
 /// Contains usage fact test helpers.
@@ -59,6 +60,49 @@ type UsageFactContractTests() =
         | Ok () -> Assert.Fail($"Usage fact should fail validation with '{expected}'.")
         | Error errors -> Assert.That(errors, Has.Some.Contains(expected))
 
+    /// Builds the deterministic usage fact fixture for a supported v1 fact kind.
+    let supportedV1Fact kind =
+        match kind with
+        | UsageFactKind.RepositoryStorageBytesMinute -> UsageFactTestData.validFact ()
+        | _ -> invalidArg (nameof kind) $"Unsupported v1 UsageFactKind '{kind}'."
+
+    /// Finds the golden JSON fixture for a supported v1 fact kind.
+    let goldenFixturePath kind =
+        match kind with
+        | UsageFactKind.RepositoryStorageBytesMinute ->
+            Path.Combine(__SOURCE_DIRECTORY__, "Fixtures", "UsageFacts", "v1", "repository-storage-bytes-minute.json")
+        | _ -> invalidArg (nameof kind) $"Unsupported v1 UsageFactKind '{kind}'."
+
+    /// Normalizes newline and final-newline differences before comparing golden JSON fixtures.
+    let normalizeJsonText (json: string) = json.ReplaceLineEndings("\n").TrimEnd()
+
+    /// Verifies that every supported v1 fact kind has a stable golden JSON fixture.
+    [<Test>]
+    member _.SupportedV1UsageFactKindsHaveGoldenJsonFixtures() =
+        Assert.That(
+            UsageFact.SupportedV1FactKinds,
+            Is.EquivalentTo(
+                [|
+                    UsageFactKind.RepositoryStorageBytesMinute
+                |]
+            )
+        )
+
+        for factKind in UsageFact.SupportedV1FactKinds do
+            let fact = supportedV1Fact factKind
+            let actual = serialize fact
+            let expected = File.ReadAllText(goldenFixturePath factKind)
+
+            Assert.That(normalizeJsonText actual, Is.EqualTo(normalizeJsonText expected), $"Golden JSON drifted for {factKind}.")
+
+            let roundTrip = deserialize<UsageFact> expected
+
+            match UsageFact.Validate roundTrip with
+            | Ok () -> Assert.That(roundTrip, Is.EqualTo(fact), $"Golden JSON no longer round trips for {factKind}.")
+            | Error errors ->
+                let errorText = String.Join("; ", errors)
+                Assert.Fail($"Golden JSON for {factKind} should validate, but failed with: {errorText}")
+
     /// Verifies that a valid repository storage fact serializes with the expected JSON field names and values.
     [<Test>]
     member _.RepositoryStorageUsageFactSerializesWithExpectedJsonShape() =
@@ -70,6 +114,7 @@ type UsageFactContractTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(stringProperty document "Class", Is.EqualTo(nameof UsageFact))
+                Assert.That((property document "SchemaVersion").GetInt32(), Is.EqualTo(UsageFactSchemaVersion))
                 Assert.That(guidProperty document "UsageFactId", Is.EqualTo(UsageFactTestData.usageFactId))
                 Assert.That(stringProperty document "CorrelationId", Is.EqualTo(UsageFactTestData.correlationId))
                 Assert.That(stringProperty document "FactKind", Is.EqualTo("repositoryStorageBytesMinute"))
@@ -102,6 +147,8 @@ type UsageFactContractTests() =
                     Is.EqualTo(UsageFactTestData.storagePoolId)
                 )
 
+                Assert.That(stringProperty document "Source", Is.EqualTo(DefaultUsageFactSource))
+                Assert.That(stringProperty document "Confidence", Is.EqualTo("observed"))
                 Assert.That((property document "Quantity").GetInt64(), Is.EqualTo(4096L))
                 Assert.That(stringProperty document "ObservedAt", Is.EqualTo("2026-07-04T12:34:00Z")))
         )
@@ -157,6 +204,26 @@ type UsageFactContractTests() =
                     Assert.That(errors, Has.Some.Contains("Scope.RepositoryId is required.")))
             )
 
+    /// Verifies that unsupported schema versions fail validation instead of becoming accepted contract drift.
+    [<TestCase(0)>]
+    [<TestCase(2)>]
+    member _.UnsupportedSchemaVersionFailsValidationClearly(schemaVersion: int) =
+        let fact = { UsageFactTestData.validFact () with SchemaVersion = schemaVersion }
+
+        assertInvalid $"SchemaVersion '{schemaVersion}' is not supported. Expected '{UsageFactSchemaVersion}'." fact
+
+    /// Verifies that serialized future schema versions deserialize but still fail contract validation.
+    [<Test>]
+    member _.UnsupportedSchemaVersionJsonFailsValidationClearly() =
+        let futureSchemaJson =
+            File
+                .ReadAllText(goldenFixturePath UsageFactKind.RepositoryStorageBytesMinute)
+                .Replace("\"SchemaVersion\": 1", "\"SchemaVersion\": 2")
+
+        let fact = deserialize<UsageFact> futureSchemaJson
+
+        assertInvalid $"SchemaVersion '2' is not supported. Expected '{UsageFactSchemaVersion}'." fact
+
     /// Verifies that missing identity JSON fields fail before becoming a partial contract value.
     [<Test>]
     member _.MissingRequiredIdentityJsonFieldsFailDeserializationClearly() =
@@ -164,12 +231,15 @@ type UsageFactContractTests() =
             """
 {
   "Class": "UsageFact",
+  "SchemaVersion": 1,
   "CorrelationId": "corr-usage-tracer-bullet",
   "FactKind": "repositoryStorageBytesMinute",
   "Scope": {},
   "Resource": {
     "StoragePoolId": "storage-pool-main"
   },
+  "Source": "Grace.Server",
+  "Confidence": "observed",
   "Quantity": 4096,
   "ObservedAt": "2026-07-04T12:34:00Z"
 }
@@ -196,6 +266,7 @@ type UsageFactContractTests() =
             """
 {
   "Class": "UsageFact",
+  "SchemaVersion": 1,
   "UsageFactId": "not-a-guid",
   "CorrelationId": "corr-usage-tracer-bullet",
   "FactKind": "repositoryStorageBytesMinute",
@@ -207,6 +278,8 @@ type UsageFactContractTests() =
   "Resource": {
     "StoragePoolId": "storage-pool-main"
   },
+  "Source": "Grace.Server",
+  "Confidence": "observed",
   "Quantity": 4096,
   "ObservedAt": "2026-07-04T12:34:00Z"
 }
@@ -216,11 +289,12 @@ type UsageFactContractTests() =
         Assert.That(ex.Message, Does.Contain("not-a-guid").Or.Contains("Guid"))
 
     /// Verifies that unsupported future fact kind values are not accepted as known facts.
-    [<Test>]
-    member _.UnsupportedFutureFactKindValueFailsValidationClearly() =
-        let fact = { UsageFactTestData.validFact () with FactKind = enum<UsageFactKind> 999 }
+    [<TestCase(0)>]
+    [<TestCase(999)>]
+    member _.UnsupportedFutureFactKindValueFailsValidationClearly(factKind: int) =
+        let fact = { UsageFactTestData.validFact () with FactKind = enum<UsageFactKind> factKind }
 
-        assertInvalid "FactKind '999' is not supported." fact
+        assertInvalid $"FactKind '{factKind}' is not supported." fact
 
     /// Verifies that unknown future fact kind strings do not deserialize as known facts.
     [<Test>]
@@ -237,6 +311,23 @@ type UsageFactContractTests() =
                 .Contain("futureUsageFactKind")
                 .Or.Contains("UsageFactKind")
         )
+
+    /// Verifies that missing source values fail validation instead of entering the durable fact stream.
+    [<TestCase("")>]
+    [<TestCase("   ")>]
+    member _.MissingSourceFailsValidationClearly(source: string) =
+        let fact = { UsageFactTestData.validFact () with Source = source }
+
+        assertInvalid "Source is required." fact
+
+    /// Verifies that unknown confidence values fail validation instead of weakening fact evidence semantics.
+    [<TestCase(0)>]
+    [<TestCase(2)>]
+    [<TestCase(999)>]
+    member _.UnsupportedConfidenceFailsValidationClearly(confidence: int) =
+        let fact = { UsageFactTestData.validFact () with Confidence = enum<UsageFactConfidence> confidence }
+
+        assertInvalid $"Confidence '{confidence}' is not supported." fact
 
     /// Verifies that zero and negative quantities are rejected by the contract validator.
     [<TestCase(0L)>]

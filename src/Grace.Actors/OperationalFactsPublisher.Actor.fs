@@ -104,6 +104,13 @@ module OperationalFactsPublisher =
         else
             Some(loggerFactory.CreateLogger("OperationalFactsPublisher.Actor"))
 
+    /// Describes unsupported operational fact publication providers without including the usage payload.
+    let private unsupportedPubSubProviderMessage pubSubSystem =
+        $"Grace pub-sub system {getDiscriminatedUnionCaseName pubSubSystem} cannot publish operational UsageFacts. Configure AzureServiceBus or disable operational fact publication explicitly."
+
+    /// Raises the fail-closed configuration error used when a configured provider cannot publish usage facts.
+    let internal rejectUnsupportedPubSubProvider pubSubSystem = invalidOp (unsupportedPubSubProviderMessage pubSubSystem)
+
     /// Publishes an immutable UsageFact to the dedicated operational facts Service Bus topic.
     let publishUsageFact (usageFact: UsageFact) (cancellationToken: CancellationToken) =
         task {
@@ -135,14 +142,12 @@ module OperationalFactsPublisher =
                     )
                 | None -> ()
             | otherSystem ->
+                let message = unsupportedPubSubProviderMessage otherSystem
+
                 match tryGetLogger () with
-                | Some log ->
-                    log.LogWarning(
-                        "Grace pub-sub system {System} not yet implemented for operational UsageFact {UsageFactId} with CorrelationId: {CorrelationId}.",
-                        getDiscriminatedUnionCaseName otherSystem,
-                        usageFact.UsageFactId,
-                        usageFact.CorrelationId
-                    )
+                | Some log -> log.LogError("{Message} System: {System}.", message, getDiscriminatedUnionCaseName otherSystem)
                 | None -> ()
+
+                rejectUnsupportedPubSubProvider otherSystem
         }
         :> Task

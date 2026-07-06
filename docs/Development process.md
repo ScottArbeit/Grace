@@ -924,10 +924,12 @@ Avoid duplicate builds. The validation ladder is:
 3. Choose exactly one final build/test gate.
 4. Run `git diff --check`.
 
-`validate.ps1 -Fast` and `validate.ps1 -Full` already restore, build the solution, and run the selected test projects.
-If a worker is going to run `validate -Fast` or `validate -Full`, do not also prompt it to routinely run a
-project-specific `dotnet build` plus `dotnet test --no-build`. The selected `validate` command is the final build/test
-gate.
+`validate.ps1 -Fast` and `validate.ps1 -Full` already restore, build, and test both solution targets:
+`src/Grace.slnx` for the root Grace surface and `src/Grace.Operations/Grace.Operations.slnx` for the Operations-local
+surface. The script keeps those solution builds/tests separate, so do not collapse Operations projects back into the
+root solution to make validation find them. If a worker is going to run `validate -Fast` or `validate -Full`, do not
+also prompt it to routinely run a project-specific `dotnet build` plus `dotnet test --no-build`. The selected
+`validate` command is the final build/test gate.
 
 Focused project build/test is still appropriate when it is the right evidence for the slice:
 

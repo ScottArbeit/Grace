@@ -1,7 +1,6 @@
 namespace Grace.Server.Tests
 
 open Azure.Messaging.ServiceBus
-open Grace.Operations.Data
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Types.Common
@@ -44,6 +43,18 @@ type OperationsTracerBulletServerTests() =
     /// Application property that records the specific usage fact kind without parsing the payload.
     [<Literal>]
     let usageFactKindProperty = "usageFactKind"
+
+    /// External operations raw-fact table verified by the server integration tracer bullet.
+    [<Literal>]
+    let operationsRawUsageFactTable = "ops.RawUsageFact"
+
+    /// External operations aggregate table verified by the server integration tracer bullet.
+    [<Literal>]
+    let operationsUsageAggregateMinuteTable = "ops.UsageAggregateMinute"
+
+    /// Storage pool identifier width enforced by the operations database schema.
+    [<Literal>]
+    let operationsStoragePoolIdMaxLength = 256
 
     /// Bounded wait used while the worker consumes Service Bus messages and commits SQL rows.
     let proofTimeout = TimeSpan.FromSeconds(45.0)
@@ -196,7 +207,7 @@ type OperationsTracerBulletServerTests() =
         task {
             use! connection = openOperationsSqlAsync ()
             use command = connection.CreateCommand()
-            command.CommandText <- $"SELECT COUNT_BIG(1) FROM {OperationsUsageSql.RawUsageFactTable} WHERE UsageFactId = @UsageFactId;"
+            command.CommandText <- $"SELECT COUNT_BIG(1) FROM {operationsRawUsageFactTable} WHERE UsageFactId = @UsageFactId;"
             addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
             let! scalar = command.ExecuteScalarAsync()
             return Convert.ToInt64 scalar
@@ -211,7 +222,7 @@ type OperationsTracerBulletServerTests() =
             command.CommandText <-
                 $"""
 SELECT COALESCE(SUM(Quantity), 0)
-FROM {OperationsUsageSql.UsageAggregateMinuteTable}
+FROM {operationsUsageAggregateMinuteTable}
 WHERE FactKind = @FactKind
   AND OwnerId = @OwnerId
   AND OrganizationId = @OrganizationId
@@ -225,7 +236,7 @@ WHERE FactKind = @FactKind
             addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier fact.Scope.OrganizationId
             addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier fact.Scope.RepositoryId
 
-            let storagePoolParameter = command.Parameters.Add("@StoragePoolId", SqlDbType.NVarChar, OperationsUsageSql.StoragePoolIdMaxLength)
+            let storagePoolParameter = command.Parameters.Add("@StoragePoolId", SqlDbType.NVarChar, operationsStoragePoolIdMaxLength)
 
             storagePoolParameter.Value <- fact.Resource.StoragePoolId
             addParameter command "@BucketStartUtc" SqlDbType.DateTime2 (fact.ObservedAt.ToDateTimeUtc())

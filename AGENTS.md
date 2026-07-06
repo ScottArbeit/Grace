@@ -15,7 +15,8 @@ Commands:
 - `pwsh ./scripts/bootstrap.ps1`
 - `pwsh ./scripts/validate.ps1 -Fast`
 
-Use `pwsh ./scripts/validate.ps1 -Full` for Aspire integration coverage.
+Use `pwsh ./scripts/validate.ps1 -Full` for Aspire integration coverage. Both validation profiles restore, build, and
+test the root Grace solution and the Operations-local solution separately.
 Optional: `pwsh ./scripts/install-githooks.ps1` to add a pre-commit `validate -Fast` hook.
 
 More context:
@@ -104,7 +105,9 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.
 - When a task assigns a worktree different from the thread workspace root, every `apply_patch` filename must be an
   absolute path under the assigned worktree. After the first patch, verify git status in both locations.
-- Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate.
+- Prefer vertical slices with focused tests and `pwsh ./scripts/validate.ps1 -Fast` as the normal validation gate. The
+  validate script builds/tests `src/Grace.slnx` and `src/Grace.Operations/Grace.Operations.slnx` as separate solution
+  targets.
 - Use `pwsh ./scripts/validate.ps1 -Full` when Aspire, emulators, storage, Service Bus, Cosmos DB, Redis,
   deployment/runtime behavior, or cross-service integration is affected.
 - Order validation to avoid duplicate builds. Run targeted Fantomas formatting or checks before validation for touched
