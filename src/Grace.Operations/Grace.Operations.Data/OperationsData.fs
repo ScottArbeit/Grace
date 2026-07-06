@@ -2,6 +2,7 @@ namespace Grace.Operations.Data
 
 open Grace.Types.Common
 open Grace.Types.Usage
+open Microsoft.EntityFrameworkCore
 open Microsoft.Data.SqlClient
 open NodaTime
 open System
@@ -98,185 +99,6 @@ module internal OperationsUsageSchemaBootstrapPlan =
             SchemaConnectionString = connectionString
             DatabaseCreationConnectionString = databaseCreationConnectionString
         }
-
-/// Provides SQL Server schema and command text for the operations usage fact tables.
-[<RequireQualifiedAccess>]
-module OperationsUsageSql =
-
-    /// Names the SQL schema used by Grace operations data.
-    [<Literal>]
-    let SchemaName = "ops"
-
-    /// Names the raw immutable fact table.
-    [<Literal>]
-    let RawUsageFactTable = "ops.RawUsageFact"
-
-    /// Names the minute aggregate table derived from accepted raw facts.
-    [<Literal>]
-    let UsageAggregateMinuteTable = "ops.UsageAggregateMinute"
-
-    /// Keeps storage-pool identities case-sensitive even when the database default collation is case-insensitive.
-    [<Literal>]
-    let CaseSensitiveStoragePoolIdCollation = "Latin1_General_100_BIN2"
-
-    /// Limits correlation identifiers to the raw fact column width used by the operations store.
-    [<Literal>]
-    let CorrelationIdMaxLength = 200
-
-    /// Limits storage-pool identifiers to the aggregate key column width used by the operations store.
-    [<Literal>]
-    let StoragePoolIdMaxLength = 256
-
-    /// Creates the operations schema when it is absent.
-    [<Literal>]
-    let CreateSchema = "IF SCHEMA_ID(N'ops') IS NULL EXEC(N'CREATE SCHEMA ops');"
-
-    /// Creates the configured operations database when SQL Server does not already contain it.
-    [<Literal>]
-    let CreateDatabaseIfMissing =
-        """
-IF DB_ID(@DatabaseName) IS NULL
-BEGIN
-    DECLARE @CreateDatabaseSql nvarchar(max) = N'CREATE DATABASE ' + QUOTENAME(@DatabaseName);
-    EXEC(@CreateDatabaseSql);
-END;
-"""
-
-    /// Creates `ops.RawUsageFact` with `UsageFactId` as the durable dedupe key.
-    [<Literal>]
-    let CreateRawUsageFactTable =
-        """
-IF OBJECT_ID(N'ops.RawUsageFact', N'U') IS NULL
-BEGIN
-    CREATE TABLE ops.RawUsageFact
-    (
-        UsageFactId uniqueidentifier NOT NULL,
-        CorrelationId nvarchar(200) NOT NULL,
-        FactKind int NOT NULL,
-        OwnerId uniqueidentifier NOT NULL,
-        OrganizationId uniqueidentifier NOT NULL,
-        RepositoryId uniqueidentifier NOT NULL,
-        StoragePoolId nvarchar(256) COLLATE Latin1_General_100_BIN2 NOT NULL,
-        Quantity bigint NOT NULL,
-        ObservedAtUtc datetime2(7) NOT NULL,
-        CreatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_RawUsageFact_CreatedAtUtc DEFAULT SYSUTCDATETIME(),
-        CONSTRAINT PK_ops_RawUsageFact PRIMARY KEY CLUSTERED (UsageFactId)
-    );
-END;
-"""
-
-    /// Creates `ops.UsageAggregateMinute` with one row per repository resource and UTC minute.
-    [<Literal>]
-    let CreateUsageAggregateMinuteTable =
-        """
-IF OBJECT_ID(N'ops.UsageAggregateMinute', N'U') IS NULL
-BEGIN
-    CREATE TABLE ops.UsageAggregateMinute
-    (
-        FactKind int NOT NULL,
-        OwnerId uniqueidentifier NOT NULL,
-        OrganizationId uniqueidentifier NOT NULL,
-        RepositoryId uniqueidentifier NOT NULL,
-        StoragePoolId nvarchar(256) COLLATE Latin1_General_100_BIN2 NOT NULL,
-        BucketStartUtc datetime2(7) NOT NULL,
-        Quantity bigint NOT NULL,
-        UpdatedAtUtc datetime2(7) NOT NULL CONSTRAINT DF_ops_UsageAggregateMinute_UpdatedAtUtc DEFAULT SYSUTCDATETIME(),
-        CONSTRAINT PK_ops_UsageAggregateMinute PRIMARY KEY CLUSTERED
-        (
-            FactKind,
-            OwnerId,
-            OrganizationId,
-            RepositoryId,
-            StoragePoolId,
-            BucketStartUtc
-        )
-    );
-END;
-"""
-
-    /// Inserts one raw usage fact only when its durable identity has not already been accepted.
-    [<Literal>]
-    let TryInsertRawUsageFact =
-        """
-INSERT INTO ops.RawUsageFact
-(
-    UsageFactId,
-    CorrelationId,
-    FactKind,
-    OwnerId,
-    OrganizationId,
-    RepositoryId,
-    StoragePoolId,
-    Quantity,
-    ObservedAtUtc
-)
-SELECT
-    @UsageFactId,
-    @CorrelationId,
-    @FactKind,
-    @OwnerId,
-    @OrganizationId,
-    @RepositoryId,
-    @StoragePoolId,
-    @Quantity,
-    @ObservedAtUtc
-WHERE NOT EXISTS
-(
-    SELECT 1
-    FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK)
-    WHERE UsageFactId = @UsageFactId
-);
-"""
-
-    /// Adds a quantity to the minute aggregate row associated with a newly accepted raw fact.
-    [<Literal>]
-    let AddToUsageAggregateMinute =
-        """
-MERGE ops.UsageAggregateMinute WITH (HOLDLOCK) AS target
-USING
-(
-    SELECT
-        @FactKind AS FactKind,
-        @OwnerId AS OwnerId,
-        @OrganizationId AS OrganizationId,
-        @RepositoryId AS RepositoryId,
-        CAST(@StoragePoolId AS nvarchar(256)) COLLATE Latin1_General_100_BIN2 AS StoragePoolId,
-        @BucketStartUtc AS BucketStartUtc,
-        @Quantity AS Quantity
-) AS source
-ON
-    target.FactKind = source.FactKind
-    AND target.OwnerId = source.OwnerId
-    AND target.OrganizationId = source.OrganizationId
-    AND target.RepositoryId = source.RepositoryId
-    AND target.StoragePoolId = source.StoragePoolId
-    AND target.BucketStartUtc = source.BucketStartUtc
-WHEN MATCHED THEN
-    UPDATE SET
-        Quantity = target.Quantity + source.Quantity,
-        UpdatedAtUtc = SYSUTCDATETIME()
-WHEN NOT MATCHED THEN
-    INSERT
-    (
-        FactKind,
-        OwnerId,
-        OrganizationId,
-        RepositoryId,
-        StoragePoolId,
-        BucketStartUtc,
-        Quantity
-    )
-    VALUES
-    (
-        source.FactKind,
-        source.OwnerId,
-        source.OrganizationId,
-        source.RepositoryId,
-        source.StoragePoolId,
-        source.BucketStartUtc,
-        source.Quantity
-    );
-"""
 
 /// Builds deterministic raw fact and aggregate projection plans from the shared usage contract.
 [<RequireQualifiedAccess>]
@@ -467,16 +289,6 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
             return connection
         }
 
-    /// Executes a schema command against the operations database.
-    let executeCommandAsync (connection: SqlConnection) commandText cancellationToken =
-        task {
-            use command = connection.CreateCommand()
-            command.CommandType <- CommandType.Text
-            command.CommandText <- commandText
-            let! _ = command.ExecuteNonQueryAsync cancellationToken
-            return ()
-        }
-
     /// Creates the configured operations database when the connection string points at a database that is absent.
     let ensureDatabaseCreatedAsync cancellationToken =
         task {
@@ -494,14 +306,24 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
             | _ -> return ()
         }
 
-    /// Creates the operations usage schema, raw fact table, and minute aggregate table when they are absent.
+    /// Opens the target database and creates the operations schema before EF migrations touch history state.
+    let ensureSchemaCreatedAsync cancellationToken =
+        task {
+            use! connection = openConnectionAsync bootstrapPlan.SchemaConnectionString cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- OperationsUsageSql.CreateSchemaIfMissing
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
+
+    /// Applies reviewed EF Core migrations for the operations usage schema.
     member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
         task {
             do! ensureDatabaseCreatedAsync cancellationToken
-            use! connection = openConnectionAsync bootstrapPlan.SchemaConnectionString cancellationToken
-            do! executeCommandAsync connection OperationsUsageSql.CreateSchema cancellationToken
-            do! executeCommandAsync connection OperationsUsageSql.CreateRawUsageFactTable cancellationToken
-            do! executeCommandAsync connection OperationsUsageSql.CreateUsageAggregateMinuteTable cancellationToken
+            do! ensureSchemaCreatedAsync cancellationToken
+            use context = OperationsDbContextFactory.create bootstrapPlan.SchemaConnectionString
+            do! context.Database.MigrateAsync cancellationToken
         }
 
 /// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
