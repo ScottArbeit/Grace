@@ -80,6 +80,22 @@ type OperationalFactsPublisherActorTests() =
             Is.EqualTo(correlationId)
         )
 
+    /// Verifies recognized but unsupported pub-sub providers fail closed instead of silently dropping usage facts.
+    [<Test>]
+    member _.UnsupportedConfiguredProviderFailsOperationalFactPublication() =
+        let ex =
+            Assert.Throws<InvalidOperationException>(
+                Action (fun () ->
+                    OperationalFactsPublisher.rejectUnsupportedPubSubProvider GracePubSubSystem.AzureEventHubs
+                    |> ignore)
+            )
+
+        Assert.That(ex.Message, Does.Contain(nameof GracePubSubSystem.AzureEventHubs))
+        Assert.That(ex.Message, Does.Contain("cannot publish operational UsageFacts"))
+        Assert.That(ex.Message, Does.Not.Contain("UsageFactId"))
+        Assert.That(ex.Message, Does.Not.Contain("CorrelationId"))
+        Assert.That(ex.Message, Does.Not.Contain("RepositoryStorageBytesMinute"))
+
     /// Verifies that missing operational topic configuration fails before any event topic fallback can happen.
     [<Test>]
     [<NonParallelizable>]
