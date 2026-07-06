@@ -3357,17 +3357,29 @@ module Watch =
                     && entry.ReferenceIds.Contains(payload.ReferenceId)
                 then
                     true
-                elif entry.AnonymousRejectionsRemaining > 0 then
-                    if payload.ReferenceId <> ReferenceId.Empty then
-                        entry.ReferenceIds.Add(payload.ReferenceId)
-                        |> ignore
-
+                elif payload.ReferenceId = ReferenceId.Empty
+                     && entry.AnonymousRejectionsRemaining > 0 then
                     entry.AnonymousRejectionsRemaining <- entry.AnonymousRejectionsRemaining - 1
                     true
                 else
                     false
             else
                 false)
+
+    /// Retires older deferred materializations when a newer unusable Reference supersedes the pending tail.
+    let private retirePendingCurrentBranchMaterializationsBeforeUnusableReference (payload: CurrentBranchReferenceNotification) =
+        if payload.ReferenceId <> ReferenceId.Empty then
+            lock pendingCurrentBranchMaterializationLock (fun () ->
+                let superseded, retained =
+                    pendingCurrentBranchMaterializations
+                    |> List.partition (fun pending ->
+                        pending.RepositoryId = payload.RepositoryId
+                        && pending.BranchId = payload.BranchId)
+
+                for supersededEntry in superseded do
+                    recordSupersededCurrentBranchMaterializationPayload supersededEntry.Payload
+
+                pendingCurrentBranchMaterializations <- retained)
 
     /// Removes pending materializations that no longer belong to the repository branch Watch is observing.
     let private prunePendingCurrentBranchMaterializationsForActiveBranch () =
@@ -3518,14 +3530,14 @@ module Watch =
             || isSupersededCurrentBranchMaterializationRoot payload)
 
     /// Runs Grace-owned materialization writes under an update marker without emitting branch-transition completion evidence.
-    let private runCurrentBranchMaterializationWithMarker (markerFileName: string) (markerText: string) operation =
+    let private runCurrentBranchMaterializationWithMarkerAndCloseVerification (markerFileName: string) (markerText: string) operation verifyAfterMarkerClose =
         task {
             Directory.CreateDirectory(Path.GetDirectoryName(markerFileName))
             |> ignore
 
             let mutable markerCreatedByThisInvocation = false
 
-            let deleteMarkerIfOwned () =
+            let deleteMarkerIfOwnedWithoutCompletionEvidence () =
                 try
                     if
                         markerCreatedByThisInvocation
@@ -3564,6 +3576,54 @@ module Watch =
                             (generateCorrelationId ())
                     )
 
+            let closeMarkerIfOwnedWithCompletionEvidence () =
+                try
+                    if not markerCreatedByThisInvocation then
+                        Ok DateTime.MinValue
+                    elif not (File.Exists(markerFileName)) then
+                        Error(
+                            GraceError.Create
+                                "Current-branch remote materialization lost its owned Grace update marker before cleanup; incremental confidence is suspended until resync completes."
+                                (generateCorrelationId ())
+                        )
+                    elif not (String.Equals(File.ReadAllText(markerFileName), markerText, StringComparison.Ordinal)) then
+                        Error(
+                            GraceError.Create
+                                "Current-branch remote materialization could not close its owned Grace update marker because the marker lease changed before cleanup; incremental confidence is suspended until resync completes."
+                                (generateCorrelationId ())
+                        )
+                    else
+                        let completedSidecar = markerFileName + ".completed"
+                        let completedUtc = DateTime.UtcNow
+
+                        File.WriteAllText(completedSidecar, completedUtc.ToString("O", CultureInfo.InvariantCulture))
+                        recordCurrentBranchMaterializationCompletedMarker markerFileName completedUtc
+                        recordGraceUpdateMarkerCompletedUtc completedUtc
+
+                        deleteCurrentBranchMaterializationMarkerForWatch markerFileName
+
+                        if File.Exists(markerFileName) then
+                            Error(
+                                GraceError.Create
+                                    "Current-branch remote materialization could not prove its owned Grace update marker was deleted; incremental confidence is suspended until resync completes."
+                                    (generateCorrelationId ())
+                            )
+                        else
+                            Ok completedUtc
+                with
+                | :? IOException as ex ->
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization could not close its owned Grace update marker; incremental confidence is suspended until resync completes: {ex.Message}"
+                            (generateCorrelationId ())
+                    )
+                | :? UnauthorizedAccessException as ex ->
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization could not close its owned Grace update marker; incremental confidence is suspended until resync completes: {ex.Message}"
+                            (generateCorrelationId ())
+                    )
+
             let markerCreationResult =
                 try
                     use fileStream = new FileStream(markerFileName, FileMode.CreateNew, FileAccess.Write, FileShare.None)
@@ -3588,16 +3648,13 @@ module Watch =
 
                     match result with
                     | Ok _ ->
-                        match deleteMarkerIfOwned () with
-                        | Ok () ->
-                            let completedSidecar = markerFileName + ".completed"
-                            let completedUtc = DateTime.UtcNow
-
-                            File.WriteAllText(completedSidecar, completedUtc.ToString("O", CultureInfo.InvariantCulture))
-                            recordCurrentBranchMaterializationCompletedMarker markerFileName completedUtc
-                            recordGraceUpdateMarkerCompletedUtc completedUtc
-
-                            return result
+                        match closeMarkerIfOwnedWithCompletionEvidence () with
+                        | Ok completedUtc ->
+                            match! verifyAfterMarkerClose completedUtc with
+                            | Ok () -> return result
+                            | Error error ->
+                                requestGraceWatchExplicitResync error.Error
+                                return Error error
                         | Error error ->
                             requestGraceWatchExplicitResync error.Error
                             return Error error
@@ -3605,20 +3662,32 @@ module Watch =
                         requestGraceWatchExplicitResync
                             "current-branch materialization aborted after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes"
 
-                        deleteMarkerIfOwned () |> ignore
+                        deleteMarkerIfOwnedWithoutCompletionEvidence ()
+                        |> ignore
+
                         return result
                 with
                 | ex ->
                     requestGraceWatchExplicitResync
                         $"current-branch materialization threw after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes: {ex.Message}"
 
-                    deleteMarkerIfOwned () |> ignore
+                    deleteMarkerIfOwnedWithoutCompletionEvidence ()
+                    |> ignore
+
                     return raise ex
         }
+
+    /// Runs a current-branch materialization marker lifecycle when no extra close proof is required by the caller.
+    let private runCurrentBranchMaterializationWithMarker markerFileName markerText operation =
+        runCurrentBranchMaterializationWithMarkerAndCloseVerification markerFileName markerText operation (fun _ -> Task.FromResult(Ok()))
 
     /// Exposes materialization marker handling to tests without invoking branch-transition helpers.
     let internal runCurrentBranchMaterializationWithMarkerForWatchTests markerFileName markerText operation =
         runCurrentBranchMaterializationWithMarker markerFileName markerText operation
+
+    /// Exposes materialization marker close verification to tests without invoking branch-transition helpers.
+    let internal runCurrentBranchMaterializationWithMarkerAndCloseVerificationForWatchTests markerFileName markerText operation verifyAfterMarkerClose =
+        runCurrentBranchMaterializationWithMarkerAndCloseVerification markerFileName markerText operation verifyAfterMarkerClose
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
     let private publishCurrentBranchMaterializedStatusWithWriter
@@ -3718,6 +3787,39 @@ module Watch =
     let internal verifyCurrentBranchMaterializationMarkerWindowCleanForWatchTests referenceId updatedGraceStatus correlationId =
         verifyCurrentBranchMaterializationMarkerWindowClean referenceId updatedGraceStatus correlationId
 
+    /// Verifies marker-time working-tree content before remote files can overwrite local paths.
+    let private verifyCurrentBranchMaterializationPreWriteContentClean referenceId (previousGraceStatus: GraceStatus) correlationId =
+        task {
+            let! markerTimeDifferences = scanForDifferences previousGraceStatus
+
+            if not (wasLastScanForDifferencesSuccessful ()) then
+                requestGraceWatchExplicitResync
+                    $"Current-branch remote materialization could not complete its marker-time pre-write scan for Reference {referenceId}."
+
+                return
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization requires resync because the marker-time pre-write scan failed for Reference {referenceId}."
+                            correlationId
+                    )
+            elif markerTimeDifferences.Count > 0 then
+                requestGraceWatchExplicitResync
+                    $"Current-branch remote materialization observed {markerTimeDifferences.Count} local edits before remote writes for Reference {referenceId}."
+
+                return
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization refused to overwrite local edits observed before remote writes for Reference {referenceId}."
+                            correlationId
+                    )
+            else
+                return Ok()
+        }
+
+    /// Exposes marker-time pre-write verification to focused Watch tests without changing public contracts.
+    let internal verifyCurrentBranchMaterializationPreWriteContentCleanForWatchTests referenceId previousGraceStatus correlationId =
+        verifyCurrentBranchMaterializationPreWriteContentClean referenceId previousGraceStatus correlationId
+
     /// Builds the default live clients that fetch, download, and apply remote current-branch directory versions.
     let private defaultCurrentBranchRemoteMaterializationOperations () =
         let getDirectoryVersionsRecursive directoryVersionId correlationId =
@@ -3792,40 +3894,54 @@ module Watch =
                     let markerText = $"`grace watch` current-branch materialization is in progress. Lease: {Guid.NewGuid():N}"
 
                     match!
-                        runCurrentBranchMaterializationWithMarker markerFileName markerText (fun () ->
-                            task {
-                                let! currentGraceStatus = readGraceStatusFile ()
+                        runCurrentBranchMaterializationWithMarkerAndCloseVerification
+                            markerFileName
+                            markerText
+                            (fun () ->
+                                task {
+                                    let! currentGraceStatus = readGraceStatusFile ()
 
-                                if not (currentBranchMaterializationAuthorityStillCurrent authority currentGraceStatus) then
-                                    return
-                                        Error(
-                                            GraceError.Create
-                                                $"Current-branch remote materialization refused because repository, branch, or local root changed after notification preflight; retry will re-evaluate Reference {payload.ReferenceId}."
-                                                correlationId
-                                        )
-                                else
-                                    let! writeBoundaryInspection = inspectGraceWatchStatus ()
-
-                                    if not (currentBranchMaterializationInspectionStillCleanForWrite authority writeBoundaryInspection) then
+                                    if not (currentBranchMaterializationAuthorityStillCurrent authority currentGraceStatus) then
                                         return
                                             Error(
                                                 GraceError.Create
-                                                    $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                    $"Current-branch remote materialization refused because repository, branch, or local root changed after notification preflight; retry will re-evaluate Reference {payload.ReferenceId}."
                                                     correlationId
                                             )
                                     else
-                                        do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
-                                        do! writeGraceStatusFile updatedGraceStatus
-                                        do! upsertObjectCache updatedGraceStatus.Index.Values
+                                        let! writeBoundaryInspection = inspectGraceWatchStatus ()
 
-                                        return!
-                                            completeDurablyAppliedCurrentBranchMaterialization
-                                                payload
-                                                updatedGraceStatus
-                                                publishCurrentBranchMaterializedStatus
-                                                (fun () ->
-                                                    verifyCurrentBranchMaterializationMarkerWindowClean payload.ReferenceId updatedGraceStatus correlationId)
-                            })
+                                        if not (currentBranchMaterializationInspectionStillCleanForWrite authority writeBoundaryInspection) then
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                        correlationId
+                                                )
+                                        else
+                                            match! verifyCurrentBranchMaterializationPreWriteContentClean payload.ReferenceId previousGraceStatus correlationId
+                                                with
+                                            | Error error -> return Error error
+                                            | Ok () ->
+                                                do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
+                                                do! writeGraceStatusFile updatedGraceStatus
+                                                do! upsertObjectCache updatedGraceStatus.Index.Values
+
+                                                return!
+                                                    completeDurablyAppliedCurrentBranchMaterialization
+                                                        payload
+                                                        updatedGraceStatus
+                                                        publishCurrentBranchMaterializedStatus
+                                                        (fun () -> Task.FromResult(Ok()))
+                                })
+                            (fun _ ->
+                                task {
+                                    match! verifyCurrentBranchMaterializationMarkerWindowClean payload.ReferenceId updatedGraceStatus correlationId with
+                                    | Ok () -> return Ok()
+                                    | Error error ->
+                                        consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+                                        return Error error
+                                })
                         with
                     | Ok updatedStatus -> return Ok updatedStatus
                     | Error error -> return Error error
@@ -3966,7 +4082,7 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.SameRoot, None -> return decision
                     | reason, Some payload ->
                         if reason = LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable then
-                            forgetPendingCurrentBranchMaterializationsThrough payload
+                            retirePendingCurrentBranchMaterializationsBeforeUnusableReference payload
 
                         if recordPendingOnBlock
                            && shouldRetainPendingCurrentBranchMaterialization reason then
