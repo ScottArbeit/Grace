@@ -27,8 +27,10 @@ jobs:
         with:
           global-json-file: global.json
       - name: Restore NuGet packages
-        run: dotnet restore "src/Grace.slnx"
-      - name: Pre-pull Aspire images and build the solution
+        run: |
+          dotnet restore "src/Grace.slnx"
+          dotnet restore "src/Grace.Operations/Grace.Operations.slnx"
+      - name: Pre-pull Aspire images and build the solutions
         shell: bash
         run: |
           set -uo pipefail
@@ -39,17 +41,36 @@ jobs:
             -p:GraceBuildKind="${GraceBuildKind}" \
             -p:GraceBuildNumber="${GraceBuildNumber}" \
             -p:GraceSourceRevisionId="${GraceSourceRevisionId}" &
-          build_pid=$!
+          root_build_pid=$!
+
+          dotnet build "src/Grace.Operations/Grace.Operations.slnx" \
+            --configuration Release \
+            --no-restore \
+            -p:GraceBuildKind="${GraceBuildKind}" \
+            -p:GraceBuildNumber="${GraceBuildNumber}" \
+            -p:GraceSourceRevisionId="${GraceSourceRevisionId}" &
+          operations_build_pid=$!
+
+          wait_for_builds() {
+            root_build_exit=0
+            operations_build_exit=0
+
+            wait "${root_build_pid}" || root_build_exit=$?
+            wait "${operations_build_pid}" || operations_build_exit=$?
+
+            if [ "${root_build_exit}" -ne 0 ]; then
+              echo "Root solution build failed with exit code ${root_build_exit}" >&2
+            fi
+
+            if [ "${operations_build_exit}" -ne 0 ]; then
+              echo "Operations solution build failed with exit code ${operations_build_exit}" >&2
+            fi
+          }
 
           docker info
           docker_info_exit=$?
           if [ "${docker_info_exit}" -ne 0 ]; then
-            build_exit=0
-            wait "${build_pid}" || build_exit=$?
-            if [ "${build_exit}" -ne 0 ]; then
-              echo "Build failed with exit code ${build_exit}" >&2
-            fi
-
+            wait_for_builds
             exit "${docker_info_exit}"
           fi
 
@@ -68,8 +89,7 @@ jobs:
             pids+=("$!")
           done
 
-          build_exit=0
-          wait "${build_pid}" || build_exit=$?
+          wait_for_builds
 
           pull_failed=0
           for index in "${!pids[@]}"; do
@@ -84,13 +104,18 @@ jobs:
             fi
           done
 
-          if [ "${build_exit}" -ne 0 ]; then
-            echo "Build failed with exit code ${build_exit}" >&2
-            exit "${build_exit}"
+          if [ "${root_build_exit}" -ne 0 ]; then
+            exit "${root_build_exit}"
+          fi
+
+          if [ "${operations_build_exit}" -ne 0 ]; then
+            exit "${operations_build_exit}"
           fi
 
           exit "${pull_failed}"
       - name: Test
         env:
           GRACE_TEST_SERVER_CLEANUP: "0"
-        run: dotnet test "src/Grace.slnx" --configuration Release --no-build --no-restore
+        run: |
+          dotnet test "src/Grace.slnx" --configuration Release --no-build --no-restore
+          dotnet test "src/Grace.Operations/Grace.Operations.slnx" --configuration Release --no-build --no-restore
