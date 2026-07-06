@@ -2287,8 +2287,11 @@ module Watch =
             let mutable attempts = 0
             let mutable transitionWasPublished = false
             let mutable pendingWorkChangedDuringWrite = true
+            let mutable publicationFailed = false
 
-            while pendingWorkChangedDuringWrite && attempts < 2 do
+            while pendingWorkChangedDuringWrite
+                  && attempts < 2
+                  && not publicationFailed do
                 attempts <- attempts + 1
                 let pendingEvidence = readPendingWatchWorkEvidence ()
                 let hasPendingWork = pendingEvidence.HasPendingWork
@@ -2317,6 +2320,8 @@ module Watch =
                 with
                 | ex ->
                     lastPublishedHasPendingWatchWork <- None
+                    transitionWasPublished <- false
+                    publicationFailed <- true
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
                 pendingWorkChangedDuringWrite <-
@@ -3370,6 +3375,7 @@ module Watch =
     let private currentBranchReferenceHasUsableRootIdentity (payload: CurrentBranchReferenceNotification) =
         payload.DirectoryId <> DirectoryVersionId.Empty
         && not (String.IsNullOrWhiteSpace($"{payload.Sha256Hash}"))
+        && not (String.IsNullOrWhiteSpace($"{payload.Blake3Hash}"))
 
     /// Retires older deferred materializations only when an unusable Reference still proves newer root authority.
     let private retirePendingCurrentBranchMaterializationsBeforeUnusableReference (payload: CurrentBranchReferenceNotification) =
@@ -3459,6 +3465,7 @@ module Watch =
 
             let appliedBoundaryIndex =
                 pendingByIndex
+                |> List.rev
                 |> List.tryFind (fun (_, candidate) -> candidate.Payload.ReferenceId = payload.ReferenceId)
                 |> Option.map fst
 
@@ -3696,10 +3703,11 @@ module Watch =
                     requestGraceWatchExplicitResync
                         $"current-branch materialization threw after acquiring the update marker; incremental confidence is suspended until a scan-derived resync completes: {ex.Message}"
 
-                    deleteMarkerIfOwnedWithoutCompletionEvidence ()
-                    |> ignore
-
-                    return raise ex
+                    match deleteMarkerIfOwnedWithoutCompletionEvidence () with
+                    | Ok () -> return raise ex
+                    | Error cleanupError ->
+                        requestGraceWatchExplicitResync cleanupError.Error
+                        return Error cleanupError
         }
 
     /// Consumes an applied payload if marker closure fails after the operation reached its durable boundary.
@@ -3975,10 +3983,15 @@ module Watch =
                                         let! writeBoundaryInspection = inspectGraceWatchStatus ()
 
                                         if not (currentBranchMaterializationInspectionStillCleanForWrite authority writeBoundaryInspection) then
+                                            consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
+                                            requestGraceWatchExplicitResync
+                                                $"Current-branch remote materialization observed pending local work at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+
                                             return
                                                 Error(
                                                     GraceError.Create
-                                                        $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                        $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; Reference {payload.ReferenceId} was retired as stale behind local work."
                                                         correlationId
                                                 )
                                         else
@@ -3986,17 +3999,32 @@ module Watch =
                                                 with
                                             | Error error -> return Error error
                                             | Ok () ->
-                                                do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
-                                                do! writeGraceStatusFile updatedGraceStatus
-                                                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
-                                                do! upsertObjectCache updatedGraceStatus.Index.Values
+                                                let! finalWriteBoundaryInspection = inspectGraceWatchStatus ()
 
-                                                return!
-                                                    completeDurablyAppliedCurrentBranchMaterialization
-                                                        payload
-                                                        updatedGraceStatus
-                                                        publishCurrentBranchMaterializedStatus
-                                                        (fun () -> Task.FromResult(Ok()))
+                                                if not (currentBranchMaterializationInspectionStillCleanForWrite authority finalWriteBoundaryInspection) then
+                                                    consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
+                                                    requestGraceWatchExplicitResync
+                                                        $"Current-branch remote materialization observed pending local work after the pre-write scan for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+
+                                                    return
+                                                        Error(
+                                                            GraceError.Create
+                                                                $"Current-branch remote materialization refused because Watch observed pending local work after the pre-write scan; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                                                correlationId
+                                                        )
+                                                else
+                                                    do! updateWorkingDirectory previousGraceStatus updatedGraceStatus directoryVersionDtos correlationId
+                                                    do! writeGraceStatusFile updatedGraceStatus
+                                                    consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+                                                    do! upsertObjectCache updatedGraceStatus.Index.Values
+
+                                                    return!
+                                                        completeDurablyAppliedCurrentBranchMaterialization
+                                                            payload
+                                                            updatedGraceStatus
+                                                            publishCurrentBranchMaterializedStatus
+                                                            (fun () -> Task.FromResult(Ok()))
                                 })
                             (fun _ ->
                                 task {
@@ -4109,9 +4137,14 @@ module Watch =
                                             let! writeBoundaryInspection = operations.InspectWatchStatus()
 
                                             if not (currentBranchMaterializationInspectionStillCleanForWrite authority writeBoundaryInspection) then
+                                                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
+                                                requestGraceWatchExplicitResync
+                                                    $"Current-branch remote materialization observed pending local work at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+
                                                 logToAnsiConsole
                                                     Colors.Error
-                                                    $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                    $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; Reference {payload.ReferenceId} was retired as stale behind local work."
 
                                                 return decision
                                             else
