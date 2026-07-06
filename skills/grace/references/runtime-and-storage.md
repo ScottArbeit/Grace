@@ -1,3 +1,4 @@
+
 # Runtime And Storage
 
 Load this reference for hosted services, background workers, webhooks dispatch, Service Bus, Aspire, storage, manifest
@@ -92,3 +93,20 @@ Relevant env vars live in `src/Grace.Shared/Constants.Shared.fs`, especially:
 - Use `pwsh ./scripts/validate.ps1 -Full` for Aspire, emulators, Service Bus, storage, Redis, deployment/runtime, or
   cross-service background behavior.
 - Pair parser/unit tests with full-gate evidence when runtime behavior depends on external delivery infrastructure.
+
+## Stale Authority And Materialization Ordering
+
+Runtime, storage, and materialization changes must name the authority used for each side effect:
+
+- current request body versus durable stored state
+- current repository configuration versus recorded route or placement evidence
+- local Watch status/cache versus re-read status after acquiring the mutation marker
+- active lifecycle state versus retained retry or cleanup evidence
+- authorized manifest/reference/path versus caller-supplied bytes, hashes, object keys, or FileVersion payloads
+
+For each side effect, revalidate authority immediately before write, SAS issuance, materialization, publication, or
+cleanup. Tests should prove stale snapshots cannot overwrite newer local state, mint object access, publish success, or
+consume/retain pending work incorrectly.
+
+Shared CAS and materialization work must authorize before materializing bytes and must not treat addresses, hashes,
+object keys, or cache keys as capabilities unless a current product decision explicitly defines them as such.

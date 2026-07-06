@@ -1,3 +1,4 @@
+
 # Grace Repository Agents Guide
 
 Agents operating under `/src` should follow this playbook alongside the existing `AGENTS.md` in the repo root.
@@ -41,6 +42,15 @@ update the issue before editing the new paths.
   contextual enough for an implementation agent to succeed from the issue body alone without hidden project context.
   Write the gate as review-prevention guidance that predicts likely Codex Code Review Bot findings without adding new
   issue-template ceremony.
+
+- For code tasks that implement a product spec or generated plan, verify decision closure before editing: accepted or
+  assumed product decisions, supported/rejected inputs, audience/authorization semantics, failure behavior, lifecycle
+  states, and contract propagation must be explicit in the issue or PR. If a critical decision is missing, update the
+  issue or report the gap before coding.
+- For runtime, storage, materialization, Watch, eventing, or auth work, write a stale-authority preflight in the worker
+  handoff: what state is authoritative, when it is re-read, what can change between decision and mutation, how retries and
+  cleanup behave, and which focused proof catches stale snapshots.
+
 - Claim the issue with a comment, assign it to the authenticated GitHub user, and create or switch to an issue-owned
   branch/worktree from the selected base before editing implementation files: latest `origin/main` for standalone
   non-epic issues, or current `origin/epic/...` for sub-issues under the required epic integration branch.

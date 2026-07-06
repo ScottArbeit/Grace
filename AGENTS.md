@@ -1,3 +1,4 @@
+
 # Agent Instructions
 
 Other `AGENTS.md` files exist in subdirectories, refer to them for more specific context.
@@ -85,6 +86,18 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   tests, high-risk adversarial examples, selected risk-surface traps, and explicit N/A waivers. Keep each issue
   implementable from its body alone without hidden project context. Write the gate as review-prevention guidance that
   predicts likely Codex Code Review Bot findings without adding new issue-template ceremony.
+
+- Before turning a product spec or implementation plan into tracked work, record decision closure. Name product
+  decisions that are accepted, recommended, deferred, or waived; include the recommended default when the plan makes a
+  best-effort assumption. Do not leave audience, visibility, ownership, lifecycle, publication timing, failure behavior,
+  or accepted-but-unimplemented inputs implicit.
+- For any issue that touches public, durable, generated, or cross-project behavior, include a contract propagation map:
+  shared DTOs/parameters/events, persisted shapes, HTTP routes, CLI, SDK, OpenAPI/static/generated artifacts, docs, and
+  tests. Every surface must be updated or explicitly marked N/A with a reason.
+- For runtime, storage, materialization, watch, eventing, or authorization work, include a stale-authority preflight:
+  the authoritative source before the decision, the revalidation point before mutation/materialization/publication, the
+  failure/abort state, retry/cleanup behavior, and the proof that stale snapshots cannot win.
+
 - Grace is not in production. There is no production data to import, migrate, preserve, or grandfather. Do not weaken
   public contracts, validators, generated clients, runtime behavior, or tests to preserve imaginary old data. Only build
   compatibility behavior when an issue explicitly requires it as current Grace behavior.
@@ -149,6 +162,11 @@ so links stay traceable without relying on epic-branch auto-close behavior.
   dependency graph and write sets allow it.
 - Before handoff, require the worker to run a bot-prevention self-review over the actual diff, fix likely Codex Code
   Review Bot findings it discovers, and report first-pass review readiness with residual risks in the handoff.
+- If a PR reaches three substantive Codex review cycles, or two cycles on the same invariant family, stop ordinary
+  review-fix churn. Mine the originating issue and review findings, name the invariant family, post or update a
+  stabilization ledger, and update active/future sibling issues or agent guidance before requesting another normal review.
+  Treat repeated review findings as a planning defect until proven otherwise.
+
 - After the first coding subagent that works on an issue commits and pushes the new branch to origin, open a normal
   ready-for-review pull request. Keep it open while the step is still in progress so Codex Code Review Bot findings,
   fixes, validation evidence, and final no-issues bot state can be recorded on the pull request instead of only on the

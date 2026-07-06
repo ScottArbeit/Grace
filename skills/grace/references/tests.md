@@ -1,3 +1,4 @@
+
 # Grace Tests
 
 Load this reference when adding, updating, repairing, or selecting tests.
@@ -100,3 +101,18 @@ not custom per-project process fan-out. Fast selects Authorization, CLI, Types, 
 integration tests.
 
 Run `dotnet tool run fantomas --recurse .` from `./src` after F# changes when formatting is needed.
+
+## Review-Resistant Proof Matrix
+
+For each behavior-changing issue, select focused tests from this matrix:
+
+- positive success through the closest stable seam
+- negative denial, unsupported value, malformed input, hidden/missing resource, duplicate, and cross-scope cases
+- regression for known prior review findings
+- boundary cases for identity, ordering, limits, and collisions
+- replay/retry/terminal-state behavior after partial success or cleanup
+- stale-authority cases where state changes between decision and mutation/materialization/publication
+- contract propagation tests for CLI/SDK/OpenAPI/generated artifacts when public surfaces change
+- no-oracle tests for hidden or unauthorized resources when absence/non-observability is the requirement
+
+A test that only executes a path is not enough. The assertion must fail if the unsafe behavior returns.

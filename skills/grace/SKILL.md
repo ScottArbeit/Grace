@@ -1,3 +1,4 @@
+
 ---
 name: grace
 description: Grace repository workflow, architecture, and implementation guidance. Use when working in a Grace repo or on Grace planning, GitHub issue orchestration, F#/.NET code, Orleans actors, Giraffe HTTP APIs, SDK or CLI surfaces, DTOs/events/parameters, authorization, webhooks and approval requests, manifest-backed storage, tests, Aspire/runtime, docs, CONTRIBUTING, or AGENTS updates.
@@ -96,3 +97,21 @@ PowerShell, so quoting mistakes can silently flatten Markdown, expand variables,
 - State skipped validation and the reason.
 - For reviews, lead with findings and include file/line references.
 - For docs-only work, validate Markdown or explain why validation was skipped.
+
+## Plan Review And Spec-Quality Mode
+
+Use this mode when the user asks to evaluate a product spec, implementation plan, issue packet, or agent guidance.
+
+1. Read the applicable repo guidance plus `docs/Development process.md`, issue/PR templates, and this skill's workflow
+   reference.
+2. Inspect the current source surface enough to verify paths, symbols, contracts, tests, and docs.
+3. Check decision closure: audience, visibility, ownership, lifecycle, defaults, failure behavior, accepted/rejected
+   inputs, publication timing, billing/retention, and migration/data-reset assumptions.
+4. Check contract propagation: DTOs, parameters, events, persisted shapes, HTTP, CLI, SDK, OpenAPI/generated artifacts,
+   events/webhooks/SignalR/watch/search, docs, and tests.
+5. Check stale-authority and negative-proof obligations for runtime, storage, materialization, Watch, auth, and eventing
+   work.
+6. Mine relevant recent PRs when the task asks for review-cycle reduction or when a similar surface has crossed three
+   substantive review cycles. Use `skills/code-review-stabilizer/SKILL.md` for root-cause lanes and stabilization output.
+7. Produce artifacts that are implementable from their own text: decisions, invariant tuples, forbidden shapes, proof
+   obligations, validation, docs impact, residual risk, and issue/PR handoff.

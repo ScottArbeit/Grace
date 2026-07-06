@@ -1,3 +1,4 @@
+
 # Grace Development Process
 
 Grace's development process is issue-owned, evidence-heavy, and branch/worktree based. GitHub issues and pull requests
@@ -273,6 +274,57 @@ not a new required section.
 If review finds a missing class of acceptance criterion, adversarial case, contract propagation, or validation evidence,
 update active and future sibling issues before assigning more workers. Preserve issue history by appending an addendum
 unless replacing stale text is clearer and safe.
+
+
+
+### Decision Closure And Contract Propagation
+
+Before implementation begins on a product or architecture slice, close the decisions that would otherwise make workers
+infer behavior from nearby code. Add the closure to the issue body, epic packet, or an issue addendum.
+
+For each decision, record:
+
+- decision name and status: `accepted`, `recommended default`, `deferred`, `waived`, or `open`
+- recommended answer when the owner has not explicitly decided yet
+- alternatives considered
+- implementation impact
+- proof impact
+- the issue or sibling issue that owns deferred behavior
+
+Use this gate for decisions about audience, authorization, visibility, ownership, billing, retention, migration, lifecycle
+states, public event timing, failure behavior, default values, and whether an accepted input is implemented or rejected.
+
+For each issue touching a public, durable, generated, or cross-project surface, add a compact contract propagation map.
+Every row must be `updated`, `not changed`, `waived`, or `deferred to #issue`:
+
+| Surface | Status | Notes / proof |
+| ------- | ------ | ------------- |
+| Shared DTOs, parameters, commands, events, persisted state | | |
+| HTTP route, validation, authorization, error shape | | |
+| CLI parser, JSON/stdout/stderr, help/examples | | |
+| SDK or facade client | | |
+| Static OpenAPI, generated clients, generator matrix | | |
+| Events, webhooks, SignalR, watch, search, or projections | | |
+| Docs, ADRs, agent guidance, runbooks | | |
+| Focused tests and final validation | | |
+
+Accepted inputs must be implemented, rejected, or explicitly classified as informational/non-triggering with proof. Do
+not accept a field or flag that silently does nothing.
+
+### Stale-Authority Preflight
+
+For Watch, storage, materialization, authorization, eventing, runtime, or background-worker work, include a preflight that
+names:
+
+- authoritative state before decision
+- identity tuple that distinguishes same, stale, duplicate, and conflicting work
+- mutation or materialization window
+- revalidation point immediately before write, publication, download, or cleanup
+- terminal states and idempotent replay behavior
+- cleanup/abort/quarantine behavior when a side effect succeeds but durable state rejects
+- negative proof that stale snapshots, hidden resources, or failed cleanup cannot appear successful
+
+This preflight should be task-specific. Prefer three precise stale-authority traps over a broad checklist copy.
 
 ### Risk-Surface Trap Checklist
 
@@ -617,6 +669,37 @@ true:
 - the orchestrator can merge the results without predictable branch churn or conflicting review replies
 
 After every review-fix push, wait for Codex Code Review Bot to finish on the new head before assigning more fix work.
+
+
+
+### Repeated Review Cycle Learning Loop
+
+A PR crosses the stabilization threshold when it has three substantive Codex review cycles, two cycles on the same
+invariant family, or one cycle with enough related findings to show that the issue text missed a model boundary.
+
+When that happens, stop treating findings as isolated fixes:
+
+1. Build a review timeline: review number, commit, finding titles, paths, fix commits, and recurring theme.
+2. Fetch the originating issue and compare its acceptance criteria to the findings.
+3. Classify root cause into one or more lanes:
+   - product-decision gap
+   - contract-propagation gap
+   - authority-source gap
+   - stale-snapshot / interleaving gap
+   - lifecycle / retry gap
+   - authorization / materialization ordering gap
+   - negative-proof gap
+   - validation freshness gap
+   - slice-boundary gap
+   - ordinary implementation mistake
+4. Post or update a stabilization ledger with the invariant family, required proof, explicit out-of-scope boundaries, and
+   status map.
+5. Update active sibling issues, future issue generators, specs, templates, or agent guidance if the lane can recur.
+6. Request another review only after the ledger is mapped to implementation and proof on the current head.
+
+The PR prevention line should name the lane and the durable artifact updated or intentionally not updated. Example:
+`Prevention: contract-propagation gap; issue #NNN now requires OpenAPI, generated clients, SDK, and CLI JSON proof or an
+explicit N/A waiver.`
 
 ### Manual Codex Review Trigger Lock
 
