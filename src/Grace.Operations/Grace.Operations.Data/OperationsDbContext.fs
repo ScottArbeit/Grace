@@ -3,6 +3,8 @@ namespace Grace.Operations.Data
 open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Design
 open Microsoft.EntityFrameworkCore.Infrastructure
+open Microsoft.EntityFrameworkCore.Migrations
+open Microsoft.EntityFrameworkCore.SqlServer.Migrations.Internal
 open System
 
 /// Configures the Operations EF Core model without opening a database connection.
@@ -194,12 +196,42 @@ type OperationsDbContext(options: DbContextOptions<OperationsDbContext>) =
     /// Configures the Operations SQL Server schema shape that migrations must preserve.
     override _.OnModelCreating(modelBuilder: ModelBuilder) = OperationsModel.configure modelBuilder
 
+/// Ensures EF-generated scripts create the Operations schema before SQL Server receives history-table DDL.
+type OperationsSqlServerHistoryRepository(dependencies: HistoryRepositoryDependencies) =
+    inherit SqlServerHistoryRepository(dependencies)
+
+    let withOpsSchemaPreamble (script: string) =
+        if String.IsNullOrWhiteSpace script then
+            script
+        else
+            $"{OperationsUsageSql.CreateSchemaIfMissing.Trim()}{Environment.NewLine}{Environment.NewLine}{script}"
+
+    /// Creates the Operations schema before EF creates `[ops].[__EFMigrationsHistory]` in non-idempotent scripts.
+    override _.GetCreateScript() = base.GetCreateScript() |> withOpsSchemaPreamble
+
+    /// Creates the Operations schema before EF creates `[ops].[__EFMigrationsHistory]` in idempotent scripts and bundles.
+    override _.GetCreateIfNotExistsScript() =
+        base.GetCreateIfNotExistsScript()
+        |> withOpsSchemaPreamble
+
 /// Builds configured Operations EF contexts for runtime schema migration and tests.
 [<RequireQualifiedAccess>]
 module OperationsDbContextFactory =
 
     /// Provides the SQL Server connection string used when EF tooling builds migrations without opening the database.
     let private defaultDesignTimeConnectionString = "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsDesignTime;Integrated Security=true;"
+
+    /// Names the documented Operations SQL environment variable shared with `Grace.Operations.Worker`.
+    let private documentedSqlConnectionStringEnvironmentVariable = "grace__operations__sql__connectionstring"
+
+    /// Names the legacy design-time SQL environment variable retained for local developer compatibility.
+    let private legacySqlConnectionStringEnvironmentVariable = "GRACE_OPERATIONS_SQL_CONNECTION_STRING"
+
+    /// Reads the first non-empty environment variable from the supplied precedence order.
+    let private firstEnvironmentConnectionString variableNames =
+        variableNames
+        |> Seq.map Environment.GetEnvironmentVariable
+        |> Seq.tryFind (fun value -> not (String.IsNullOrWhiteSpace value))
 
     /// Resolves the design-time SQL Server connection string from EF command arguments, environment, or LocalDB.
     let designTimeConnectionString (args: string array) =
@@ -208,16 +240,17 @@ module OperationsDbContextFactory =
             with
         | Some connectionString -> connectionString
         | None ->
-            let environmentConnectionString = Environment.GetEnvironmentVariable("GRACE_OPERATIONS_SQL_CONNECTION_STRING")
-
-            if String.IsNullOrWhiteSpace environmentConnectionString then
-                defaultDesignTimeConnectionString
-            else
-                environmentConnectionString
+            [|
+                documentedSqlConnectionStringEnvironmentVariable
+                legacySqlConnectionStringEnvironmentVariable
+            |]
+            |> firstEnvironmentConnectionString
+            |> Option.defaultValue defaultDesignTimeConnectionString
 
     /// Creates EF Core options for the Operations SQL Server database.
     let options (connectionString: string) =
         DbContextOptionsBuilder<OperationsDbContext>()
+            .ReplaceService<IHistoryRepository, OperationsSqlServerHistoryRepository>()
             .UseSqlServer(
             connectionString,
             System.Action<SqlServerDbContextOptionsBuilder> (fun sql ->

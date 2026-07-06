@@ -114,4 +114,160 @@ END;
         modelBuilder.HasAnnotation("ProductVersion", "10.0.9")
         |> ignore
 
-        OperationsModel.configure modelBuilder
+        // Deliberately keep this migration target model frozen with literals so future runtime model edits
+        // cannot rewrite the reviewed baseline migration point.
+        modelBuilder.HasDefaultSchema("ops") |> ignore
+
+        let rawFact = modelBuilder.Entity<RawUsageFactEntity>()
+
+        rawFact.ToTable("RawUsageFact", "ops") |> ignore
+
+        rawFact
+            .HasKey([| "UsageFactId" |])
+            .HasName("PK_ops_RawUsageFact")
+        |> ignore
+
+        rawFact
+            .Property<System.Guid>("UsageFactId")
+            .HasColumnType("uniqueidentifier")
+            .ValueGeneratedNever()
+        |> ignore
+
+        rawFact
+            .Property<string>("CorrelationId")
+            .HasMaxLength(200)
+            .IsRequired()
+        |> ignore
+
+        rawFact.Property<int>("FactKind").IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<System.Guid>("OwnerId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<System.Guid>("OrganizationId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<System.Guid>("RepositoryId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<string>("StoragePoolId")
+            .HasMaxLength(256)
+            .UseCollation("Latin1_General_100_BIN2")
+            .IsRequired()
+        |> ignore
+
+        rawFact.Property<int64>("Quantity").IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<System.DateTime>("ObservedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<System.DateTime>("CreatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .HasIndex(
+                [|
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "FactKind"
+                    "ObservedAtUtc"
+                |]
+            )
+            .HasDatabaseName("IX_ops_RawUsageFact_ScopeKindObservedAt")
+        |> ignore
+
+        let aggregate = modelBuilder.Entity<UsageAggregateMinuteEntity>()
+
+        aggregate.ToTable("UsageAggregateMinute", "ops")
+        |> ignore
+
+        aggregate
+            .HasKey(
+                [|
+                    "FactKind"
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "StoragePoolId"
+                    "BucketStartUtc"
+                |]
+            )
+            .HasName("PK_ops_UsageAggregateMinute")
+        |> ignore
+
+        aggregate.Property<int>("FactKind").IsRequired()
+        |> ignore
+
+        aggregate
+            .Property<System.Guid>("OwnerId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        aggregate
+            .Property<System.Guid>("OrganizationId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        aggregate
+            .Property<System.Guid>("RepositoryId")
+            .HasColumnType("uniqueidentifier")
+            .IsRequired()
+        |> ignore
+
+        aggregate
+            .Property<string>("StoragePoolId")
+            .HasMaxLength(256)
+            .UseCollation("Latin1_General_100_BIN2")
+            .IsRequired()
+        |> ignore
+
+        aggregate
+            .Property<System.DateTime>("BucketStartUtc")
+            .HasColumnType("datetime2(7)")
+            .IsRequired()
+        |> ignore
+
+        aggregate.Property<int64>("Quantity").IsRequired()
+        |> ignore
+
+        aggregate
+            .Property<System.DateTime>("UpdatedAtUtc")
+            .HasColumnType("datetime2(7)")
+            .HasDefaultValueSql("SYSUTCDATETIME()")
+            .IsRequired()
+        |> ignore
+
+        aggregate
+            .HasIndex(
+                [|
+                    "OwnerId"
+                    "OrganizationId"
+                    "RepositoryId"
+                    "FactKind"
+                    "BucketStartUtc"
+                |]
+            )
+            .HasDatabaseName("IX_ops_UsageAggregateMinute_ScopeKindBucket")
+        |> ignore

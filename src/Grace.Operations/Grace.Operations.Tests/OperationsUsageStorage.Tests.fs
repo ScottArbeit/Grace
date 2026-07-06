@@ -141,6 +141,9 @@ type OperationsUsageStorageTests() =
         let transactionScope = InMemoryOperationsUsageTransactionScope()
         OperationsUsageStore transactionScope, transactionScope
 
+    /// Restores a process environment variable after a design-time configuration test mutates it.
+    let restoreEnvironmentVariable name value = Environment.SetEnvironmentVariable(name, value)
+
     /// Extracts a successful storage result from the data-layer result shape.
     let requireStored (result: Result<UsageFactPersistenceResult, string list>) =
         match result with
@@ -193,6 +196,49 @@ type OperationsUsageStorageTests() =
                 Assert.That(context, Is.InstanceOf<OperationsDbContext>())
                 Assert.That(context.Database.ProviderName, Is.EqualTo("Microsoft.EntityFrameworkCore.SqlServer")))
         )
+
+    /// Verifies EF tooling honors the documented Operations SQL environment variable before legacy aliases.
+    [<Test>]
+    [<NonParallelizable>]
+    member _.OperationsDesignTimeFactoryPrefersDocumentedSqlEnvironmentVariable() =
+        let documentedName = "grace__operations__sql__connectionstring"
+        let legacyName = "GRACE_OPERATIONS_SQL_CONNECTION_STRING"
+        let documentedConnectionString = "Server=tcp:documented.example.net;Database=GraceOperationsDocumented;"
+        let legacyConnectionString = "Server=tcp:legacy.example.net;Database=GraceOperationsLegacy;"
+        let previousDocumented = Environment.GetEnvironmentVariable(documentedName)
+        let previousLegacy = Environment.GetEnvironmentVariable(legacyName)
+
+        try
+            Environment.SetEnvironmentVariable(documentedName, documentedConnectionString)
+            Environment.SetEnvironmentVariable(legacyName, legacyConnectionString)
+
+            let actual = OperationsDbContextFactory.designTimeConnectionString [|  |]
+
+            Assert.That(actual, Is.EqualTo(documentedConnectionString))
+        finally
+            restoreEnvironmentVariable documentedName previousDocumented
+            restoreEnvironmentVariable legacyName previousLegacy
+
+    /// Verifies EF tooling still honors the previous design-time SQL environment variable as a fallback.
+    [<Test>]
+    [<NonParallelizable>]
+    member _.OperationsDesignTimeFactoryKeepsLegacySqlEnvironmentVariableFallback() =
+        let documentedName = "grace__operations__sql__connectionstring"
+        let legacyName = "GRACE_OPERATIONS_SQL_CONNECTION_STRING"
+        let legacyConnectionString = "Server=tcp:legacy.example.net;Database=GraceOperationsLegacy;"
+        let previousDocumented = Environment.GetEnvironmentVariable(documentedName)
+        let previousLegacy = Environment.GetEnvironmentVariable(legacyName)
+
+        try
+            Environment.SetEnvironmentVariable(documentedName, null)
+            Environment.SetEnvironmentVariable(legacyName, legacyConnectionString)
+
+            let actual = OperationsDbContextFactory.designTimeConnectionString [|  |]
+
+            Assert.That(actual, Is.EqualTo(legacyConnectionString))
+        finally
+            restoreEnvironmentVariable documentedName previousDocumented
+            restoreEnvironmentVariable legacyName previousLegacy
 
     /// Verifies the EF model keeps raw fact identity as the durable dedupe boundary.
     [<Test>]
@@ -277,10 +323,14 @@ type OperationsUsageStorageTests() =
     [<Test>]
     member _.BaselineMigrationScriptContainsExpectedOperationsSchema() =
         let script = migrationScript ()
+        let schemaPreambleIndex = script.IndexOf("IF SCHEMA_ID(N'ops') IS NULL", StringComparison.Ordinal)
+        let historyTableIndex = script.IndexOf("[ops].[__EFMigrationsHistory]", StringComparison.Ordinal)
 
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(script, Does.Contain("CREATE SCHEMA [ops]"))
+                Assert.That(schemaPreambleIndex, Is.GreaterThanOrEqualTo(0))
+                Assert.That(historyTableIndex, Is.GreaterThan(schemaPreambleIndex))
                 Assert.That(script, Does.Contain("IF OBJECT_ID(N'ops.RawUsageFact', N'U') IS NULL"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.RawUsageFact"))
                 Assert.That(script, Does.Contain("CONSTRAINT PK_ops_RawUsageFact PRIMARY KEY CLUSTERED (UsageFactId)"))
@@ -298,6 +348,23 @@ type OperationsUsageStorageTests() =
         let migration = InitialOperationsSchema()
         let rawFact = migration.TargetModel.FindEntityType(typeof<RawUsageFactEntity>)
         let aggregate = migration.TargetModel.FindEntityType(typeof<UsageAggregateMinuteEntity>)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(rawFact, Is.Not.Null)
+                Assert.That(rawFact.GetSchema(), Is.EqualTo(OperationsUsageSql.SchemaName))
+                Assert.That(rawFact.GetTableName(), Is.EqualTo(OperationsUsageSql.RawUsageFactTableName))
+                Assert.That(aggregate, Is.Not.Null)
+                Assert.That(aggregate.GetSchema(), Is.EqualTo(OperationsUsageSql.SchemaName))
+                Assert.That(aggregate.GetTableName(), Is.EqualTo(OperationsUsageSql.UsageAggregateMinuteTableName)))
+        )
+
+    /// Verifies the checked-in model snapshot carries the reviewed schema shape for future migration diffs.
+    [<Test>]
+    member _.BaselineModelSnapshotContainsOperationsEntities() =
+        let snapshot = OperationsDbContextModelSnapshot()
+        let rawFact = snapshot.Model.FindEntityType(typeof<RawUsageFactEntity>)
+        let aggregate = snapshot.Model.FindEntityType(typeof<UsageAggregateMinuteEntity>)
 
         Assert.Multiple(
             Action (fun () ->
