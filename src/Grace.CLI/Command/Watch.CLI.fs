@@ -2147,6 +2147,9 @@ module Watch =
     /// Clears the pending resync request once scan-derived status has reached the durable boundary.
     let private clearGraceWatchResyncPending () = Volatile.Write(&graceWatchResyncGeneration, 0L)
 
+    /// Clears explicit resync state for tests that need to isolate confidence-boundary publication.
+    let internal clearGraceWatchResyncPendingForWatchTests () = clearGraceWatchResyncPending ()
+
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
@@ -3355,6 +3358,10 @@ module Watch =
                 then
                     true
                 elif entry.AnonymousRejectionsRemaining > 0 then
+                    if payload.ReferenceId <> ReferenceId.Empty then
+                        entry.ReferenceIds.Add(payload.ReferenceId)
+                        |> ignore
+
                     entry.AnonymousRejectionsRemaining <- entry.AnonymousRejectionsRemaining - 1
                     true
                 else
@@ -3654,6 +3661,30 @@ module Watch =
     let internal publishCurrentBranchMaterializedStatusWithWriterForWatchTests graceStatus writeWatchInterprocessFile =
         publishCurrentBranchMaterializedStatusWithWriter graceStatus writeWatchInterprocessFile
 
+    /// Closes the post-apply materialization window after durable file and status writes have committed.
+    let private completeDurablyAppliedCurrentBranchMaterialization
+        (payload: CurrentBranchReferenceNotification)
+        (updatedGraceStatus: GraceStatus)
+        publishStatus
+        verifyMarkerWindow
+        =
+        task {
+            match! publishStatus updatedGraceStatus with
+            | Error error ->
+                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+                return Error error
+            | Ok () ->
+                match! verifyMarkerWindow () with
+                | Error error ->
+                    consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+                    return Error error
+                | Ok () -> return Ok updatedGraceStatus
+        }
+
+    /// Exposes post-apply materialization closure to tests without requiring remote directory download setup.
+    let internal completeDurablyAppliedCurrentBranchMaterializationForWatchTests payload updatedGraceStatus publishStatus verifyMarkerWindow =
+        completeDurablyAppliedCurrentBranchMaterialization payload updatedGraceStatus publishStatus verifyMarkerWindow
+
     /// Scans the marker-window result before Watch can publish materialization completion evidence.
     let private verifyCurrentBranchMaterializationMarkerWindowClean referenceId (updatedGraceStatus: GraceStatus) correlationId =
         task {
@@ -3787,14 +3818,13 @@ module Watch =
                                         do! writeGraceStatusFile updatedGraceStatus
                                         do! upsertObjectCache updatedGraceStatus.Index.Values
 
-                                        match! verifyCurrentBranchMaterializationMarkerWindowClean payload.ReferenceId updatedGraceStatus correlationId with
-                                        | Error error ->
-                                            consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
-                                            return Error error
-                                        | Ok () ->
-                                            match! publishCurrentBranchMaterializedStatus updatedGraceStatus with
-                                            | Ok () -> return Ok updatedGraceStatus
-                                            | Error error -> return Error error
+                                        return!
+                                            completeDurablyAppliedCurrentBranchMaterialization
+                                                payload
+                                                updatedGraceStatus
+                                                publishCurrentBranchMaterializedStatus
+                                                (fun () ->
+                                                    verifyCurrentBranchMaterializationMarkerWindowClean payload.ReferenceId updatedGraceStatus correlationId)
                             })
                         with
                     | Ok updatedStatus -> return Ok updatedStatus
@@ -3923,6 +3953,8 @@ module Watch =
                                                         return decision
                                                     with
                                                     | ex ->
+                                                        consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
                                                         requestGraceWatchExplicitResync
                                                             $"Current-branch remote materialization could not publish durable status for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes: {ex.Message}"
 
@@ -4712,6 +4744,12 @@ module Watch =
                         $"Grace Watch published non-incremental IPC for {context} while runtime mode is {runtimeMode} and resync pending is {isGraceWatchResyncPending ()}."
 
                     verified
+
+            if publicationVerified
+               && runtimeMode = GraceWatchRuntimeMode.HealthyIncremental
+               && trustedStatus.RootDirectoryId
+                  <> DirectoryVersionId.Empty then
+                recordPublishedCurrentBranchCleanRoot trustedStatus
 
             return publicationVerified
         }

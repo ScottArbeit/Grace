@@ -14400,6 +14400,19 @@ module WatchTests =
             secondAppliedPayloads.Count |> should equal 0
             secondPublishedStatuses.Count |> should equal 0
 
+            let duplicateDelayedOperations, duplicateFetchedRoots, duplicateDownloadBatches, duplicateAppliedPayloads, duplicatePublishedStatuses =
+                recordingMaterializationOperations inspection updatedStatus previousStatus [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests duplicateDelayedOperations true [| olderPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            duplicateFetchedRoots.Count |> should equal 0
+            duplicateDownloadBatches.Count |> should equal 0
+            duplicateAppliedPayloads.Count |> should equal 0
+            duplicatePublishedStatuses.Count |> should equal 0
+
             Watch
                 .pendingCurrentBranchMaterializationStatusForWatchTests()
                 .Count
@@ -15087,15 +15100,16 @@ module WatchTests =
             delayedBAppliedPayloads.Count |> should equal 0
             delayedBPublishedStatuses.Count |> should equal 0)
 
-    /// Verifies that failed publish evidence is not treated as successful materialization completion.
+    /// Verifies that failed publish evidence consumes the already-applied remote payload before resync.
     [<Test>]
-    let ``current branch materialization publish failure keeps pending and requests resync`` () =
+    let ``current branch materialization publish failure consumes applied payload and requests resync`` () =
         withTempRepo (fun root ->
             Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
 
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let localRootId = Guid.NewGuid()
             let remoteRootId = Guid.NewGuid()
+            let laterLocalRootId = Guid.NewGuid()
             let cleanStatus = liveWatchStatus localRootId
 
             let payload =
@@ -15142,10 +15156,31 @@ module WatchTests =
 
             let pendingStatus = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
 
-            pendingStatus.Count |> should equal 1
+            pendingStatus.Count |> should equal 0
 
-            pendingStatus.LatestReferenceId
-            |> should equal (Some payload.ReferenceId))
+            let localAfterResync =
+                { liveWatchStatus laterLocalRootId with
+                    RootDirectorySha256Hash = Sha256Hash "later-local-after-publish-failure"
+                    RootDirectoryBlake3Hash = Blake3Hash "later-local-after-publish-failure-blake3"
+                    DirectoryIds = HashSet<DirectoryVersionId>([| laterLocalRootId |])
+                }
+
+            let retryOperations, retryFetchedRoots, retryDownloadBatches, retryAppliedPayloads, retryPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None localAfterResync))
+                    GraceStatus.Default
+                    GraceStatus.Default
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests retryOperations true [| payload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            retryFetchedRoots.Count |> should equal 0
+            retryDownloadBatches.Count |> should equal 0
+            retryAppliedPayloads.Count |> should equal 0
+            retryPublishedStatuses.Count |> should equal 0)
 
     /// Verifies that unverified materialized IPC publication returns failure for the default materialization path.
     [<Test>]
@@ -15168,6 +15203,63 @@ module WatchTests =
 
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true)
+
+    /// Verifies that the final marker-window scan runs after IPC publication and consumes failures.
+    [<Test>]
+    let ``current branch materialization final marker scan covers edits after ipc publication`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearPendingWatchWorkForTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let remoteRootId = Guid.NewGuid()
+            let localEditPath = Path.Combine(root, "post-ipc-local-edit.txt")
+            let updatedStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            let payload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    remoteRootId
+                    (Sha256Hash "post-ipc-remote-root")
+                    (Blake3Hash "post-ipc-remote-root-blake3")
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                payload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            let ordering = ResizeArray<string>()
+
+            let publishStatus _ =
+                task {
+                    ordering.Add("publish")
+                    File.WriteAllText(localEditPath, "local edit after IPC publication")
+                    return Ok()
+                }
+
+            let verifyMarkerWindow () =
+                task {
+                    ordering.Add("verify")
+                    return! Watch.verifyCurrentBranchMaterializationMarkerWindowCleanForWatchTests payload.ReferenceId updatedStatus (generateCorrelationId ())
+                }
+
+            let result =
+                (Watch.completeDurablyAppliedCurrentBranchMaterializationForWatchTests payload updatedStatus publishStatus verifyMarkerWindow)
+                    .GetAwaiter()
+                    .GetResult()
+
+            result.IsError |> should equal true
+
+            ordering.ToArray()
+            |> should equal [| "publish"; "verify" |]
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0)
 
     /// Verifies that an applied remote root is consumed before marker-window resync returns control to retry.
     [<Test>]
@@ -15213,6 +15305,78 @@ module WatchTests =
                     [| DirectoryVersionDto.Default |]
 
             (Watch.processCurrentBranchReferenceMaterializationForWatchTests operations true [| payload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            fetchedRoots.Count |> should equal 0
+            downloadBatches.Count |> should equal 0
+            appliedPayloads.Count |> should equal 0
+            publishedStatuses.Count |> should equal 0)
+
+    /// Verifies that startup clean publication seeds root history before the first later local save.
+    [<Test>]
+    let ``current branch materialization rejects first delayed startup root after clean publication seed`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearPendingWatchWorkForTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let startupRootId = Guid.NewGuid()
+            let firstLocalSaveRootId = Guid.NewGuid()
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let startupStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = startupRootId
+                    RootDirectorySha256Hash = Sha256Hash "startup-clean-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "startup-clean-root-blake3"
+                }
+
+            let firstLocalSaveStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = firstLocalSaveRootId
+                    RootDirectorySha256Hash = Sha256Hash "first-local-save-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "first-local-save-root-blake3"
+                }
+
+            let startupDirectoryIds = HashSet<DirectoryVersionId>([| startupRootId |])
+
+            (Watch.publishGraceWatchInterprocessFileForCurrentConfidenceForWatchTests
+                startupStatus
+                startupDirectoryIds
+                Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.recordPublishedCurrentBranchCleanRootForWatchTests firstLocalSaveStatus
+
+            let cleanStatusAfterFirstLocalSave =
+                { liveWatchStatus firstLocalSaveRootId with
+                    RootDirectorySha256Hash = firstLocalSaveStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = firstLocalSaveStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| firstLocalSaveRootId |])
+                }
+
+            let delayedStartupPayload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    startupRootId
+                    startupStatus.RootDirectorySha256Hash
+                    startupStatus.RootDirectoryBlake3Hash
+
+            let operations, fetchedRoots, downloadBatches, appliedPayloads, publishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None cleanStatusAfterFirstLocalSave))
+                    firstLocalSaveStatus
+                    startupStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests operations true [| delayedStartupPayload |])
                 .GetAwaiter()
                 .GetResult()
             |> ignore
