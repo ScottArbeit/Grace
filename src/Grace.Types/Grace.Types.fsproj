@@ -27,6 +27,7 @@
         <Compile Include="Owner.Types.fs" />
         <Compile Include="Organization.Types.fs" />
         <Compile Include="Repository.Types.fs" />
+        <Compile Include="Visibility.Types.fs" />
         <Compile Include="Reference.Types.fs" />
         <Compile Include="Annotation.Types.fs" />
         <Compile Include="Branch.Types.fs" />
