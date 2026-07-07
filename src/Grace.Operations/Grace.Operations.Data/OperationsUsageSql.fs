@@ -64,6 +64,7 @@ END;
 INSERT INTO ops.RawUsageFact
 (
     UsageFactId,
+    RawPayload,
     CorrelationId,
     FactKind,
     OwnerId,
@@ -75,6 +76,7 @@ INSERT INTO ops.RawUsageFact
 )
 SELECT
     @UsageFactId,
+    @RawPayload,
     @CorrelationId,
     @FactKind,
     @OwnerId,

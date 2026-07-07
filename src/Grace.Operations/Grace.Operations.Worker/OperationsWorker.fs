@@ -73,14 +73,15 @@ type IOperationsUsageMessageActions =
 type IOperationsUsageFactStore =
 
     /// Persists the fact idempotently and returns the operations data-layer result.
-    abstract StoreUsageFactAsync: fact: UsageFact * cancellationToken: CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>
+    abstract StoreUsageFactAsync:
+        fact: UsageFact * rawPayload: byte array * cancellationToken: CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>
 
 /// Adapts the concrete operations data store to the worker's fakeable ingestion dependency.
 type OperationsUsageFactStoreAdapter(store: OperationsUsageStore) =
 
     interface IOperationsUsageFactStore with
 
-        member _.StoreUsageFactAsync(fact, cancellationToken) = store.StoreUsageFactAsync(fact, cancellationToken)
+        member _.StoreUsageFactAsync(fact, rawPayload, cancellationToken) = store.StoreUsageFactAsync(fact, rawPayload, cancellationToken)
 
 /// Reports whether the operations usage worker is ready to consume durable ingestion messages.
 type OperationsUsageReadinessStatus =
@@ -799,7 +800,7 @@ type OperationsUsageIngestionProcessor
                                 let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
                                 ()
                             | Ok () ->
-                                let! stored = store.StoreUsageFactAsync(usageFact, cancellationToken)
+                                let! stored = store.StoreUsageFactAsync(usageFact, message.Body, cancellationToken)
 
                                 match stored with
                                 | Error errors ->

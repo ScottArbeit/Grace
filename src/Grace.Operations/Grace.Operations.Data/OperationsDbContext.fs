@@ -33,6 +33,12 @@ module OperationsModel =
         |> ignore
 
         rawFact
+            .Property<byte array>("RawPayload")
+            .HasColumnType("varbinary(max)")
+            .IsRequired()
+        |> ignore
+
+        rawFact
             .Property<string>("CorrelationId")
             .HasMaxLength(OperationsUsageSql.CorrelationIdMaxLength)
             .IsRequired()

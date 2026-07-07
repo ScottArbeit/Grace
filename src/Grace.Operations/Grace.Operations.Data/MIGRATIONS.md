@@ -3,7 +3,8 @@
 `Grace.Operations.Data` owns the EF Core model and migrations for the Azure SQL operations store. The current baseline
 schema is intentionally narrow:
 
-- `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary.
+- `ops.RawUsageFact` stores immutable `UsageFact` rows with `UsageFactId` as the duplicate-delivery boundary and keeps
+  the exact accepted broker payload in `RawPayload` for replay and audit.
 - `ops.UsageAggregateMinute` stores one aggregate row per fact kind, Grace scope, storage pool, and UTC minute.
 - The EF migrations history table lives in `ops.__EFMigrationsHistory` so operations schema state stays with the
   operations schema.

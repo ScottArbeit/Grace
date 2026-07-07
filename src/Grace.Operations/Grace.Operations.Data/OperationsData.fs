@@ -20,6 +20,7 @@ type internal OperationsDataAssembly =
 type RawUsageFact =
     {
         UsageFactId: UsageFactId
+        RawPayload: byte array
         CorrelationId: CorrelationId
         FactKind: UsageFactKind
         OwnerId: OwnerId
@@ -108,11 +109,14 @@ module UsageFactPersistencePlan =
     let bucketObservedAt (observedAt: Instant) = UsageFact.NormalizeObservedAtToMinute observedAt
 
     /// Validates a usage fact and converts it into the transaction plan required by operations storage.
-    let tryCreate (fact: UsageFact) =
+    let tryCreate (fact: UsageFact) (rawPayload: byte array) =
         match UsageFact.Validate fact with
         | Error errors -> Error errors
         | Ok () ->
             let errors = ResizeArray<string>()
+
+            if isNull rawPayload || rawPayload.Length = 0 then
+                errors.Add("Raw UsageFact payload is required for operations SQL storage.")
 
             if fact.CorrelationId.Length > OperationsUsageSql.CorrelationIdMaxLength then
                 errors.Add($"CorrelationId must be {OperationsUsageSql.CorrelationIdMaxLength} characters or fewer for operations SQL storage.")
@@ -128,6 +132,7 @@ module UsageFactPersistencePlan =
                 let rawFact =
                     {
                         UsageFactId = fact.UsageFactId
+                        RawPayload = Array.copy rawPayload
                         CorrelationId = fact.CorrelationId
                         FactKind = fact.FactKind
                         OwnerId = fact.Scope.OwnerId
@@ -182,6 +187,11 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         let parameter = command.Parameters.Add(name, SqlDbType.NVarChar, length)
         parameter.Value <- value
 
+    /// Adds a SQL parameter for the exact broker payload bytes stored with a raw fact.
+    let addRawPayloadParameter (command: SqlCommand) (value: byte array) =
+        let parameter = command.Parameters.Add("@RawPayload", SqlDbType.VarBinary, -1)
+        parameter.Value <- Array.copy value
+
     /// Creates a command that participates in the current operations usage transaction.
     let createCommand commandText =
         let command = connection.CreateCommand()
@@ -196,6 +206,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
     /// Adds the raw usage fact parameters expected by `OperationsUsageSql.TryInsertRawUsageFact`.
     let addRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
         addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+        addRawPayloadParameter command rawFact.RawPayload
         addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
         addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
         addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
@@ -330,9 +341,9 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
 type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =
 
     /// Stores a usage fact exactly once by durable `UsageFactId` and projects aggregates only for newly accepted facts.
-    member _.StoreUsageFactAsync(fact: UsageFact, cancellationToken: CancellationToken) =
+    member _.StoreUsageFactAsync(fact: UsageFact, rawPayload: byte array, cancellationToken: CancellationToken) =
         task {
-            match UsageFactPersistencePlan.tryCreate fact with
+            match UsageFactPersistencePlan.tryCreate fact rawPayload with
             | Error errors -> return Error errors
             | Ok plan ->
                 let operation (transaction: IOperationsUsageTransaction) (operationCancellationToken: CancellationToken) =
