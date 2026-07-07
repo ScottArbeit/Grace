@@ -4,11 +4,11 @@ Cache behavior requested for artifact source selection.
 
 ## Enum
 
-* `NUMBER_1` (value: `1`)
+* `BYPASSCACHE` (value: `'bypassCache'`)
 
-* `NUMBER_2` (value: `2`)
+* `PREFERCACHE` (value: `'preferCache'`)
 
-* `NUMBER_3` (value: `3`)
+* `REQUIRECACHE` (value: `'requireCache'`)
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

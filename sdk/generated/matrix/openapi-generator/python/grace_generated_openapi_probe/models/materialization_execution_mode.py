@@ -19,7 +19,7 @@ from enum import Enum
 from typing_extensions import Self
 
 
-class MaterializationExecutionMode(int, Enum):
+class MaterializationExecutionMode(str, Enum):
     """
     How Grace may satisfy a Materialization Plan request.
     """
@@ -27,9 +27,9 @@ class MaterializationExecutionMode(int, Enum):
     """
     allowed enum values
     """
-    NUMBER_1 = 1
-    NUMBER_2 = 2
-    NUMBER_3 = 3
+    DIRECT = 'direct'
+    CACHEPREFERRED = 'cachePreferred'
+    CACHEREQUIRED = 'cacheRequired'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

@@ -19,7 +19,7 @@ from enum import Enum
 from typing_extensions import Self
 
 
-class MaterializationArtifactKind(int, Enum):
+class MaterializationArtifactKind(str, Enum):
     """
     Artifact contract vocabulary that a Materialization Plan may require.
     """
@@ -27,11 +27,11 @@ class MaterializationArtifactKind(int, Enum):
     """
     allowed enum values
     """
-    NUMBER_1 = 1
-    NUMBER_2 = 2
-    NUMBER_3 = 3
-    NUMBER_4 = 4
-    NUMBER_5 = 5
+    DIRECTORYVERSIONZIP = 'directoryVersionZip'
+    RECURSIVEDIRECTORYMETADATA = 'recursiveDirectoryMetadata'
+    WHOLEFILECONTENT = 'wholeFileContent'
+    FILEMANIFEST = 'fileManifest'
+    CONTENTBLOCK = 'contentBlock'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

@@ -18,9 +18,9 @@
  * @export
  */
 export const MaterializationCacheSelectionKind = {
-    NUMBER_1: 1,
-    NUMBER_2: 2,
-    NUMBER_3: 3
+    BypassCache: 'bypassCache',
+    PreferCache: 'preferCache',
+    RequireCache: 'requireCache'
 } as const;
 export type MaterializationCacheSelectionKind = typeof MaterializationCacheSelectionKind[keyof typeof MaterializationCacheSelectionKind];
 

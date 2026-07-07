@@ -4,15 +4,15 @@ Artifact contract vocabulary that a Materialization Plan may require.
 
 ## Enum
 
-* `NUMBER_1` (value: `1`)
+* `DIRECTORYVERSIONZIP` (value: `'directoryVersionZip'`)
 
-* `NUMBER_2` (value: `2`)
+* `RECURSIVEDIRECTORYMETADATA` (value: `'recursiveDirectoryMetadata'`)
 
-* `NUMBER_3` (value: `3`)
+* `WHOLEFILECONTENT` (value: `'wholeFileContent'`)
 
-* `NUMBER_4` (value: `4`)
+* `FILEMANIFEST` (value: `'fileManifest'`)
 
-* `NUMBER_5` (value: `5`)
+* `CONTENTBLOCK` (value: `'contentBlock'`)
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

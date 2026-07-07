@@ -37,7 +37,7 @@ class TestMaterializationArtifactDescriptor(unittest.TestCase):
         if include_optional:
             return MaterializationArtifactDescriptor(
                 var_class = 'MaterializationArtifactDescriptor',
-                artifact_kind = 1,
+                artifact_kind = 'directoryVersionZip',
                 canonical_artifact_identity = '',
                 represented_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
                 target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
@@ -50,14 +50,14 @@ class TestMaterializationArtifactDescriptor(unittest.TestCase):
                 storage_pool_id = '',
                 source = grace_generated_openapi_probe.models.materialization_artifact_source.MaterializationArtifactSource(
                     class = 'MaterializationArtifactSource', 
-                    source_kind = 1, 
+                    source_kind = 'directUri', 
                     direct_uri = '', 
                     cache_key = '', )
             )
         else:
             return MaterializationArtifactDescriptor(
                 var_class = 'MaterializationArtifactDescriptor',
-                artifact_kind = 1,
+                artifact_kind = 'directoryVersionZip',
                 target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
         )
         """

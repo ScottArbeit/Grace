@@ -18,9 +18,9 @@
  * @export
  */
 export const MaterializationArtifactSourceKind = {
-    NUMBER_1: 1,
-    NUMBER_2: 2,
-    NUMBER_3: 3
+    DirectUri: 'directUri',
+    CacheEntry: 'cacheEntry',
+    Deferred: 'deferred'
 } as const;
 export type MaterializationArtifactSourceKind = typeof MaterializationArtifactSourceKind[keyof typeof MaterializationArtifactSourceKind];
 

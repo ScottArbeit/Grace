@@ -19,7 +19,7 @@ from enum import Enum
 from typing_extensions import Self
 
 
-class MaterializationCacheSelectionKind(int, Enum):
+class MaterializationCacheSelectionKind(str, Enum):
     """
     Cache behavior requested for artifact source selection.
     """
@@ -27,9 +27,9 @@ class MaterializationCacheSelectionKind(int, Enum):
     """
     allowed enum values
     """
-    NUMBER_1 = 1
-    NUMBER_2 = 2
-    NUMBER_3 = 3
+    BYPASSCACHE = 'bypassCache'
+    PREFERCACHE = 'preferCache'
+    REQUIRECACHE = 'requireCache'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

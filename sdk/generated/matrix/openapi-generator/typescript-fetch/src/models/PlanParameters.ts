@@ -44,7 +44,7 @@ export interface PlanParameters {
      * @type {string}
      * @memberof PlanParameters
      */
-    ownerId?: string;
+    ownerId: string;
     /**
      * 
      * @type {string}
@@ -56,7 +56,7 @@ export interface PlanParameters {
      * @type {string}
      * @memberof PlanParameters
      */
-    organizationId?: string;
+    organizationId: string;
     /**
      * 
      * @type {string}
@@ -68,7 +68,7 @@ export interface PlanParameters {
      * @type {string}
      * @memberof PlanParameters
      */
-    repositoryId?: string;
+    repositoryId: string;
     /**
      * 
      * @type {string}
@@ -87,6 +87,9 @@ export interface PlanParameters {
  * Check if a given object implements the PlanParameters interface.
  */
 export function instanceOfPlanParameters(value: object): value is PlanParameters {
+    if (!('ownerId' in value) || value['ownerId'] === undefined) return false;
+    if (!('organizationId' in value) || value['organizationId'] === undefined) return false;
+    if (!('repositoryId' in value) || value['repositoryId'] === undefined) return false;
     if (!('request' in value) || value['request'] === undefined) return false;
     return true;
 }
@@ -103,11 +106,11 @@ export function PlanParametersFromJSONTyped(json: any, ignoreDiscriminator: bool
         
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
-        'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
+        'ownerId': json['OwnerId'],
         'ownerName': json['OwnerName'] == null ? undefined : json['OwnerName'],
-        'organizationId': json['OrganizationId'] == null ? undefined : json['OrganizationId'],
+        'organizationId': json['OrganizationId'],
         'organizationName': json['OrganizationName'] == null ? undefined : json['OrganizationName'],
-        'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
+        'repositoryId': json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
         'request': MaterializationPlanRequestFromJSON(json['Request']),
     };

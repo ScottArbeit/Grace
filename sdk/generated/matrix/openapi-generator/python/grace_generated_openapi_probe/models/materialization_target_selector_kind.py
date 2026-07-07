@@ -19,7 +19,7 @@ from enum import Enum
 from typing_extensions import Self
 
 
-class MaterializationTargetSelectorKind(int, Enum):
+class MaterializationTargetSelectorKind(str, Enum):
     """
     Selector shape supplied before Grace resolves the immutable target root.
     """
@@ -27,9 +27,9 @@ class MaterializationTargetSelectorKind(int, Enum):
     """
     allowed enum values
     """
-    NUMBER_1 = 1
-    NUMBER_2 = 2
-    NUMBER_3 = 3
+    DIRECTORYVERSIONID = 'directoryVersionId'
+    REFERENCEID = 'referenceId'
+    BRANCHNAME = 'branchName'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

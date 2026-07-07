@@ -11,30 +11,32 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-use serde_repr::{Serialize_repr,Deserialize_repr};
 /// MaterializationCacheSelectionKind : Cache behavior requested for artifact source selection.
 /// Cache behavior requested for artifact source selection.
-#[repr(i64)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum MaterializationCacheSelectionKind {
-    Variant1 = 1,
-    Variant2 = 2,
-    Variant3 = 3,
+    #[serde(rename = "bypassCache")]
+    BypassCache,
+    #[serde(rename = "preferCache")]
+    PreferCache,
+    #[serde(rename = "requireCache")]
+    RequireCache,
 
 }
 
 impl std::fmt::Display for MaterializationCacheSelectionKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::Variant1 => "1",
-            Self::Variant2 => "2",
-            Self::Variant3 => "3",
-        })
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::BypassCache => write!(f, "bypassCache"),
+            Self::PreferCache => write!(f, "preferCache"),
+            Self::RequireCache => write!(f, "requireCache"),
+        }
     }
 }
+
 impl Default for MaterializationCacheSelectionKind {
     fn default() -> MaterializationCacheSelectionKind {
-        Self::Variant1
+        Self::BypassCache
     }
 }
 

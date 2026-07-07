@@ -1,33 +1,33 @@
     MaterializationExecutionMode:
       description: How Grace may satisfy a Materialization Plan request.
-      type: integer
-      enum: [1, 2, 3]
+      type: string
+      enum: [direct, cachePreferred, cacheRequired]
       x-enumNames: [Direct, CachePreferred, CacheRequired]
-      example: 1
+      example: direct
     MaterializationTargetSelectorKind:
       description: Selector shape supplied before Grace resolves the immutable target root.
-      type: integer
-      enum: [1, 2, 3]
+      type: string
+      enum: [directoryVersionId, referenceId, branchName]
       x-enumNames: [DirectoryVersionId, ReferenceId, BranchName]
-      example: 1
+      example: directoryVersionId
     MaterializationCacheSelectionKind:
       description: Cache behavior requested for artifact source selection.
-      type: integer
-      enum: [1, 2, 3]
+      type: string
+      enum: [bypassCache, preferCache, requireCache]
       x-enumNames: [BypassCache, PreferCache, RequireCache]
-      example: 1
+      example: bypassCache
     MaterializationArtifactKind:
       description: Artifact contract vocabulary that a Materialization Plan may require.
-      type: integer
-      enum: [1, 2, 3, 4, 5]
+      type: string
+      enum: [directoryVersionZip, recursiveDirectoryMetadata, wholeFileContent, fileManifest, contentBlock]
       x-enumNames: [DirectoryVersionZip, RecursiveDirectoryMetadata, WholeFileContent, FileManifest, ContentBlock]
-      example: 1
+      example: directoryVersionZip
     MaterializationArtifactSourceKind:
       description: Where a planned artifact can be fetched or resolved from.
-      type: integer
-      enum: [1, 2, 3]
+      type: string
+      enum: [directUri, cacheEntry, deferred]
       x-enumNames: [DirectUri, CacheEntry, Deferred]
-      example: 1
+      example: directUri
     MaterializationTargetSelector:
       description: Public selector that the server resolves to one immutable root DirectoryVersionId.
       type: object
@@ -82,16 +82,16 @@
         Class: MaterializationPlanRequest
         TargetSelector:
           Class: MaterializationTargetSelector
-          SelectorKind: 1
+          SelectorKind: directoryVersionId
           DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
           ReferenceId: null
           BranchName: null
-        ExecutionMode: 1
+        ExecutionMode: direct
         CacheSelection:
           Class: MaterializationCacheSelection
-          SelectionKind: 1
+          SelectionKind: bypassCache
           CacheScope: null
-        RequestedArtifactKinds: [1, 2]
+        RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]
     PlanParameters:
       description: Parameters for the /materialization/plan endpoint.
       type: object
@@ -112,7 +112,7 @@
           $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
         Request:
           $ref: '#/MaterializationPlanRequest'
-      required: [Request]
+      required: [OwnerId, OrganizationId, RepositoryId, Request]
       example: &materializationPlanParametersExample
         CorrelationId: cli-20260707T105500Z-0001
         Principal: user:alice

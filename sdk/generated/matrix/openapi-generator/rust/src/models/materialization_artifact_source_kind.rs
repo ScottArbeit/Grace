@@ -11,30 +11,32 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-use serde_repr::{Serialize_repr,Deserialize_repr};
 /// MaterializationArtifactSourceKind : Where a planned artifact can be fetched or resolved from.
 /// Where a planned artifact can be fetched or resolved from.
-#[repr(i64)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum MaterializationArtifactSourceKind {
-    Variant1 = 1,
-    Variant2 = 2,
-    Variant3 = 3,
+    #[serde(rename = "directUri")]
+    DirectUri,
+    #[serde(rename = "cacheEntry")]
+    CacheEntry,
+    #[serde(rename = "deferred")]
+    Deferred,
 
 }
 
 impl std::fmt::Display for MaterializationArtifactSourceKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::Variant1 => "1",
-            Self::Variant2 => "2",
-            Self::Variant3 => "3",
-        })
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::DirectUri => write!(f, "directUri"),
+            Self::CacheEntry => write!(f, "cacheEntry"),
+            Self::Deferred => write!(f, "deferred"),
+        }
     }
 }
+
 impl Default for MaterializationArtifactSourceKind {
     fn default() -> MaterializationArtifactSourceKind {
-        Self::Variant1
+        Self::DirectUri
     }
 }
 

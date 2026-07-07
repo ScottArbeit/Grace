@@ -4,11 +4,11 @@ How Grace may satisfy a Materialization Plan request.
 
 ## Enum
 
-* `NUMBER_1` (value: `1`)
+* `DIRECT` (value: `'direct'`)
 
-* `NUMBER_2` (value: `2`)
+* `CACHEPREFERRED` (value: `'cachePreferred'`)
 
-* `NUMBER_3` (value: `3`)
+* `CACHEREQUIRED` (value: `'cacheRequired'`)
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

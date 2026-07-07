@@ -11,30 +11,32 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-use serde_repr::{Serialize_repr,Deserialize_repr};
 /// MaterializationExecutionMode : How Grace may satisfy a Materialization Plan request.
 /// How Grace may satisfy a Materialization Plan request.
-#[repr(i64)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum MaterializationExecutionMode {
-    Variant1 = 1,
-    Variant2 = 2,
-    Variant3 = 3,
+    #[serde(rename = "direct")]
+    Direct,
+    #[serde(rename = "cachePreferred")]
+    CachePreferred,
+    #[serde(rename = "cacheRequired")]
+    CacheRequired,
 
 }
 
 impl std::fmt::Display for MaterializationExecutionMode {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::Variant1 => "1",
-            Self::Variant2 => "2",
-            Self::Variant3 => "3",
-        })
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::Direct => write!(f, "direct"),
+            Self::CachePreferred => write!(f, "cachePreferred"),
+            Self::CacheRequired => write!(f, "cacheRequired"),
+        }
     }
 }
+
 impl Default for MaterializationExecutionMode {
     fn default() -> MaterializationExecutionMode {
-        Self::Variant1
+        Self::Direct
     }
 }
 

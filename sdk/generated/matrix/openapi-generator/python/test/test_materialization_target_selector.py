@@ -37,7 +37,7 @@ class TestMaterializationTargetSelector(unittest.TestCase):
         if include_optional:
             return MaterializationTargetSelector(
                 var_class = 'MaterializationTargetSelector',
-                selector_kind = 1,
+                selector_kind = 'directoryVersionId',
                 directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842',
                 reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 branch_name = 'MyBranch'
@@ -45,7 +45,7 @@ class TestMaterializationTargetSelector(unittest.TestCase):
         else:
             return MaterializationTargetSelector(
                 var_class = 'MaterializationTargetSelector',
-                selector_kind = 1,
+                selector_kind = 'directoryVersionId',
         )
         """
 

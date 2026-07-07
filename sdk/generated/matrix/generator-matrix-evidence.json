@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "7e7c3cf7f0d30ba32530c69605793b71fdb2272a22404ab44c388e04fd54746e",
+  "sourceProjectionSha256": "697a8c0a7f6a543e3877bf401498b8e6357009b357602185ffecc7659418d988",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.3",
@@ -52,7 +52,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 154305."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 154754."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -153,15 +153,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "78c637d2aeec571d34ca172b67247b177e6a01b6a38275c4e320e71e3fc7d242"
+      "manifestSha256": "7ceb9f0e7c70588a840d4649ab451829a1d39520efd4dd9c26f60a1794a559b2"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "a26095ab5fc7f9620aa7c7ec7817c645960ad6d1b68bc9808500f2b4f9707a6f"
+      "manifestSha256": "a7a2cdb3038cc363dbae958d76bb3de2dc2036fd8f092a717db43295b65008fe"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "94aa1f8b670922dbf0370362a2621502047b0d3f570388e4c16cbc7afb74669d"
+      "manifestSha256": "086a1c153f26c6a0035acaa0a660cca7fddf1e853b74834ec77a533cf9079062"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",

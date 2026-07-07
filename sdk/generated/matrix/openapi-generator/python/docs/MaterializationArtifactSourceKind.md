@@ -4,11 +4,11 @@ Where a planned artifact can be fetched or resolved from.
 
 ## Enum
 
-* `NUMBER_1` (value: `1`)
+* `DIRECTURI` (value: `'directUri'`)
 
-* `NUMBER_2` (value: `2`)
+* `CACHEENTRY` (value: `'cacheEntry'`)
 
-* `NUMBER_3` (value: `3`)
+* `DEFERRED` (value: `'deferred'`)
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

@@ -1,5 +1,6 @@
 namespace Grace.Server.Unit.Tests
 
+open Grace.Actors.DirectoryVersion
 open Grace.Server
 open Grace.Shared
 open Grace.Shared.Parameters.Materialization
@@ -49,11 +50,93 @@ type MaterializationPlanRouteTests() =
             )
         |]
 
+    /// Builds projection evidence for the helper seam without requiring object storage.
+    let projectionEvidence artifactKind size source =
+        {
+            ArtifactKind = artifactKind
+            SizeInBytes = size
+            Sha256Hash = Some(Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa")
+            Blake3Hash = Some(Blake3Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
+            Source = source
+        }
+
+    /// Ensures projection evidence becomes the same descriptors consumed by the route planner.
+    let ensureProjectionArtifacts zipSource metadataSource =
+        ensureRequiredProjectionArtifactsWith
+            targetRootDirectoryVersionId
+            (fun () -> Task.FromResult(Ok(projectionEvidence MaterializationArtifactKind.DirectoryVersionZip 123L zipSource)))
+            (fun () -> Task.FromResult(Ok(projectionEvidence MaterializationArtifactKind.RecursiveDirectoryMetadata 456L metadataSource)))
+            correlationId
+
     /// Asserts an error contains the expected message fragment.
     let assertErrorContains expected (result: Result<'T, GraceError>) =
         match result with
         | Ok _ -> Assert.Fail($"Expected an error containing '{expected}'.")
         | Error error -> Assert.That(error.Error, Does.Contain(expected))
+
+    /// Verifies real projection descriptors with Direct sources satisfy the Direct/Bypass route validation path.
+    [<Test>]
+    member _.DirectRootRequestAcceptsDirectProjectionHelperDescriptors() =
+        task {
+            let! artifactResult =
+                ensureProjectionArtifacts
+                    (Some(MaterializationArtifactSource.Direct "https://example.invalid/root.zip"))
+                    (Some(MaterializationArtifactSource.Direct "https://example.invalid/root.msgpack"))
+
+            let artifacts =
+                match artifactResult with
+                | Error error ->
+                    Assert.Fail(error.Error)
+                    Array.empty
+                | Ok descriptors -> descriptors
+
+            let! result =
+                Materialization.createDirectPlanForResolvedRoot
+                    (directRootRequest ())
+                    targetRootDirectoryVersionId
+                    (fun _ -> Task.FromResult(Ok artifacts))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok plan ->
+                Assert.That(plan.RequiredArtifacts, Has.Count.EqualTo(2))
+
+                Assert.That(
+                    plan.RequiredArtifacts
+                    |> Seq.forall (fun descriptor ->
+                        match descriptor.Source with
+                        | Some source -> source.SourceKind = MaterializationArtifactSourceKind.DirectUri
+                        | None -> false),
+                    Is.True
+                )
+        }
+
+    /// Verifies CacheOnly projection metadata would still fail the Direct/Bypass route validation invariant.
+    [<Test>]
+    member _.DirectRootRequestRejectsCacheOnlyProjectionHelperMetadata() =
+        task {
+            let! artifactResult =
+                ensureProjectionArtifacts
+                    (Some(MaterializationArtifactSource.Direct "https://example.invalid/root.zip"))
+                    (Some(MaterializationArtifactSource.CacheOnly "recursive/root.msgpack"))
+
+            let artifacts =
+                match artifactResult with
+                | Error error ->
+                    Assert.Fail(error.Error)
+                    Array.empty
+                | Ok descriptors -> descriptors
+
+            let! result =
+                Materialization.createDirectPlanForResolvedRoot
+                    (directRootRequest ())
+                    targetRootDirectoryVersionId
+                    (fun _ -> Task.FromResult(Ok artifacts))
+                    correlationId
+
+            assertErrorContains "Direct/Bypass plans must not require CacheEntry artifact sources." result
+        }
 
     /// Verifies that a valid Direct root request produces a validated Materialization Plan.
     [<Test>]

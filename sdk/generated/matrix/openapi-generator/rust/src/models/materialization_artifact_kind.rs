@@ -11,34 +11,38 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-use serde_repr::{Serialize_repr,Deserialize_repr};
 /// MaterializationArtifactKind : Artifact contract vocabulary that a Materialization Plan may require.
 /// Artifact contract vocabulary that a Materialization Plan may require.
-#[repr(i64)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum MaterializationArtifactKind {
-    Variant1 = 1,
-    Variant2 = 2,
-    Variant3 = 3,
-    Variant4 = 4,
-    Variant5 = 5,
+    #[serde(rename = "directoryVersionZip")]
+    DirectoryVersionZip,
+    #[serde(rename = "recursiveDirectoryMetadata")]
+    RecursiveDirectoryMetadata,
+    #[serde(rename = "wholeFileContent")]
+    WholeFileContent,
+    #[serde(rename = "fileManifest")]
+    FileManifest,
+    #[serde(rename = "contentBlock")]
+    ContentBlock,
 
 }
 
 impl std::fmt::Display for MaterializationArtifactKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::Variant1 => "1",
-            Self::Variant2 => "2",
-            Self::Variant3 => "3",
-            Self::Variant4 => "4",
-            Self::Variant5 => "5",
-        })
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::DirectoryVersionZip => write!(f, "directoryVersionZip"),
+            Self::RecursiveDirectoryMetadata => write!(f, "recursiveDirectoryMetadata"),
+            Self::WholeFileContent => write!(f, "wholeFileContent"),
+            Self::FileManifest => write!(f, "fileManifest"),
+            Self::ContentBlock => write!(f, "contentBlock"),
+        }
     }
 }
+
 impl Default for MaterializationArtifactKind {
     fn default() -> MaterializationArtifactKind {
-        Self::Variant1
+        Self::DirectoryVersionZip
     }
 }
 

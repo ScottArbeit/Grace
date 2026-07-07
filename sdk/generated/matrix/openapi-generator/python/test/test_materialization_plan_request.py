@@ -39,17 +39,17 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                 var_class = 'MaterializationPlanRequest',
                 target_selector = grace_generated_openapi_probe.models.materialization_target_selector.MaterializationTargetSelector(
                     class = 'MaterializationTargetSelector', 
-                    selector_kind = 1, 
+                    selector_kind = 'directoryVersionId', 
                     directory_version_id = null, 
                     reference_id = null, 
                     branch_name = null, ),
-                execution_mode = 1,
+                execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
-                    selection_kind = 1, 
+                    selection_kind = 'bypassCache', 
                     cache_scope = '', ),
                 requested_artifact_kinds = [
-                    1
+                    'directoryVersionZip'
                     ]
             )
         else:
@@ -57,17 +57,17 @@ class TestMaterializationPlanRequest(unittest.TestCase):
                 var_class = 'MaterializationPlanRequest',
                 target_selector = grace_generated_openapi_probe.models.materialization_target_selector.MaterializationTargetSelector(
                     class = 'MaterializationTargetSelector', 
-                    selector_kind = 1, 
+                    selector_kind = 'directoryVersionId', 
                     directory_version_id = null, 
                     reference_id = null, 
                     branch_name = null, ),
-                execution_mode = 1,
+                execution_mode = 'direct',
                 cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                     class = 'MaterializationCacheSelection', 
-                    selection_kind = 1, 
+                    selection_kind = 'bypassCache', 
                     cache_scope = '', ),
                 requested_artifact_kinds = [
-                    1
+                    'directoryVersionZip'
                     ],
         )
         """

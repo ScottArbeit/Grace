@@ -592,6 +592,80 @@ function Assert-OpenApiSchemaHasProperty {
     }
 }
 
+function Assert-OpenApiSchemaRequiresProperties {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string[]] $RequiredProperties,
+        [string] $MessagePrefix
+    )
+
+    $block = Get-OpenApiNamedBlock $Text $SchemaName
+    if ($null -eq $block) {
+        Add-Failure "OpenAPI schema '$SchemaName' is missing."
+        return
+    }
+
+    $requiredLine = @($block.Lines | Where-Object { $_ -match '^\s+required:\s*\[(?<items>[^\]]*)\]\s*$' } | Select-Object -First 1)
+    if ($requiredLine.Count -eq 0) {
+        Add-Failure "$MessagePrefix must declare required properties."
+        return
+    }
+
+    $match = [regex]::Match([string] $requiredLine[0], '^\s+required:\s*\[(?<items>[^\]]*)\]\s*$')
+    $actualRequired = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($item in ($match.Groups['items'].Value -split ',')) {
+        [void] $actualRequired.Add($item.Trim())
+    }
+
+    foreach ($requiredProperty in $RequiredProperties) {
+        if (-not $actualRequired.Contains($requiredProperty)) {
+            Add-Failure "$MessagePrefix must require $requiredProperty."
+        }
+    }
+}
+
+function Assert-MaterializationStringEnumSchema {
+    param(
+        [string] $Text,
+        [string] $SchemaName,
+        [string[]] $ExpectedValues
+    )
+
+    $block = Get-OpenApiNamedBlock $Text $SchemaName
+    if ($null -eq $block) {
+        Add-Failure "Materialization enum schema '$SchemaName' is missing."
+        return
+    }
+
+    $blockText = [string] $block.Text
+    if ($blockText -notmatch '(?m)^\s+type:\s*string\s*$') {
+        Add-Failure "Materialization enum schema '$SchemaName' must use the string wire format."
+    }
+
+    if ($blockText -match '(?m)^\s+type:\s*integer\s*$' -or $blockText -match '(?m)^\s+enum:\s*\[\s*\d') {
+        Add-Failure "Materialization enum schema '$SchemaName' must not advertise integer values."
+    }
+
+    $enumLine = @($block.Lines | Where-Object { $_ -match '^\s+enum:\s*\[(?<items>[^\]]*)\]\s*$' } | Select-Object -First 1)
+    if ($enumLine.Count -eq 0) {
+        Add-Failure "Materialization enum schema '$SchemaName' must declare enum values."
+        return
+    }
+
+    $match = [regex]::Match([string] $enumLine[0], '^\s+enum:\s*\[(?<items>[^\]]*)\]\s*$')
+    $actualValues = [System.Collections.Generic.HashSet[string]]::new([StringComparer]::Ordinal)
+    foreach ($item in ($match.Groups['items'].Value -split ',')) {
+        [void] $actualValues.Add($item.Trim())
+    }
+
+    foreach ($expectedValue in $ExpectedValues) {
+        if (-not $actualValues.Contains($expectedValue)) {
+            Add-Failure "Materialization enum schema '$SchemaName' is missing string value '$expectedValue'."
+        }
+    }
+}
+
 function Get-YamlIndentLength {
     param([string] $Line)
 
@@ -1221,6 +1295,39 @@ function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
         'GetDirectoryVersionByBlake3Hash must use the strict raw directory-version envelope.'
 }
 
+function Test-OpenApiMaterializationContractDetails {
+    param([string] $OpenApiRoot)
+
+    $materializationText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Materialization.Components.OpenAPI.yaml') -Raw
+
+    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationExecutionMode' @('direct', 'cachePreferred', 'cacheRequired')
+    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationTargetSelectorKind' @('directoryVersionId', 'referenceId', 'branchName')
+    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationCacheSelectionKind' @('bypassCache', 'preferCache', 'requireCache')
+    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationArtifactKind' @(
+        'directoryVersionZip',
+        'recursiveDirectoryMetadata',
+        'wholeFileContent',
+        'fileManifest',
+        'contentBlock'
+    )
+    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationArtifactSourceKind' @('directUri', 'cacheEntry', 'deferred')
+
+    Assert-OpenApiSchemaRequiresProperties `
+        $materializationText `
+        'PlanParameters' `
+        @('OwnerId', 'OrganizationId', 'RepositoryId', 'Request') `
+        'PlanParameters must encode repository authority required by ValidateIdsMiddleware and the route planner'
+
+    foreach ($requiredExampleValue in @(
+            'SelectorKind: directoryVersionId',
+            'ExecutionMode: direct',
+            'SelectionKind: bypassCache',
+            'RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]'
+        )) {
+        Assert-TextContains $materializationText $requiredExampleValue "Materialization OpenAPI examples must use string enum value '$requiredExampleValue'."
+    }
+}
+
 function Test-OpenApiSharedContractDetails {
     param(
         [string] $OpenApiRoot,
@@ -1344,6 +1451,7 @@ function Test-OpenApiSharedContractDetails {
 
     Test-OpenApiBranchReferenceDiffDetails $OpenApiRoot $Operations
     Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails $OpenApiRoot $Operations
+    Test-OpenApiMaterializationContractDetails $OpenApiRoot
 }
 
 function Test-OpenApiQuality {
@@ -1546,6 +1654,88 @@ function Test-GeneratedClientMatrixProof {
         }
         elseif ($probe.exitCode -ne 0) {
             Add-Failure "Generator matrix probe '$probeName' failed with exit code $($probe.exitCode)."
+        }
+    }
+
+    $generatedEnumChecks = @(
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationExecutionMode.ts'
+            required = @("Direct: 'direct'", "CachePreferred: 'cachePreferred'", "CacheRequired: 'cacheRequired'")
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationTargetSelectorKind.ts'
+            required = @("DirectoryVersionId: 'directoryVersionId'", "ReferenceId: 'referenceId'", "BranchName: 'branchName'")
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationCacheSelectionKind.ts'
+            required = @("BypassCache: 'bypassCache'", "PreferCache: 'preferCache'", "RequireCache: 'requireCache'")
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationArtifactKind.ts'
+            required = @("DirectoryVersionZip: 'directoryVersionZip'", "RecursiveDirectoryMetadata: 'recursiveDirectoryMetadata'", "WholeFileContent: 'wholeFileContent'")
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationArtifactSourceKind.ts'
+            required = @("DirectUri: 'directUri'", "CacheEntry: 'cacheEntry'", "Deferred: 'deferred'")
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_execution_mode.py'
+            required = @('direct', 'cachePreferred', 'cacheRequired')
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_artifact_kind.py'
+            required = @('directoryVersionZip', 'recursiveDirectoryMetadata', 'wholeFileContent')
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_artifact_source_kind.py'
+            required = @('directUri', 'cacheEntry', 'deferred')
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_execution_mode.rs'
+            required = @('direct', 'cachePreferred', 'cacheRequired')
+            forbidden = @('Number1', 'Number2', 'Number3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_artifact_kind.rs'
+            required = @('directoryVersionZip', 'recursiveDirectoryMetadata', 'wholeFileContent')
+            forbidden = @('Number1', 'Number2', 'Number3', 'Number4', 'Number5')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_artifact_source_kind.rs'
+            required = @('directUri', 'cacheEntry', 'deferred')
+            forbidden = @('Number1', 'Number2', 'Number3')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/PlanParameters.ts'
+            required = @('ownerId: string;', 'organizationId: string;', 'repositoryId: string;', "if (!('ownerId' in value)")
+            forbidden = @('ownerId?: string;', 'organizationId?: string;', 'repositoryId?: string;')
+        }
+    )
+
+    foreach ($check in $generatedEnumChecks) {
+        $generatedPath = Join-Path $RepoRoot ([string] $check.path)
+        if (-not (Test-Path -LiteralPath $generatedPath -PathType Leaf)) {
+            Add-Failure "Generated-client contract proof file is missing: $($check.path)"
+            continue
+        }
+
+        $generatedText = Get-Content -LiteralPath $generatedPath -Raw
+        foreach ($requiredNeedle in @($check.required)) {
+            Assert-TextContains $generatedText $requiredNeedle "Generated-client contract proof $($check.path) is missing '$requiredNeedle'."
+        }
+
+        foreach ($forbiddenNeedle in @($check.forbidden)) {
+            if ($generatedText.Contains($forbiddenNeedle, [StringComparison]::Ordinal)) {
+                Add-Failure "Generated-client contract proof $($check.path) must not contain stale numeric enum or optional authority shape '$forbiddenNeedle'."
+            }
         }
     }
 

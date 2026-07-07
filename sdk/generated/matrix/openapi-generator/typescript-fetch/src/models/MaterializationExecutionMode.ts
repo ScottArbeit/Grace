@@ -18,9 +18,9 @@
  * @export
  */
 export const MaterializationExecutionMode = {
-    NUMBER_1: 1,
-    NUMBER_2: 2,
-    NUMBER_3: 3
+    Direct: 'direct',
+    CachePreferred: 'cachePreferred',
+    CacheRequired: 'cacheRequired'
 } as const;
 export type MaterializationExecutionMode = typeof MaterializationExecutionMode[keyof typeof MaterializationExecutionMode];
 

@@ -19,7 +19,7 @@ from enum import Enum
 from typing_extensions import Self
 
 
-class MaterializationArtifactSourceKind(int, Enum):
+class MaterializationArtifactSourceKind(str, Enum):
     """
     Where a planned artifact can be fetched or resolved from.
     """
@@ -27,9 +27,9 @@ class MaterializationArtifactSourceKind(int, Enum):
     """
     allowed enum values
     """
-    NUMBER_1 = 1
-    NUMBER_2 = 2
-    NUMBER_3 = 3
+    DIRECTURI = 'directUri'
+    CACHEENTRY = 'cacheEntry'
+    DEFERRED = 'deferred'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

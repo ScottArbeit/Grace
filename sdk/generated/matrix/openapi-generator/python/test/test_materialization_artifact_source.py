@@ -37,14 +37,14 @@ class TestMaterializationArtifactSource(unittest.TestCase):
         if include_optional:
             return MaterializationArtifactSource(
                 var_class = 'MaterializationArtifactSource',
-                source_kind = 1,
+                source_kind = 'directUri',
                 direct_uri = '',
                 cache_key = ''
             )
         else:
             return MaterializationArtifactSource(
                 var_class = 'MaterializationArtifactSource',
-                source_kind = 1,
+                source_kind = 'directUri',
         )
         """
 

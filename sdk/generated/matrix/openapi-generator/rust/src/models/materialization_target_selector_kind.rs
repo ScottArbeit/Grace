@@ -11,30 +11,32 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-use serde_repr::{Serialize_repr,Deserialize_repr};
 /// MaterializationTargetSelectorKind : Selector shape supplied before Grace resolves the immutable target root.
 /// Selector shape supplied before Grace resolves the immutable target root.
-#[repr(i64)]
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize_repr, Deserialize_repr)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum MaterializationTargetSelectorKind {
-    Variant1 = 1,
-    Variant2 = 2,
-    Variant3 = 3,
+    #[serde(rename = "directoryVersionId")]
+    DirectoryVersionId,
+    #[serde(rename = "referenceId")]
+    ReferenceId,
+    #[serde(rename = "branchName")]
+    BranchName,
 
 }
 
 impl std::fmt::Display for MaterializationTargetSelectorKind {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}", match self {
-            Self::Variant1 => "1",
-            Self::Variant2 => "2",
-            Self::Variant3 => "3",
-        })
+    fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
+        match self {
+            Self::DirectoryVersionId => write!(f, "directoryVersionId"),
+            Self::ReferenceId => write!(f, "referenceId"),
+            Self::BranchName => write!(f, "branchName"),
+        }
     }
 }
+
 impl Default for MaterializationTargetSelectorKind {
     fn default() -> MaterializationTargetSelectorKind {
-        Self::Variant1
+        Self::DirectoryVersionId
     }
 }
 

@@ -39,15 +39,15 @@ class TestMaterializationPlanReturnValue(unittest.TestCase):
                 return_value = grace_generated_openapi_probe.models.materialization_plan.MaterializationPlan(
                     class = 'MaterializationPlan', 
                     target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
-                    execution_mode = 1, 
+                    execution_mode = 'direct', 
                     cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                         class = 'MaterializationCacheSelection', 
-                        selection_kind = 1, 
+                        selection_kind = 'bypassCache', 
                         cache_scope = '', ), 
                     required_artifacts = [
                         grace_generated_openapi_probe.models.materialization_artifact_descriptor.MaterializationArtifactDescriptor(
                             class = 'MaterializationArtifactDescriptor', 
-                            artifact_kind = 1, 
+                            artifact_kind = 'directoryVersionZip', 
                             canonical_artifact_identity = '', 
                             represented_root_directory_version_id = null, 
                             target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
@@ -71,15 +71,15 @@ class TestMaterializationPlanReturnValue(unittest.TestCase):
                 return_value = grace_generated_openapi_probe.models.materialization_plan.MaterializationPlan(
                     class = 'MaterializationPlan', 
                     target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 
-                    execution_mode = 1, 
+                    execution_mode = 'direct', 
                     cache_selection = grace_generated_openapi_probe.models.materialization_cache_selection.MaterializationCacheSelection(
                         class = 'MaterializationCacheSelection', 
-                        selection_kind = 1, 
+                        selection_kind = 'bypassCache', 
                         cache_scope = '', ), 
                     required_artifacts = [
                         grace_generated_openapi_probe.models.materialization_artifact_descriptor.MaterializationArtifactDescriptor(
                             class = 'MaterializationArtifactDescriptor', 
-                            artifact_kind = 1, 
+                            artifact_kind = 'directoryVersionZip', 
                             canonical_artifact_identity = '', 
                             represented_root_directory_version_id = null, 
                             target_root_directory_version_id = '33a4e36b-828f-4fae-9343-50b6560dc842', 

@@ -2081,7 +2081,8 @@ module DirectoryVersion =
                             | Error error -> return Error error
                             | Ok _ ->
                                 let blobName = getRecursiveDirectoryVersionsCacheFileName directoryVersion.DirectoryVersionId
-                                let source = Some(MaterializationArtifactSource.CacheOnly blobName)
+                                let! metadataUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
+                                let source = Some(MaterializationArtifactSource.Direct(metadataUri.AbsoluteUri))
 
                                 return!
                                     describeProjectionBlob repositoryDto blobName MaterializationArtifactKind.RecursiveDirectoryMetadata source correlationId
