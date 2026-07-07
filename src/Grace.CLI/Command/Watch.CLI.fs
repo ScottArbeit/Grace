@@ -3295,6 +3295,7 @@ module Watch =
             BranchId: BranchId
             BranchName: string
             RootDirectory: string
+            ObjectDirectory: string
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
             RootDirectoryBlake3Hash: Blake3Hash
@@ -3390,55 +3391,62 @@ module Watch =
                 incrementAnonymousCurrentBranchMaterializationRejections entry)
 
     /// Records a locally published clean-root advancement so delayed remote roots cannot roll Watch backward.
-    let private recordPublishedCurrentBranchCleanRootWithPendingPolicy retirePendingEntries (updatedStatus: GraceStatus) =
-        let current = Current()
+    let private recordPublishedCurrentBranchCleanRootForIdentityWithPendingPolicy repositoryId branchId retirePendingEntries (updatedStatus: GraceStatus) =
         let updatedRoot = updatedStatus.RootDirectoryId
 
         if updatedRoot <> DirectoryVersionId.Empty then
             lock pendingCurrentBranchMaterializationLock (fun () ->
+                let rootChanged =
+                    match lastPublishedCurrentBranchCleanRoot with
+                    | Some (publishedRepositoryId, publishedBranchId, publishedRoot) ->
+                        publishedRepositoryId <> repositoryId
+                        || publishedBranchId <> branchId
+                        || publishedRoot <> updatedRoot
+                    | None -> true
+
                 let retiredPendingEntries =
                     if retirePendingEntries then
                         match lastPublishedCurrentBranchCleanRoot with
-                        | Some (repositoryId, branchId, previousRoot) when
-                            repositoryId = current.RepositoryId
-                            && branchId = current.BranchId
+                        | Some (publishedRepositoryId, publishedBranchId, previousRoot) when
+                            publishedRepositoryId = repositoryId
+                            && publishedBranchId = branchId
                             && previousRoot <> updatedRoot
                             ->
                             let retired, retained =
                                 pendingCurrentBranchMaterializations
                                 |> List.partition (fun pending ->
-                                    pending.RepositoryId = current.RepositoryId
-                                    && pending.BranchId = current.BranchId)
+                                    pending.RepositoryId = repositoryId
+                                    && pending.BranchId = branchId)
 
                             pendingCurrentBranchMaterializations <- retained
                             retired
-                        | Some (repositoryId, branchId, _) when
-                            (repositoryId <> current.RepositoryId
-                             || branchId <> current.BranchId)
+                        | Some (publishedRepositoryId, publishedBranchId, _) when
+                            (publishedRepositoryId <> repositoryId
+                             || publishedBranchId <> branchId)
                             && pendingCurrentBranchMaterializations
                                |> List.exists (fun pending ->
-                                   pending.RepositoryId = current.RepositoryId
-                                   && pending.BranchId = current.BranchId)
+                                   pending.RepositoryId = repositoryId
+                                   && pending.BranchId = branchId)
                             ->
                             let retired, retained =
                                 pendingCurrentBranchMaterializations
                                 |> List.partition (fun pending ->
-                                    pending.RepositoryId = current.RepositoryId
-                                    && pending.BranchId = current.BranchId)
+                                    pending.RepositoryId = repositoryId
+                                    && pending.BranchId = branchId)
 
                             pendingCurrentBranchMaterializations <- retained
                             retired
                         | None when
                             pendingCurrentBranchMaterializations
                             |> List.exists (fun pending ->
-                                pending.RepositoryId = current.RepositoryId
-                                && pending.BranchId = current.BranchId)
+                                pending.RepositoryId = repositoryId
+                                && pending.BranchId = branchId)
                             ->
                             let retired, retained =
                                 pendingCurrentBranchMaterializations
                                 |> List.partition (fun pending ->
-                                    pending.RepositoryId = current.RepositoryId
-                                    && pending.BranchId = current.BranchId)
+                                    pending.RepositoryId = repositoryId
+                                    && pending.BranchId = branchId)
 
                             pendingCurrentBranchMaterializations <- retained
                             retired
@@ -3447,28 +3455,39 @@ module Watch =
                         []
 
                 match lastPublishedCurrentBranchCleanRoot with
-                | Some (repositoryId, branchId, previousRoot) when
-                    repositoryId = current.RepositoryId
-                    && branchId = current.BranchId
+                | Some (publishedRepositoryId, publishedBranchId, previousRoot) when
+                    publishedRepositoryId = repositoryId
+                    && publishedBranchId = branchId
                     && previousRoot <> updatedRoot
                     ->
-                    let entry = supersededCurrentBranchMaterializationRootEntry current.RepositoryId current.BranchId previousRoot
+                    let entry = supersededCurrentBranchMaterializationRootEntry repositoryId branchId previousRoot
                     incrementAnonymousCurrentBranchMaterializationRejections entry
                 | _ -> ()
 
                 for retiredEntry in retiredPendingEntries do
                     recordSupersededCurrentBranchMaterializationPayload retiredEntry.Payload
 
-                Interlocked.Increment(&lastPublishedCurrentBranchCleanRootGeneration)
-                |> ignore
+                if rootChanged then
+                    Interlocked.Increment(&lastPublishedCurrentBranchCleanRootGeneration)
+                    |> ignore
 
-                lastPublishedCurrentBranchCleanRoot <- Some(current.RepositoryId, current.BranchId, updatedRoot))
+                lastPublishedCurrentBranchCleanRoot <- Some(repositoryId, branchId, updatedRoot))
 
     /// Records a local clean-root publication and retires stale deferred same-branch payloads.
-    let private recordPublishedCurrentBranchCleanRoot updatedStatus = recordPublishedCurrentBranchCleanRootWithPendingPolicy true updatedStatus
+    let private recordPublishedCurrentBranchCleanRoot updatedStatus =
+        let current = Current()
+
+        recordPublishedCurrentBranchCleanRootForIdentityWithPendingPolicy current.RepositoryId current.BranchId true updatedStatus
 
     /// Records a materialized clean root without discarding unrelated queued same-branch payloads.
-    let private recordMaterializedCurrentBranchCleanRoot updatedStatus = recordPublishedCurrentBranchCleanRootWithPendingPolicy false updatedStatus
+    let private recordMaterializedCurrentBranchCleanRoot updatedStatus =
+        let current = Current()
+
+        recordPublishedCurrentBranchCleanRootForIdentityWithPendingPolicy current.RepositoryId current.BranchId false updatedStatus
+
+    /// Records a materialized clean root against the branch authority that owned the remote apply boundary.
+    let private recordMaterializedCurrentBranchCleanRootForAuthority (authority: CurrentBranchMaterializationAuthority) updatedStatus =
+        recordPublishedCurrentBranchCleanRootForIdentityWithPendingPolicy authority.RepositoryId authority.BranchId false updatedStatus
 
     /// Exposes published clean-root advancement to tests that prove stale remote notifications cannot roll back local saves.
     let internal recordPublishedCurrentBranchCleanRootForWatchTests updatedStatus = recordPublishedCurrentBranchCleanRoot updatedStatus
@@ -3742,6 +3761,7 @@ module Watch =
             BranchId = branchId
             BranchName = string status.BranchName
             RootDirectory = Current().RootDirectory
+            ObjectDirectory = Current().ObjectDirectory
             RootDirectoryId = status.RootDirectoryId
             RootDirectorySha256Hash = status.RootDirectorySha256Hash
             RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
@@ -4029,6 +4049,7 @@ module Watch =
         (graceStatus: GraceStatus)
         (writeWatchInterprocessFile: GraceStatus -> HashSet<DirectoryVersionId> option -> Task<unit>)
         (inspectPublishedStatus: unit -> Task<GraceWatchStatusInspection>)
+        (recordMaterializedRoot: GraceStatus -> unit)
         =
         task {
             let directoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
@@ -4046,7 +4067,7 @@ module Watch =
                     inspectPublishedStatus
 
             if wasPublished then
-                recordMaterializedCurrentBranchCleanRoot graceStatus
+                recordMaterializedRoot graceStatus
                 return Ok()
             else
                 requestGraceWatchExplicitResync
@@ -4062,7 +4083,11 @@ module Watch =
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
     let private publishCurrentBranchMaterializedStatusWithWriter graceStatus writeWatchInterprocessFile =
-        publishCurrentBranchMaterializedStatusWithWriterAndInspector graceStatus writeWatchInterprocessFile inspectGraceWatchStatus
+        publishCurrentBranchMaterializedStatusWithWriterAndInspector
+            graceStatus
+            writeWatchInterprocessFile
+            inspectGraceWatchStatus
+            recordMaterializedCurrentBranchCleanRoot
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
     let private publishCurrentBranchMaterializedStatus graceStatus =
@@ -4085,9 +4110,14 @@ module Watch =
                     authority.RootDirectory
                     authority.BranchId
                     authority.BranchName)
+            (recordMaterializedCurrentBranchCleanRootForAuthority authority)
 
     /// Exposes current-branch materialized status publication to deterministic Watch tests.
     let internal publishCurrentBranchMaterializedStatusForWatchTests graceStatus = publishCurrentBranchMaterializedStatus graceStatus
+
+    /// Exposes captured-authority materialized status publication to deterministic Watch tests.
+    let internal publishCurrentBranchMaterializedStatusForAuthorityForWatchTests authority graceStatus =
+        publishCurrentBranchMaterializedStatusForAuthority authority graceStatus
 
     /// Publishes materialized status through an injected IPC writer so tests can prove cache/write serialization.
     let internal publishCurrentBranchMaterializedStatusWithWriterForWatchTests graceStatus writeWatchInterprocessFile =
@@ -4095,7 +4125,11 @@ module Watch =
 
     /// Publishes materialized status through injected IPC seams so tests can prove captured-authority verification.
     let internal publishCurrentBranchMaterializedStatusWithWriterAndInspectorForWatchTests graceStatus writeWatchInterprocessFile inspectPublishedStatus =
-        publishCurrentBranchMaterializedStatusWithWriterAndInspector graceStatus writeWatchInterprocessFile inspectPublishedStatus
+        publishCurrentBranchMaterializedStatusWithWriterAndInspector
+            graceStatus
+            writeWatchInterprocessFile
+            inspectPublishedStatus
+            recordMaterializedCurrentBranchCleanRoot
 
     /// Closes the post-apply materialization window after durable file and status writes have committed.
     let private completeDurablyAppliedCurrentBranchMaterialization
@@ -4154,8 +4188,14 @@ module Watch =
     let internal verifyCurrentBranchMaterializationMarkerWindowCleanForWatchTests referenceId updatedGraceStatus correlationId =
         verifyCurrentBranchMaterializationMarkerWindowClean referenceId updatedGraceStatus correlationId
 
-    /// Verifies marker-time working-tree content before remote files can overwrite local paths.
-    let private verifyCurrentBranchMaterializationPreWriteContentClean referenceId (previousGraceStatus: GraceStatus) correlationId =
+    /// Classifies marker-time scan evidence before remote files can overwrite local paths.
+    type private CurrentBranchMaterializationPreWriteContentResult =
+        | Clean
+        | ProvenLocalWork
+        | ScanFailed
+
+    /// Classifies marker-time working-tree content before remote files can overwrite local paths.
+    let private inspectCurrentBranchMaterializationPreWriteContent referenceId (previousGraceStatus: GraceStatus) correlationId =
         task {
             let! markerTimeDifferences = scanForDifferences previousGraceStatus
 
@@ -4164,23 +4204,32 @@ module Watch =
                     $"Current-branch remote materialization could not complete its marker-time pre-write scan for Reference {referenceId}."
 
                 return
-                    Error(
-                        GraceError.Create
-                            $"Current-branch remote materialization requires resync because the marker-time pre-write scan failed for Reference {referenceId}."
-                            correlationId
-                    )
+                    ScanFailed,
+                    GraceError.Create
+                        $"Current-branch remote materialization requires resync because the marker-time pre-write scan failed for Reference {referenceId}."
+                        correlationId
             elif markerTimeDifferences.Count > 0 then
                 requestGraceWatchExplicitResync
                     $"Current-branch remote materialization observed {markerTimeDifferences.Count} local edits before remote writes for Reference {referenceId}."
 
                 return
-                    Error(
-                        GraceError.Create
-                            $"Current-branch remote materialization refused to overwrite local edits observed before remote writes for Reference {referenceId}."
-                            correlationId
-                    )
+                    ProvenLocalWork,
+                    GraceError.Create
+                        $"Current-branch remote materialization refused to overwrite local edits observed before remote writes for Reference {referenceId}."
+                        correlationId
             else
-                return Ok()
+                return Clean, GraceError.Create String.Empty correlationId
+        }
+
+    /// Verifies marker-time working-tree content before remote files can overwrite local paths.
+    let private verifyCurrentBranchMaterializationPreWriteContentClean referenceId (previousGraceStatus: GraceStatus) correlationId =
+        task {
+            let! result, error = inspectCurrentBranchMaterializationPreWriteContent referenceId previousGraceStatus correlationId
+
+            match result with
+            | Clean -> return Ok()
+            | ProvenLocalWork
+            | ScanFailed -> return Error error
         }
 
     /// Exposes marker-time pre-write verification to focused Watch tests without changing public contracts.
@@ -4190,11 +4239,14 @@ module Watch =
     /// Retires a remote payload when pre-write evidence proves local work superseded the materialization attempt.
     let private verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayload payload previousGraceStatus correlationId =
         task {
-            match! verifyCurrentBranchMaterializationPreWriteContentClean payload.ReferenceId previousGraceStatus correlationId with
-            | Ok () -> return Ok()
-            | Error error ->
+            let! result, error = inspectCurrentBranchMaterializationPreWriteContent payload.ReferenceId previousGraceStatus correlationId
+
+            match result with
+            | Clean -> return Ok()
+            | ProvenLocalWork ->
                 consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
                 return Error error
+            | ScanFailed -> return Error error
         }
 
     /// Exposes stale-payload retirement for focused pre-write scan regression tests.
@@ -4218,13 +4270,13 @@ module Watch =
         |> Seq.tryFind (fun fileVersion -> String.Equals(normalizeRelativePath fileVersion.RelativePath, normalizedRelativePath, watchPathComparison))
 
     /// Converts a scan difference into the current full working-tree path it protects.
-    let private materializationDifferenceFullPath (difference: FileSystemDifference) =
-        Path.GetFullPath(Path.Combine(Current().RootDirectory, string difference.RelativePath))
+    let private materializationDifferenceFullPath rootDirectory (difference: FileSystemDifference) =
+        Path.GetFullPath(Path.Combine(rootDirectory, string difference.RelativePath))
 
     /// Reports whether a scan-derived local edit targets the same path or a child of a directory mutation.
-    let private materializationDifferenceTargetsMutation (mutation: WorkingDirectoryTargetMutation) (difference: FileSystemDifference) =
+    let private materializationDifferenceTargetsMutation rootDirectory (mutation: WorkingDirectoryTargetMutation) (difference: FileSystemDifference) =
         let mutationPath = Path.GetFullPath(mutation.FullPath)
-        let differencePath = materializationDifferenceFullPath difference
+        let differencePath = materializationDifferenceFullPath rootDirectory difference
 
         if mutation.IsDirectory then
             differencePath.StartsWith(mutationPath + string Path.DirectorySeparatorChar, watchPathComparison)
@@ -4233,14 +4285,15 @@ module Watch =
             String.Equals(differencePath, mutationPath, watchPathComparison)
 
     /// Revalidates one materialization target immediately before `updateWorkingDirectory` mutates it.
-    let private verifyCurrentBranchMaterializationTargetAtOverwriteBoundary
+    let private verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryWithAuthority
         (payload: CurrentBranchReferenceNotification)
         (previousGraceStatus: GraceStatus)
+        (authorityRootDirectory: string)
         correlationId
         (mutation: WorkingDirectoryTargetMutation)
         =
         task {
-            let root = Current().RootDirectory
+            let root = authorityRootDirectory
             let fullPath = Path.GetFullPath(mutation.FullPath)
             let relativePath = Path.GetRelativePath(root, fullPath)
 
@@ -4257,7 +4310,7 @@ module Watch =
                                 $"Current-branch remote materialization requires resync because final target verification failed for Reference {payload.ReferenceId}."
                                 correlationId
                         )
-                elif finalDifferences.Exists(fun difference -> materializationDifferenceTargetsMutation mutation difference) then
+                elif finalDifferences.Exists(fun difference -> materializationDifferenceTargetsMutation authorityRootDirectory mutation difference) then
                     requestGraceWatchExplicitResync
                         $"Current-branch remote materialization detected a local edit at target {relativePath} before overwrite for Reference {payload.ReferenceId}."
 
@@ -4324,8 +4377,38 @@ module Watch =
         }
 
     /// Exposes final target overwrite validation to focused Watch tests.
-    let internal verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryForWatchTests payload previousGraceStatus correlationId mutation =
-        verifyCurrentBranchMaterializationTargetAtOverwriteBoundary payload previousGraceStatus correlationId mutation
+    let internal verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryForWatchTests
+        (payload: CurrentBranchReferenceNotification)
+        (previousGraceStatus: GraceStatus)
+        correlationId
+        (mutation: WorkingDirectoryTargetMutation)
+        =
+        let current = Current()
+
+        let authority: CurrentBranchMaterializationAuthority =
+            {
+                RepositoryId = current.RepositoryId
+                RepositoryName = current.RepositoryName
+                BranchId = current.BranchId
+                BranchName = current.BranchName
+                RootDirectory = current.RootDirectory
+                ObjectDirectory = current.ObjectDirectory
+                RootDirectoryId = previousGraceStatus.RootDirectoryId
+                RootDirectorySha256Hash = previousGraceStatus.RootDirectorySha256Hash
+                RootDirectoryBlake3Hash = previousGraceStatus.RootDirectoryBlake3Hash
+            }
+
+        verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryWithAuthority payload previousGraceStatus authority.RootDirectory correlationId mutation
+
+    /// Exposes authority-rooted final target overwrite validation to focused Watch tests.
+    let internal verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryWithAuthorityForWatchTests
+        payload
+        (authority: CurrentBranchMaterializationAuthority)
+        previousGraceStatus
+        correlationId
+        mutation
+        =
+        verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryWithAuthority payload previousGraceStatus authority.RootDirectory correlationId mutation
 
     /// Builds the default live clients that fetch, download, and apply remote current-branch directory versions.
     let private defaultCurrentBranchRemoteMaterializationOperations () =
@@ -4379,7 +4462,13 @@ module Watch =
                 | None -> return Ok()
             }
 
-        let applyRemoteDirectory payload authority (previousGraceStatus: GraceStatus) directoryVersionDtos correlationId =
+        let applyRemoteDirectory
+            payload
+            (authority: CurrentBranchMaterializationAuthority)
+            (previousGraceStatus: GraceStatus)
+            directoryVersionDtos
+            correlationId
+            =
             task {
                 let updatedGraceStatus = updateGraceStatusWithNewDirectoryVersionsFromServer previousGraceStatus directoryVersionDtos
 
@@ -4397,7 +4486,14 @@ module Watch =
                                 correlationId
                         )
                 else
-                    let markerFileName = updateInProgressFileName ()
+                    let markerFileName =
+                        updateInProgressFileNameForIdentity
+                            authority.RepositoryId
+                            authority.RepositoryName
+                            authority.RootDirectory
+                            authority.BranchId
+                            authority.BranchName
+
                     let markerText = $"`grace watch` current-branch materialization is in progress. Lease: {Guid.NewGuid():N}"
 
                     match!
@@ -4465,14 +4561,17 @@ module Watch =
                                                         )
                                                 else
                                                     match!
-                                                        updateWorkingDirectoryWithTargetGuard
+                                                        updateWorkingDirectoryWithTargetGuardAtRoot
+                                                            authority.RootDirectory
+                                                            authority.ObjectDirectory
                                                             previousGraceStatus
                                                             updatedGraceStatus
                                                             directoryVersionDtos
                                                             correlationId
-                                                            (verifyCurrentBranchMaterializationTargetAtOverwriteBoundary
+                                                            (verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryWithAuthority
                                                                 payload
                                                                 previousGraceStatus
+                                                                authority.RootDirectory
                                                                 correlationId)
                                                         with
                                                     | Error error -> return Error error
