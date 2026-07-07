@@ -453,6 +453,30 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "ArtifactKind '999' is not supported." (Validation.validateArtifactDescriptor invalidDescriptor)
 
+    /// Verifies that invalid target selector kind values fail validation rather than choosing an identity shape.
+    [<Test>]
+    member _.InvalidTargetSelectorKindValueFailsValidationClearly() =
+        let selector =
+            { MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId with
+                SelectorKind = enum<MaterializationTargetSelectorKind> 999
+            }
+
+        assertInvalid "TargetSelector.SelectorKind '999' is not supported." (Validation.validateTargetSelector selector)
+
+    /// Verifies that invalid cache selection kind values fail validation rather than choosing cache authority.
+    [<Test>]
+    member _.InvalidCacheSelectionKindValueFailsValidationClearly() =
+        let cacheSelection = { MaterializationCacheSelection.Preferred with SelectionKind = enum<MaterializationCacheSelectionKind> 999 }
+
+        assertInvalid "CacheSelection.SelectionKind '999' is not supported." (Validation.validateCacheSelection cacheSelection)
+
+    /// Verifies that invalid artifact source kind values fail validation rather than choosing source identity.
+    [<Test>]
+    member _.InvalidArtifactSourceKindValueFailsValidationClearly() =
+        let source = { MaterializationArtifactSource.Deferred with SourceKind = enum<MaterializationArtifactSourceKind> 999 }
+
+        assertInvalid "Artifact SourceKind '999' is not supported." (Validation.validateArtifactSource source)
+
     /// Verifies that unknown future execution mode strings fail deserialization clearly.
     [<Test>]
     member _.UnknownExecutionModeStringFailsDeserializationClearly() =
@@ -529,6 +553,24 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "RequiredArtifacts must include RecursiveDirectoryMetadata for the target root." (Validation.validatePlan plan)
 
+    /// Verifies that the V1 response also fails when the target-root zip artifact is absent.
+    [<Test>]
+    member _.PlanMissingDirectoryVersionZipRootArtifactFailsValidationClearly() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Bypass,
+                [
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some MaterializationArtifactSource.Deferred
+                    )
+                ]
+            )
+
+        assertInvalid "RequiredArtifacts must include DirectoryVersionZip for the target root." (Validation.validatePlan plan)
+
     /// Verifies that every artifact descriptor in a response belongs to the resolved target root.
     [<Test>]
     member _.PlanArtifactForDifferentRootFailsValidationClearly() =
@@ -600,6 +642,38 @@ type MaterializationPlanContractTests() =
         let source = { MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey with CacheKey = None }
 
         assertInvalid "Artifact CacheKey is required for CacheEntry sources." (Validation.validateArtifactSource source)
+
+    /// Verifies that cache-entry sources reject blank, whitespace, and null cache identity.
+    [<Test>]
+    member _.CacheEntrySourceRejectsMalformedCacheKeys() =
+        let malformedSources =
+            [
+                "missing", None
+                "blank", Some ""
+                "whitespace", Some "   "
+                "null", Some Unchecked.defaultof<string>
+            ]
+
+        for _, cacheKey in malformedSources do
+            let source = { MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey with CacheKey = cacheKey }
+
+            assertInvalid "Artifact CacheKey is required for CacheEntry sources." (Validation.validateArtifactSource source)
+
+    /// Verifies that direct sources reject missing, blank, whitespace, and null direct URIs.
+    [<Test>]
+    member _.DirectUriSourceRejectsMissingBlankWhitespaceAndNullUris() =
+        let malformedSources =
+            [
+                "missing", None, "Artifact DirectUri is required for DirectUri sources."
+                "blank", Some "", "Artifact DirectUri must be an absolute http or https URI for DirectUri sources."
+                "whitespace", Some "   ", "Artifact DirectUri must be an absolute http or https URI for DirectUri sources."
+                "null", Some Unchecked.defaultof<string>, "Artifact DirectUri must be an absolute http or https URI for DirectUri sources."
+            ]
+
+        for _, directUri, expected in malformedSources do
+            let source = { MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip" with DirectUri = directUri }
+
+            assertInvalid expected (Validation.validateArtifactSource source)
 
     /// Verifies that cache-scope identity is either absent or a non-blank value.
     [<TestCase("")>]
@@ -902,6 +976,14 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "TargetSelector.BranchName is required." (Validation.validateTargetSelector selector)
 
+    /// Verifies that branch target selectors reject blank and whitespace-only selector identity.
+    [<TestCase("")>]
+    [<TestCase("   ")>]
+    member _.BranchTargetSelectorsRejectBlankAndWhitespaceNames(branchName: string) =
+        let selector = MaterializationTargetSelector.ForBranch(BranchName branchName)
+
+        assertInvalid "TargetSelector.BranchName is required." (Validation.validateTargetSelector selector)
+
     /// Verifies that direct plans reject cache-entry artifact sources even when the execution/cache pair is valid.
     [<Test>]
     member _.DirectBypassPlanRejectsCacheEntryArtifactSources() =
@@ -920,6 +1002,32 @@ type MaterializationPlanContractTests() =
                         Some MaterializationArtifactSource.Deferred
                     )
                 ]
+            )
+
+        assertInvalid "Direct/Bypass plans must not require CacheEntry artifact sources." (Validation.validatePlan plan)
+
+    /// Verifies that BypassCache selection alone rejects cache-entry sources even when execution mode is not Direct.
+    [<Test>]
+    member _.BypassSelectionRejectsCacheEntrySourcesWhenExecutionModeIsNotDirect() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                MaterializationCacheSelection.Bypass,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertInvalid "Direct/Bypass plans must not require CacheEntry artifact sources." (Validation.validatePlan plan)
+
+    /// Verifies that Direct execution rejects cache-entry sources even when cache selection is inconsistent.
+    [<Test>]
+    member _.DirectExecutionRejectsCacheEntrySourcesWhenSelectionIsInconsistent() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Preferred,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
             )
 
         assertInvalid "Direct/Bypass plans must not require CacheEntry artifact sources." (Validation.validatePlan plan)
@@ -1000,6 +1108,37 @@ type MaterializationPlanContractTests() =
                      Some MaterializationPlanTestData.blake3Hash
                  else
                      Some(Blake3Hash "")),
+                Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
+            )
+
+        let expected =
+            if evaluateSha256 then
+                "Artifact Sha256Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors."
+            else
+                "Artifact Blake3Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors."
+
+        assertInvalid expected (Validation.validateArtifactDescriptor descriptor)
+
+    /// Verifies that whole-file descriptors require canonical lowercase 64-hex hash identity.
+    [<TestCase(true, "0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF")>]
+    [<TestCase(true, "0123456789abcdef")>]
+    [<TestCase(true, "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdeg")>]
+    [<TestCase(false, "89ABCDEF0123456789ABCDEF0123456789ABCDEF0123456789ABCDEF01234567")>]
+    [<TestCase(false, "89abcdef01234567")>]
+    [<TestCase(false, "89abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456g")>]
+    member _.WholeFileContentRejectsMalformedHashOptions(evaluateSha256: bool, malformedHash: string) =
+        let descriptor =
+            MaterializationArtifactDescriptor.WholeFileContent(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                RelativePath "src/app.fs",
+                (if evaluateSha256 then
+                     Some(Sha256Hash malformedHash)
+                 else
+                     Some MaterializationPlanTestData.sha256Hash),
+                (if evaluateSha256 then
+                     Some MaterializationPlanTestData.blake3Hash
+                 else
+                     Some(Blake3Hash malformedHash)),
                 Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
             )
 
@@ -1153,6 +1292,47 @@ type MaterializationPlanContractTests() =
 
         assertValid (Validation.validatePlan plan)
 
+    /// Verifies that CAS uniqueness includes storage pool, allowing same addresses in distinct pools.
+    [<Test>]
+    member _.PlanAllowsCasDescriptorsWithSameAddressInDifferentStoragePools() =
+        let secondaryStoragePoolId = StoragePoolId "storage-pool-secondary"
+
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                [
+                    yield! MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+                    MaterializationArtifactDescriptor.FileManifest(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.manifestAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/manifest/main")
+                    )
+                    MaterializationArtifactDescriptor.FileManifest(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.manifestAddress,
+                        secondaryStoragePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/manifest/secondary")
+                    )
+                    MaterializationArtifactDescriptor.ContentBlock(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.contentBlockAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/block/main")
+                    )
+                    MaterializationArtifactDescriptor.ContentBlock(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.contentBlockAddress,
+                        secondaryStoragePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/block/secondary")
+                    )
+                ]
+            )
+
+        assertValid (Validation.validatePlan plan)
+
     /// Verifies that V1 plans reject duplicate singleton root artifact descriptors.
     [<Test>]
     member _.PlanRejectsDuplicateTargetRootSingletonArtifacts() =
@@ -1249,3 +1429,37 @@ type MaterializationPlanContractTests() =
         assertInvalid "TargetSelector.ReferenceId must be empty for DirectoryVersionId selectors." (Validation.validateTargetSelector directorySelector)
         assertInvalid "TargetSelector.BranchName must be empty for ReferenceId selectors." (Validation.validateTargetSelector referenceSelector)
         assertInvalid "TargetSelector.DirectoryVersionId must be empty for BranchName selectors." (Validation.validateTargetSelector branchSelector)
+
+    /// Verifies that every selector kind rejects each identity field owned by the other selector kinds.
+    [<Test>]
+    member _.TargetSelectorsRejectEveryOffKindIdentityField() =
+        let cases =
+            [
+                { MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId with
+                    ReferenceId = Some MaterializationPlanTestData.referenceId
+                },
+                "TargetSelector.ReferenceId must be empty for DirectoryVersionId selectors."
+                { MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId with
+                    BranchName = Some MaterializationPlanTestData.branchName
+                },
+                "TargetSelector.BranchName must be empty for DirectoryVersionId selectors."
+                { MaterializationTargetSelector.ForReference MaterializationPlanTestData.referenceId with
+                    DirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
+                },
+                "TargetSelector.DirectoryVersionId must be empty for ReferenceId selectors."
+                { MaterializationTargetSelector.ForReference MaterializationPlanTestData.referenceId with
+                    BranchName = Some MaterializationPlanTestData.branchName
+                },
+                "TargetSelector.BranchName must be empty for ReferenceId selectors."
+                { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with
+                    DirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
+                },
+                "TargetSelector.DirectoryVersionId must be empty for BranchName selectors."
+                { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with
+                    ReferenceId = Some MaterializationPlanTestData.referenceId
+                },
+                "TargetSelector.ReferenceId must be empty for BranchName selectors."
+            ]
+
+        for selector, expected in cases do
+            assertInvalid expected (Validation.validateTargetSelector selector)
