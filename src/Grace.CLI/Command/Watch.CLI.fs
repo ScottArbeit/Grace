@@ -3243,7 +3243,9 @@ module Watch =
     type internal CurrentBranchMaterializationAuthority =
         {
             RepositoryId: RepositoryId
+            RepositoryName: string
             BranchId: BranchId
+            BranchName: string
             RootDirectory: string
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
@@ -3265,7 +3267,7 @@ module Watch =
                 -> Grace.Types.DirectoryVersion.DirectoryVersionDto array
                 -> CorrelationId
                 -> Task<Result<GraceStatus, GraceError>>
-            PublishWatchStatus: GraceStatus -> Task<unit>
+            PublishWatchStatus: CurrentBranchMaterializationAuthority -> GraceStatus -> Task<unit>
         }
 
     /// Records a deferred current-branch Reference and the decision reason that made Watch hold it.
@@ -3382,7 +3384,7 @@ module Watch =
     let internal recordPublishedCurrentBranchCleanRootForWatchTests updatedStatus = recordPublishedCurrentBranchCleanRoot updatedStatus
 
     /// Reports whether a remote root is known stale by Reference identity or bounded root-only authority.
-    let private isSupersededCurrentBranchMaterializationRoot (payload: CurrentBranchReferenceNotification) =
+    let private isSupersededCurrentBranchMaterializationRootWithAnonymousPolicy consumeAnonymousRootAuthority (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
             let key = currentBranchMaterializationRootHistoryKey payload.RepositoryId payload.BranchId payload.DirectoryId
 
@@ -3396,12 +3398,20 @@ module Watch =
                     true
                 elif payload.ReferenceId = ReferenceId.Empty
                      && entry.AnonymousRejectionsRemaining > 0 then
-                    entry.AnonymousRejectionsRemaining <- entry.AnonymousRejectionsRemaining - 1
+                    if consumeAnonymousRootAuthority then
+                        entry.AnonymousRejectionsRemaining <- entry.AnonymousRejectionsRemaining - 1
+
                     true
                 else
                     false
             else
                 false)
+
+    /// Reports and consumes whether a remote root is known stale by Reference identity or bounded root-only authority.
+    let private isSupersededCurrentBranchMaterializationRoot payload = isSupersededCurrentBranchMaterializationRootWithAnonymousPolicy true payload
+
+    /// Reports whether a remote root is known stale without spending bounded anonymous root-only authority.
+    let private peekSupersededCurrentBranchMaterializationRoot payload = isSupersededCurrentBranchMaterializationRootWithAnonymousPolicy false payload
 
     /// Reports whether a Reference notification carries enough root identity to supersede pending work.
     let private currentBranchReferenceHasUsableRootIdentity (payload: CurrentBranchReferenceNotification) =
@@ -3466,6 +3476,17 @@ module Watch =
 
         lock pendingCurrentBranchMaterializationLock (fun () ->
             pendingCurrentBranchMaterializations
+            |> List.map (fun pending -> pending.Payload))
+
+    /// Reads deferred materializations that were blocked by unsafe local state, not manual supersession test setup.
+    let private pendingUnsafeCurrentBranchMaterializationSnapshot () =
+        prunePendingCurrentBranchMaterializationsForActiveBranch ()
+
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            pendingCurrentBranchMaterializations
+            |> List.filter (fun pending ->
+                pending.Reason
+                <> LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
             |> List.map (fun pending -> pending.Payload))
 
     /// Reads Watch-owned pending materialization status without exposing it through public CLI output.
@@ -3569,7 +3590,9 @@ module Watch =
     let private currentBranchMaterializationAuthorityFromStatus repositoryId branchId (status: GraceWatchStatus) : CurrentBranchMaterializationAuthority =
         {
             RepositoryId = repositoryId
+            RepositoryName = string status.RepositoryName
             BranchId = branchId
+            BranchName = string status.BranchName
             RootDirectory = Current().RootDirectory
             RootDirectoryId = status.RootDirectoryId
             RootDirectorySha256Hash = status.RootDirectorySha256Hash
@@ -3615,6 +3638,21 @@ module Watch =
         && current.BranchId = authority.BranchId
         && currentBranchMaterializationRootDirectoryStillCurrent authority
         && currentBranchMaterializationRootMatchesAuthority authority currentGraceStatus
+
+    /// Confirms status publication still belongs to the captured branch identity after remote files reached disk.
+    let private currentBranchMaterializationPublicationStillCurrent
+        (authority: CurrentBranchMaterializationAuthority)
+        (updatedGraceStatus: GraceStatus)
+        (currentGraceStatus: GraceStatus)
+        =
+        let current = Current()
+
+        current.RepositoryId = authority.RepositoryId
+        && current.BranchId = authority.BranchId
+        && currentBranchMaterializationRootDirectoryStillCurrent authority
+        && currentGraceStatus.RootDirectoryId = updatedGraceStatus.RootDirectoryId
+        && currentGraceStatus.RootDirectorySha256Hash = updatedGraceStatus.RootDirectorySha256Hash
+        && currentGraceStatus.RootDirectoryBlake3Hash = updatedGraceStatus.RootDirectoryBlake3Hash
 
     /// Confirms Watch still has no queued local work at the marker-time materialization boundary.
     let private currentBranchMaterializationInspectionStillCleanForWrite
@@ -3871,6 +3909,17 @@ module Watch =
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
     let private publishCurrentBranchMaterializedStatus graceStatus =
         publishCurrentBranchMaterializedStatusWithWriter graceStatus updateGraceWatchInterprocessFile
+
+    /// Publishes materialized status to the IPC file owned by the captured materialization authority.
+    let private publishCurrentBranchMaterializedStatusForAuthority (authority: CurrentBranchMaterializationAuthority) graceStatus =
+        publishCurrentBranchMaterializedStatusWithWriter
+            graceStatus
+            (updateGraceWatchInterprocessFileForIdentity
+                authority.RepositoryId
+                authority.RepositoryName
+                authority.RootDirectory
+                authority.BranchId
+                authority.BranchName)
 
     /// Exposes current-branch materialized status publication to deterministic Watch tests.
     let internal publishCurrentBranchMaterializedStatusForWatchTests graceStatus = publishCurrentBranchMaterializedStatus graceStatus
@@ -4188,11 +4237,20 @@ module Watch =
                                 task {
                                     let! currentGraceStatus = readGraceStatusFile ()
 
-                                    if not (currentBranchMaterializationAuthorityStillCurrent authority currentGraceStatus) then
+                                    if not (currentBranchMaterializationRootMatchesAuthority authority currentGraceStatus) then
+                                        consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
                                         return
                                             Error(
                                                 GraceError.Create
-                                                    $"Current-branch remote materialization refused because repository, branch, or local root changed after notification preflight; retry will re-evaluate Reference {payload.ReferenceId}."
+                                                    $"Current-branch remote materialization refused because local root changed after notification preflight; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                                    correlationId
+                                            )
+                                    elif not (currentBranchMaterializationAuthorityStillCurrent authority currentGraceStatus) then
+                                        return
+                                            Error(
+                                                GraceError.Create
+                                                    $"Current-branch remote materialization refused because repository or branch changed after notification preflight; retry will re-evaluate Reference {payload.ReferenceId}."
                                                     correlationId
                                             )
                                     else
@@ -4273,9 +4331,9 @@ module Watch =
             DownloadDirectoryFiles = downloadDirectoryFiles
             ApplyRemoteDirectory = applyRemoteDirectory
             PublishWatchStatus =
-                fun graceStatus ->
+                fun (authority: CurrentBranchMaterializationAuthority) graceStatus ->
                     task {
-                        match! publishCurrentBranchMaterializedStatus graceStatus with
+                        match! publishCurrentBranchMaterializedStatusForAuthority authority graceStatus with
                         | Ok () -> ()
                         | Error error -> return raise (InvalidOperationException(error.Error))
                     }
@@ -4291,15 +4349,38 @@ module Watch =
             do! currentBranchMaterializationGate.WaitAsync()
 
             try
-                let payloadArray = payloadProvider () |> Seq.toArray
+                let providedPayloads = payloadProvider () |> Seq.toArray
 
-                if payloadArray.Length = 0 then
+                if providedPayloads.Length = 0 then
                     return LatestCurrentBranchReferenceDecision.NoApplicableReference
                 else
                     let current = Current()
                     let! inspection = operations.InspectWatchStatus()
 
                     let localStatus = if inspection.IsUsable then inspection.Status else None
+
+                    let payloadArray =
+                        if recordPendingOnBlock then
+                            let providedDecision =
+                                decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus providedPayloads
+
+                            let providedPayloadTargetsKnownStaleRoot =
+                                match providedDecision.Reference, localStatus with
+                                | Some payload, Some status ->
+                                    status.RootDirectoryId <> payload.DirectoryId
+                                    && peekSupersededCurrentBranchMaterializationRoot payload
+                                | _ -> false
+
+                            if providedDecision.Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+                               && not providedPayloadTargetsKnownStaleRoot then
+                                Array.append
+                                    providedPayloads
+                                    (pendingUnsafeCurrentBranchMaterializationSnapshot ()
+                                     |> List.toArray)
+                            else
+                                providedPayloads
+                        else
+                            providedPayloads
 
                     let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus payloadArray
 
@@ -4362,12 +4443,18 @@ module Watch =
                                     | Ok () ->
                                         let! markerTimeGraceStatus = operations.ReadGraceStatus()
 
-                                        if not (currentBranchMaterializationAuthorityStillCurrent authority markerTimeGraceStatus) then
+                                        if not (currentBranchMaterializationRootMatchesAuthority authority markerTimeGraceStatus) then
                                             consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
 
                                             logToAnsiConsole
                                                 Colors.Error
-                                                $"Current-branch remote materialization refused because repository, branch, or local root changed before write; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                                $"Current-branch remote materialization refused because local root changed before write; Reference {payload.ReferenceId} was retired as stale behind local work."
+
+                                            return decision
+                                        elif not (currentBranchMaterializationAuthorityStillCurrent authority markerTimeGraceStatus) then
+                                            logToAnsiConsole
+                                                Colors.Error
+                                                $"Current-branch remote materialization refused because repository or branch changed before write; retry will re-evaluate Reference {payload.ReferenceId}."
 
                                             return decision
                                         else
@@ -4391,25 +4478,39 @@ module Watch =
                                                     logToAnsiConsole Colors.Error $"{Markup.Escape(error.Error)}"
                                                     return decision
                                                 | Ok updatedStatus ->
-                                                    try
-                                                        do! operations.PublishWatchStatus updatedStatus
-                                                        recordSupersededCurrentBranchMaterializationRoot authority updatedStatus
-                                                        forgetPendingCurrentBranchMaterializationsThrough payload
+                                                    let! publishBoundaryStatus = operations.ReadGraceStatus()
 
-                                                        logToAnsiConsole
-                                                            Colors.Highlighted
-                                                            $"Materialized current-branch reference notification {payload.ReferenceId} for root {payload.DirectoryId}."
-
-                                                        return decision
-                                                    with
-                                                    | ex ->
+                                                    if not (currentBranchMaterializationPublicationStillCurrent authority updatedStatus publishBoundaryStatus) then
                                                         consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
 
                                                         requestGraceWatchExplicitResync
-                                                            $"Current-branch remote materialization could not publish durable status for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes: {ex.Message}"
+                                                            $"Current-branch remote materialization observed repository, branch, or root drift before publishing Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
 
-                                                        logToAnsiConsole Colors.Error $"{Markup.Escape(ex.Message)}"
+                                                        logToAnsiConsole
+                                                            Colors.Error
+                                                            $"Current-branch remote materialization refused to publish stale status for Reference {payload.ReferenceId}; payload was retired behind newer local authority."
+
                                                         return decision
+                                                    else
+                                                        try
+                                                            do! operations.PublishWatchStatus authority updatedStatus
+                                                            recordSupersededCurrentBranchMaterializationRoot authority updatedStatus
+                                                            forgetPendingCurrentBranchMaterializationsThrough payload
+
+                                                            logToAnsiConsole
+                                                                Colors.Highlighted
+                                                                $"Materialized current-branch reference notification {payload.ReferenceId} for root {payload.DirectoryId}."
+
+                                                            return decision
+                                                        with
+                                                        | ex ->
+                                                            consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
+                                                            requestGraceWatchExplicitResync
+                                                                $"Current-branch remote materialization could not publish durable status for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes: {ex.Message}"
+
+                                                            logToAnsiConsole Colors.Error $"{Markup.Escape(ex.Message)}"
+                                                            return decision
                     | LatestCurrentBranchReferenceDecisionReason.SameRoot, Some payload ->
                         forgetPendingCurrentBranchMaterializationsThrough payload
                         return decision

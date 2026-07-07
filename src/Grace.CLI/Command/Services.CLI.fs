@@ -2673,14 +2673,17 @@ module Services =
                     }
         }
 
-    /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
-    let private createGraceWatchStatusWithPendingWork
+    /// Builds the persisted Grace Watch status snapshot for a specific repository identity.
+    let private createGraceWatchStatusWithPendingWorkForIdentity
         (pendingWorkOverride: bool option)
+        repositoryId
+        repositoryName
+        rootDirectory
+        branchId
+        branchName
         (graceStatus: GraceStatus)
         (directoryIdsOverride: HashSet<DirectoryVersionId> option)
         =
-        let current = Current()
-
         let hasPendingWatchWork =
             pendingWorkOverride
             |> Option.defaultWith hasGraceWatchPendingWorkForStatus
@@ -2703,11 +2706,11 @@ module Services =
         {
             UpdatedAt = getCurrentInstant ()
             IsStartupClaim = false
-            RepositoryId = current.RepositoryId
-            RepositoryName = current.RepositoryName
-            BranchId = current.BranchId
-            BranchName = current.BranchName
-            RootDirectory = current.RootDirectory
+            RepositoryId = repositoryId
+            RepositoryName = repositoryName
+            BranchId = branchId
+            BranchName = branchName
+            RootDirectory = rootDirectory
             HasPendingWatchWork = hasPendingWatchWork
             IsWorkingTreeClean = not hasPendingWatchWork
             RootDirectoryId = graceStatus.RootDirectoryId
@@ -2717,6 +2720,24 @@ module Services =
             LastDirectoryVersionInstant = graceStatus.LastSuccessfulDirectoryVersionUpload
             DirectoryIds = directoryIds
         }
+
+    /// Builds the persisted Grace Watch status snapshot used by check and startup coordination.
+    let private createGraceWatchStatusWithPendingWork
+        (pendingWorkOverride: bool option)
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        let current = Current()
+
+        createGraceWatchStatusWithPendingWorkForIdentity
+            pendingWorkOverride
+            current.RepositoryId
+            current.RepositoryName
+            current.RootDirectory
+            current.BranchId
+            current.BranchName
+            graceStatus
+            directoryIdsOverride
 
     /// Builds a Watch IPC snapshot using the current process pending-work flag.
     let private createGraceWatchStatus graceStatus directoryIdsOverride = createGraceWatchStatusWithPendingWork None graceStatus directoryIdsOverride
@@ -2747,12 +2768,12 @@ module Services =
         && graceWatchStatus.Mode = GraceWatchRuntimeMode.HealthyIncremental
 
     /// Writes Grace Watch IPC JSON to disk after the caller has acquired the status write gate.
-    let private writeGraceWatchStatusWithPersistedModeCore persistedModeOverride fileMode graceWatchStatus =
+    let private writeGraceWatchStatusWithPersistedModeCoreToFile (ipcFileName: string) persistedModeOverride fileMode graceWatchStatus =
         task {
-            Directory.CreateDirectory(Path.GetDirectoryName(IpcFileName()))
+            Directory.CreateDirectory(Path.GetDirectoryName(ipcFileName))
             |> ignore
 
-            use fileStream = new FileStream(IpcFileName(), fileMode, FileAccess.Write, FileShare.None)
+            use fileStream = new FileStream(ipcFileName, fileMode, FileAccess.Write, FileShare.None)
 
             match persistedModeOverride with
             | Some mode -> do! writeGraceWatchStatusContractWithPersistedModeToStream fileStream mode graceWatchStatus
@@ -2760,6 +2781,10 @@ module Services =
 
             graceWatchStatusUpdateTime <- graceWatchStatus.UpdatedAt
         }
+
+    /// Writes Grace Watch IPC JSON to the current identity path after the caller has acquired the status write gate.
+    let private writeGraceWatchStatusWithPersistedModeCore persistedModeOverride fileMode graceWatchStatus =
+        writeGraceWatchStatusWithPersistedModeCoreToFile (IpcFileName()) persistedModeOverride fileMode graceWatchStatus
 
     /// Writes grace watch status data through the CLI output contract with an optional runtime-mode override.
     let private writeGraceWatchStatusWithPersistedMode persistedModeOverride fileMode graceWatchStatus =
@@ -2810,6 +2835,46 @@ module Services =
     /// Updates the contents of the `grace watch` status inter-process communication file.
     let updateGraceWatchInterprocessFile (graceStatus: GraceStatus) (directoryIdsOverride: HashSet<DirectoryVersionId> option) =
         updateGraceWatchInterprocessFileCore None None graceStatus directoryIdsOverride
+
+    /// Updates Watch IPC for the repository identity captured before a materialization began.
+    let updateGraceWatchInterprocessFileForIdentity
+        repositoryId
+        repositoryName
+        rootDirectory
+        branchId
+        branchName
+        (graceStatus: GraceStatus)
+        (directoryIdsOverride: HashSet<DirectoryVersionId> option)
+        =
+        task {
+            let ipcFileName = IpcFileNameForIdentity repositoryId repositoryName rootDirectory branchId branchName
+
+            try
+                do! graceWatchStatusWriteGate.WaitAsync()
+
+                try
+                    let graceWatchStatus =
+                        createGraceWatchStatusWithPendingWorkForIdentity
+                            None
+                            repositoryId
+                            repositoryName
+                            rootDirectory
+                            branchId
+                            branchName
+                            graceStatus
+                            directoryIdsOverride
+
+                    do! writeGraceWatchStatusWithPersistedModeCoreToFile ipcFileName None FileMode.Create graceWatchStatus
+                finally
+                    graceWatchStatusWriteGate.Release() |> ignore
+
+                logToAnsiConsole Colors.Important $"Wrote inter-process communication file."
+            with
+            | ex ->
+                logToAnsiConsole Colors.Error $"Exception in updateGraceWatchInterprocessFile."
+                logToAnsiConsole Colors.Error $"ex.GetType: {ex.GetType().FullName}{Environment.NewLine}{Environment.NewLine}"
+                logToAnsiConsole Colors.Error $"ex.Message: {ex.Message}{Environment.NewLine}{Environment.NewLine}{ex.StackTrace}"
+        }
 
     /// Selects the live Watch pending and mode facts that a non-Watch writer must not erase.
     let private liveWorkPreservationFromInspection (inspection: GraceWatchStatusInspection) =
@@ -3173,7 +3238,10 @@ module Services =
                     for newDirectoryVersionDto in newDirectoryVersionDtoArray do
                         let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion.ToLocalDirectoryVersion DateTime.UtcNow
 
-                        if not (Directory.Exists(newDirectoryVersion.FullName)) then
+                        if File.Exists(newDirectoryVersion.FullName) then
+                            rememberTarget newDirectoryVersion.FullName false true
+                            rememberTarget newDirectoryVersion.FullName true false
+                        elif not (Directory.Exists(newDirectoryVersion.FullName)) then
                             rememberTarget newDirectoryVersion.FullName true false
 
                         let previousDirectoryVersion =
@@ -3191,7 +3259,10 @@ module Services =
                         for fileVersion in newLocalFileVersions do
                             let existingFileOnDisk = FileInfo(fileVersion.FullName)
 
-                            if existingFileOnDisk.Exists then
+                            if Directory.Exists(existingFileOnDisk.FullName) then
+                                collectDirectoryTreeDeleteTargets (DirectoryInfo(existingFileOnDisk.FullName))
+                                rememberTarget existingFileOnDisk.FullName false false
+                            elif existingFileOnDisk.Exists then
                                 let findFileVersionFromPreviousGraceStatus =
                                     previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
 
@@ -3366,7 +3437,31 @@ module Services =
                         )
                     // Ensure that the directory exists on disk.
                     let! directoryCreateGuard =
-                        if Directory.Exists(newDirectoryVersion.FullName) then
+                        if File.Exists(newDirectoryVersion.FullName) then
+                            task {
+                                match! verifyTarget newDirectoryVersion.FullName false true with
+                                | Error error -> return Error error
+                                | Ok () ->
+                                    try
+                                        File.Delete(newDirectoryVersion.FullName)
+                                        return! verifyTarget newDirectoryVersion.FullName true false
+                                    with
+                                    | :? IOException as ex ->
+                                        return
+                                            Error(
+                                                GraceError.Create
+                                                    $"Working directory update could not delete verified file {newDirectoryVersion.FullName} before creating a remote directory at the same path; retry after the tree can be re-evaluated: {ex.Message}"
+                                                    correlationId
+                                            )
+                                    | :? UnauthorizedAccessException as ex ->
+                                        return
+                                            Error(
+                                                GraceError.Create
+                                                    $"Working directory update could not delete verified file {newDirectoryVersion.FullName} before creating a remote directory at the same path; retry after the tree can be re-evaluated: {ex.Message}"
+                                                    correlationId
+                                            )
+                            }
+                        elif Directory.Exists(newDirectoryVersion.FullName) then
                             Task.FromResult(Ok())
                         else
                             verifyTarget newDirectoryVersion.FullName true false
@@ -3416,7 +3511,17 @@ module Services =
 
                                     logToAnsiConsole Colors.Error $"{error}"
 
-                            if existingFileOnDisk.Exists then
+                            if Directory.Exists(existingFileOnDisk.FullName) then
+                                match! verifyTarget existingFileOnDisk.FullName true true with
+                                | Error _ -> ()
+                                | Ok () ->
+                                    do! deleteDirectoryTreeWithTargetGuard (DirectoryInfo(existingFileOnDisk.FullName))
+
+                                    if resultError.IsNone then
+                                        match! verifyTarget existingFileOnDisk.FullName false false with
+                                        | Ok () -> File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
+                                        | Error _ -> ()
+                            elif existingFileOnDisk.Exists then
                                 // Need to compare existing file to new version from the object cache.
                                 let findFileVersionFromPreviousGraceStatus =
                                     previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
