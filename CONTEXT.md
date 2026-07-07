@@ -581,7 +581,10 @@ pretend to be the backing storage account.
 
 **Possession vs. permission**:
 Grace Cache may store target-root zips and recursive metadata before a requester needs them, but it serves artifacts only
-when the requester has a server-issued grant for the resolved Materialization Plan or DirectoryVersionId.
+when the requester has a current server-issued grant that authorizes the whole target-root scope for the resolved
+Materialization Plan or DirectoryVersionId. DirectoryVersionId equality alone is not enough for path-narrowed grants:
+V1 full-root artifacts must reject narrowed path-scope grants until Grace accepts path-scoped artifact shapes and their
+recursive metadata contract.
 
 **Private subnet vs. authorization**:
 A private subnet reduces exposure for Grace Cache, but it does not replace per-call authorization. Grace Cache validates
@@ -795,7 +798,9 @@ Materialization Plan."
 Developer: "If Grace Cache already has a target-root zip, can anyone on the subnet fetch it by hash?"
 
 Domain expert: "No. The requester needs a server-issued grant for the resolved Materialization Plan or
-DirectoryVersionId that names the artifact."
+DirectoryVersionId that names the artifact and authorizes the whole target-root scope. Matching the DirectoryVersionId
+is not enough when the grant is narrowed to a path; V1 full-root artifacts must reject narrowed path-scope grants until
+Grace accepts path-scoped artifact shapes."
 
 Developer: "If the cache runs on a private CI subnet, can it skip authorization checks?"
 
