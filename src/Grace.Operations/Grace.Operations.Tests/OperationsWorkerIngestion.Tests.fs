@@ -1,5 +1,6 @@
 namespace Grace.Operations.Tests
 
+open Azure.Messaging.ServiceBus
 open Grace.Operations.Data
 open Grace.Operations.Worker
 open Grace.Shared
@@ -68,6 +69,21 @@ module OperationsWorkerIngestionTestData =
             ApplicationProperties = applicationProperties ()
             Body = body
         }
+
+    /// Creates the Azure SDK message shape delivered by the production Service Bus processor.
+    let receivedServiceBusMessage (body: byte array) =
+        let properties = Dictionary<string, obj>()
+        properties[OperationalFactEnvelope.UsageFactMessageTypeProperty] <- box OperationalFactEnvelope.UsageFactMessageType
+        properties[OperationalFactEnvelope.UsageFactKindProperty] <- box "RepositoryStorageBytesMinute"
+
+        ServiceBusModelFactory.ServiceBusReceivedMessage(
+            body = BinaryData(body),
+            messageId = "message-1",
+            correlationId = "message-correlation",
+            subject = OperationalFactEnvelope.UsageFactSubject,
+            properties = properties,
+            deliveryCount = 2
+        )
 
     /// Builds the aggregate projected by the data layer for a valid fact.
     let aggregateFor fact =
@@ -943,6 +959,82 @@ type OperationsWorkerIngestionTests() =
                 Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None)))
         )
 
+    /// Verifies the production Service Bus receive handler clears a prior receive/link readiness failure.
+    [<Test>]
+    member _.ProductionReceiveProofClearsServiceBusReceiveFaultReadiness() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("24242424-2424-4424-8424-242424242424"))
+
+            let processor, _store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                ServiceBusErrorSource.Receive
+                (InvalidOperationException("receive-link-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.receivedServiceBusMessage
+
+            do! OperationsUsageServiceBusMessage.processReceivedMessageAsync recorder processor true message actions CancellationToken.None
+
+            let recoveredSnapshot = readinessSnapshot readiness
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Receive, InvalidOperationException)."))
+                    Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                    Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None))
+                    Assert.That(eventText events, Is.EqualTo("store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
+    /// Verifies a production callback cannot clear receive/link readiness when the worker may be draining prefetch.
+    [<Test>]
+    member _.ProductionPrefetchedCallbackDoesNotClearServiceBusReceiveFaultReadiness() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("26262626-2626-4626-8626-262626262626"))
+
+            let processor, _store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                ServiceBusErrorSource.Receive
+                (InvalidOperationException("receive-link-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.receivedServiceBusMessage
+
+            do! OperationsUsageServiceBusMessage.processReceivedMessageAsync recorder processor false message actions CancellationToken.None
+
+            let completedSnapshot = readinessSnapshot readiness
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Receive, InvalidOperationException)."))
+                    Assert.That(completedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(completedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Receive, InvalidOperationException)."))
+                    Assert.That(eventText events, Is.EqualTo("store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
     /// Verifies a prefetched callback after a receive/link fault does not prove receive-side recovery.
     [<Test>]
     member _.PrefetchedCallbackDoesNotClearServiceBusReceiveFaultReadiness() =
@@ -1113,9 +1205,9 @@ type OperationsWorkerIngestionTests() =
                 Assert.That(dependencyFailure, Does.Not.Contain("callback-secret")))
         )
 
-    /// Verifies a settlement-side Service Bus processor failure clears after later successful runtime processing.
+    /// Verifies storage success does not clear a settlement-side Service Bus processor failure before settlement succeeds.
     [<Test>]
-    member _.NonReceiveServiceBusProcessorFailureClearsAfterLaterRuntimeSuccess() =
+    member _.SettlementFailureDoesNotClearAfterStorageSuccessBeforeSettlement() =
         task {
             let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("23232323-2323-4323-8323-232323232323"))
 
@@ -1123,11 +1215,12 @@ type OperationsWorkerIngestionTests() =
 
             let durableSuccess = TaskCompletionSource<Result<UsageFactPersistenceResult, string list>>(TaskCreationOptions.RunContinuationsAsynchronously)
 
-            let processor, _store, actions, events, readiness =
+            let processor, _store, _actions, events, readiness =
                 createProcessorWithReadiness (fun storedFact _ ->
                     storeStarted.SetResult(())
                     durableSuccess.Task)
 
+            let actions = BlockingCompleteMessageActions(events)
             let recorder = readiness :> IOperationsUsageReadinessRecorder
             recorder.MarkReady()
 
@@ -1150,6 +1243,12 @@ type OperationsWorkerIngestionTests() =
             let callbackStartedSnapshot = readinessSnapshot readiness
 
             durableSuccess.SetResult(Ok(accepted fact))
+
+            do! actions.CompleteStarted
+
+            let storageSucceededSnapshot = readinessSnapshot readiness
+
+            actions.ReleaseComplete()
             do! processing
 
             let completedSnapshot = readinessSnapshot readiness
@@ -1169,11 +1268,63 @@ type OperationsWorkerIngestionTests() =
                         Is.EqualTo(Some "Service Bus processor fault (Complete, InvalidOperationException).")
                     )
 
+                    Assert.That(storageSucceededSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+
+                    Assert.That(
+                        storageSucceededSnapshot.DependencyFailure,
+                        Is.EqualTo(Some "Service Bus processor fault (Complete, InvalidOperationException).")
+                    )
+
                     Assert.That(completedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
                     Assert.That(completedSnapshot.DependencyFailure, Is.EqualTo(None))
                     Assert.That(dependencyFailure, Does.Not.Contain("settlement-secret"))
-                    Assert.That(eventText events, Is.EqualTo("store|complete"))
+                    Assert.That(eventText events, Is.EqualTo("store|complete-waiting|complete"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
+    /// Verifies a successful abandon settlement clears a prior abandon-side Service Bus processor failure.
+    [<Test>]
+    member _.SuccessfulAbandonClearsServiceBusProcessorFailureAfterSettlement() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("25252525-2525-4525-8525-252525252525"))
+
+            let processor, _store, actions, events, readiness =
+                createProcessorWithReadiness (fun _ _ ->
+                    Task.FromException<Result<UsageFactPersistenceResult, string list>>(InvalidOperationException("forced SQL failure")))
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                ServiceBusErrorSource.Abandon
+                (InvalidOperationException("abandon-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let settledSnapshot = readinessSnapshot readiness
+
+            let dependencyFailure =
+                settledSnapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Abandon, InvalidOperationException)."))
+                    Assert.That(settledSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(settledSnapshot.DependencyFailure, Is.EqualTo(Some "Runtime processing dependency failed (InvalidOperationException)."))
+                    Assert.That(dependencyFailure, Does.Not.Contain("abandon-secret"))
+                    Assert.That(eventText events, Is.EqualTo("store|abandon"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon")))
             )
         }
 

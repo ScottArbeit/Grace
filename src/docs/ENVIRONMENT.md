@@ -201,7 +201,8 @@ These capture failure classification, retryability, cleanup notes, and runtime m
   `GraceOperations`.
 - `grace__operations_worker__max_concurrent_calls`: Optional Service Bus processor concurrency override. Defaults to
   `4`.
-- `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `16`.
+- `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `0` so
+  receive/link readiness recovery is not proven by callbacks draining prefetched messages.
 
 The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and requires
 `grace__azure_service_bus__operational_facts_processor_subscription` to be exactly `operational-facts-processor`.
