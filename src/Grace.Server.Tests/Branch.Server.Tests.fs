@@ -2303,6 +2303,12 @@ type BranchServer() =
                         secondRoot
                     ]
 
+            let! firstSaveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
+            do! BranchServerTestHelpers.assertOk firstSaveResponse
+
+            let! secondSaveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch secondRoot.DirectoryVersionId secondRoot.Sha256Hash
+            do! BranchServerTestHelpers.assertOk secondSaveResponse
+
             /// Asserts ambiguous for integration responses.
             let assertAmbiguous (response: HttpResponseMessage) =
                 task {
