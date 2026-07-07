@@ -101,6 +101,25 @@ type IOperationsUsageArchiveBlobStore =
     /// Verifies an already-recorded Blob pointer before SQL cleanup resumes.
     abstract VerifyAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task
 
+    /// Downloads archived Blob bytes after verifying checksum and byte length against SQL pointer authority.
+    abstract DownloadVerifiedAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<byte array>
+
+/// Replays archived usage facts without restoring hot SQL payload authority.
+type IOperationsUsageArchiveReplayStore =
+
+    /// Persists an archived fact idempotently while keeping `ops.RawUsageFact.RawPayload` empty.
+    abstract ReplayArchivedUsageFactAsync:
+        fact: UsageFact * rawPayload: byte array * pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken ->
+            Task<Result<UsageFactPersistenceResult, string list>>
+
+/// Adapts the concrete operations usage store to archive replay.
+type OperationsUsageArchiveReplayStoreAdapter(store: OperationsUsageStore) =
+
+    interface IOperationsUsageArchiveReplayStore with
+
+        member _.ReplayArchivedUsageFactAsync(fact, rawPayload, pointer, cancellationToken) =
+            store.ReplayArchivedUsageFactAsync(fact, rawPayload, pointer, cancellationToken)
+
 /// Builds deterministic archive names, JSONL payloads, compression, and checksums for raw usage facts.
 [<RequireQualifiedAccess>]
 module OperationsUsageArchiveFormat =
@@ -202,6 +221,101 @@ module OperationsUsageArchiveFormat =
 
         { Pointer = pointer; Content = content }
 
+    /// Decompresses archived gzip JSONL bytes for replay validation.
+    let gunzip (content: byte array) =
+        use input = new MemoryStream(content)
+        use gzipStream = new GZipStream(input, CompressionMode.Decompress)
+        use output = new MemoryStream()
+        gzipStream.CopyTo output
+        output.ToArray()
+
+    /// Reads a required string property from the archive JSON record.
+    let private readString (root: JsonElement) (name: string) = root.GetProperty(name).GetString()
+
+    /// Fails replay when the archive record and compact SQL index disagree.
+    let private requireMatch description expected actual =
+        if not (String.Equals(expected, actual, StringComparison.Ordinal)) then
+            invalidOp $"Archive replay {description} mismatch. Expected '{expected}'; actual '{actual}'."
+
+    /// Extracts and validates the raw UsageFact payload from an archived Blob against the compact SQL index.
+    let readValidatedUsageFact (item: RawUsageFactArchiveReplayItem) (content: byte array) =
+        let jsonl = gunzip content
+        use document = JsonDocument.Parse(ReadOnlyMemory<byte>(jsonl))
+        let root = document.RootElement
+
+        let archiveSchemaVersion =
+            root
+                .GetProperty("archiveSchemaVersion")
+                .GetInt32()
+
+        if archiveSchemaVersion <> ArchiveSchemaVersion then
+            invalidOp
+                $"Archive replay schema version mismatch for UsageFactId '{item.UsageFactId}'. Expected {ArchiveSchemaVersion}; actual {archiveSchemaVersion}."
+
+        requireMatch "UsageFactId" (string item.UsageFactId) (readString root "usageFactId")
+        requireMatch "CorrelationId" (string item.CorrelationId) (readString root "correlationId")
+        requireMatch "FactKind" (item.FactKind.ToString()) (readString root "factKind")
+        requireMatch "OwnerId" (string item.OwnerId) (readString root "ownerId")
+        requireMatch "OrganizationId" (string item.OrganizationId) (readString root "organizationId")
+        requireMatch "RepositoryId" (string item.RepositoryId) (readString root "repositoryId")
+        requireMatch "StoragePoolId" (string item.StoragePoolId) (readString root "storagePoolId")
+
+        requireMatch
+            "Quantity"
+            (item.Quantity.ToString(CultureInfo.InvariantCulture))
+            (root
+                .GetProperty("quantity")
+                .GetInt64()
+                .ToString(CultureInfo.InvariantCulture))
+
+        requireMatch
+            "ObservedAtUtc"
+            (item
+                .ObservedAt
+                .ToDateTimeUtc()
+                .ToString("O", CultureInfo.InvariantCulture))
+            (readString root "observedAtUtc")
+
+        let rawPayload =
+            root
+                .GetProperty("rawPayloadBase64")
+                .GetBytesFromBase64()
+
+        let usageFact =
+            use stream = new MemoryStream(rawPayload, writable = false)
+            JsonSerializer.Deserialize<UsageFact>(stream, Constants.JsonSerializerOptions)
+
+        if isNull (box usageFact) then
+            invalidOp $"Archive replay payload for UsageFactId '{item.UsageFactId}' did not contain a UsageFact."
+
+        match UsageFact.Validate usageFact with
+        | Error errors ->
+            let errorText = String.Join("; ", errors)
+            invalidOp $"Archive replay payload for UsageFactId '{item.UsageFactId}' is invalid: {errorText}"
+        | Ok () -> ()
+
+        requireMatch "payload UsageFactId" (string item.UsageFactId) (string usageFact.UsageFactId)
+        requireMatch "payload CorrelationId" (string item.CorrelationId) (string usageFact.CorrelationId)
+        requireMatch "payload FactKind" (item.FactKind.ToString()) (usageFact.FactKind.ToString())
+        requireMatch "payload OwnerId" (string item.OwnerId) (string usageFact.Scope.OwnerId)
+        requireMatch "payload OrganizationId" (string item.OrganizationId) (string usageFact.Scope.OrganizationId)
+        requireMatch "payload RepositoryId" (string item.RepositoryId) (string usageFact.Scope.RepositoryId)
+        requireMatch "payload StoragePoolId" (string item.StoragePoolId) (string usageFact.Resource.StoragePoolId)
+        requireMatch "payload Quantity" (item.Quantity.ToString(CultureInfo.InvariantCulture)) (usageFact.Quantity.ToString(CultureInfo.InvariantCulture))
+
+        requireMatch
+            "payload ObservedAtUtc"
+            (item
+                .ObservedAt
+                .ToDateTimeUtc()
+                .ToString("O", CultureInfo.InvariantCulture))
+            (usageFact
+                .ObservedAt
+                .ToDateTimeUtc()
+                .ToString("O", CultureInfo.InvariantCulture))
+
+        usageFact, rawPayload
+
 /// Stores archive blobs in Azure Blob Storage and reads them back for authority verification.
 type AzureOperationsUsageArchiveBlobStore(containerClient: BlobContainerClient) =
 
@@ -253,6 +367,13 @@ type AzureOperationsUsageArchiveBlobStore(containerClient: BlobContainerClient) 
             task {
                 let! storedContent = downloadContentAsync pointer.BlobName cancellationToken
                 verifyContent pointer storedContent
+            }
+
+        member _.DownloadVerifiedAsync(pointer, cancellationToken) =
+            task {
+                let! storedContent = downloadContentAsync pointer.BlobName cancellationToken
+                verifyContent pointer storedContent
+                return storedContent
             }
 
 /// Archives old hot raw payloads after Blob authority is verified and persisted in SQL.
@@ -316,6 +437,179 @@ type OperationsUsageArchiveProcessor
                 index <- index + 1
 
             return archived
+        }
+
+/// Summarizes one archive replay batch.
+type OperationsUsageArchiveReplayBatchResult = { Examined: int; Accepted: int; AlreadyProcessed: int }
+
+/// Replays archived UsageFact payloads through SQL compact-index and Blob authority checks.
+type OperationsUsageArchiveReplayProcessor
+    (
+        archiveStore: IOperationsUsageArchiveStore,
+        blobStore: IOperationsUsageArchiveBlobStore,
+        replayStore: IOperationsUsageArchiveReplayStore,
+        logger: ILogger<OperationsUsageArchiveReplayProcessor>
+    ) =
+
+    /// Replays one archived item after Blob checksum, byte length, and payload/index validation.
+    let replayItemAsync (item: RawUsageFactArchiveReplayItem) cancellationToken =
+        task {
+            let! content = blobStore.DownloadVerifiedAsync(item.Pointer, cancellationToken)
+            let usageFact, rawPayload = OperationsUsageArchiveFormat.readValidatedUsageFact item content
+            let! replayed = replayStore.ReplayArchivedUsageFactAsync(usageFact, rawPayload, item.Pointer, cancellationToken)
+
+            match replayed with
+            | Error errors ->
+                let errorText = String.Join("; ", errors)
+                return invalidOp $"Archive replay rejected UsageFactId '{item.UsageFactId}': {errorText}"
+            | Ok result ->
+                logger.LogInformation(
+                    "Replayed archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; Status: {Status}.",
+                    item.UsageFactId,
+                    item.Pointer.BlobName,
+                    result.Status
+                )
+
+                return result.Status
+        }
+
+    /// Replays at most one SQL-index batch, using UsageFactId idempotency to avoid duplicate aggregate projection.
+    member _.ReplayBatchAsync(scope: RawUsageFactArchiveScope option, batchSize: int, cancellationToken: CancellationToken) =
+        task {
+            let! items = archiveStore.ListArchivedUsageFactsAsync(scope, batchSize, cancellationToken)
+            let itemArray = items |> List.toArray
+            let mutable index = 0
+            let mutable accepted = 0
+            let mutable alreadyProcessed = 0
+
+            while index < itemArray.Length do
+                cancellationToken.ThrowIfCancellationRequested()
+                let! status = replayItemAsync itemArray[index] cancellationToken
+
+                match status with
+                | UsageFactPersistenceStatus.Accepted -> accepted <- accepted + 1
+                | UsageFactPersistenceStatus.AlreadyProcessed -> alreadyProcessed <- alreadyProcessed + 1
+                | _ -> invalidOp $"Archive replay returned unsupported persistence status '{status}'."
+
+                index <- index + 1
+
+            return { Examined = itemArray.Length; Accepted = accepted; AlreadyProcessed = alreadyProcessed }
+        }
+
+/// Requests temporary support access to archived payloads for one Grace repository scope.
+type OperationsUsageRehydrationRequest = { Scope: RawUsageFactArchiveScope; MaxFacts: int; RequestedBy: string; Reason: string; ExpiresAt: Instant }
+
+/// Reports temporary support rehydration audit evidence and cleanup targets.
+type OperationsUsageRehydrationResult = { AuditEntries: RawUsageFactRehydrationAuditEntry list }
+
+/// Restores archived payloads temporarily for scoped support workflows and provides cleanup.
+type OperationsUsageRehydrationProcessor
+    (
+        archiveStore: IOperationsUsageArchiveStore,
+        blobStore: IOperationsUsageArchiveBlobStore,
+        clock: IClock,
+        logger: ILogger<OperationsUsageRehydrationProcessor>
+    ) =
+
+    /// Rejects global or unbounded rehydration requests before any Blob reads occur.
+    let validateRequest (request: OperationsUsageRehydrationRequest) =
+        let errors = ResizeArray<string>()
+
+        if request.Scope.OwnerId.IsNone then
+            errors.Add("Rehydration requires OwnerId scope.")
+
+        if request.Scope.OrganizationId.IsNone then
+            errors.Add("Rehydration requires OrganizationId scope.")
+
+        if request.Scope.RepositoryId.IsNone then
+            errors.Add("Rehydration requires RepositoryId scope.")
+
+        if request.MaxFacts <= 0 then
+            errors.Add("Rehydration MaxFacts quota must be greater than zero.")
+
+        if String.IsNullOrWhiteSpace request.RequestedBy then
+            errors.Add("Rehydration RequestedBy audit value is required.")
+
+        if String.IsNullOrWhiteSpace request.Reason then
+            errors.Add("Rehydration Reason audit value is required.")
+
+        if request.ExpiresAt <= clock.GetCurrentInstant() then
+            errors.Add("Rehydration ExpiresAt must be in the future.")
+
+        if errors.Count > 0 then Error(List.ofSeq errors) else Ok()
+
+    /// Rehydrates one archived payload after replay-equivalent archive validation.
+    let rehydrateItemAsync request rehydratedAt (item: RawUsageFactArchiveReplayItem) cancellationToken =
+        task {
+            let! content = blobStore.DownloadVerifiedAsync(item.Pointer, cancellationToken)
+            let _, rawPayload = OperationsUsageArchiveFormat.readValidatedUsageFact item content
+            let! changed = archiveStore.RehydrateArchivedPayloadAsync(item.Pointer, rawPayload, cancellationToken)
+
+            logger.LogInformation(
+                "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ChangedSqlState: {ChangedSqlState}; RequestedBy: {RequestedBy}.",
+                item.UsageFactId,
+                item.Pointer.BlobName,
+                changed,
+                request.RequestedBy
+            )
+
+            return
+                {
+                    UsageFactId = item.UsageFactId
+                    Scope = request.Scope
+                    Pointer = item.Pointer
+                    RequestedBy = request.RequestedBy
+                    Reason = request.Reason
+                    RehydratedAt = rehydratedAt
+                    ExpiresAt = request.ExpiresAt
+                    RestoredByteLength = rawPayload.Length
+                    ChangedSqlState = changed
+                }
+        }
+
+    /// Rehydrates up to the explicit quota for one scoped support request and returns local audit proof.
+    member _.RehydrateAsync(request: OperationsUsageRehydrationRequest, cancellationToken: CancellationToken) =
+        task {
+            match validateRequest request with
+            | Error errors -> return Error errors
+            | Ok () ->
+                let! items = archiveStore.ListArchivedUsageFactsAsync(Some request.Scope, request.MaxFacts, cancellationToken)
+                let itemArray = items |> List.toArray
+                let entries = ResizeArray<RawUsageFactRehydrationAuditEntry>()
+                let rehydratedAt = clock.GetCurrentInstant()
+                let mutable index = 0
+
+                while index < itemArray.Length do
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let! entry = rehydrateItemAsync request rehydratedAt itemArray[index] cancellationToken
+                    entries.Add entry
+                    index <- index + 1
+
+                return Ok { AuditEntries = entries |> Seq.toList }
+        }
+
+    /// Clears every payload represented by the supplied support-audit entries.
+    member _.CleanupAsync(entries: RawUsageFactRehydrationAuditEntry list, cancellationToken: CancellationToken) =
+        task {
+            let entryArray = entries |> List.toArray
+            let mutable index = 0
+            let mutable cleaned = 0
+
+            while index < entryArray.Length do
+                cancellationToken.ThrowIfCancellationRequested()
+                let! changed = archiveStore.CleanupRehydratedPayloadAsync(entryArray[index].Pointer, cancellationToken)
+
+                if changed then cleaned <- cleaned + 1
+
+                index <- index + 1
+
+            logger.LogInformation(
+                "Cleaned up temporary operations UsageFact rehydration. Requested: {Requested}; Cleaned: {Cleaned}.",
+                entryArray.Length,
+                cleaned
+            )
+
+            return cleaned
         }
 
 /// Reads Blob archive settings required by the hot/cold usage fact archive worker.

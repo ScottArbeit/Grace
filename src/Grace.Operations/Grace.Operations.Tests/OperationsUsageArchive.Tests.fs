@@ -3,6 +3,7 @@ namespace Grace.Operations.Tests
 open Grace.Operations.Data
 open Grace.Operations.Data.Migrations
 open Grace.Operations.Worker
+open Grace.Shared
 open Grace.Types.Common
 open Grace.Types.Usage
 open Microsoft.EntityFrameworkCore
@@ -40,6 +41,22 @@ module OperationsUsageArchiveTestData =
     /// Creates the accepted raw payload bytes that later replay leaves will consume.
     let payload usageFactId = Encoding.UTF8.GetBytes($"{{\"usageFactId\":\"{usageFactId:D}\",\"payload\":\"exact broker bytes\"}}")
 
+    /// Creates a valid usage fact whose raw JSON payload can be validated during archive replay.
+    let usageFact usageFactId =
+        UsageFact.RepositoryStorageBytesMinute(
+            usageFactId,
+            CorrelationId $"corr-{usageFactId}",
+            ownerId,
+            organizationId,
+            repositoryId,
+            storagePoolId,
+            4096L,
+            Instant.FromUtc(2026, 7, 4, 12, 34, 0)
+        )
+
+    /// Serializes a usage fact with the production JSON settings preserved in archive blobs.
+    let usageFactPayload fact = JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
+
     /// Creates a raw usage fact archive candidate with deterministic scope and observed time.
     let candidate usageFactId archiveState rawPayload pointer =
         {
@@ -69,12 +86,20 @@ module OperationsUsageArchiveTestData =
 type private RecordingArchiveStore(candidates: RawUsageFactArchiveCandidate list, events: List<string>) =
     let markedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let completedPointers = ResizeArray<RawUsageFactArchivePointer>()
+    let rehydratedPointers = ResizeArray<RawUsageFactArchivePointer>()
+    let cleanedPointers = ResizeArray<RawUsageFactArchivePointer>()
 
     /// Returns Blob pointers recorded as verified in SQL.
     member _.MarkedPointers = markedPointers |> Seq.toList
 
     /// Returns Blob pointers completed by clearing the hot SQL payload.
     member _.CompletedPointers = completedPointers |> Seq.toList
+
+    /// Returns Blob pointers restored for temporary support rehydration.
+    member _.RehydratedPointers = rehydratedPointers |> Seq.toList
+
+    /// Returns Blob pointers cleaned after temporary support rehydration.
+    member _.CleanedPointers = cleanedPointers |> Seq.toList
 
     interface IOperationsUsageArchiveStore with
 
@@ -90,6 +115,56 @@ type private RecordingArchiveStore(candidates: RawUsageFactArchiveCandidate list
         member _.CompleteArchiveAsync(pointer, _cancellationToken) =
             events.Add("complete-archive")
             completedPointers.Add pointer
+            Task.FromResult true
+
+        member _.ListArchivedUsageFactsAsync(scope, batchSize, _cancellationToken) =
+            events.Add("list-archived")
+
+            let matchesScope (candidate: RawUsageFactArchiveCandidate) =
+                match scope with
+                | None -> true
+                | Some scope ->
+                    (scope.OwnerId
+                     |> Option.forall ((=) candidate.OwnerId))
+                    && (scope.OrganizationId
+                        |> Option.forall ((=) candidate.OrganizationId))
+                    && (scope.RepositoryId
+                        |> Option.forall ((=) candidate.RepositoryId))
+
+            let replayItems =
+                candidates
+                |> List.filter matchesScope
+                |> List.truncate batchSize
+                |> List.map (fun candidate ->
+                    match candidate.ArchiveBlobName, candidate.ArchiveChecksumSha256Hex, candidate.ArchiveByteLength with
+                    | Some blobName, Some checksum, Some byteLength ->
+                        let pointer = { UsageFactId = candidate.UsageFactId; BlobName = blobName; ChecksumSha256Hex = checksum; ByteLength = byteLength }
+
+                        {
+                            UsageFactId = candidate.UsageFactId
+                            CorrelationId = candidate.CorrelationId
+                            FactKind = candidate.FactKind
+                            OwnerId = candidate.OwnerId
+                            OrganizationId = candidate.OrganizationId
+                            RepositoryId = candidate.RepositoryId
+                            StoragePoolId = candidate.StoragePoolId
+                            Quantity = candidate.Quantity
+                            ObservedAt = candidate.ObservedAt
+                            Pointer = pointer
+                        }
+                    | _ -> failwith "Replay candidates require complete archive pointer authority.")
+
+            Task.FromResult replayItems
+
+        member _.RehydrateArchivedPayloadAsync(pointer, rawPayload, _cancellationToken) =
+            events.Add("rehydrate")
+            Assert.That(rawPayload, Is.Not.Empty)
+            rehydratedPointers.Add pointer
+            Task.FromResult true
+
+        member _.CleanupRehydratedPayloadAsync(pointer, _cancellationToken) =
+            events.Add("cleanup-rehydrated")
+            cleanedPointers.Add pointer
             Task.FromResult true
 
 /// Stores archive blobs in memory while preserving checksum and length verification semantics.
@@ -110,10 +185,14 @@ type private RecordingArchiveBlobStore(events: List<string>) =
         match blobs.TryGetValue pointer.BlobName with
         | false, _ -> invalidOp $"Archive Blob '{pointer.BlobName}' is missing."
         | true, content ->
-            Assert.That(int64 content.Length, Is.EqualTo(pointer.ByteLength))
+            if int64 content.Length <> pointer.ByteLength then
+                invalidOp
+                    $"Archive Blob '{pointer.BlobName}' length mismatch for UsageFactId '{pointer.UsageFactId}'. Expected {pointer.ByteLength}; actual {content.Length}."
 
             let checksum = OperationsUsageArchiveFormat.checksumSha256Hex content
-            Assert.That(checksum, Is.EqualTo(pointer.ChecksumSha256Hex))
+
+            if checksum <> pointer.ChecksumSha256Hex then
+                invalidOp $"Archive Blob '{pointer.BlobName}' checksum mismatch for UsageFactId '{pointer.UsageFactId}'."
 
     interface IOperationsUsageArchiveBlobStore with
 
@@ -140,6 +219,46 @@ type private RecordingArchiveBlobStore(events: List<string>) =
             with
             | ex -> Task.FromException ex
 
+        member this.DownloadVerifiedAsync(pointer, _cancellationToken) =
+            events.Add("download-verified")
+
+            try
+                this.VerifyPointer pointer
+                Task.FromResult(this.Content pointer.BlobName)
+            with
+            | ex -> Task.FromException<byte array> ex
+
+/// Records replay persistence calls and simulates UsageFactId idempotency.
+type private RecordingArchiveReplayStore(events: List<string>) =
+    let replayed = HashSet<UsageFactId>()
+
+    /// Returns the number of unique usage facts accepted by replay.
+    member _.AcceptedCount = replayed.Count
+
+    interface IOperationsUsageArchiveReplayStore with
+
+        member _.ReplayArchivedUsageFactAsync(fact, rawPayload, pointer, _cancellationToken) =
+            events.Add("replay-store")
+            Assert.That(rawPayload, Is.Not.Empty)
+            Assert.That(pointer.UsageFactId, Is.EqualTo(fact.UsageFactId))
+
+            let status =
+                if replayed.Add fact.UsageFactId then
+                    UsageFactPersistenceStatus.Accepted
+                else
+                    UsageFactPersistenceStatus.AlreadyProcessed
+
+            let result = { Status = status; UsageFactId = fact.UsageFactId; Aggregate = None }
+
+            Task.FromResult(Ok result)
+
+/// Provides deterministic time for rehydration expiry tests.
+type private FixedClock(now: Instant) =
+
+    interface IClock with
+
+        member _.GetCurrentInstant() = now
+
 /// Covers hot/cold archive layout, Blob verification, SQL state ordering, and migration shape.
 [<TestFixture>]
 type OperationsUsageArchiveTests() =
@@ -150,6 +269,26 @@ type OperationsUsageArchiveTests() =
             archiveStore,
             blobStore,
             NullLogger<OperationsUsageArchiveProcessor>
+                .Instance
+        )
+
+    /// Creates the replay processor with fake SQL, Blob, and replay dependencies.
+    let createReplayProcessor archiveStore blobStore replayStore =
+        OperationsUsageArchiveReplayProcessor(
+            archiveStore,
+            blobStore,
+            replayStore,
+            NullLogger<OperationsUsageArchiveReplayProcessor>
+                .Instance
+        )
+
+    /// Creates the scoped rehydration processor with deterministic time.
+    let createRehydrationProcessor archiveStore blobStore clock =
+        OperationsUsageRehydrationProcessor(
+            archiveStore,
+            blobStore,
+            clock,
+            NullLogger<OperationsUsageRehydrationProcessor>
                 .Instance
         )
 
@@ -342,6 +481,189 @@ type OperationsUsageArchiveTests() =
                     Assert.That(archiveStore.MarkedPointers, Is.Empty)
                     Assert.That(archiveStore.CompletedPointers, Is.Empty))
             )
+        }
+
+    /// Verifies archive replay validates Blob authority and remains idempotent by UsageFactId.
+    [<Test>]
+    member _.ArchiveReplayValidatesBlobAuthorityAndIsIdempotent() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("45454545-4545-4545-8545-454545454545")
+            let fact = OperationsUsageArchiveTestData.usageFact usageFactId
+            let rawPayload = OperationsUsageArchiveTestData.usageFactPayload fact
+            let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+
+            let replayCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Archived None (Some archiveBlob.Pointer)
+
+            let archiveStore = RecordingArchiveStore([ replayCandidate ], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
+            let replayStore = RecordingArchiveReplayStore(events)
+            let processor = createReplayProcessor archiveStore blobStore replayStore
+
+            let! first = processor.ReplayBatchAsync(None, 10, CancellationToken.None)
+            let! second = processor.ReplayBatchAsync(None, 10, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(first.Examined, Is.EqualTo(1))
+                    Assert.That(first.Accepted, Is.EqualTo(1))
+                    Assert.That(first.AlreadyProcessed, Is.EqualTo(0))
+                    Assert.That(second.Examined, Is.EqualTo(1))
+                    Assert.That(second.Accepted, Is.EqualTo(0))
+                    Assert.That(second.AlreadyProcessed, Is.EqualTo(1))
+                    Assert.That(replayStore.AcceptedCount, Is.EqualTo(1)))
+            )
+        }
+
+    /// Verifies replay fails loudly when Blob checksum, byte length, or UsageFactId authority disagrees.
+    [<Test>]
+    member _.ArchiveReplayRejectsCorruptArchiveAuthority() =
+        task {
+            let usageFactId = Guid.Parse("46464646-4646-4646-8646-464646464646")
+            let fact = OperationsUsageArchiveTestData.usageFact usageFactId
+            let rawPayload = OperationsUsageArchiveTestData.usageFactPayload fact
+            let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+
+            let runReplayWithPointer (pointer: RawUsageFactArchivePointer) =
+                task {
+                    let events = List<string>()
+                    let replayCandidate = OperationsUsageArchiveTestData.candidate pointer.UsageFactId RawUsageFactArchiveState.Archived None (Some pointer)
+                    let archiveStore = RecordingArchiveStore([ replayCandidate ], events)
+                    let blobStore = RecordingArchiveBlobStore(events)
+                    blobStore.Put(pointer.BlobName, archiveBlob.Content)
+                    let replayStore = RecordingArchiveReplayStore(events)
+                    let processor = createReplayProcessor archiveStore blobStore replayStore
+                    let mutable message = None
+
+                    try
+                        let! _ = processor.ReplayBatchAsync(None, 10, CancellationToken.None)
+                        Assert.Fail("Corrupt archive authority should stop replay.")
+                    with
+                    | :? InvalidOperationException as ex -> message <- Some ex.Message
+
+                    return message.Value
+                }
+
+            let checksumPointer: RawUsageFactArchivePointer =
+                { archiveBlob.Pointer with ChecksumSha256Hex = String.replicate OperationsUsageSql.ArchiveChecksumSha256HexLength "0" }
+
+            let lengthPointer: RawUsageFactArchivePointer = { archiveBlob.Pointer with ByteLength = archiveBlob.Pointer.ByteLength + 1L }
+
+            let usageFactIdPointer: RawUsageFactArchivePointer = { archiveBlob.Pointer with UsageFactId = Guid.Parse("47474747-4747-4747-8747-474747474747") }
+
+            let! checksumMessage = runReplayWithPointer checksumPointer
+            let! lengthMessage = runReplayWithPointer lengthPointer
+            let! usageFactIdMessage = runReplayWithPointer usageFactIdPointer
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(checksumMessage, Does.Contain("checksum mismatch"))
+                    Assert.That(lengthMessage, Does.Contain("length mismatch"))
+                    Assert.That(usageFactIdMessage, Does.Contain("UsageFactId mismatch")))
+            )
+        }
+
+    /// Verifies support rehydration requires scope, quota, local audit proof, and exact-pointer cleanup.
+    [<Test>]
+    member _.RehydrationIsScopedQuotaLimitedAuditedAndCleanedUp() =
+        task {
+            let events = List<string>()
+            let firstUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484848")
+            let secondUsageFactId = Guid.Parse("49494949-4949-4949-8949-494949494949")
+
+            let createReplayCandidate usageFactId =
+                let fact = OperationsUsageArchiveTestData.usageFact usageFactId
+                let rawPayload = OperationsUsageArchiveTestData.usageFactPayload fact
+                let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+                let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+                OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Archived None (Some archiveBlob.Pointer), archiveBlob
+
+            let firstCandidate, firstBlob = createReplayCandidate firstUsageFactId
+            let secondCandidate, secondBlob = createReplayCandidate secondUsageFactId
+            let archiveStore = RecordingArchiveStore([ firstCandidate; secondCandidate ], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(firstBlob.Pointer.BlobName, firstBlob.Content)
+            blobStore.Put(secondBlob.Pointer.BlobName, secondBlob.Content)
+
+            let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
+            let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
+
+            let scope: RawUsageFactArchiveScope =
+                {
+                    OwnerId = Some OperationsUsageArchiveTestData.ownerId
+                    OrganizationId = Some OperationsUsageArchiveTestData.organizationId
+                    RepositoryId = Some OperationsUsageArchiveTestData.repositoryId
+                }
+
+            let request: OperationsUsageRehydrationRequest =
+                {
+                    Scope = scope
+                    MaxFacts = 1
+                    RequestedBy = "support@example.test"
+                    Reason = "Investigate archived customer support case"
+                    ExpiresAt = now + Duration.FromHours 1.0
+                }
+
+            let! rehydrated = processor.RehydrateAsync(request, CancellationToken.None)
+
+            let result =
+                match rehydrated with
+                | Ok value -> value
+                | Error errors -> failwith (String.Join("; ", errors))
+
+            let! cleaned = processor.CleanupAsync(result.AuditEntries, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(result.AuditEntries |> List.length, Is.EqualTo(1))
+                    Assert.That(result.AuditEntries[0].UsageFactId, Is.EqualTo(firstUsageFactId))
+                    Assert.That(result.AuditEntries[0].RequestedBy, Is.EqualTo(request.RequestedBy))
+                    Assert.That(result.AuditEntries[0].Reason, Is.EqualTo(request.Reason))
+                    Assert.That(result.AuditEntries[0].ExpiresAt, Is.EqualTo(request.ExpiresAt))
+                    Assert.That(result.AuditEntries[0].RestoredByteLength, Is.GreaterThan(0))
+                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1))
+                    Assert.That(cleaned, Is.EqualTo(1))
+                    Assert.That(archiveStore.CleanedPointers |> List.length, Is.EqualTo(1)))
+            )
+        }
+
+    /// Verifies support rehydration rejects global or unbounded requests before reading Blob payloads.
+    [<Test>]
+    member _.RehydrationRejectsMissingScopeAndQuota() =
+        task {
+            let events = List<string>()
+            let archiveStore = RecordingArchiveStore([], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
+            let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
+
+            let request: OperationsUsageRehydrationRequest =
+                {
+                    Scope = { OwnerId = None; OrganizationId = None; RepositoryId = None }
+                    MaxFacts = 0
+                    RequestedBy = ""
+                    Reason = ""
+                    ExpiresAt = now - Duration.FromMinutes 1.0
+                }
+
+            let! result = processor.RehydrateAsync(request, CancellationToken.None)
+
+            match result with
+            | Ok _ -> Assert.Fail("Global unbounded rehydration should be rejected.")
+            | Error errors ->
+                let errorText = String.Join("|", errors)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(errorText, Does.Contain("OwnerId scope"))
+                        Assert.That(errorText, Does.Contain("OrganizationId scope"))
+                        Assert.That(errorText, Does.Contain("RepositoryId scope"))
+                        Assert.That(errorText, Does.Contain("MaxFacts quota"))
+                        Assert.That(events, Is.Empty))
+                )
         }
 
     /// Verifies archive settings expose missing Blob dependencies as startup validation errors.

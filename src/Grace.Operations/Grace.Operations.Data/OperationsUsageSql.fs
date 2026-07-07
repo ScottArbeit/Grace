@@ -134,6 +134,115 @@ AND
 ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
 """
 
+    /// Selects archived usage fact rows whose compact SQL index can authorize Blob replay.
+    [<Literal>]
+    let SelectArchivedRawUsageFactsForReplay =
+        """
+SELECT TOP (@BatchSize)
+    UsageFactId,
+    CorrelationId,
+    FactKind,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    StoragePoolId,
+    Quantity,
+    ObservedAtUtc,
+    ArchiveState,
+    ArchiveBlobName,
+    ArchiveChecksumSha256Hex,
+    ArchiveByteLength
+FROM ops.RawUsageFact WITH (READPAST, READCOMMITTEDLOCK)
+WHERE ArchiveState = @ArchiveStateArchived
+AND ArchiveBlobName IS NOT NULL
+AND ArchiveChecksumSha256Hex IS NOT NULL
+AND ArchiveByteLength IS NOT NULL
+AND (@OwnerId IS NULL OR OwnerId = @OwnerId)
+AND (@OrganizationId IS NULL OR OrganizationId = @OrganizationId)
+AND (@RepositoryId IS NULL OR RepositoryId = @RepositoryId)
+ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
+"""
+
+    /// Inserts an archived replay row without repopulating the hot SQL payload, preserving replay idempotency by UsageFactId.
+    [<Literal>]
+    let TryInsertReplayedArchivedRawUsageFact =
+        """
+INSERT INTO ops.RawUsageFact
+(
+    UsageFactId,
+    RawPayload,
+    CorrelationId,
+    FactKind,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    StoragePoolId,
+    Quantity,
+    ObservedAtUtc,
+    ArchiveState,
+    ArchiveBlobName,
+    ArchiveChecksumSha256Hex,
+    ArchiveByteLength,
+    ArchiveVerifiedAtUtc,
+    ArchivedAtUtc
+)
+SELECT
+    @UsageFactId,
+    NULL,
+    @CorrelationId,
+    @FactKind,
+    @OwnerId,
+    @OrganizationId,
+    @RepositoryId,
+    @StoragePoolId,
+    @Quantity,
+    @ObservedAtUtc,
+    @ArchiveStateArchived,
+    @ArchiveBlobName,
+    @ArchiveChecksumSha256Hex,
+    @ArchiveByteLength,
+    SYSUTCDATETIME(),
+    SYSUTCDATETIME()
+WHERE NOT EXISTS
+(
+    SELECT 1
+    FROM ops.RawUsageFact WITH (UPDLOCK, HOLDLOCK)
+    WHERE UsageFactId = @UsageFactId
+);
+"""
+
+    /// Restores archived raw payload bytes only for an exact SQL Blob pointer match during scoped support rehydration.
+    [<Literal>]
+    let RehydrateArchivedRawUsageFactPayload =
+        """
+UPDATE ops.RawUsageFact
+SET RawPayload = @RawPayload
+WHERE UsageFactId = @UsageFactId
+AND ArchiveState = @ArchiveStateArchived
+AND RawPayload IS NULL
+AND ArchiveBlobName = @ArchiveBlobName
+AND ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex
+AND ArchiveByteLength = @ArchiveByteLength;
+
+SELECT @@ROWCOUNT;
+"""
+
+    /// Clears temporarily rehydrated raw payload bytes only when the archived Blob pointer still matches.
+    [<Literal>]
+    let CleanupRehydratedRawUsageFactPayload =
+        """
+UPDATE ops.RawUsageFact
+SET RawPayload = NULL
+WHERE UsageFactId = @UsageFactId
+AND ArchiveState = @ArchiveStateArchived
+AND RawPayload IS NOT NULL
+AND ArchiveBlobName = @ArchiveBlobName
+AND ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex
+AND ArchiveByteLength = @ArchiveByteLength;
+
+SELECT @@ROWCOUNT;
+"""
+
     /// Records verified Blob authority while retaining the hot payload for an idempotent cleanup retry.
     [<Literal>]
     let MarkRawUsageFactArchiveVerified =
