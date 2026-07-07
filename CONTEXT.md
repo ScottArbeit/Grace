@@ -164,31 +164,38 @@ The DirectoryVersionDto set returned by calling `GetRecursiveDirectoryVersions()
 existing Grace representation of the directory tree and its FileVersions for a requested Reference or DirectoryVersion.
 _Avoid_: ContentPlan, separate restore plan type
 
+**Materialization Plan**:
+The server-resolved, immutable plan that names the repository content artifacts a client or cache may materialize for one
+authorized DirectoryVersion scope. Grace Server resolves branch names, references, account context, path permissions, and
+authorization before issuing or publishing a Materialization Plan.
+_Avoid_: Client-resolved checkout plan, cache-resolved branch, raw path request
+
 **Grace Cache**:
-A Grace-aware service that stores and serves authorized ContentChunks near clients or build machines. Grace Cache is an
-explicit endpoint, not a transparent network proxy.
-_Avoid_: Blob mirror, storage proxy, transparent cache
+A Grace-aware artifact service that stores and serves immutable artifacts named by server-resolved Materialization Plans
+near clients or build machines. Grace Cache is an explicit endpoint, and it does not decide repository meaning, branch
+resolution, latest/current semantics, account access rules, or path permissions.
+_Avoid_: Blob mirror, storage proxy, branch resolver, ACL engine
 
-**Cache Chunk Store**:
-The physical Grace Cache storage for ContentChunks. Cache Chunk Store is shared across repositories, while cache
-metadata and authorization remain scoped to repositories, references, paths, and callers.
-_Avoid_: Repository chunk folder, per-repo physical cache
+**Cache Artifact Store**:
+The physical Grace Cache storage for immutable artifacts named by Materialization Plans. The V1 required artifacts are a
+target-root zip plus recursive metadata for the same DirectoryVersionId.
+_Avoid_: Repository chunk folder, per-repo physical cache, baseline-plus-delta store
 
-**Cache Reference Metadata**:
-Grace Cache metadata for a cached Reference or root DirectoryVersion. Cache Reference Metadata determines which
-ContentChunks are live in the Cache Chunk Store.
-_Avoid_: Chunk presence, prefetch-only metadata, read-only metadata
+**Cache Artifact Metadata**:
+Grace Cache metadata for artifacts produced from a server-resolved Materialization Plan. Cache Artifact Metadata records
+which immutable artifacts are locally present and eligible for retention; it is not repository authority.
+_Avoid_: Chunk presence, branch state, path-scoped access decision
 
 **Cache Retention**:
-The single retention period for a cached Reference or root DirectoryVersion. Prefetches and successful reads can refresh
-Cache Retention, but they do not create separate retention classes for the same cached content.
+The single retention period for locally held Materialization Plan artifacts. Prefetches and successful reads can refresh
+Cache Retention, but they do not create separate retention classes for the same cached artifact set.
 _Avoid_: Per-chunk retention, separate prefetch/read retention, pinned cache entries
 
 **ContentAccessGrant**:
 A short-lived, server-issued authorization that Grace Cache can validate without calling Grace Server. A
-ContentAccessGrant scopes a cache request to specific Grace content, such as a Reference, DirectoryVersion, path set,
-FileManifest, ContentChunk, or RecursiveDirectoryVersions.
-_Avoid_: Delegated content capability, raw chunk token, hash authorization
+ContentAccessGrant scopes a cache request to server-resolved Grace content, such as a Materialization Plan,
+DirectoryVersionId, target-root zip, or recursive metadata artifact.
+_Avoid_: Delegated content capability, raw artifact token, hash authorization
 
 **Resolved Content Scope**:
 The immutable Grace object scope named by a ContentAccessGrant, such as a ReferenceId or DirectoryVersionId. Branch names
@@ -207,8 +214,8 @@ _Avoid_: Bearer-only cache token, unbound access token
 
 **Cache Service Identity**:
 The registered identity Grace Cache uses for configured prefetch subscriptions. Cache Service Identity does not by
-itself authorize serving cached chunks to arbitrary callers.
-_Avoid_: Global chunk reader, mirror credential
+itself authorize serving cached artifacts to arbitrary callers.
+_Avoid_: Global artifact reader, mirror credential
 
 **Authorization Scope**:
 A node in Grace's authorization hierarchy where RoleAssignments can be granted, such as System, Owner, Organization,
@@ -563,17 +570,18 @@ Server is authoritative for accepting range claims, validating reconstruction, a
 Grace computes ChunkAddress from a ContentChunk's unencoded bytes. Compression is a storage or transfer encoding, not
 part of chunk identity.
 
-**Server authority vs. cache presence**:
-Grace Server is authoritative for resolving a Reference to RecursiveDirectoryVersions. Grace caches are authoritative
-only for which authorized ContentChunks they already have locally.
+**Server authority vs. cache artifacts**:
+Grace Server is authoritative for resolving repository meaning, account access, references, branch inputs, path
+permissions, and the DirectoryVersionId behind a Materialization Plan. Grace Cache is authoritative only for which
+immutable plan artifacts it already has locally.
 
-**Explicit cache vs. transparent proxy**:
-Grace Cache is used intentionally by Grace-aware clients and CI workers. It does not intercept storage traffic or act as
-an invisible proxy.
+**Explicit cache vs. storage interposition**:
+Grace Cache is used intentionally by Grace-aware clients and CI workers. It does not intercept object-storage traffic or
+pretend to be the backing storage account.
 
 **Possession vs. permission**:
-Grace Cache may store ContentChunks before a requester needs them, but it serves chunks only when the requester is
-authorized for RecursiveDirectoryVersions that contain those ChunkAddresses.
+Grace Cache may store target-root zips and recursive metadata before a requester needs them, but it serves artifacts only
+when the requester has a server-issued grant for the resolved Materialization Plan or DirectoryVersionId.
 
 **Private subnet vs. authorization**:
 A private subnet reduces exposure for Grace Cache, but it does not replace per-call authorization. Grace Cache validates
@@ -585,32 +593,30 @@ cache request.
 
 **Bound grant vs. bearer secret**:
 Grace Cache validates a ContentAccessGrant against the caller and cache audience. Possession of an unbound token is not
-enough to fetch ContentChunks.
+enough to fetch cache artifacts.
 
-**Grant scope vs. recursive directory data**:
-Grace Cache trusts a valid ContentAccessGrant for its declared scope. When a grant authorizes a Reference, Grace Cache
-may use prefetched or freshly fetched RecursiveDirectoryVersions for that Reference without requiring a separate hash of
-the RecursiveDirectoryVersions data in the grant.
+**Grant scope vs. materialization data**:
+Grace Cache trusts a valid ContentAccessGrant for its declared scope. When a grant authorizes a Materialization Plan,
+Grace Cache serves only the artifacts named by that server-resolved plan.
 
 **Resolved scope vs. moving names**:
-Grace Server resolves branch names before issuing a ContentAccessGrant. The grant authorizes immutable Reference or
-DirectoryVersion content, not a branch name that can move after issuance.
+Grace Server resolves branch names and latest/current-style inputs before issuing a ContentAccessGrant. The grant
+authorizes immutable plan artifacts for a resolved DirectoryVersionId, not a moving name that can change after issuance.
 
 **Authorization decision vs. cache enforcement**:
 Grace Server evaluates claims, roles, and directory or file path permissions before issuing a ContentAccessGrant. Grace
-Cache enforces the resolved grant scope against RecursiveDirectoryVersions, but it does not evaluate ACL policy.
+Cache enforces the resolved grant scope against Materialization Plan artifacts, but it does not evaluate ACL policy.
 
-**Global storage vs. scoped access**:
-Grace Cache stores ContentChunks once in a shared Cache Chunk Store, but serves them only through repository-, reference-,
-path-, and caller-scoped authorization.
+**Artifact storage vs. scoped access**:
+Grace Cache stores immutable Materialization Plan artifacts in a Cache Artifact Store, but serves them only through
+repository-, DirectoryVersion-, path-, and caller-scoped authorization resolved by Grace Server.
 
-**Cache metadata vs. chunk presence**:
-ContentChunks remain live in Grace Cache only while unexpired Cache Reference Metadata refers to them. Physical presence
-in the Cache Chunk Store is not liveness.
+**Cache metadata vs. artifact presence**:
+Cache artifacts remain live only while unexpired Cache Artifact Metadata refers to them. Physical presence in the Cache
+Artifact Store is not repository authority or retention authority.
 
 **Cache expiry vs. pinning**:
-Grace Cache uses expiry-based retention for cached References and root DirectoryVersions. It does not pin cached content
-in v1.
+Grace Cache uses expiry-based retention for cached Materialization Plan artifacts. It does not pin cached content in v1.
 
 **Repository storage vs. physical storage**:
 A Repository maps to a StoragePool. Storage accounts, containers, buckets, and prefixes are StorageShards inside that
@@ -653,10 +659,10 @@ Developer: "Can I use FileContentHash as the FileVersion hash?"
 Domain expert: "No. FileContentHash is a path-independent content identity. A FileVersion version hash identifies the
 version graph object that says a specific relative path contains specific content."
 
-Developer: "Can the cache distribute chunks without knowing the original path?"
+Developer: "Can the cache serve materialized content without resolving the original branch or path request?"
 
-Domain expert: "Yes. The cache works with FileManifests, ContentBlocks, and ContentChunks after Grace has authorized
-access to a repository version."
+Domain expert: "Yes. Grace Server resolves the Materialization Plan first. Grace Cache can then serve the immutable
+artifacts named by that plan without making repository or path-permission decisions."
 
 Developer: "If a file has several chunks, which hash identifies the whole file?"
 
@@ -774,8 +780,8 @@ Domain expert: "No. The ChunkAddress is computed from the unencoded chunk bytes.
 
 Developer: "Can a cache decide what chunks belong to a version by scanning local storage?"
 
-Domain expert: "No. Grace Server provides RecursiveDirectoryVersions; the cache only decides which authorized
-ContentBlocks or chunk ranges are present."
+Domain expert: "No. Grace Server resolves the Materialization Plan. Grace Cache only decides whether the plan's
+immutable artifacts are present locally."
 
 Developer: "Is RecursiveDirectoryVersions a new CAS type?"
 
@@ -783,12 +789,13 @@ Domain expert: "No. It is the existing result of calling `GetRecursiveDirectoryV
 
 Developer: "Does Grace Cache make downloads faster by pretending to be Azure Blob Storage?"
 
-Domain expert: "No. Grace-aware clients call Grace Cache explicitly after Grace Server authorizes the request."
+Domain expert: "No. Grace-aware clients call Grace Cache explicitly for artifacts named by a server-resolved
+Materialization Plan."
 
-Developer: "If Grace Cache already has a chunk, can anyone on the subnet fetch it by hash?"
+Developer: "If Grace Cache already has a target-root zip, can anyone on the subnet fetch it by hash?"
 
-Domain expert: "No. The requester needs authorization for RecursiveDirectoryVersions that include the relevant
-FileManifest and ContentBlock ranges."
+Domain expert: "No. The requester needs a server-issued grant for the resolved Materialization Plan or
+DirectoryVersionId that names the artifact."
 
 Developer: "If the cache runs on a private CI subnet, can it skip authorization checks?"
 
@@ -803,28 +810,29 @@ Developer: "If someone copies a cache token from a CI log, can they use it from 
 
 Domain expert: "No. A ContentAccessGrant is bound to the requester identity and cache audience."
 
-Developer: "Does a grant for a Reference need to include a hash of the RecursiveDirectoryVersions data?"
+Developer: "Does a grant for a Materialization Plan need to include a separate hash of the recursive metadata?"
 
-Domain expert: "No. The valid grant authorizes the Reference, and Grace Cache resolves that Reference through Grace
-Server's RecursiveDirectoryVersions path."
+Domain expert: "No. The valid grant authorizes the server-resolved plan. In v1, the plan names a target-root zip and
+recursive metadata for the same DirectoryVersionId."
 
 Developer: "Can a grant say 'whatever main means right now'?"
 
-Domain expert: "No. Grace Server resolves `main` first, then issues the grant for the resolved Reference or
-DirectoryVersion."
+Domain expert: "No. Grace Server resolves `main` first, then issues the grant for immutable artifacts tied to the
+resolved DirectoryVersionId."
 
 Developer: "Does Grace Cache evaluate claim-based directory or file ACLs?"
 
 Domain expert: "No. Grace Server evaluates ACL policy and issues the grant; Grace Cache enforces the resolved scope."
 
-Developer: "If two repositories use the same ContentChunk, does Grace Cache store two physical copies?"
+Developer: "If two repositories materialize the same DirectoryVersionId, does Grace Cache own the access decision?"
 
-Domain expert: "No. Grace Cache stores the ContentChunk once, while authorization and telemetry stay scoped to each
-repository request."
+Domain expert: "No. Grace Cache can store immutable artifacts, but Grace Server owns repository meaning, account access,
+path permissions, and the Materialization Plan."
 
-Developer: "Does Grace Cache keep chunks alive just because they exist on disk?"
+Developer: "Does Grace Cache keep artifacts alive just because they exist on disk?"
 
-Domain expert: "No. Cache Reference Metadata keeps chunks live; chunks with no unexpired metadata can be deleted."
+Domain expert: "No. Cache Artifact Metadata controls local retention; artifacts with no unexpired metadata can be
+deleted."
 
 Developer: "Can an operator pin a cached Reference so GC never removes it?"
 
