@@ -2,20 +2,52 @@ namespace Grace.Operations.Data.Migrations
 
 open Grace.Operations.Data
 open Microsoft.EntityFrameworkCore
-open Microsoft.EntityFrameworkCore.Infrastructure
+open Microsoft.EntityFrameworkCore.Migrations
 
-/// Captures the current Operations EF model so future migrations can detect reviewed schema drift.
-[<DbContextAttribute(typeof<OperationsDbContext>)>]
-type OperationsDbContextModelSnapshot() =
-    inherit ModelSnapshot()
+/// Adds exact raw payload retention to accepted Operations usage facts.
+[<Microsoft.EntityFrameworkCore.Infrastructure.DbContextAttribute(typeof<OperationsDbContext>)>]
+[<Migration("20260707000000_AddRawUsageFactPayload")>]
+type AddRawUsageFactPayload() =
+    inherit Migration()
 
-    /// Rebuilds the Operations model represented by the latest migration.
-    override _.BuildModel(modelBuilder: ModelBuilder) =
+    /// Adds the immutable raw payload column without changing the durable duplicate key.
+    override _.Up(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.Sql(
+            """
+IF COL_LENGTH(N'ops.RawUsageFact', N'RawPayload') IS NULL
+BEGIN
+    ALTER TABLE ops.RawUsageFact
+        ADD RawPayload varbinary(max) NOT NULL
+            CONSTRAINT DF_ops_RawUsageFact_RawPayload DEFAULT (0x) WITH VALUES;
+END;
+
+IF OBJECT_ID(N'ops.DF_ops_RawUsageFact_RawPayload', N'D') IS NOT NULL
+BEGIN
+    ALTER TABLE ops.RawUsageFact
+        DROP CONSTRAINT DF_ops_RawUsageFact_RawPayload;
+END;
+"""
+        )
+        |> ignore
+
+    /// Removes the raw payload column when rolling this reviewed schema change back.
+    override _.Down(migrationBuilder: MigrationBuilder) =
+        migrationBuilder.Sql(
+            """
+IF COL_LENGTH(N'ops.RawUsageFact', N'RawPayload') IS NOT NULL
+BEGIN
+    ALTER TABLE ops.RawUsageFact
+        DROP COLUMN RawPayload;
+END;
+"""
+        )
+        |> ignore
+
+    /// Captures the model shape after raw fact payload retention is enabled.
+    override _.BuildTargetModel(modelBuilder: ModelBuilder) =
         modelBuilder.HasAnnotation("ProductVersion", "10.0.9")
         |> ignore
 
-        // Deliberately keep this snapshot frozen with literals so future runtime model edits
-        // cannot change the latest reviewed migration point before a new migration updates it.
         modelBuilder.HasDefaultSchema("ops") |> ignore
 
         let rawFact = modelBuilder.Entity<RawUsageFactEntity>()

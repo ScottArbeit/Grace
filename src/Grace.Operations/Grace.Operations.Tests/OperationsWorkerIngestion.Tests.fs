@@ -87,7 +87,7 @@ module OperationsWorkerIngestionTestData =
 
     /// Builds the aggregate projected by the data layer for a valid fact.
     let aggregateFor fact =
-        match UsageFactPersistencePlan.tryCreate fact with
+        match UsageFactPersistencePlan.tryCreate fact (serializeFact fact) with
         | Ok plan -> plan.Aggregate
         | Error errors -> failwith (String.Join("; ", errors))
 
@@ -189,18 +189,27 @@ type private ThrowingSettlementMessageActions(events: List<string>, operationToT
                 Task.CompletedTask
 
 /// Fakes the operations data-layer boundary for deterministic processor tests.
-type private StubUsageFactStore(storeAsync: UsageFact -> CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>, events: List<string>) =
+type private StubUsageFactStore
+    (
+        storeAsync: UsageFact -> byte array -> CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>,
+        events: List<string>
+    ) =
     let storedFacts = ResizeArray<UsageFact>()
+    let storedPayloads = ResizeArray<byte array>()
 
     /// Returns the facts sent to the fake store.
     member _.StoredFacts = storedFacts |> Seq.toList
 
+    /// Returns the raw payloads sent to the fake store.
+    member _.StoredPayloads = storedPayloads |> Seq.map Array.copy |> Seq.toList
+
     interface IOperationsUsageFactStore with
 
-        member _.StoreUsageFactAsync(fact, cancellationToken) =
+        member _.StoreUsageFactAsync(fact, rawPayload, cancellationToken) =
             storedFacts.Add fact
+            storedPayloads.Add(Array.copy rawPayload)
             events.Add("store")
-            storeAsync fact cancellationToken
+            storeAsync fact rawPayload cancellationToken
 
 /// Records formatted log output from worker infrastructure tests.
 type private RecordingLogger<'T>() =
@@ -239,7 +248,7 @@ type OperationsWorkerIngestionTests() =
             .Build()
 
     /// Creates a processor with deterministic fake dependencies and an inspectable readiness state.
-    let createProcessorWithReadiness storeAsync =
+    let createProcessorWithReadinessRaw storeAsync =
         let events = List<string>()
         let store = StubUsageFactStore(storeAsync, events)
         let readiness = OperationsUsageReadinessState()
@@ -254,9 +263,17 @@ type OperationsWorkerIngestionTests() =
         events,
         readiness
 
+    /// Creates a processor with deterministic fake dependencies and a store callback that ignores raw payload bytes.
+    let createProcessorWithReadiness storeAsync = createProcessorWithReadinessRaw (fun fact _rawPayload cancellationToken -> storeAsync fact cancellationToken)
+
     /// Creates a processor with deterministic fake dependencies.
     let createProcessor storeAsync =
         let processor, store, actions, events, _readiness = createProcessorWithReadiness storeAsync
+        processor, store, actions, events
+
+    /// Creates a processor with deterministic fake dependencies and inspectable raw payload forwarding.
+    let createProcessorRaw storeAsync =
+        let processor, store, actions, events, _readiness = createProcessorWithReadinessRaw storeAsync
         processor, store, actions, events
 
     /// Creates a processor backed by the real data-layer validation path.
@@ -603,11 +620,12 @@ type OperationsWorkerIngestionTests() =
         task {
             let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"))
 
-            let processor, store, actions, events = createProcessor (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+            let processor, store, actions, events = createProcessorRaw (fun storedFact _rawPayload _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let messageBody = OperationsWorkerIngestionTestData.serializeFact fact
 
             let message =
-                fact
-                |> OperationsWorkerIngestionTestData.serializeFact
+                messageBody
                 |> OperationsWorkerIngestionTestData.message
 
             do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
@@ -616,6 +634,7 @@ type OperationsWorkerIngestionTests() =
                 Action (fun () ->
                     Assert.That(List.length store.StoredFacts, Is.EqualTo(1))
                     Assert.That(store.StoredFacts[0].UsageFactId, Is.EqualTo(fact.UsageFactId))
+                    Assert.That(Convert.ToBase64String(store.StoredPayloads[0]), Is.EqualTo(Convert.ToBase64String(messageBody)))
                     Assert.That(eventText events, Is.EqualTo("store|complete"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
             )
