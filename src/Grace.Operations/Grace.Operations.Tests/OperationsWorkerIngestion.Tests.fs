@@ -915,6 +915,60 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies a later received message clears a Service Bus receive/link readiness failure before storage or settlement succeeds.
+    [<Test>]
+    member _.LaterReceiveClearsServiceBusReceiveFaultReadiness() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("20202020-2020-4020-8020-202020202020"))
+
+            let storeStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let durableSuccess = TaskCompletionSource<Result<UsageFactPersistenceResult, string list>>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let processor, _store, actions, events, readiness =
+                createProcessorWithReadiness (fun _ _ ->
+                    storeStarted.SetResult(())
+                    durableSuccess.Task)
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                Azure.Messaging.ServiceBus.ServiceBusErrorSource.Receive
+                (InvalidOperationException("receive-link-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let processing = processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            do! storeStarted.Task
+
+            let receiveRecoveredSnapshot = readinessSnapshot readiness
+
+            durableSuccess.SetResult(Ok(accepted fact))
+            do! processing
+
+            let completedSnapshot = readinessSnapshot readiness
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Receive, InvalidOperationException)."))
+                    Assert.That(receiveRecoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                    Assert.That(receiveRecoveredSnapshot.DependencyFailure, Is.EqualTo(None))
+                    Assert.That(eventText events, Is.EqualTo("store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("complete"))
+                    Assert.That(completedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                    Assert.That(completedSnapshot.DependencyFailure, Is.EqualTo(None)))
+            )
+        }
+
     /// Verifies an older in-flight success cannot clear a newer runtime dependency failure.
     [<Test>]
     member _.StaleInFlightSuccessDoesNotClearNewerDependencyFailure() =

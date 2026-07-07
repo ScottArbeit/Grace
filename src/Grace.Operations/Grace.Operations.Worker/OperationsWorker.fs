@@ -139,6 +139,9 @@ type IOperationsUsageReadinessRecorder =
     /// Records a redacted Service Bus receive or link failure that prevents the worker from being ready.
     abstract MarkServiceBusProcessorFailure: description: string -> unit
 
+    /// Clears a Service Bus receive or link failure only when a later received message proves the link recovered.
+    abstract MarkServiceBusReceiveSuccess: attempt: OperationsUsageReadinessAttempt -> unit
+
     /// Clears a runtime storage or processing failure only when this success started after that failure.
     abstract MarkRuntimeProcessingSuccess: attempt: OperationsUsageReadinessAttempt -> unit
 
@@ -200,6 +203,18 @@ type OperationsUsageReadinessState() =
         member _.MarkServiceBusProcessorFailure(description) =
             lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusProcessor description)
 
+        member _.MarkServiceBusReceiveSuccess(attempt) =
+            lock gate (fun () ->
+                match dependencyFailure with
+                | Some failure when
+                    failure.Source = OperationsUsageReadinessFailureSource.ServiceBusProcessor
+                    && failure.Version <= attempt.FailureVersion
+                    ->
+                    status <- OperationsUsageReadinessStatus.Ready
+                    dependencyFailure <- None
+                | None -> status <- OperationsUsageReadinessStatus.Ready
+                | Some _ -> ())
+
         member _.MarkRuntimeProcessingSuccess(attempt) =
             lock gate (fun () ->
                 match dependencyFailure with
@@ -221,6 +236,10 @@ module internal OperationsUsageReadinessTransitions =
     /// Records a redacted Service Bus processor fault observed after startup.
     let recordServiceBusProcessorFault (readiness: IOperationsUsageReadinessRecorder) (errorSource: ServiceBusErrorSource) (ex: exn) =
         readiness.MarkServiceBusProcessorFailure($"Service Bus processor fault ({errorSource}, {ex.GetType().Name}).")
+
+    /// Records a later receive-side proof that a Service Bus processor receive or link fault recovered.
+    let recordServiceBusReceiveSuccess (readiness: IOperationsUsageReadinessRecorder) (attempt: OperationsUsageReadinessAttempt) =
+        readiness.MarkServiceBusReceiveSuccess(attempt)
 
     /// Records a redacted runtime processing dependency failure that should recover after a later successful message.
     let recordRuntimeProcessingFailure (readiness: IOperationsUsageReadinessRecorder) (ex: exn) =
@@ -553,6 +572,7 @@ type OperationsUsageIngestionProcessor
     member _.ProcessMessageAsync(message: OperationsUsageMessage, actions: IOperationsUsageMessageActions, cancellationToken: CancellationToken) =
         task {
             let readinessAttempt = readiness.BeginProcessingAttempt()
+            OperationsUsageReadinessTransitions.recordServiceBusReceiveSuccess readiness readinessAttempt
 
             try
                 cancellationToken.ThrowIfCancellationRequested()
