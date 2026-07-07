@@ -12,19 +12,30 @@ type VisibilityCallerAudience =
         HasRepositoryAdministration: bool
         /// Caller has the security-maintainer audience that may observe contributor-owned hidden resources.
         HasSecurityAdministration: bool
-        /// Caller is an explicit reviewer for the resource being considered.
+    }
+
+    /// Anonymous caller with no elevated audience.
+    static member Anonymous = { UserId = None; HasRepositoryAdministration = false; HasSecurityAdministration = false }
+
+/// Describes caller authority that must be evaluated against the exact resource being considered.
+type VisibilityResourceAudience =
+    {
+        /// Caller has branch-scoped administration authority for this branch.
+        HasBranchAdministration: bool
+        /// Caller is an explicit reviewer for this resource.
         IsExplicitReviewer: bool
-        /// Caller is an explicit maintainer for the resource being considered.
+        /// Caller is an explicit maintainer for this resource.
         IsExplicitMaintainer: bool
     }
 
-    /// Anonymous caller with no elevated or explicit resource audience.
-    static member Anonymous =
-        { UserId = None; HasRepositoryAdministration = false; HasSecurityAdministration = false; IsExplicitReviewer = false; IsExplicitMaintainer = false }
+    /// No resource-specific authority has been established for the candidate.
+    static member None = { HasBranchAdministration = false; IsExplicitReviewer = false; IsExplicitMaintainer = false }
 
 /// Carries the persisted visibility facts shared by branches, references, and promotion sets.
-type VisibilityResource =
+type VisibilityResource<'AuthorityKey> =
     {
+        /// Route-local identifier used to evaluate reviewer, maintainer, or branch administration authority per candidate.
+        AuthorityKey: 'AuthorityKey
         /// Public or private visibility recorded on the authoritative resource.
         Visibility: ResourceVisibility
         /// Repository-owned or contributor-owned visibility boundary recorded on the authoritative resource.
@@ -64,36 +75,49 @@ type VisibleWindow<'Resource> =
 module VisibilityAuthorization =
 
     /// Determines whether the caller is part of the explicit or elevated audience for a contributor-owned hidden resource.
-    let hasContributorAudience (caller: VisibilityCallerAudience) (resource: VisibilityResource) =
+    let private hasContributorAudience includeBranchAdministration (caller: VisibilityCallerAudience) resolveResourceAudience resource =
+        let resourceAudience = resolveResourceAudience resource
+
         let isCreator =
             match caller.UserId, resource.CreatorUserId with
             | Some callerUserId, Some creatorUserId -> callerUserId = creatorUserId
             | _ -> false
 
         isCreator
-        || caller.IsExplicitReviewer
-        || caller.IsExplicitMaintainer
+        || resourceAudience.IsExplicitReviewer
+        || resourceAudience.IsExplicitMaintainer
+        || (includeBranchAdministration
+            && resourceAudience.HasBranchAdministration)
         || caller.HasRepositoryAdministration
         || caller.HasSecurityAdministration
 
     /// Determines whether a caller may observe a branch after the route has loaded the authoritative branch facts.
-    let canObserveBranch (caller: VisibilityCallerAudience) (branch: VisibilityResource) =
+    let canObserveBranch (caller: VisibilityCallerAudience) resolveResourceAudience branch =
         match branch.Visibility, branch.Ownership with
         | ResourceVisibility.Public, _ -> true
         | _, ResourceOwnership.RepositoryOwned -> true
-        | _, ResourceOwnership.ContributorOwned -> hasContributorAudience caller branch
+        | _, ResourceOwnership.ContributorOwned -> hasContributorAudience true caller resolveResourceAudience branch
 
     /// Determines whether a caller may observe a reference after the route has loaded its authoritative visibility facts.
-    let canObserveReference (caller: VisibilityCallerAudience) (reference: VisibilityResource) = canObserveBranch caller reference
+    let canObserveReference (caller: VisibilityCallerAudience) resolveResourceAudience reference =
+        match reference.Visibility, reference.Ownership with
+        | ResourceVisibility.Public, _ -> true
+        | _, ResourceOwnership.RepositoryOwned -> true
+        | _, ResourceOwnership.ContributorOwned -> hasContributorAudience false caller resolveResourceAudience reference
 
     /// Determines whether a caller may observe a promotion set after the route has loaded its authoritative visibility facts.
-    let canObservePromotionSet (caller: VisibilityCallerAudience) (promotionSet: VisibilityResource) = canObserveBranch caller promotionSet
+    let canObservePromotionSet (caller: VisibilityCallerAudience) resolveResourceAudience promotionSet =
+        match promotionSet.Visibility, promotionSet.Ownership with
+        | ResourceVisibility.Public, _ -> true
+        | _, ResourceOwnership.RepositoryOwned -> true
+        | _, ResourceOwnership.ContributorOwned -> hasContributorAudience false caller resolveResourceAudience promotionSet
 
     /// Applies a route-specific missing model when an existing resource must be hidden from the caller.
     let hiddenAsMissing missingModel canObserve resource = if canObserve then Observable resource else RouteEquivalentMissing missingModel
 
     /// Applies branch visibility and returns the route's existing missing shape for hidden branches.
-    let requireObservableBranch caller missingModel branch = hiddenAsMissing missingModel (canObserveBranch caller branch) branch
+    let requireObservableBranch caller resolveResourceAudience missingModel branch =
+        hiddenAsMissing missingModel (canObserveBranch caller resolveResourceAudience branch) branch
 
     /// Filters candidates before list limits, visible counts, and latest selection are calculated.
     let filterVisibleWindow limit canObserve candidates =
