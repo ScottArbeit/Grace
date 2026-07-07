@@ -5,6 +5,7 @@ open Orleans
 open System
 open System.Collections.Generic
 open System.IO
+open System.Text.RegularExpressions
 
 /// Contains Materialization Plan request, response, artifact, and cache-selection contracts.
 module MaterializationPlan =
@@ -322,27 +323,57 @@ module MaterializationPlan =
         /// Returns true when the supplied enum value is one of the known public artifact source kinds.
         let isSupportedArtifactSourceKind (kind: MaterializationArtifactSourceKind) = Enum.IsDefined(typeof<MaterializationArtifactSourceKind>, kind)
 
+        let private canonicalLowercaseHexAddressRegex =
+            Regex(
+                "^[0-9a-f]{64}$",
+                RegexOptions.Compiled
+                ||| RegexOptions.CultureInvariant
+            )
+
+        /// Returns true when a contract hash or CAS address is a canonical lowercase 64-hex BLAKE3/SHA value.
+        let isCanonicalLowercaseHexAddress (address: string) =
+            not (String.IsNullOrWhiteSpace address)
+            && canonicalLowercaseHexAddressRegex.IsMatch(address)
+
+        /// Returns true when a direct artifact source can be fetched through a public HTTP(S) URI.
+        let isAllowedDirectUri (uri: string) =
+            let mutable parsedUri = Unchecked.defaultof<Uri>
+
+            not (String.IsNullOrWhiteSpace uri)
+            && Uri.TryCreate(uri, UriKind.Absolute, &parsedUri)
+            && (parsedUri.Scheme.Equals(Uri.UriSchemeHttps, StringComparison.OrdinalIgnoreCase)
+                || parsedUri.Scheme.Equals(Uri.UriSchemeHttp, StringComparison.OrdinalIgnoreCase))
+
         /// Returns true when a whole-file artifact path is normalized for repository-relative materialization.
         let isNormalizedRepositoryRelativePath (relativePath: string) =
             not (String.IsNullOrWhiteSpace relativePath)
             && not (Path.IsPathRooted relativePath)
+            && not (relativePath.StartsWith("/", StringComparison.Ordinal))
+            && not (relativePath.StartsWith("\\", StringComparison.Ordinal))
             && not (relativePath.Contains('\\'))
+            && not (relativePath.Contains(':'))
             && relativePath.Split('/', StringSplitOptions.None)
                |> Array.forall (fun segment ->
                    not (String.IsNullOrWhiteSpace segment)
                    && segment <> "."
                    && segment <> "..")
 
-        /// Rejects public cache controls that require cache use while also asking Grace to bypass cache entries.
-        let rejectCacheRequiredBypass
+        /// Rejects public cache controls where cache-required mode is not paired with RequireCache selection.
+        let rejectCacheRequiredSelectionMismatch
             (executionMode: MaterializationExecutionMode)
             (cacheSelection: MaterializationCacheSelection)
             (errors: ResizeArray<string>)
             =
-            if executionMode = MaterializationExecutionMode.CacheRequired
-               && not (isNull (box cacheSelection))
-               && cacheSelection.SelectionKind = MaterializationCacheSelectionKind.BypassCache then
-                errors.Add("CacheRequired materialization must not use BypassCache selection.")
+            if
+                executionMode = MaterializationExecutionMode.CacheRequired
+                && not (isNull (box cacheSelection))
+            then
+                if cacheSelection.SelectionKind
+                   <> MaterializationCacheSelectionKind.RequireCache then
+                    errors.Add("CacheRequired materialization must use RequireCache selection.")
+
+                if cacheSelection.SelectionKind = MaterializationCacheSelectionKind.BypassCache then
+                    errors.Add("CacheRequired materialization must not use BypassCache selection.")
 
         /// Validates the target selector before server-side target-root resolution.
         let validateTargetSelector (selector: MaterializationTargetSelector) =
@@ -426,7 +457,8 @@ module MaterializationPlan =
                     match source.SourceKind with
                     | MaterializationArtifactSourceKind.DirectUri ->
                         match source.DirectUri with
-                        | Some uri when not (String.IsNullOrWhiteSpace uri) -> ()
+                        | Some uri when isAllowedDirectUri uri -> ()
+                        | Some _ -> errors.Add("Artifact DirectUri must be an absolute http or https URI for DirectUri sources.")
                         | _ -> errors.Add("Artifact DirectUri is required for DirectUri sources.")
 
                         if source.CacheKey.IsSome then
@@ -460,6 +492,18 @@ module MaterializationPlan =
                 match descriptor.StoragePoolId with
                 | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) -> ()
                 | _ -> errors.Add("Artifact StoragePoolId is required for CAS artifact descriptors.")
+
+            let requireCanonicalSha256Hash () =
+                match descriptor.Sha256Hash with
+                | Some sha256Hash when isCanonicalLowercaseHexAddress sha256Hash -> ()
+                | Some _ -> errors.Add("Artifact Sha256Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors.")
+                | None -> ()
+
+            let requireCanonicalBlake3Hash () =
+                match descriptor.Blake3Hash with
+                | Some blake3Hash when isCanonicalLowercaseHexAddress blake3Hash -> ()
+                | Some _ -> errors.Add("Artifact Blake3Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors.")
+                | None -> ()
 
             let rejectRelativePath artifactKind =
                 if descriptor.RelativePath.IsSome then
@@ -514,10 +558,12 @@ module MaterializationPlan =
                         | Some _ -> errors.Add("Artifact RelativePath must be a normalized repository-relative path for WholeFileContent descriptors.")
                         | _ -> errors.Add("Artifact RelativePath is required for WholeFileContent descriptors.")
 
-                        match descriptor.Sha256Hash, descriptor.Blake3Hash with
-                        | Some sha256Hash, _ when not (String.IsNullOrWhiteSpace sha256Hash) -> ()
-                        | _, Some blake3Hash when not (String.IsNullOrWhiteSpace blake3Hash) -> ()
-                        | _ -> errors.Add("Artifact Sha256Hash or Blake3Hash is required for WholeFileContent descriptors.")
+                        requireCanonicalSha256Hash ()
+                        requireCanonicalBlake3Hash ()
+
+                        if descriptor.Sha256Hash.IsNone
+                           && descriptor.Blake3Hash.IsNone then
+                            errors.Add("Artifact Sha256Hash or Blake3Hash is required for WholeFileContent descriptors.")
 
                         rejectManifestAddress (string descriptor.ArtifactKind)
                         rejectContentBlockAddress (string descriptor.ArtifactKind)
@@ -526,7 +572,9 @@ module MaterializationPlan =
                         requireTargetRoot ()
 
                         match descriptor.ManifestAddress with
-                        | Some manifestAddress when not (String.IsNullOrWhiteSpace manifestAddress) -> ()
+                        | Some manifestAddress when isCanonicalLowercaseHexAddress manifestAddress -> ()
+                        | Some _ ->
+                            errors.Add("Artifact ManifestAddress must be a canonical lowercase 64-character hexadecimal value for FileManifest descriptors.")
                         | _ -> errors.Add("Artifact ManifestAddress is required for FileManifest descriptors.")
 
                         requireStoragePool ()
@@ -537,7 +585,11 @@ module MaterializationPlan =
                         requireTargetRoot ()
 
                         match descriptor.ContentBlockAddress with
-                        | Some contentBlockAddress when not (String.IsNullOrWhiteSpace contentBlockAddress) -> ()
+                        | Some contentBlockAddress when isCanonicalLowercaseHexAddress contentBlockAddress -> ()
+                        | Some _ ->
+                            errors.Add(
+                                "Artifact ContentBlockAddress must be a canonical lowercase 64-character hexadecimal value for ContentBlock descriptors."
+                            )
                         | _ -> errors.Add("Artifact ContentBlockAddress is required for ContentBlock descriptors.")
 
                         requireStoragePool ()
@@ -576,7 +628,7 @@ module MaterializationPlan =
                 | Ok () -> ()
                 | Error cacheErrors -> errors.AddRange(cacheErrors)
 
-                rejectCacheRequiredBypass request.ExecutionMode request.CacheSelection errors
+                rejectCacheRequiredSelectionMismatch request.ExecutionMode request.CacheSelection errors
 
                 if
                     isNull (box request.RequestedArtifactKinds)
@@ -610,7 +662,7 @@ module MaterializationPlan =
                 | Ok () -> ()
                 | Error cacheErrors -> errors.AddRange(cacheErrors)
 
-                rejectCacheRequiredBypass plan.ExecutionMode plan.CacheSelection errors
+                rejectCacheRequiredSelectionMismatch plan.ExecutionMode plan.CacheSelection errors
 
                 if
                     isNull (box plan.RequiredArtifacts)
@@ -618,8 +670,8 @@ module MaterializationPlan =
                 then
                     errors.Add("RequiredArtifacts must include the V1 target-root artifacts.")
                 else
-                    let mutable hasTargetRootZip = false
-                    let mutable hasRecursiveMetadata = false
+                    let mutable targetRootZipCount = 0
+                    let mutable recursiveMetadataCount = 0
                     let cacheRequiredByExecutionMode = plan.ExecutionMode = MaterializationExecutionMode.CacheRequired
 
                     let cacheRequiredBySelection =
@@ -635,12 +687,15 @@ module MaterializationPlan =
                             if cacheRequiredByExecutionMode
                                || cacheRequiredBySelection then
                                 match descriptor.Source with
+                                | Some source when isNull (box source) ->
+                                    errors.Add("CacheRequired plans must include a non-direct artifact source for every required artifact.")
                                 | Some source when
                                     not (isNull (box source))
                                     && source.SourceKind = MaterializationArtifactSourceKind.DirectUri
                                     ->
                                     errors.Add("CacheRequired plans must not require DirectUri artifact sources.")
-                                | _ -> ()
+                                | Some _ -> ()
+                                | None -> errors.Add("CacheRequired plans must include a non-direct artifact source for every required artifact.")
 
                             if descriptor.TargetRootDirectoryVersionId
                                <> plan.TargetRootDirectoryVersionId then
@@ -648,16 +703,20 @@ module MaterializationPlan =
 
                             if descriptor.ArtifactKind = MaterializationArtifactKind.DirectoryVersionZip
                                && descriptor.TargetRootDirectoryVersionId = plan.TargetRootDirectoryVersionId then
-                                hasTargetRootZip <- true
+                                targetRootZipCount <- targetRootZipCount + 1
 
                             if descriptor.ArtifactKind = MaterializationArtifactKind.RecursiveDirectoryMetadata
                                && descriptor.TargetRootDirectoryVersionId = plan.TargetRootDirectoryVersionId then
-                                hasRecursiveMetadata <- true
+                                recursiveMetadataCount <- recursiveMetadataCount + 1
 
-                    if not hasTargetRootZip then
+                    if targetRootZipCount = 0 then
                         errors.Add("RequiredArtifacts must include DirectoryVersionZip for the target root.")
+                    elif targetRootZipCount > 1 then
+                        errors.Add("RequiredArtifacts must include exactly one DirectoryVersionZip for the target root.")
 
-                    if not hasRecursiveMetadata then
+                    if recursiveMetadataCount = 0 then
                         errors.Add("RequiredArtifacts must include RecursiveDirectoryMetadata for the target root.")
+                    elif recursiveMetadataCount > 1 then
+                        errors.Add("RequiredArtifacts must include exactly one RecursiveDirectoryMetadata for the target root.")
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)

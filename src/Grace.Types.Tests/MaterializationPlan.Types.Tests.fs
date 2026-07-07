@@ -29,6 +29,18 @@ module MaterializationPlanTestData =
     /// Provides a deterministic cache entry key that does not imply a direct source URL.
     let cacheKey = "cache/materialization/11111111/root.zip"
 
+    /// Provides a canonical lowercase BLAKE3 manifest address for descriptor validation.
+    let manifestAddress = ManifestAddress "5dd11fdb1534c0f1c4fecca3c07498f9b59a7dff26d69fe78e43f7ce50d90895"
+
+    /// Provides a canonical lowercase BLAKE3 content block address for descriptor validation.
+    let contentBlockAddress = ContentBlockAddress "75359c5d838dda90b12c6cbcdd9b71a1f193daf6c23fa2bfd496065bed57a30f"
+
+    /// Provides a canonical lowercase SHA-256 hash value for whole-file descriptor validation.
+    let sha256Hash = Sha256Hash "0123456789abcdef0123456789abcdef0123456789abcdef0123456789abcdef"
+
+    /// Provides a canonical lowercase BLAKE3 hash value for whole-file descriptor validation.
+    let blake3Hash = Blake3Hash "89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"
+
     /// Builds the V1 required target-root artifact descriptors for the supplied root.
     let rootArtifacts targetRoot =
         [
@@ -47,19 +59,19 @@ module MaterializationPlanTestData =
                 MaterializationArtifactDescriptor.WholeFileContent(
                     targetRootDirectoryVersionId,
                     RelativePath "src/app.fs",
-                    Some(Sha256Hash "sha256-file"),
-                    Some(Blake3Hash "blake3-file"),
+                    Some sha256Hash,
+                    Some blake3Hash,
                     Some(MaterializationArtifactSource.CacheOnly "cache/file/src/app.fs")
                 )
                 MaterializationArtifactDescriptor.FileManifest(
                     targetRootDirectoryVersionId,
-                    ManifestAddress "manifest-blake3-abc123",
+                    manifestAddress,
                     storagePoolId,
                     Some(MaterializationArtifactSource.CacheOnly "cache/manifest/abc123")
                 )
                 MaterializationArtifactDescriptor.ContentBlock(
                     targetRootDirectoryVersionId,
-                    ContentBlockAddress "block-blake3-def456",
+                    contentBlockAddress,
                     storagePoolId,
                     Some(MaterializationArtifactSource.CacheOnly "cache/block/def456")
                 )
@@ -92,11 +104,17 @@ type MaterializationPlanContractTests() =
     [<TestCase(MaterializationExecutionMode.CachePreferred)>]
     [<TestCase(MaterializationExecutionMode.CacheRequired)>]
     member _.ExecutionModesRoundTripThroughJson(mode: MaterializationExecutionMode) =
+        let cacheSelection =
+            if mode = MaterializationExecutionMode.CacheRequired then
+                MaterializationCacheSelection.Required
+            else
+                MaterializationCacheSelection.Preferred
+
         let request =
             MaterializationPlanRequest.Create(
                 MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
                 mode,
-                MaterializationCacheSelection.Preferred,
+                cacheSelection,
                 [
                     MaterializationArtifactKind.DirectoryVersionZip
                 ]
@@ -377,7 +395,9 @@ type MaterializationPlanContractTests() =
     [<TestCase("../app.fs")>]
     [<TestCase("src/../app.fs")>]
     [<TestCase("/src/app.fs")>]
+    [<TestCase("C:/src/app.fs")>]
     [<TestCase("C:\\src\\app.fs")>]
+    [<TestCase("src:C/app.fs")>]
     [<TestCase("src\\app.fs")>]
     [<TestCase("src//app.fs")>]
     [<TestCase("./src/app.fs")>]
@@ -386,7 +406,7 @@ type MaterializationPlanContractTests() =
             MaterializationArtifactDescriptor.WholeFileContent(
                 MaterializationPlanTestData.targetRootDirectoryVersionId,
                 RelativePath relativePath,
-                Some(Sha256Hash "sha256-file"),
+                Some MaterializationPlanTestData.sha256Hash,
                 None,
                 None
             )
@@ -601,6 +621,157 @@ type MaterializationPlanContractTests() =
             )
 
         assertInvalid "CacheRequired materialization must not use BypassCache selection." (Validation.validateRequest request)
+
+    /// Verifies that cache-required request intent has one authoritative cache-required selection.
+    [<Test>]
+    member _.CacheRequiredRequestWithPreferCacheSelectionFailsValidationClearly() =
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Preferred,
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        assertInvalid "CacheRequired materialization must use RequireCache selection." (Validation.validateRequest request)
+
+    /// Verifies that cache-required plans have one authoritative cache-required selection.
+    [<Test>]
+    member _.CacheRequiredPlanWithPreferCacheSelectionFailsValidationClearly() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Preferred,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertInvalid "CacheRequired materialization must use RequireCache selection." (Validation.validatePlan plan)
+
+    /// Verifies that whole-file descriptors reject blank hash fields even when the other hash is valid.
+    [<TestCase(true)>]
+    [<TestCase(false)>]
+    member _.WholeFileContentRejectsBlankHashOptions(evaluateSha256: bool) =
+        let descriptor =
+            MaterializationArtifactDescriptor.WholeFileContent(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                RelativePath "src/app.fs",
+                (if evaluateSha256 then
+                     Some(Sha256Hash "   ")
+                 else
+                     Some MaterializationPlanTestData.sha256Hash),
+                (if evaluateSha256 then
+                     Some MaterializationPlanTestData.blake3Hash
+                 else
+                     Some(Blake3Hash "")),
+                Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
+            )
+
+        let expected =
+            if evaluateSha256 then
+                "Artifact Sha256Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors."
+            else
+                "Artifact Blake3Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors."
+
+        assertInvalid expected (Validation.validateArtifactDescriptor descriptor)
+
+    /// Verifies that cache-required root artifacts must carry an authoritative cache source.
+    [<Test>]
+    member _.CacheRequiredPlanRejectsMissingRootArtifactSources() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                [
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(MaterializationPlanTestData.targetRootDirectoryVersionId, None)
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
+                    )
+                ]
+            )
+
+        assertInvalid "CacheRequired plans must include a non-direct artifact source for every required artifact." (Validation.validatePlan plan)
+
+    /// Verifies that V1 plans reject duplicate singleton root artifact descriptors.
+    [<Test>]
+    member _.PlanRejectsDuplicateTargetRootSingletonArtifacts() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Bypass,
+                [
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip")
+                    )
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root-copy.zip")
+                    )
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some MaterializationArtifactSource.Deferred
+                    )
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/metadata.json")
+                    )
+                ]
+            )
+
+        let result = Validation.validatePlan plan
+
+        assertInvalid "RequiredArtifacts must include exactly one DirectoryVersionZip for the target root." result
+        assertInvalid "RequiredArtifacts must include exactly one RecursiveDirectoryMetadata for the target root." result
+
+    /// Verifies that CAS descriptors use canonical lowercase BLAKE3 addresses.
+    [<TestCase(MaterializationArtifactKind.FileManifest, "manifest-blake3-abc123")>]
+    [<TestCase(MaterializationArtifactKind.FileManifest, "5DD11FDB1534C0F1C4FECCA3C07498F9B59A7DFF26D69FE78E43F7CE50D90895")>]
+    [<TestCase(MaterializationArtifactKind.ContentBlock, "block-blake3-def456")>]
+    [<TestCase(MaterializationArtifactKind.ContentBlock, "75359c5d838dda90b12c6cbcdd9b71a1f193daf6c23fa2bfd496065bed57a30g")>]
+    member _.CasArtifactDescriptorsRejectMalformedAddresses(kind: MaterializationArtifactKind, address: string) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.FileManifest ->
+                MaterializationArtifactDescriptor.FileManifest(
+                    MaterializationPlanTestData.targetRootDirectoryVersionId,
+                    ManifestAddress address,
+                    MaterializationPlanTestData.storagePoolId,
+                    Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
+                )
+            | MaterializationArtifactKind.ContentBlock ->
+                MaterializationArtifactDescriptor.ContentBlock(
+                    MaterializationPlanTestData.targetRootDirectoryVersionId,
+                    ContentBlockAddress address,
+                    MaterializationPlanTestData.storagePoolId,
+                    Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
+                )
+            | _ -> failwith "Unsupported test kind."
+
+        let expected =
+            match kind with
+            | MaterializationArtifactKind.FileManifest ->
+                "Artifact ManifestAddress must be a canonical lowercase 64-character hexadecimal value for FileManifest descriptors."
+            | MaterializationArtifactKind.ContentBlock ->
+                "Artifact ContentBlockAddress must be a canonical lowercase 64-character hexadecimal value for ContentBlock descriptors."
+            | _ -> failwith "Unsupported test kind."
+
+        assertInvalid expected (Validation.validateArtifactDescriptor descriptor)
+
+    /// Verifies that direct sources require absolute fetch URIs with an allowed scheme.
+    [<TestCase("artifacts/root.zip")>]
+    [<TestCase("/artifacts/root.zip")>]
+    [<TestCase("file:///tmp/root.zip")>]
+    [<TestCase("ftp://cache.example.test/artifacts/root.zip")>]
+    member _.DirectUriSourceRejectsRelativeFileAndUnsupportedSchemes(uri: string) =
+        let source = MaterializationArtifactSource.Direct uri
+
+        assertInvalid "Artifact DirectUri must be an absolute http or https URI for DirectUri sources." (Validation.validateArtifactSource source)
 
     /// Verifies that each selector kind rejects identity fields owned by other selector kinds.
     [<Test>]
