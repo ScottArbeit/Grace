@@ -153,6 +153,12 @@ type OperationsUsageArchiveTests() =
                 .Instance
         )
 
+    /// Creates archive worker configuration from exact setting names so startup validation paths can be tested.
+    let archiveConfiguration (settings: KeyValuePair<string, string> seq) =
+        ConfigurationBuilder()
+            .AddInMemoryCollection(Dictionary<string, string>(settings))
+            .Build()
+
     /// Decompresses gzip JSONL bytes for deterministic archive content assertions.
     let decompressGzip (content: byte array) =
         use input = new MemoryStream(content)
@@ -371,6 +377,66 @@ type OperationsUsageArchiveTests() =
         | Error errors ->
             let errorText = String.Join("; ", errors)
             Assert.Fail($"No archive settings should not fail ingestion-only startup: {errorText}")
+
+    /// Verifies malformed archive tuning values fail startup instead of silently reverting to defaults.
+    [<Test>]
+    member _.ArchiveSettingsRejectMalformedTuningValuesWhenArchiveConfigurationIsPresent() =
+        let configuration =
+            archiveConfiguration [ KeyValuePair(OperationsUsageArchiveSettings.BlobConnectionStringEnvironmentVariable, "UseDevelopmentStorage=true")
+                                   KeyValuePair(OperationsUsageArchiveSettings.BlobContainerNameEnvironmentVariable, "usage-archives")
+                                   KeyValuePair(OperationsUsageArchiveSettings.HotRetentionDaysEnvironmentVariable, "7d")
+                                   KeyValuePair(OperationsUsageArchiveSettings.BatchSizeEnvironmentVariable, "abc")
+                                   KeyValuePair(OperationsUsageArchiveSettings.PollIntervalSecondsEnvironmentVariable, "0") ]
+
+        match OperationsUsageArchiveSettings.fromConfiguration configuration with
+        | Ok _ -> Assert.Fail("Archive settings should reject malformed or non-positive tuning values.")
+        | Error errors ->
+            let errorText = String.Join("|", errors)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(errorText, Does.Contain(OperationsUsageArchiveSettings.HotRetentionDaysEnvironmentVariable))
+                    Assert.That(errorText, Does.Contain(OperationsUsageArchiveSettings.BatchSizeEnvironmentVariable))
+                    Assert.That(errorText, Does.Contain(OperationsUsageArchiveSettings.PollIntervalSecondsEnvironmentVariable)))
+            )
+
+    /// Verifies archive Blob container names follow Azure's lowercase DNS-style naming rules.
+    [<TestCase("UsageArchives")>]
+    [<TestCase("archive--hot")>]
+    [<TestCase("-archive-hot")>]
+    [<TestCase("archive-hot-")>]
+    [<TestCase("ar")>]
+    [<TestCase("archive_hot")>]
+    member _.ArchiveSettingsRejectInvalidBlobContainerNames(containerName: string) =
+        let configuration =
+            archiveConfiguration [ KeyValuePair(OperationsUsageArchiveSettings.BlobConnectionStringEnvironmentVariable, "UseDevelopmentStorage=true")
+                                   KeyValuePair(OperationsUsageArchiveSettings.BlobContainerNameEnvironmentVariable, containerName) ]
+
+        match OperationsUsageArchiveSettings.fromConfiguration configuration with
+        | Ok _ -> Assert.Fail($"Archive settings should reject invalid Blob container name '{containerName}'.")
+        | Error errors ->
+            let errorText = String.Join("|", errors)
+            Assert.That(errorText, Does.Contain(OperationsUsageArchiveSettings.BlobContainerNameEnvironmentVariable))
+
+    /// Verifies a valid archive configuration still applies default worker tuning values.
+    [<Test>]
+    member _.ArchiveSettingsAcceptValidConfigurationWithDefaultTuning() =
+        let configuration =
+            archiveConfiguration [ KeyValuePair(OperationsUsageArchiveSettings.BlobConnectionStringEnvironmentVariable, "UseDevelopmentStorage=true")
+                                   KeyValuePair(OperationsUsageArchiveSettings.BlobContainerNameEnvironmentVariable, "usage-archives") ]
+
+        match OperationsUsageArchiveSettings.fromConfiguration configuration with
+        | Error errors ->
+            let errorText = String.Join("; ", errors)
+            Assert.Fail($"Archive settings should accept valid Blob configuration: {errorText}")
+        | Ok settings ->
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(settings.BlobContainerName, Is.EqualTo("usage-archives"))
+                    Assert.That(settings.HotRetentionDays, Is.EqualTo(90))
+                    Assert.That(settings.BatchSize, Is.EqualTo(100))
+                    Assert.That(settings.PollInterval, Is.EqualTo(TimeSpan.FromSeconds 300.0)))
+            )
 
     /// Verifies EF model metadata includes the persisted archive authority surface.
     [<Test>]

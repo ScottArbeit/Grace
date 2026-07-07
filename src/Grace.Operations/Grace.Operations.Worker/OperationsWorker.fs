@@ -366,14 +366,42 @@ module OperationsUsageArchiveSettings =
         ]
         |> List.tryPick (fun value -> if String.IsNullOrWhiteSpace value then None else Some(value.Trim()))
 
-    /// Reads a positive integer setting or returns the supplied default.
+    /// Reads a positive integer setting, rejecting malformed values once archive configuration is present.
     let private positiveIntSetting configuration name defaultValue =
         match optionalSetting configuration name with
         | Some value ->
-            match Int32.TryParse value with
-            | true, parsed when parsed > 0 -> parsed
-            | _ -> defaultValue
-        | None -> defaultValue
+            match Int32.TryParse(value, NumberStyles.Integer, CultureInfo.InvariantCulture) with
+            | true, parsed when parsed > 0 -> Ok parsed
+            | _ -> Error $"{name} must be a positive integer."
+        | None -> Ok defaultValue
+
+    /// Validates the lowercase DNS-style Azure Blob container name used for usage fact archives.
+    let private validateContainerName (name: string) =
+        let isLowercaseLetterOrDigit (value: char) =
+            (value >= 'a' && value <= 'z')
+            || (value >= '0' && value <= '9')
+
+        let isValidCharacter (value: char) = isLowercaseLetterOrDigit value || value = '-'
+
+        let hasValidLength = name.Length >= 3 && name.Length <= 63
+
+        let hasValidBoundary =
+            hasValidLength
+            && isLowercaseLetterOrDigit name[0]
+            && isLowercaseLetterOrDigit name[name.Length - 1]
+
+        let hasValidCharacters = name |> Seq.forall isValidCharacter
+
+        if
+            hasValidLength
+            && hasValidBoundary
+            && hasValidCharacters
+            && not (name.Contains("--", StringComparison.Ordinal))
+        then
+            Ok()
+        else
+            Error
+                $"{BlobContainerNameEnvironmentVariable} must be 3-63 lowercase letters, numbers, or hyphens; start and end with a letter or number; and not contain consecutive hyphens."
 
     /// Builds validated archive settings from configuration.
     let fromConfiguration (configuration: IConfiguration) =
@@ -391,6 +419,22 @@ module OperationsUsageArchiveSettings =
 
         if blobContainerName.IsNone then
             errors.Add($"{BlobContainerNameEnvironmentVariable} is required.")
+        else
+            match validateContainerName blobContainerName.Value with
+            | Ok () -> ()
+            | Error error -> errors.Add error
+
+        match hotRetentionDays with
+        | Ok _ -> ()
+        | Error error -> errors.Add error
+
+        match batchSize with
+        | Ok _ -> ()
+        | Error error -> errors.Add error
+
+        match pollIntervalSeconds with
+        | Ok _ -> ()
+        | Error error -> errors.Add error
 
         match blobServiceUri with
         | Some uri ->
@@ -399,18 +443,18 @@ module OperationsUsageArchiveSettings =
             | _ -> errors.Add($"{BlobServiceUriEnvironmentVariable} must be an absolute HTTPS URI.")
         | None -> ()
 
-        if errors.Count > 0 then
-            Error(List.ofSeq errors)
-        else
+        match hotRetentionDays, batchSize, pollIntervalSeconds with
+        | Ok hotRetentionDaysValue, Ok batchSizeValue, Ok pollIntervalSecondsValue when errors.Count = 0 ->
             Ok
                 {
                     BlobConnectionString = blobConnectionString
                     BlobServiceUri = blobServiceUri
                     BlobContainerName = blobContainerName.Value
-                    HotRetentionDays = hotRetentionDays
-                    BatchSize = batchSize
-                    PollInterval = TimeSpan.FromSeconds(float pollIntervalSeconds)
+                    HotRetentionDays = hotRetentionDaysValue
+                    BatchSize = batchSizeValue
+                    PollInterval = TimeSpan.FromSeconds(float pollIntervalSecondsValue)
                 }
+        | _ -> Error(List.ofSeq errors)
 
     /// Enables the archive worker only when archive storage settings are present, while rejecting partial configuration.
     let tryFromConfiguration (configuration: IConfiguration) =
