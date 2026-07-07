@@ -17,7 +17,14 @@ type AddRawUsageFactPayload() =
 IF COL_LENGTH(N'ops.RawUsageFact', N'RawPayload') IS NULL
 BEGIN
     ALTER TABLE ops.RawUsageFact
-        ADD RawPayload varbinary(max) NOT NULL;
+        ADD RawPayload varbinary(max) NOT NULL
+            CONSTRAINT DF_ops_RawUsageFact_RawPayload DEFAULT (0x) WITH VALUES;
+END;
+
+IF OBJECT_ID(N'ops.DF_ops_RawUsageFact_RawPayload', N'D') IS NOT NULL
+BEGIN
+    ALTER TABLE ops.RawUsageFact
+        DROP CONSTRAINT DF_ops_RawUsageFact_RawPayload;
 END;
 """
         )

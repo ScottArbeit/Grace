@@ -335,6 +335,8 @@ type OperationsUsageStorageTests() =
         let script = migrationScript ()
         let schemaPreambleIndex = script.IndexOf("IF SCHEMA_ID(N'ops') IS NULL", StringComparison.Ordinal)
         let historyTableIndex = script.IndexOf("[ops].[__EFMigrationsHistory]", StringComparison.Ordinal)
+        let rawPayloadDefaultIndex = script.IndexOf("CONSTRAINT DF_ops_RawUsageFact_RawPayload DEFAULT (0x) WITH VALUES", StringComparison.Ordinal)
+        let rawPayloadDefaultDropIndex = script.IndexOf("DROP CONSTRAINT DF_ops_RawUsageFact_RawPayload", StringComparison.Ordinal)
 
         Assert.Multiple(
             Action (fun () ->
@@ -346,6 +348,8 @@ type OperationsUsageStorageTests() =
                 Assert.That(script, Does.Contain("CONSTRAINT PK_ops_RawUsageFact PRIMARY KEY CLUSTERED (UsageFactId)"))
                 Assert.That(script, Does.Contain("ALTER TABLE ops.RawUsageFact"))
                 Assert.That(script, Does.Contain("ADD RawPayload varbinary(max) NOT NULL"))
+                Assert.That(rawPayloadDefaultIndex, Is.GreaterThanOrEqualTo(0))
+                Assert.That(rawPayloadDefaultDropIndex, Is.GreaterThan(rawPayloadDefaultIndex))
                 Assert.That(script, Does.Contain("IF OBJECT_ID(N'ops.UsageAggregateMinute', N'U') IS NULL"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.UsageAggregateMinute"))
                 Assert.That(script, Does.Contain("CONSTRAINT PK_ops_UsageAggregateMinute PRIMARY KEY CLUSTERED"))
