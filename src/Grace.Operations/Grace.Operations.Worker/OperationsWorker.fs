@@ -151,7 +151,7 @@ type IOperationsUsageReadinessRecorder =
     /// Clears a Service Bus receive or link failure only when a later received message proves the link recovered.
     abstract MarkServiceBusReceiveSuccess: attempt: OperationsUsageReadinessAttempt -> unit
 
-    /// Clears a runtime storage or processing failure only when this success started after that failure.
+    /// Clears runtime-owned processing failures only when this success started after that failure.
     abstract MarkRuntimeProcessingSuccess: attempt: OperationsUsageReadinessAttempt -> unit
 
     /// Records the latest unsupported ingestion contract observed at the broker boundary.
@@ -237,7 +237,9 @@ type OperationsUsageReadinessState() =
             lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.ServiceBusReceiveLink attempt)
 
         member _.MarkRuntimeProcessingSuccess(attempt) =
-            lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.RuntimeProcessingDependency attempt)
+            lock gate (fun () ->
+                clearFailureWhenFresh OperationsUsageReadinessFailureSource.RuntimeProcessingDependency attempt
+                clearFailureWhenFresh OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime attempt)
 
         member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
 
@@ -601,7 +603,6 @@ type OperationsUsageIngestionProcessor
     member _.ProcessMessageAsync(message: OperationsUsageMessage, actions: IOperationsUsageMessageActions, cancellationToken: CancellationToken) =
         task {
             let readinessAttempt = readiness.BeginProcessingAttempt()
-            OperationsUsageReadinessTransitions.recordServiceBusReceiveSuccess readiness readinessAttempt
 
             try
                 cancellationToken.ThrowIfCancellationRequested()
