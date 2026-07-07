@@ -2625,12 +2625,12 @@ module Services =
 
         IpcFileNameForIdentity current.RepositoryId current.RepositoryName current.RootDirectory current.BranchId current.BranchName
 
-    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
-    let inspectGraceWatchStatus () =
+    /// Reads one Watch IPC status file for diagnostics without logging file paths, stack traces, or raw JSON.
+    let private inspectGraceWatchStatusFile ipcFileName =
         task {
-            if System.IO.File.Exists(IpcFileName()) then
+            if System.IO.File.Exists(ipcFileName) then
                 try
-                    let json = System.IO.File.ReadAllText(IpcFileName())
+                    let json = System.IO.File.ReadAllText(ipcFileName)
 
                     let status = deserializeNormalizedGraceWatchStatus json
 
@@ -2672,6 +2672,13 @@ module Services =
                         ReadError = None
                     }
         }
+
+    /// Reads Watch IPC status for diagnostics without logging file paths, stack traces, or raw JSON.
+    let inspectGraceWatchStatus () = inspectGraceWatchStatusFile (IpcFileName())
+
+    /// Reads Watch IPC status for one captured repository branch identity.
+    let internal inspectGraceWatchStatusForIdentity repositoryId repositoryName rootDirectory branchId branchName =
+        inspectGraceWatchStatusFile (IpcFileNameForIdentity repositoryId repositoryName rootDirectory branchId branchName)
 
     /// Builds the persisted Grace Watch status snapshot for a specific repository identity.
     let private createGraceWatchStatusWithPendingWorkForIdentity
@@ -3444,7 +3451,16 @@ module Services =
                                 | Ok () ->
                                     try
                                         File.Delete(newDirectoryVersion.FullName)
-                                        return! verifyTarget newDirectoryVersion.FullName true false
+
+                                        if File.Exists(newDirectoryVersion.FullName) then
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        $"Working directory update could not delete verified file {newDirectoryVersion.FullName} before creating a remote directory at the same path; retry after the tree can be re-evaluated: the file still exists after delete."
+                                                        correlationId
+                                                )
+                                        else
+                                            return Ok()
                                     with
                                     | :? IOException as ex ->
                                         return
@@ -3468,8 +3484,41 @@ module Services =
 
                     let directoryInfo =
                         match directoryCreateGuard with
-                        | Ok () -> Directory.CreateDirectory(newDirectoryVersion.FullName)
-                        | Error _ -> DirectoryInfo(newDirectoryVersion.FullName)
+                        | Ok () ->
+                            try
+                                let createdDirectory = Directory.CreateDirectory(newDirectoryVersion.FullName)
+
+                                if not (Directory.Exists(newDirectoryVersion.FullName)) then
+                                    resultError <-
+                                        Some(
+                                            GraceError.Create
+                                                $"Working directory update could not create remote directory {newDirectoryVersion.FullName}; retry after the tree can be re-evaluated: the directory does not exist after create."
+                                                correlationId
+                                        )
+
+                                createdDirectory
+                            with
+                            | :? IOException as ex ->
+                                resultError <-
+                                    Some(
+                                        GraceError.Create
+                                            $"Working directory update could not create remote directory {newDirectoryVersion.FullName}; retry after the tree can be re-evaluated: {ex.Message}"
+                                            correlationId
+                                    )
+
+                                DirectoryInfo(newDirectoryVersion.FullName)
+                            | :? UnauthorizedAccessException as ex ->
+                                resultError <-
+                                    Some(
+                                        GraceError.Create
+                                            $"Working directory update could not create remote directory {newDirectoryVersion.FullName}; retry after the tree can be re-evaluated: {ex.Message}"
+                                            correlationId
+                                    )
+
+                                DirectoryInfo(newDirectoryVersion.FullName)
+                        | Error error ->
+                            resultError <- Some error
+                            DirectoryInfo(newDirectoryVersion.FullName)
 
                     // Copy new and existing files into place.
                     let sourceFileVersions = newDirectoryVersion.Files.ToArray()
@@ -3571,8 +3620,8 @@ module Services =
 
                     let subdirectoryVersions = newDirectoryVersion.Directories.Select(fun directoryVersionId -> updatedGraceStatus.Index[directoryVersionId])
                     // Loop through the actual subdirectories on disk.
-                    for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do
-                        if resultError.IsNone then
+                    if resultError.IsNone then
+                        for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do
                             // If we don't have this subdirectory listed in new parent DirectoryVersion, and it's a directory that we shouldn't ignore,
                             //    that means that it was deleted, and we should delete it from the working directory.
                             let relativeSubdirectoryPath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
@@ -3588,13 +3637,17 @@ module Services =
 
                     // Delete unnecessary files.
                     // Loop through the actual files on disk.
-                    for fileInfo in directoryInfo.EnumerateFiles() do
-                        if resultError.IsNone then
+                    if resultError.IsNone then
+                        for fileInfo in directoryInfo.EnumerateFiles() do
                             // If we don't have this file in the new version of the directory, and it's a file that we shouldn't ignore,
                             //   that means that it was deleted, and we should delete it from the working directory.
                             // Ignored files get... ignored.
                             if not
                                <| newLocalFileVersions.Any(fun fileVersion -> fileVersion.FullName = fileInfo.FullName)
+                               && not
+                                  <| (subdirectoryVersions
+                                      |> Seq.exists (fun subdirectoryVersion ->
+                                          subdirectoryVersion.RelativePath = Path.GetRelativePath(Current().RootDirectory, fileInfo.FullName)))
                                && not <| shouldIgnoreFile fileInfo.FullName then
                                 //logToAnsiConsole Colors.Verbose $"Deleting file {fileInfo.FullName}."
                                 match! verifyTarget fileInfo.FullName false true with

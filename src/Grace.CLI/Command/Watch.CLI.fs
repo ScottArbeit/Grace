@@ -2264,10 +2264,16 @@ module Watch =
         && status.DirectoryIds.SetEquals(expectedDirectoryIds)
 
     /// Advances the pending-work publication cache only after the exact IPC snapshot proves it reached disk.
-    let private cachePendingWatchWorkPublicationIfVerified expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt =
+    let private cachePendingWatchWorkPublicationIfVerified
+        (inspectPublishedStatus: unit -> Task<GraceWatchStatusInspection>)
+        expectedStatus
+        expectedDirectoryIds
+        hasPendingWork
+        publicationStartedAt
+        =
         let transitionWasPublished =
             try
-                let inspection = inspectGraceWatchStatus().GetAwaiter().GetResult()
+                let inspection = inspectPublishedStatus().GetAwaiter().GetResult()
 
                 inspection.Status
                 |> Option.exists (statusMatchesVerifiedPublication expectedStatus expectedDirectoryIds hasPendingWork publicationStartedAt)
@@ -2282,7 +2288,13 @@ module Watch =
         transitionWasPublished
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
-    let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+    let private tryPublishWatchIpcWithFreshPendingWorkProbeWithPendingWriter
+        expectedStatus
+        expectedDirectoryIds
+        (writeSnapshot: unit -> Task<unit>)
+        (writePendingSnapshot: GraceStatus -> HashSet<DirectoryVersionId> option -> Task<unit>)
+        (inspectPublishedStatus: unit -> Task<GraceWatchStatusInspection>)
+        =
         lock watchStatusPublishLock (fun () ->
             let mutable attempts = 0
             let mutable transitionWasPublished = false
@@ -2308,15 +2320,18 @@ module Watch =
                     if pendingEvidence.HasDurableOnlyPendingWork then
                         let emptyDirectoryIds = HashSet<DirectoryVersionId>()
 
-                        match currentGraceWatchRuntimeMode () with
-                        | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode GraceStatus.Default (Some emptyDirectoryIds)
-                        | _ -> updateGraceWatchInterprocessFile GraceStatus.Default (Some emptyDirectoryIds)
+                        writePendingSnapshot GraceStatus.Default (Some emptyDirectoryIds)
                         |> fun writeTask -> writeTask.GetAwaiter().GetResult()
                     else
                         writeSnapshot().GetAwaiter().GetResult()
 
                     transitionWasPublished <-
-                        cachePendingWatchWorkPublicationIfVerified statusForVerification directoryIdsForVerification hasPendingWork publicationStartedAt
+                        cachePendingWatchWorkPublicationIfVerified
+                            inspectPublishedStatus
+                            statusForVerification
+                            directoryIdsForVerification
+                            hasPendingWork
+                            publicationStartedAt
                 with
                 | ex ->
                     lastPublishedHasPendingWatchWork <- None
@@ -2329,6 +2344,20 @@ module Watch =
                     <> hasPendingWork
 
             transitionWasPublished)
+
+    /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
+    let private tryPublishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds (writeSnapshot: unit -> Task<unit>) =
+        let writePendingSnapshot =
+            match currentGraceWatchRuntimeMode () with
+            | GraceWatchRuntimeMode.Suspended -> updateGraceWatchInterprocessFileForSuspendedMode
+            | _ -> updateGraceWatchInterprocessFile
+
+        tryPublishWatchIpcWithFreshPendingWorkProbeWithPendingWriter
+            expectedStatus
+            expectedDirectoryIds
+            writeSnapshot
+            writePendingSnapshot
+            inspectGraceWatchStatus
 
     /// Publishes Watch IPC after reading queued work inside the serialized status boundary.
     let private publishWatchIpcWithFreshPendingWorkProbe expectedStatus expectedDirectoryIds writeSnapshot =
@@ -3360,6 +3389,22 @@ module Watch =
 
                             pendingCurrentBranchMaterializations <- retained
                             retired
+                        | Some (repositoryId, branchId, _) when
+                            (repositoryId <> current.RepositoryId
+                             || branchId <> current.BranchId)
+                            && pendingCurrentBranchMaterializations
+                               |> List.exists (fun pending ->
+                                   pending.RepositoryId = current.RepositoryId
+                                   && pending.BranchId = current.BranchId)
+                            ->
+                            let retired, retained =
+                                pendingCurrentBranchMaterializations
+                                |> List.partition (fun pending ->
+                                    pending.RepositoryId = current.RepositoryId
+                                    && pending.BranchId = current.BranchId)
+
+                            pendingCurrentBranchMaterializations <- retained
+                            retired
                         | None when
                             pendingCurrentBranchMaterializations
                             |> List.exists (fun pending ->
@@ -3506,6 +3551,25 @@ module Watch =
             |> List.filter (fun pending ->
                 pending.Reason
                 <> LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
+            |> List.map (fun pending -> pending.Payload))
+
+    /// Reports whether a deferred payload already matches the clean root that will evaluate the live notification batch.
+    let private pendingCurrentBranchMaterializationMatchesLocalRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
+        status.RootDirectoryId = payload.DirectoryId
+        || (status.RootDirectorySha256Hash = payload.Sha256Hash
+            && status.RootDirectoryBlake3Hash = payload.Blake3Hash)
+
+    /// Reads retry-deferred materializations that still differ from the local clean root.
+    let private pendingRetryDeferredCurrentBranchMaterializationSnapshot (localStatus: GraceWatchStatus option) =
+        prunePendingCurrentBranchMaterializationsForActiveBranch ()
+
+        lock pendingCurrentBranchMaterializationLock (fun () ->
+            pendingCurrentBranchMaterializations
+            |> List.filter (fun pending ->
+                pending.Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+                && (localStatus
+                    |> Option.exists (fun status -> pendingCurrentBranchMaterializationMatchesLocalRoot status pending.Payload)
+                    |> not))
             |> List.map (fun pending -> pending.Payload))
 
     /// Reads Watch-owned pending materialization status without exposing it through public CLI output.
@@ -3896,19 +3960,25 @@ module Watch =
         runDurablyAppliedCurrentBranchMaterializationWithMarkerAndCloseVerification payload markerFileName markerText operation verifyAfterMarkerClose
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
-    let private publishCurrentBranchMaterializedStatusWithWriter
+    let private publishCurrentBranchMaterializedStatusWithWriterAndInspector
         (graceStatus: GraceStatus)
         (writeWatchInterprocessFile: GraceStatus -> HashSet<DirectoryVersionId> option -> Task<unit>)
+        (inspectPublishedStatus: unit -> Task<GraceWatchStatusInspection>)
         =
         task {
             let directoryIds = HashSet<DirectoryVersionId>(graceStatus.Index.Keys)
 
             let wasPublished =
-                publishWatchIpcWithFreshPendingWorkProbe graceStatus directoryIds (fun () ->
-                    task {
-                        updateGraceStatusDirectoryIds graceStatus
-                        do! writeWatchInterprocessFile graceStatus (Some directoryIds)
-                    })
+                tryPublishWatchIpcWithFreshPendingWorkProbeWithPendingWriter
+                    graceStatus
+                    directoryIds
+                    (fun () ->
+                        task {
+                            updateGraceStatusDirectoryIds graceStatus
+                            do! writeWatchInterprocessFile graceStatus (Some directoryIds)
+                        })
+                    writeWatchInterprocessFile
+                    inspectPublishedStatus
 
             if wasPublished then
                 recordMaterializedCurrentBranchCleanRoot graceStatus
@@ -3926,12 +3996,16 @@ module Watch =
         }
 
     /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
+    let private publishCurrentBranchMaterializedStatusWithWriter graceStatus writeWatchInterprocessFile =
+        publishCurrentBranchMaterializedStatusWithWriterAndInspector graceStatus writeWatchInterprocessFile inspectGraceWatchStatus
+
+    /// Publishes a materialized remote status through the Watch IPC freshness gate and directory-id cache.
     let private publishCurrentBranchMaterializedStatus graceStatus =
         publishCurrentBranchMaterializedStatusWithWriter graceStatus updateGraceWatchInterprocessFile
 
     /// Publishes materialized status to the IPC file owned by the captured materialization authority.
     let private publishCurrentBranchMaterializedStatusForAuthority (authority: CurrentBranchMaterializationAuthority) graceStatus =
-        publishCurrentBranchMaterializedStatusWithWriter
+        publishCurrentBranchMaterializedStatusWithWriterAndInspector
             graceStatus
             (updateGraceWatchInterprocessFileForIdentity
                 authority.RepositoryId
@@ -3939,6 +4013,13 @@ module Watch =
                 authority.RootDirectory
                 authority.BranchId
                 authority.BranchName)
+            (fun () ->
+                inspectGraceWatchStatusForIdentity
+                    authority.RepositoryId
+                    authority.RepositoryName
+                    authority.RootDirectory
+                    authority.BranchId
+                    authority.BranchName)
 
     /// Exposes current-branch materialized status publication to deterministic Watch tests.
     let internal publishCurrentBranchMaterializedStatusForWatchTests graceStatus = publishCurrentBranchMaterializedStatus graceStatus
@@ -3946,6 +4027,10 @@ module Watch =
     /// Publishes materialized status through an injected IPC writer so tests can prove cache/write serialization.
     let internal publishCurrentBranchMaterializedStatusWithWriterForWatchTests graceStatus writeWatchInterprocessFile =
         publishCurrentBranchMaterializedStatusWithWriter graceStatus writeWatchInterprocessFile
+
+    /// Publishes materialized status through injected IPC seams so tests can prove captured-authority verification.
+    let internal publishCurrentBranchMaterializedStatusWithWriterAndInspectorForWatchTests graceStatus writeWatchInterprocessFile inspectPublishedStatus =
+        publishCurrentBranchMaterializedStatusWithWriterAndInspector graceStatus writeWatchInterprocessFile inspectPublishedStatus
 
     /// Closes the post-apply materialization window after durable file and status writes have committed.
     let private completeDurablyAppliedCurrentBranchMaterialization
@@ -4395,13 +4480,29 @@ module Watch =
 
                             if providedDecision.Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired then
                                 let pendingPayloads =
-                                    pendingUnsafeCurrentBranchMaterializationSnapshot ()
-                                    |> List.toArray
+                                    if providedPayloadTargetsKnownStaleRoot then
+                                        pendingUnsafeCurrentBranchMaterializationSnapshot ()
+                                        |> List.toArray
+                                    else
+                                        let unsafePendingPayloads =
+                                            pendingUnsafeCurrentBranchMaterializationSnapshot ()
+                                            |> List.toArray
+
+                                        let retryDeferredPayloads =
+                                            pendingRetryDeferredCurrentBranchMaterializationSnapshot localStatus
+                                            |> List.toArray
+
+                                        if retryDeferredPayloads.Length > 0 then
+                                            Array.concat [| providedPayloads
+                                                            unsafePendingPayloads
+                                                            retryDeferredPayloads |]
+                                        else
+                                            Array.append unsafePendingPayloads providedPayloads
 
                                 if providedPayloadTargetsKnownStaleRoot then
                                     if pendingPayloads.Length > 0 then pendingPayloads else providedPayloads
                                 else
-                                    Array.append pendingPayloads providedPayloads
+                                    pendingPayloads
                             else
                                 providedPayloads
                         else
@@ -5379,7 +5480,7 @@ module Watch =
             let publicationStartedAt = getCurrentInstant ()
             do! updateGraceWatchInterprocessFileClient trustedStatus (Some directoryIds)
 
-            cachePendingWatchWorkPublicationIfVerified trustedStatus directoryIds true publicationStartedAt
+            cachePendingWatchWorkPublicationIfVerified inspectGraceWatchStatus trustedStatus directoryIds true publicationStartedAt
             |> ignore
         }
 
