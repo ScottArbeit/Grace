@@ -64,6 +64,19 @@ review-ready:
 - Public docs and generated contracts.
 - Validation evidence and residual risks.
 
+## Grace Cache Artifact Authorization Guardrails
+
+Future implementation PRs must preserve these V1 guardrails when updating any audit row:
+
+- V1 cache artifacts are Materialization Plan artifacts. Cache hits depend on artifact completeness
+  and current artifact grants, not low-level storage or object-placement proof.
+- Full-root artifacts require current whole-target-root authorization for the plan artifact. Matching
+  immutable target identity is necessary, but it is not an authorization scope by itself.
+- Narrowed path-scope grants must be rejected for V1 full-root artifacts until Grace accepts a
+  path-scoped artifact shape and proof obligation.
+- Cache Service Identity authorizes configured cache operations only. It must not become a global
+  artifact reader or bypass per-call artifact grant validation.
+
 ## Requirement Group Scaffold
 
 Each group starts as a scaffold entry for #609. Future implementation PRs should replace the
@@ -110,24 +123,27 @@ docs-only classification with current evidence for the behavior they own.
 - Implementation seam: Grace Server grant issuance, grant binding, grant expiry, resolved content
   scope, resolved path scope, and Grace Cache local validation.
 - Proof seam: tests for caller binding, cache audience binding, expired grants, wrong repository,
-  wrong reference or DirectoryVersion, narrowed path scope, and malformed grant data.
+  wrong reference or DirectoryVersion, artifact completeness, whole-target-root authorization,
+  narrowed path-scope rejection, and malformed grant data.
 - Status classification: `not applicable` to this docs-only scaffold.
 - Issue or PR evidence: #609 creates the audit slot; later grant work must cite the issue or PR that
   owns the current grant contract.
-- Residual risk or rationale: possession of cached chunks or a bearer-like token must not become
-  authorization to serve content.
+- Residual risk or rationale: ContentAccessGrant proof must pair complete Materialization Plan
+  artifacts with current whole-target-root authorization and per-call artifact grant validation; a
+  complete local artifact or bearer-like token is never enough to serve content.
 
 ### Cache Service Registration And Identity
 
 - Implementation seam: cache service registration, health or capability publication, configured
   cache audience, and Cache Service Identity for prefetch subscriptions.
 - Proof seam: tests or static validation for unregistered cache rejection, wrong audience rejection,
-  duplicate registration handling, identity rotation, and disabled-cache behavior.
+  duplicate registration handling, identity rotation, disabled-cache behavior, and rejection of
+  per-call artifact grant bypass attempts.
 - Status classification: `not applicable` to this docs-only scaffold.
 - Issue or PR evidence: #609 creates the audit slot; registration work must cite its owning issue or
   PR and validation.
 - Residual risk or rationale: Cache Service Identity authorizes configured cache behavior only; it
-  must not become a global chunk reader claim.
+  must not become a global artifact reader or bypass per-call artifact grants.
 
 ### Read-Through Behavior
 
