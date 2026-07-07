@@ -99,6 +99,43 @@ type private RecordingMessageActions(events: List<string>) =
             settlements.Add("dead-letter", Some reason)
             Task.CompletedTask
 
+/// Blocks message completion so tests can interleave another receive after durable storage succeeds.
+type private BlockingCompleteMessageActions(events: List<string>) =
+    let completeStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let completeRelease = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+    let settlements = ResizeArray<string * string option>()
+
+    /// Completes when the processor reaches message completion after durable storage succeeded.
+    member _.CompleteStarted = completeStarted.Task
+
+    /// Allows the blocked completion to finish.
+    member _.ReleaseComplete() = completeRelease.SetResult(())
+
+    /// Returns the settlements recorded by the fake actions.
+    member _.Settlements = settlements |> Seq.toList
+
+    interface IOperationsUsageMessageActions with
+
+        member _.CompleteAsync(_cancellationToken) =
+            task {
+                events.Add("complete-waiting")
+                completeStarted.SetResult(())
+                do! completeRelease.Task
+                events.Add("complete")
+                settlements.Add("complete", None)
+            }
+            :> Task
+
+        member _.AbandonAsync(_cancellationToken) =
+            events.Add("abandon")
+            settlements.Add("abandon", None)
+            Task.CompletedTask
+
+        member _.DeadLetterAsync(reason, _description, _cancellationToken) =
+            events.Add("dead-letter")
+            settlements.Add("dead-letter", Some reason)
+            Task.CompletedTask
+
 /// Fakes the operations data-layer boundary for deterministic processor tests.
 type private StubUsageFactStore(storeAsync: UsageFact -> CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>, events: List<string>) =
     let storedFacts = ResizeArray<UsageFact>()
@@ -822,6 +859,77 @@ type OperationsWorkerIngestionTests() =
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon|complete"))
                     Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
                     Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Runtime processing dependency failed (InvalidOperationException)."))
+                    Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                    Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None)))
+            )
+        }
+
+    /// Verifies an older in-flight success cannot clear a newer runtime dependency failure.
+    [<Test>]
+    member _.StaleInFlightSuccessDoesNotClearNewerDependencyFailure() =
+        task {
+            let olderSuccessFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("1a1a1a1a-1a1a-4a1a-8a1a-1a1a1a1a1a1a"))
+
+            let newerFailureFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("1b1b1b1b-1b1b-4b1b-8b1b-1b1b1b1b1b1b"))
+
+            let newerSuccessFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("1c1c1c1c-1c1c-4c1c-8c1c-1c1c1c1c1c1c"))
+
+            let processor, _store, _actions, events, readiness =
+                createProcessorWithReadiness (fun storedFact _ ->
+                    if storedFact.UsageFactId = newerFailureFact.UsageFactId then
+                        Task.FromException<Result<UsageFactPersistenceResult, string list>>(InvalidOperationException("newer SQL failure"))
+                    else
+                        Task.FromResult(Ok(accepted storedFact)))
+
+            (readiness :> IOperationsUsageReadinessRecorder)
+                .MarkReady()
+
+            let olderActions = BlockingCompleteMessageActions(events)
+            let newerFailureActions = RecordingMessageActions(events)
+            let newerSuccessActions = RecordingMessageActions(events)
+
+            let olderMessage =
+                olderSuccessFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let newerFailureMessage =
+                newerFailureFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let newerSuccessMessage =
+                newerSuccessFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let olderProcessing = processor.ProcessMessageAsync(olderMessage, olderActions, CancellationToken.None)
+
+            do! olderActions.CompleteStarted
+
+            do! processor.ProcessMessageAsync(newerFailureMessage, newerFailureActions, CancellationToken.None)
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            olderActions.ReleaseComplete()
+            do! olderProcessing
+
+            let staleCompletionSnapshot = readinessSnapshot readiness
+
+            do! processor.ProcessMessageAsync(newerSuccessMessage, newerSuccessActions, CancellationToken.None)
+
+            let recoveredSnapshot = readinessSnapshot readiness
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("store|complete-waiting|store|abandon|complete|store|complete"))
+                    Assert.That(settlementText olderActions.Settlements, Is.EqualTo("complete"))
+                    Assert.That(settlementText newerFailureActions.Settlements, Is.EqualTo("abandon"))
+                    Assert.That(settlementText newerSuccessActions.Settlements, Is.EqualTo("complete"))
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Runtime processing dependency failed (InvalidOperationException)."))
+                    Assert.That(staleCompletionSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(staleCompletionSnapshot.DependencyFailure, Is.EqualTo(Some "Runtime processing dependency failed (InvalidOperationException)."))
                     Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
                     Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None)))
             )

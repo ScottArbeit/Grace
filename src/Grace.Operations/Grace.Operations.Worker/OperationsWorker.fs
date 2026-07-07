@@ -576,8 +576,8 @@ type OperationsUsageIngestionProcessor
                                         |> Option.defaultValue Instant.MinValue
                                     )
 
-                                    do! actions.CompleteAsync cancellationToken
                                     readiness.MarkReady()
+                                    do! actions.CompleteAsync cancellationToken
             with
             | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
                 logger.LogWarning(
