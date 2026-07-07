@@ -3316,6 +3316,7 @@ module Watch =
                 -> Grace.Types.DirectoryVersion.DirectoryVersionDto array
                 -> CorrelationId
                 -> Task<Result<GraceStatus, GraceError>>
+            PublishWatchStatusRecordsSupersededRoot: bool
             PublishWatchStatus: CurrentBranchMaterializationAuthority -> GraceStatus -> Task<unit>
         }
 
@@ -4361,6 +4362,13 @@ module Watch =
         |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
         |> Seq.tryFind (fun fileVersion -> String.Equals(normalizeRelativePath fileVersion.RelativePath, normalizedRelativePath, watchPathComparison))
 
+    /// Finds the previous GraceStatus directory authority for a repository-relative materialization target.
+    let private tryFindPreviousMaterializationDirectoryAuthority (previousGraceStatus: GraceStatus) (relativePath: string) =
+        let normalizedRelativePath = normalizeRelativePath (RelativePath relativePath)
+
+        previousGraceStatus.Index.Values
+        |> Seq.tryFind (fun directoryVersion -> String.Equals(normalizeRelativePath directoryVersion.RelativePath, normalizedRelativePath, watchPathComparison))
+
     /// Converts a scan difference into the current full working-tree path it protects.
     let private materializationDifferenceFullPath rootDirectory (difference: FileSystemDifference) =
         Path.GetFullPath(Path.Combine(rootDirectory, string difference.RelativePath))
@@ -4390,7 +4398,7 @@ module Watch =
             let relativePath = Path.GetRelativePath(root, fullPath)
 
             if mutation.IsDirectory then
-                let! finalDifferences = scanForDifferences previousGraceStatus
+                let! finalDifferences = scanForDifferencesAtRoot authorityRootDirectory previousGraceStatus
 
                 if not (wasLastScanForDifferencesSuccessful ()) then
                     requestGraceWatchExplicitResync
@@ -4449,10 +4457,7 @@ module Watch =
                                         correlationId
                                 )
                 | None ->
-                    if
-                        File.Exists(fullPath)
-                        || Directory.Exists(fullPath)
-                    then
+                    if File.Exists(fullPath) then
                         requestGraceWatchExplicitResync
                             $"Current-branch remote materialization detected new local work at file target {relativePath} before overwrite for Reference {payload.ReferenceId}."
 
@@ -4464,6 +4469,21 @@ module Watch =
                                     $"Current-branch remote materialization refused to overwrite new local work at file target {relativePath}; Reference {payload.ReferenceId} was retired as stale behind local work."
                                     correlationId
                             )
+                    elif Directory.Exists(fullPath) then
+                        match tryFindPreviousMaterializationDirectoryAuthority previousGraceStatus relativePath with
+                        | Some _ when not mutation.DeletesExistingContent -> return Ok()
+                        | _ ->
+                            requestGraceWatchExplicitResync
+                                $"Current-branch remote materialization detected new local work at file target {relativePath} before overwrite for Reference {payload.ReferenceId}."
+
+                            consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
+                            return
+                                Error(
+                                    GraceError.Create
+                                        $"Current-branch remote materialization refused to overwrite new local work at file target {relativePath}; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                        correlationId
+                                )
                     else
                         return Ok()
         }
@@ -4719,6 +4739,7 @@ module Watch =
             GetDirectoryVersionsRecursive = getDirectoryVersionsRecursive
             DownloadDirectoryFiles = downloadDirectoryFiles
             ApplyRemoteDirectory = applyRemoteDirectory
+            PublishWatchStatusRecordsSupersededRoot = true
             PublishWatchStatus =
                 fun (authority: CurrentBranchMaterializationAuthority) graceStatus ->
                     task {
@@ -4922,7 +4943,10 @@ module Watch =
                                                     else
                                                         try
                                                             do! operations.PublishWatchStatus authority updatedStatus
-                                                            recordSupersededCurrentBranchMaterializationRoot authority updatedStatus
+
+                                                            if not operations.PublishWatchStatusRecordsSupersededRoot then
+                                                                recordSupersededCurrentBranchMaterializationRoot authority updatedStatus
+
                                                             forgetPendingCurrentBranchMaterializationsThrough false payload
 
                                                             logToAnsiConsole

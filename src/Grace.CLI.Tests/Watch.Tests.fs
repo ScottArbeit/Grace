@@ -13808,6 +13808,7 @@ module WatchTests =
                         appliedPayloads.Add(payload)
                         appliedStatusReachedDisk.Value <- true
                         Task.FromResult<Result<GraceStatus, GraceError>>(Ok(updatedStatus))
+                PublishWatchStatusRecordsSupersededRoot = false
                 PublishWatchStatus =
                     fun _ status ->
                         publishedStatuses.Add(status)
@@ -14330,6 +14331,7 @@ module WatchTests =
                         fun appliedPayload _ _ _ _ ->
                             appliedPayloads.Add(appliedPayload)
                             Task.FromResult<Result<GraceStatus, GraceError>>(Ok advancedStatus)
+                    PublishWatchStatusRecordsSupersededRoot = false
                     PublishWatchStatus = fun _ _ -> Task.FromException<unit>(InvalidOperationException("stale materialization must not publish"))
                 }
 
@@ -15202,6 +15204,123 @@ module WatchTests =
             finally
                 Services.resetDownloadFileVersionsForWorkingDirectoryUpdateForTests ())
 
+    /// Verifies that fallback downloads fail before mutation when Current points at a different object cache.
+    [<Test>]
+    let ``current branch materialization fallback download refuses drifted object cache`` () =
+        withTempRepo (fun root ->
+            configureCurrentWatchIdentity root "current-repo" "current-branch"
+            |> ignore
+
+            let capturedObjectDirectory = Current().ObjectDirectory
+            let driftedObjectDirectory = Path.Combine(root, ".grace", "drifted-objects")
+            let remoteRootId = Guid.NewGuid()
+            let relativePath = RelativePath "object-cache-drift.txt"
+            let workingFilePath = Path.Combine(root, string relativePath)
+            let previousBytes = Encoding.UTF8.GetBytes("previous file content")
+            let remoteBytes = Encoding.UTF8.GetBytes("remote bytes should not be copied")
+
+            File.WriteAllBytes(workingFilePath, previousBytes)
+
+            let previousFile =
+                (Services.createLocalFileVersion (FileInfo(workingFilePath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            let previousRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    (Guid.NewGuid())
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (Current().RepositoryId)
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "object-cache-drift-local-root")
+                    (Blake3Hash "object-cache-drift-local-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| previousFile |]))
+                    previousFile.Size
+                    DateTime.UtcNow
+
+            let previousIndex = GraceIndex()
+
+            previousIndex.TryAdd(previousRoot.DirectoryVersionId, previousRoot)
+            |> ignore
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = previousIndex
+                    RootDirectoryId = previousRoot.DirectoryVersionId
+                    RootDirectorySha256Hash = previousRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = previousRoot.Blake3Hash
+                }
+
+            let remoteFile =
+                FileVersion.CreateWithHashes
+                    relativePath
+                    (Sha256Hash "object-cache-drift-remote-file")
+                    (Blake3Hash "object-cache-drift-remote-file-blake3")
+                    String.Empty
+                    false
+                    (int64 remoteBytes.Length)
+
+            let remoteRoot =
+                DirectoryVersion.CreateWithHashes
+                    remoteRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (Current().RepositoryId)
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "object-cache-drift-remote-root")
+                    (Blake3Hash "object-cache-drift-remote-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([| remoteFile |]))
+                    (int64 remoteBytes.Length)
+
+            let remoteDto = { DirectoryVersionDto.Default with DirectoryVersion = remoteRoot; RecursiveSize = int64 remoteBytes.Length }
+            let updatedIndex = GraceIndex()
+            let updatedRoot = remoteRoot.ToLocalDirectoryVersion DateTime.UtcNow
+
+            updatedIndex.TryAdd(remoteRootId, updatedRoot)
+            |> ignore
+
+            let updatedStatus =
+                { GraceStatus.Default with
+                    Index = updatedIndex
+                    RootDirectoryId = remoteRootId
+                    RootDirectorySha256Hash = remoteRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = remoteRoot.Blake3Hash
+                }
+
+            let downloadCalls = ref 0
+            let originalObjectDirectory = Current().ObjectDirectory
+            Current().ObjectDirectory <- driftedObjectDirectory
+
+            try
+                Services.setDownloadFileVersionsForWorkingDirectoryUpdateForTests (fun _ _ _ ->
+                    incr downloadCalls
+                    Task.FromResult<Result<unit, string>>(Ok()))
+
+                let result =
+                    (Services.updateWorkingDirectoryWithTargetGuardAtRoot
+                        root
+                        capturedObjectDirectory
+                        previousStatus
+                        updatedStatus
+                        [| remoteDto |]
+                        (generateCorrelationId ())
+                        (fun _ -> Task.FromResult<Result<unit, GraceError>>(Ok())))
+                        .GetAwaiter()
+                        .GetResult()
+
+                result.IsError |> should equal true
+                downloadCalls.Value |> should equal 0
+
+                File.ReadAllBytes(workingFilePath)
+                |> should equal previousBytes
+            finally
+                Current().ObjectDirectory <- originalObjectDirectory
+                Services.resetDownloadFileVersionsForWorkingDirectoryUpdateForTests ())
+
     /// Verifies that durable-only pending evidence is published through the captured branch IPC writer.
     [<Test>]
     let ``current branch materialization durable fallback uses captured ipc writer`` () =
@@ -15438,6 +15557,140 @@ module WatchTests =
                 .Count
             |> should equal 0)
 
+    /// Verifies that a tracked directory can be preflighted as an authorized remote file replacement.
+    [<Test>]
+    let ``current branch materialization target guard allows tracked directory at file replacement target`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let trackedDirectoryId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let swappedPath = RelativePath "tracked-dir-file-guard"
+            let swappedDirectoryPath = Path.Combine(root, string swappedPath)
+            let nestedPath = Path.Combine(swappedDirectoryPath, "old-child.txt")
+            let remoteBytes = Encoding.UTF8.GetBytes("remote file replaces tracked directory through guard")
+
+            Directory.CreateDirectory(swappedDirectoryPath)
+            |> ignore
+
+            File.WriteAllText(nestedPath, "tracked child")
+
+            let previousChild =
+                (Services.createLocalFileVersion (FileInfo(nestedPath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            let previousDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    trackedDirectoryId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    swappedPath
+                    (Sha256Hash "tracked-dir-file-guard-directory")
+                    (Blake3Hash "tracked-dir-file-guard-directory-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| previousChild |]))
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    localRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "tracked-dir-file-guard-local-root")
+                    (Blake3Hash "tracked-dir-file-guard-local-root-blake3")
+                    (List<DirectoryVersionId>([| trackedDirectoryId |]))
+                    (List<LocalFileVersion>())
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousIndex = GraceIndex()
+
+            previousIndex.TryAdd(localRootId, previousRoot)
+            |> ignore
+
+            previousIndex.TryAdd(trackedDirectoryId, previousDirectory)
+            |> ignore
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = previousIndex
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = previousRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = previousRoot.Blake3Hash
+                }
+
+            let remoteFile =
+                FileVersion.CreateWithHashes
+                    swappedPath
+                    (Sha256Hash "tracked-dir-file-guard-remote-file")
+                    (Blake3Hash "tracked-dir-file-guard-remote-file-blake3")
+                    String.Empty
+                    false
+                    (int64 remoteBytes.Length)
+
+            let remoteObjectPath = Services.getLocalObjectCachePathForFileVersion remoteFile
+
+            Directory.CreateDirectory(Path.GetDirectoryName(remoteObjectPath))
+            |> ignore
+
+            File.WriteAllBytes(remoteObjectPath, remoteBytes)
+
+            let remoteRoot =
+                DirectoryVersion.CreateWithHashes
+                    remoteRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "tracked-dir-file-guard-remote-root")
+                    (Blake3Hash "tracked-dir-file-guard-remote-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([| remoteFile |]))
+                    (int64 remoteBytes.Length)
+
+            let remoteDto = { DirectoryVersionDto.Default with DirectoryVersion = remoteRoot; RecursiveSize = int64 remoteBytes.Length }
+            let updatedIndex = GraceIndex()
+            let updatedRoot = remoteRoot.ToLocalDirectoryVersion DateTime.UtcNow
+
+            updatedIndex.TryAdd(remoteRootId, updatedRoot)
+            |> ignore
+
+            let updatedStatus =
+                { GraceStatus.Default with
+                    Index = updatedIndex
+                    RootDirectoryId = remoteRootId
+                    RootDirectorySha256Hash = remoteRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = remoteRoot.Blake3Hash
+                }
+
+            let payload = currentBranchReferencePayload currentRepositoryId currentBranchId remoteRootId remoteRoot.Sha256Hash remoteRoot.Blake3Hash
+
+            let result =
+                (Services.updateWorkingDirectoryWithTargetGuard previousStatus updatedStatus [| remoteDto |] (generateCorrelationId ()) (fun mutation ->
+                    Watch.verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryForWatchTests payload previousStatus (generateCorrelationId ()) mutation))
+                    .GetAwaiter()
+                    .GetResult()
+
+            result.IsOk |> should equal true
+
+            Directory.Exists(swappedDirectoryPath)
+            |> should equal false
+
+            File.ReadAllBytes(swappedDirectoryPath)
+            |> should equal remoteBytes
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal false)
+
     /// Verifies that a local file created after preflight at a remote-create target fails closed.
     [<Test>]
     let ``current branch materialization target guard rejects local file created after preflight`` () =
@@ -15598,6 +15851,125 @@ module WatchTests =
                 File.Exists(driftedTargetPath)
                 |> should equal false
             finally
+                if Directory.Exists(otherRoot) then Directory.Delete(otherRoot, true))
+
+    /// Verifies that directory-target verification scans the captured authority root after Current drifts.
+    [<Test>]
+    let ``current branch materialization directory target guard scans captured authority root`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let trackedDirectoryId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let directoryPath = RelativePath "captured-scan-dir"
+            let targetDirectoryPath = Path.Combine(root, string directoryPath)
+            let childPath = Path.Combine(targetDirectoryPath, "child.txt")
+            let otherRoot = Path.Combine(Path.GetTempPath(), $"grace-scan-drift-{Guid.NewGuid():N}")
+
+            Directory.CreateDirectory(targetDirectoryPath)
+            |> ignore
+
+            File.WriteAllText(childPath, "clean child")
+
+            let previousChild =
+                (Services.createLocalFileVersion (FileInfo(childPath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            let previousDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    trackedDirectoryId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    directoryPath
+                    (Sha256Hash "captured-scan-directory")
+                    (Blake3Hash "captured-scan-directory-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| previousChild |]))
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    localRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "captured-scan-root")
+                    (Blake3Hash "captured-scan-root-blake3")
+                    (List<DirectoryVersionId>([| trackedDirectoryId |]))
+                    (List<LocalFileVersion>())
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousIndex = GraceIndex()
+
+            previousIndex.TryAdd(localRootId, previousRoot)
+            |> ignore
+
+            previousIndex.TryAdd(trackedDirectoryId, previousDirectory)
+            |> ignore
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = previousIndex
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = previousRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = previousRoot.Blake3Hash
+                }
+
+            let authority = currentMaterializationAuthorityFromStatus previousStatus
+            let originalRootDirectory = Current().RootDirectory
+
+            try
+                let otherDirectoryPath = Path.Combine(otherRoot, string directoryPath)
+
+                Directory.CreateDirectory(otherDirectoryPath)
+                |> ignore
+
+                File.WriteAllText(Path.Combine(otherDirectoryPath, "child.txt"), "clean child")
+                File.WriteAllText(childPath, "racing edit under captured root")
+                File.SetLastWriteTimeUtc(childPath, previousChild.LastWriteTimeUtc.AddMinutes(1.0))
+
+                Current().RootDirectory <- otherRoot
+
+                let payload =
+                    currentBranchReferencePayload
+                        currentRepositoryId
+                        currentBranchId
+                        remoteRootId
+                        (Sha256Hash "captured-scan-remote-root")
+                        (Blake3Hash "captured-scan-remote-root-blake3")
+
+                Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                    payload
+                    Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+                let mutation: Services.WorkingDirectoryTargetMutation = { FullPath = targetDirectoryPath; IsDirectory = true; DeletesExistingContent = true }
+
+                let result =
+                    (Watch.verifyCurrentBranchMaterializationTargetAtOverwriteBoundaryWithAuthorityForWatchTests
+                        payload
+                        authority
+                        previousStatus
+                        (generateCorrelationId ())
+                        mutation)
+                        .GetAwaiter()
+                        .GetResult()
+
+                result.IsError |> should equal true
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal true
+            finally
+                Current().RootDirectory <- originalRootDirectory
+
                 if Directory.Exists(otherRoot) then Directory.Delete(otherRoot, true))
 
     /// Verifies that a remote file can replace a tracked directory at the same path.
@@ -16967,6 +17339,109 @@ module WatchTests =
             exhaustedAppliedPayloads.Count |> should equal 1
             exhaustedPublishedStatuses.Count |> should equal 1)
 
+    /// Verifies that production materialized publication records one anonymous stale-root credit for one old root.
+    [<Test>]
+    let ``current branch materialization production publication records one anonymous stale-root credit`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearPendingWatchWorkForTests ()
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let oldRootId = Guid.NewGuid()
+            let newRootId = Guid.NewGuid()
+
+            let oldStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = oldRootId
+                    RootDirectorySha256Hash = Sha256Hash "single-credit-old-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "single-credit-old-root-blake3"
+                }
+
+            let newStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = newRootId
+                    RootDirectorySha256Hash = Sha256Hash "single-credit-new-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "single-credit-new-root-blake3"
+                }
+
+            Watch.recordPublishedCurrentBranchCleanRootForWatchTests oldStatus
+
+            let cleanOldStatus =
+                { liveWatchStatus oldRootId with
+                    RootDirectorySha256Hash = oldStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = oldStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| oldRootId |])
+                }
+
+            let newPayload =
+                currentBranchReferencePayload currentRepositoryId currentBranchId newRootId newStatus.RootDirectorySha256Hash newStatus.RootDirectoryBlake3Hash
+
+            let materializingOperations, _, _, _, _ =
+                recordingMaterializationOperations (ref (materializationInspection None cleanOldStatus)) oldStatus newStatus [| DirectoryVersionDto.Default |]
+
+            let productionPublishingOperations =
+                { materializingOperations with
+                    PublishWatchStatusRecordsSupersededRoot = true
+                    PublishWatchStatus =
+                        fun authority status ->
+                            task {
+                                match! Watch.publishCurrentBranchMaterializedStatusForAuthorityForWatchTests authority status with
+                                | Ok () -> ()
+                                | Error error -> return raise (InvalidOperationException(error.Error))
+                            }
+                }
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests productionPublishingOperations true [| newPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            let cleanNewStatus =
+                { liveWatchStatus newRootId with
+                    RootDirectorySha256Hash = newStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = newStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| newRootId |])
+                }
+
+            let oldAnonymousPayload =
+                { currentBranchReferencePayload
+                      currentRepositoryId
+                      currentBranchId
+                      oldRootId
+                      oldStatus.RootDirectorySha256Hash
+                      oldStatus.RootDirectoryBlake3Hash with
+                    ReferenceId = ReferenceId.Empty
+                }
+
+            let skippedOperations, skippedFetchedRoots, skippedDownloadBatches, skippedAppliedPayloads, skippedPublishedStatuses =
+                recordingMaterializationOperations (ref (materializationInspection None cleanNewStatus)) newStatus oldStatus [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests skippedOperations true [| oldAnonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            skippedFetchedRoots.Count |> should equal 0
+            skippedDownloadBatches.Count |> should equal 0
+            skippedAppliedPayloads.Count |> should equal 0
+            skippedPublishedStatuses.Count |> should equal 0
+
+            let exhaustedOperations, exhaustedFetchedRoots, _, exhaustedAppliedPayloads, exhaustedPublishedStatuses =
+                recordingMaterializationOperations (ref (materializationInspection None cleanNewStatus)) newStatus oldStatus [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests exhaustedOperations true [| oldAnonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            exhaustedFetchedRoots
+            |> Seq.toArray
+            |> should equal [| oldRootId |]
+
+            exhaustedAppliedPayloads.Count |> should equal 1
+            exhaustedPublishedStatuses.Count |> should equal 1)
+
     /// Verifies that materialized publication does not retire unrelated queued same-branch payloads.
     [<Test>]
     let ``current branch materialization publication preserves newer queued payload`` () =
@@ -18229,6 +18704,7 @@ module WatchTests =
                         fun appliedPayload _ _ _ _ ->
                             appliedPayloads.Add(appliedPayload)
                             Task.FromResult<Result<GraceStatus, GraceError>>(Ok updatedStatus)
+                    PublishWatchStatusRecordsSupersededRoot = false
                     PublishWatchStatus =
                         fun _ status ->
                             publishedStatuses.Add(status)

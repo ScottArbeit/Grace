@@ -1157,15 +1157,16 @@ module Services =
     /// Preserves the old test reset hook after working-tree scans moved to fresh per-scan write-time maps.
     let internal clearWorkingDirectoryWriteTimesForWatchRescan () = ()
 
-    /// Gets a dictionary of local paths and their last write times.
-    let getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
+    /// Gets a dictionary of local paths and their last write times using an explicit working-tree root.
+    let getWorkingDirectoryWriteTimesAtRoot rootDirectory (directoryInfo: DirectoryInfo) =
         let localWriteTimes = ConcurrentDictionary<FileSystemEntryType * RelativePath, DateTime>()
+        let rootedWorkingDirectory = Path.GetFullPath(rootDirectory)
 
         /// Adds non-ignored working-tree entries to the current scan's write-time map.
         let rec addWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) =
             if shouldNotIgnoreDirectory directoryInfo.FullName then
                 // Add the current directory to the lookup dictionary
-                let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, directoryInfo.FullName)))
+                let directoryFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(rootedWorkingDirectory, directoryInfo.FullName)))
 
                 localWriteTimes.AddOrUpdate(
                     (FileSystemEntryType.Directory, directoryFullPath),
@@ -1179,7 +1180,7 @@ module Services =
                     directoryInfo
                         .GetFiles()
                         .Where(fun f -> not <| shouldIgnoreFile f.FullName) do
-                    let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(Current().RootDirectory, f.FullName)))
+                    let fileFullPath = RelativePath(normalizeFilePath (Path.GetRelativePath(rootedWorkingDirectory, f.FullName)))
 
                     localWriteTimes.AddOrUpdate((FileSystemEntryType.File, fileFullPath), (fun _ -> f.LastWriteTimeUtc), (fun _ _ -> f.LastWriteTimeUtc))
                     |> ignore
@@ -1194,6 +1195,9 @@ module Services =
 
         addWorkingDirectoryWriteTimes directoryInfo
         localWriteTimes
+
+    /// Gets a dictionary of local paths and their last write times.
+    let getWorkingDirectoryWriteTimes (directoryInfo: DirectoryInfo) = getWorkingDirectoryWriteTimesAtRoot (Current().RootDirectory) directoryInfo
 
     /// Reads local state db path from ParseResult, local configuration, or Grace ids.
     let private getLocalStateDbPath () = Current().GraceStatusFile
@@ -1234,10 +1238,11 @@ module Services =
     let upsertObjectCache (newDirectoryVersions: IEnumerable<LocalDirectoryVersion>) =
         LocalStateDb.upsertObjectCache (getLocalStateDbPath ()) newDirectoryVersions
 
-    /// Compared the repository's working directory against the Grace index file and returns the differences.
-    let scanForDifferences (previousGraceStatus: GraceStatus) =
+    /// Compares a captured working-tree root against the Grace index file and returns the differences.
+    let scanForDifferencesAtRoot rootDirectory (previousGraceStatus: GraceStatus) =
         task {
             try
+                let rootedWorkingDirectory = Path.GetFullPath(rootDirectory)
                 let lookupCache = Dictionary<FileSystemEntryType * RelativePath, (DateTime * Sha256Hash * Blake3Hash)>()
 
                 let differences = ConcurrentStack<FileSystemDifference>()
@@ -1265,7 +1270,7 @@ module Services =
                         $"scanForDifferences: previousGraceStatus contains {previousGraceStatus.Index.Count} DirectoryVersion entries, and {fileCount} files."
 
                 // Get an indexed lookup dictionary of path -> lastWriteTimeUtc from the working directory.
-                let localWriteTimes = getWorkingDirectoryWriteTimes (DirectoryInfo(Current().RootDirectory))
+                let localWriteTimes = getWorkingDirectoryWriteTimesAtRoot rootedWorkingDirectory (DirectoryInfo(rootedWorkingDirectory))
 
                 // Loop through the working directory list and compare it to the Grace Status index.
                 for kvp in localWriteTimes do
@@ -1286,7 +1291,7 @@ module Services =
                            && lastWriteTimeUtc <> knownLastWriteTimeUtc then
                             // If it's a directory, ignore it. I don't care when the local directory was created vs. the one stored in GraceIndex.
                             // If this is a file, then check that the contents have actually changed.
-                            let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, relativePath))
+                            let fileInfo = FileInfo(Path.Combine(rootedWorkingDirectory, relativePath))
 
                             match! createLocalFileVersion fileInfo with
                             | Some newFileVersion ->
@@ -1315,6 +1320,18 @@ module Services =
 
                 lastScanForDifferencesSucceeded <- true
                 return differences.ToList()
+            with
+            | ex ->
+                lastScanForDifferencesSucceeded <- false
+                logToAnsiConsole Colors.Error $"{ExceptionResponse.Create ex}"
+                return List<FileSystemDifference>()
+        }
+
+    /// Compared the repository's working directory against the Grace index file and returns the differences.
+    let scanForDifferences (previousGraceStatus: GraceStatus) =
+        task {
+            try
+                return! scanForDifferencesAtRoot (Current().RootDirectory) previousGraceStatus
             with
             | ex ->
                 lastScanForDifferencesSucceeded <- false
@@ -3599,31 +3616,56 @@ module Services =
                             let objectFile = FileInfo(objectFilePath)
 
                             if not <| objectFile.Exists then
+                                let currentObjectDirectory = Path.GetFullPath(Current().ObjectDirectory)
+
+                                let objectDirectoryComparison =
+                                    if OperatingSystem.IsWindows() then
+                                        StringComparison.OrdinalIgnoreCase
+                                    else
+                                        StringComparison.Ordinal
+
+                                if not (String.Equals(currentObjectDirectory, rootedObjectDirectory, objectDirectoryComparison)) then
+                                    resultError <-
+                                        Some(
+                                            GraceError.Create
+                                                $"Working directory update refused to download missing object {objectFilePath} because the active object cache changed before fallback download; retry after the tree can be re-evaluated."
+                                                correlationId
+                                        )
+
                                 // This is an error. There _should_ be a file in the object cache for every file in each DirectoryVersion.
                                 //   Anyway, we'll just download it from the server (again).
-                                let getDownloadUriParameters =
-                                    Storage.GetDownloadUriParameters(
-                                        OwnerId = $"{Current().OwnerId}",
-                                        OwnerName = Current().OwnerName,
-                                        OrganizationId = $"{Current().OrganizationId}",
-                                        OrganizationName = Current().OrganizationName,
-                                        RepositoryId = $"{Current().RepositoryId}",
-                                        RepositoryName = Current().RepositoryName,
-                                        CorrelationId = correlationId
-                                    )
+                                if resultError.IsNone then
+                                    let getDownloadUriParameters =
+                                        Storage.GetDownloadUriParameters(
+                                            OwnerId = $"{Current().OwnerId}",
+                                            OwnerName = Current().OwnerName,
+                                            OrganizationId = $"{Current().OrganizationId}",
+                                            OrganizationName = Current().OrganizationName,
+                                            RepositoryId = $"{Current().RepositoryId}",
+                                            RepositoryName = Current().RepositoryName,
+                                            CorrelationId = correlationId
+                                        )
 
-                                match! downloadFileVersionsForWorkingDirectoryUpdate getDownloadUriParameters [| sourceFileVersion |] correlationId with
-                                | Ok _ ->
-                                    logToAnsiConsole Colors.Verbose $"Downloaded {objectFilePath} from the object storage provider."
+                                    match! downloadFileVersionsForWorkingDirectoryUpdate getDownloadUriParameters [| sourceFileVersion |] correlationId with
+                                    | Ok _ ->
+                                        objectFile.Refresh()
 
-                                    ()
-                                | Error error ->
-                                    logToAnsiConsole
-                                        Colors.Error
-                                        $"An error occurred while downloading a file from the object storage provider. CorrelationId: {correlationId}."
+                                        if objectFile.Exists then
+                                            logToAnsiConsole Colors.Verbose $"Downloaded {objectFilePath} from the object storage provider."
+                                        else
+                                            resultError <-
+                                                Some(
+                                                    GraceError.Create
+                                                        $"Working directory update fallback download did not populate captured object cache path {objectFilePath}; retry after the tree can be re-evaluated."
+                                                        correlationId
+                                                )
+                                    | Error error ->
+                                        logToAnsiConsole
+                                            Colors.Error
+                                            $"An error occurred while downloading a file from the object storage provider. CorrelationId: {correlationId}."
 
-                                    logToAnsiConsole Colors.Error $"{error}"
-                                    resultError <- Some(GraceError.Create $"{error}" correlationId)
+                                        logToAnsiConsole Colors.Error $"{error}"
+                                        resultError <- Some(GraceError.Create $"{error}" correlationId)
 
                             if
                                 resultError.IsNone
