@@ -100,6 +100,21 @@ type OperationsUsageReadinessSnapshot =
         LastUnsupportedContract: string option
     }
 
+/// Identifies which dependency surface currently owns an Operations ingestion readiness failure.
+type internal OperationsUsageReadinessFailureSource =
+
+    /// Startup dependency failures are cleared only by a later successful startup pass.
+    | StartupDependency = 1
+
+    /// Runtime storage or processing failures are cleared by a later fresh durable message success.
+    | RuntimeProcessingDependency = 2
+
+    /// Service Bus receive/link failures are cleared only by receive-side recovery proof.
+    | ServiceBusProcessor = 3
+
+/// Captures the current readiness ordering point for one in-flight message.
+type OperationsUsageReadinessAttempt = { FailureVersion: int64 }
+
 /// Exposes a snapshot of the Operations ingestion readiness state.
 type IOperationsUsageReadinessProbe =
 
@@ -112,8 +127,20 @@ type IOperationsUsageReadinessRecorder =
     /// Marks ingestion dependencies as ready after SQL initialization and Service Bus processor startup succeed.
     abstract MarkReady: unit -> unit
 
+    /// Captures the readiness failure version visible when one message starts processing.
+    abstract BeginProcessingAttempt: unit -> OperationsUsageReadinessAttempt
+
     /// Records a redacted dependency failure that prevents the worker from being ready.
     abstract MarkDependencyFailure: description: string -> unit
+
+    /// Records a redacted runtime storage or processing failure that prevents the worker from being ready.
+    abstract MarkRuntimeProcessingFailure: description: string -> unit
+
+    /// Records a redacted Service Bus receive or link failure that prevents the worker from being ready.
+    abstract MarkServiceBusProcessorFailure: description: string -> unit
+
+    /// Clears a runtime storage or processing failure only when this success started after that failure.
+    abstract MarkRuntimeProcessingSuccess: attempt: OperationsUsageReadinessAttempt -> unit
 
     /// Records the latest unsupported ingestion contract observed at the broker boundary.
     abstract MarkUnsupportedContract: description: string -> unit
@@ -122,16 +149,33 @@ type IOperationsUsageReadinessRecorder =
 type OperationsUsageReadinessState() =
     let gate = obj ()
 
+    let mutable failureVersion = 0L
     let mutable status = OperationsUsageReadinessStatus.NotReady
-    let mutable dependencyFailure = Some "Operations usage worker has not completed dependency startup."
+
+    let mutable dependencyFailure =
+        Some
+            {|
+                Source = OperationsUsageReadinessFailureSource.StartupDependency
+                Description = "Operations usage worker has not completed dependency startup."
+                Version = failureVersion
+            |}
+
     let mutable lastUnsupportedContract: string option = None
+
+    let recordFailure source description =
+        failureVersion <- failureVersion + 1L
+        status <- OperationsUsageReadinessStatus.NotReady
+
+        dependencyFailure <- Some {| Source = source; Description = description; Version = failureVersion |}
 
     let snapshot () =
         lock gate (fun () ->
             {
                 Status = status
                 SupportedUsageFactSchemaVersion = UsageFactSchemaVersion
-                DependencyFailure = dependencyFailure
+                DependencyFailure =
+                    dependencyFailure
+                    |> Option.map (fun failure -> failure.Description)
                 LastUnsupportedContract = lastUnsupportedContract
             })
 
@@ -146,10 +190,27 @@ type OperationsUsageReadinessState() =
                 status <- OperationsUsageReadinessStatus.Ready
                 dependencyFailure <- None)
 
-        member _.MarkDependencyFailure(description) =
+        member _.BeginProcessingAttempt() = lock gate (fun () -> { FailureVersion = failureVersion })
+
+        member _.MarkDependencyFailure(description) = lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.StartupDependency description)
+
+        member _.MarkRuntimeProcessingFailure(description) =
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.RuntimeProcessingDependency description)
+
+        member _.MarkServiceBusProcessorFailure(description) =
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusProcessor description)
+
+        member _.MarkRuntimeProcessingSuccess(attempt) =
             lock gate (fun () ->
-                status <- OperationsUsageReadinessStatus.NotReady
-                dependencyFailure <- Some description)
+                match dependencyFailure with
+                | Some failure when
+                    failure.Source = OperationsUsageReadinessFailureSource.RuntimeProcessingDependency
+                    && failure.Version <= attempt.FailureVersion
+                    ->
+                    status <- OperationsUsageReadinessStatus.Ready
+                    dependencyFailure <- None
+                | None -> status <- OperationsUsageReadinessStatus.Ready
+                | Some _ -> ())
 
         member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
 
@@ -159,11 +220,11 @@ module internal OperationsUsageReadinessTransitions =
 
     /// Records a redacted Service Bus processor fault observed after startup.
     let recordServiceBusProcessorFault (readiness: IOperationsUsageReadinessRecorder) (errorSource: ServiceBusErrorSource) (ex: exn) =
-        readiness.MarkDependencyFailure($"Service Bus processor fault ({errorSource}, {ex.GetType().Name}).")
+        readiness.MarkServiceBusProcessorFailure($"Service Bus processor fault ({errorSource}, {ex.GetType().Name}).")
 
     /// Records a redacted runtime processing dependency failure that should recover after a later successful message.
     let recordRuntimeProcessingFailure (readiness: IOperationsUsageReadinessRecorder) (ex: exn) =
-        readiness.MarkDependencyFailure($"Runtime processing dependency failed ({ex.GetType().Name}).")
+        readiness.MarkRuntimeProcessingFailure($"Runtime processing dependency failed ({ex.GetType().Name}).")
 
 /// Adapts Operations ingestion readiness to the standard .NET health-check surface.
 type OperationsUsageReadinessHealthCheck(readiness: IOperationsUsageReadinessProbe) =
@@ -491,6 +552,8 @@ type OperationsUsageIngestionProcessor
     /// Processes a usage fact message and settles it only after the durable outcome is known.
     member _.ProcessMessageAsync(message: OperationsUsageMessage, actions: IOperationsUsageMessageActions, cancellationToken: CancellationToken) =
         task {
+            let readinessAttempt = readiness.BeginProcessingAttempt()
+
             try
                 cancellationToken.ThrowIfCancellationRequested()
 
@@ -576,7 +639,7 @@ type OperationsUsageIngestionProcessor
                                         |> Option.defaultValue Instant.MinValue
                                     )
 
-                                    readiness.MarkReady()
+                                    readiness.MarkRuntimeProcessingSuccess(readinessAttempt)
                                     do! actions.CompleteAsync cancellationToken
             with
             | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
