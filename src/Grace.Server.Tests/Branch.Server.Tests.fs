@@ -4,6 +4,7 @@ open Azure.Storage.Blobs.Models
 open Azure.Storage.Blobs.Specialized
 open Grace.Server.Tests.Services
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Services
 open Grace.Shared.Utilities
@@ -13,7 +14,9 @@ open Grace.Types
 open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.PersonalAccessToken
+open Grace.Types.Reference
 open Grace.Types.Visibility
+open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -60,6 +63,25 @@ module BranchServerTestHelpers =
             parameters.PrincipalType <- "User"
             parameters.PrincipalId <- principalId
             parameters.ScopeKind <- "repo"
+            parameters.RoleId <- roleId
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    /// Grants a branch-scoped role to a test user.
+    let grantBranchRoleAsync repositoryId branchId principalId roleId =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- branchId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- "branch"
             parameters.RoleId <- roleId
             parameters.Source <- "test"
             parameters.CorrelationId <- generateCorrelationId ()
@@ -235,6 +257,30 @@ module BranchServerTestHelpers =
 
         client.PostAsync(route, createJsonContent parameters)
 
+    /// Posts a branch reference-list query route with an explicit max count through the supplied test client.
+    let postBranchReferencesRouteWithMaxCountAsync (client: HttpClient) (route: string) repositoryId branchId maxCount =
+        let parameters = Parameters.Branch.GetReferencesParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.MaxCount <- maxCount
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync(route, createJsonContent parameters)
+
+    /// Posts a direct branch reference lookup through the supplied test client.
+    let postBranchReferenceLookupAsync (client: HttpClient) repositoryId branchId referenceId =
+        let parameters = Parameters.Branch.GetReferenceParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.ReferenceId <- referenceId
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync("/branch/getReference", createJsonContent parameters)
+
     /// Posts a branch version route through the supplied test client.
     let postBranchVersionRouteAsync (client: HttpClient) repositoryId branchId =
         let parameters = Parameters.Branch.GetBranchVersionParameters()
@@ -325,6 +371,29 @@ module BranchServerTestHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/branch/save", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<string>> response
+
+            Assert.That(returnValue.Properties.ContainsKey(nameof BranchId), Is.True)
+            Assert.That(returnValue.Properties.ContainsKey(nameof RepositoryId), Is.True)
+
+            return returnValue
+        }
+
+    /// Saves branch through the supplied authenticated client.
+    let saveBranchWithClientAsync (client: HttpClient) (repositoryId: string) (branch: Branch.BranchDto) =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+            parameters.Sha256Hash <- $"{branch.BasedOn.Sha256Hash}"
+            parameters.Message <- "Hosted private branch visibility proof save"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/branch/save", createJsonContent parameters)
             do! assertOk response
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
 
@@ -542,6 +611,22 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/save", createJsonContent parameters)
         }
 
+    /// Saves reference response through the supplied authenticated client.
+    let saveReferenceWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- directoryVersionId
+            parameters.Sha256Hash <- sha256Hash
+            parameters.Message <- "Private hash ownership proof save"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/save", createJsonContent parameters)
+        }
+
     /// Defines assign reference response behavior for the surrounding tests used by the server integration branch scenario.
     let assignReferenceResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
         task {
@@ -636,6 +721,34 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/listContents", createJsonContent parameters)
         }
 
+    /// Lists contents by SHA hash through the supplied authenticated client.
+    let listContentsByShaHashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) sha256Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/listContents", createJsonContent parameters)
+        }
+
+    /// Lists contents by BLAKE3 hash through the supplied authenticated client.
+    let listContentsByBlake3HashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) blake3Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Blake3Hash <- blake3Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/listContents", createJsonContent parameters)
+        }
+
     /// Gets version by SHA and BLAKE3 hash response from the running test server.
     let getVersionByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
         task {
@@ -651,6 +764,20 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/getVersion", createJsonContent parameters)
         }
 
+    /// Gets version by SHA hash through the supplied authenticated client.
+    let getVersionByShaHashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) sha256Hash =
+        task {
+            let parameters = Parameters.Branch.GetBranchVersionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/getVersion", createJsonContent parameters)
+        }
+
     /// Gets recursive size by SHA256 hash response from the running test server.
     let getRecursiveSizeBySha256HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash =
         task {
@@ -663,6 +790,20 @@ module BranchServerTestHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             return! Client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
+        }
+
+    /// Gets recursive size by SHA hash through the supplied authenticated client.
+    let getRecursiveSizeByShaHashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) sha256Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
         }
 
     /// Gets recursive size by BLAKE3 hash response from the running test server.
@@ -1243,6 +1384,387 @@ type BranchServer() =
             )
         }
 
+    /// Verifies private branch reference read surfaces hide leaked reference ids while branch admins retain observability.
+    [<Test>]
+    member _.PrivateContributorBranchReferencesAreHiddenFromObserverAndVisibleToBranchAdmin() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let branchAdminUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityReferences"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+            use branchAdminClient = BranchServerTestHelpers.createClientWithUserId branchAdminUserId
+
+            let! observerBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBranches |> Array.exactlyOne
+            let branchName = $"PrivateReference{Guid.NewGuid():N}"
+
+            let! privateBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch branchName "Private" "ContributorOwned"
+
+            let! creatorBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertOk creatorBranchResponse
+            let! creatorBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> creatorBranchResponse
+            let creatorBranch = creatorBranchReturnValue.ReturnValue
+
+            let! _saveReturnValue = BranchServerTestHelpers.saveBranchWithClientAsync creatorClient repositoryId creatorBranch
+            let! savedCreatorBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertOk savedCreatorBranchResponse
+            let! savedCreatorBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> savedCreatorBranchResponse
+            let savedCreatorBranch = savedCreatorBranchReturnValue.ReturnValue
+            let privateReferenceId = savedCreatorBranch.LatestSave.ReferenceId
+
+            Assert.That(privateReferenceId, Is.Not.EqualTo(ReferenceId.Empty))
+
+            do! BranchServerTestHelpers.grantBranchRoleAsync repositoryId privateBranchId branchAdminUserId "BranchAdmin"
+
+            let! observerEvents = BranchServerTestHelpers.postBranchIdRouteAsync observerClient "/branch/getEvents" repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerEvents
+
+            let! observerReferences = BranchServerTestHelpers.postBranchReferencesRouteAsync observerClient "/branch/getReferences" repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerReferences
+
+            let! observerDirectHidden =
+                BranchServerTestHelpers.postBranchReferenceLookupAsync observerClient repositoryId $"{parentBranch.BranchId}" $"{privateReferenceId}"
+
+            let! observerDirectHiddenBody = observerDirectHidden.Content.ReadAsStringAsync()
+            Assert.That(observerDirectHidden.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerDirectHiddenBody)
+
+            let observerHiddenReference =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto>> observerDirectHiddenBody)
+                    .ReturnValue
+
+            Assert.That(observerHiddenReference.ReferenceId, Is.EqualTo(ReferenceId.Empty))
+
+            let! observerDirectMissing =
+                BranchServerTestHelpers.postBranchReferenceLookupAsync observerClient repositoryId $"{parentBranch.BranchId}" $"{ReferenceId.NewGuid()}"
+
+            let! observerDirectMissingBody = observerDirectMissing.Content.ReadAsStringAsync()
+            Assert.That(observerDirectMissing.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerDirectMissingBody)
+
+            let observerMissingReference =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto>> observerDirectMissingBody)
+                    .ReturnValue
+
+            Assert.That(observerMissingReference.ReferenceId, Is.EqualTo(observerHiddenReference.ReferenceId))
+            Assert.That(observerMissingReference.DirectoryId, Is.EqualTo(observerHiddenReference.DirectoryId))
+
+            let! branchAdminReferences =
+                BranchServerTestHelpers.postBranchReferencesRouteWithMaxCountAsync branchAdminClient "/branch/getReferences" repositoryId privateBranchId 1
+
+            let! branchAdminReferencesBody = branchAdminReferences.Content.ReadAsStringAsync()
+            Assert.That(branchAdminReferences.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminReferencesBody)
+
+            let branchAdminReferenceWindow =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto array>> branchAdminReferencesBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminReferenceWindow, Has.Length.EqualTo(1))
+            Assert.That(branchAdminReferenceWindow[0].ReferenceId, Is.EqualTo(privateReferenceId))
+
+            let! branchAdminDirect =
+                BranchServerTestHelpers.postBranchReferenceLookupAsync branchAdminClient repositoryId privateBranchId $"{privateReferenceId}"
+
+            let! branchAdminDirectBody = branchAdminDirect.Content.ReadAsStringAsync()
+            Assert.That(branchAdminDirect.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminDirectBody)
+
+            let branchAdminReference =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto>> branchAdminDirectBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminReference.ReferenceId, Is.EqualTo(privateReferenceId))
+
+            let! branchAdminSaveBucket =
+                BranchServerTestHelpers.postBranchReferencesRouteWithMaxCountAsync branchAdminClient "/branch/getSaves" repositoryId privateBranchId 1
+
+            let! branchAdminSaveBucketBody = branchAdminSaveBucket.Content.ReadAsStringAsync()
+            Assert.That(branchAdminSaveBucket.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminSaveBucketBody)
+            Assert.That(branchAdminSaveBucketBody, Does.Contain($"{privateReferenceId}"))
+        }
+
+    /// Verifies hash-based content reads require an observable reference owner and do not treat known hashes as capabilities.
+    [<Test>]
+    member _.HashOwnedPrivateBranchContentIsHiddenFromRepositoryReaderAndVisibleToBranchAdmin() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let branchAdminUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityHashReads"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+            use branchAdminClient = BranchServerTestHelpers.createClientWithUserId branchAdminUserId
+
+            let! observerBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBranches |> Array.exactlyOne
+            let branchName = $"PrivateHashRead{Guid.NewGuid():N}"
+
+            let! privateBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch branchName "Private" "ContributorOwned"
+
+            let! creatorBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertOk creatorBranchResponse
+            let! creatorBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> creatorBranchResponse
+            let creatorBranch = creatorBranchReturnValue.ReturnValue
+
+            let payload = Encoding.UTF8.GetBytes($"private-hash-owned-content-{Guid.NewGuid():N}")
+
+            let fileVersion =
+                FileVersion.CreateWithHashes
+                    (RelativePath $"private/hash/{Guid.NewGuid():N}.txt")
+                    (BranchServerTestHelpers.sha256Hex payload)
+                    (BranchServerTestHelpers.blake3Hex payload)
+                    String.Empty
+                    false
+                    (int64 payload.Length)
+
+            let privateRoot = BranchServerTestHelpers.createRootDirectoryVersion repositoryId fileVersion
+
+            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload fileVersion
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ privateRoot ]
+
+            let! privateSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    creatorBranch
+                    privateRoot.DirectoryVersionId
+                    privateRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk privateSaveResponse
+
+            let! observerListContents =
+                BranchServerTestHelpers.listContentsByShaHashWithClientResponseAsync observerClient repositoryId parentBranch privateRoot.Sha256Hash
+
+            let! observerListContentsBody = observerListContents.Content.ReadAsStringAsync()
+            Assert.That(observerListContents.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerListContentsBody)
+
+            let observerContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> observerListContentsBody)
+                    .ReturnValue
+
+            Assert.That(observerContents, Is.Empty)
+
+            let! observerRecursiveSize =
+                BranchServerTestHelpers.getRecursiveSizeByShaHashWithClientResponseAsync observerClient repositoryId parentBranch privateRoot.Sha256Hash
+
+            let! observerRecursiveSizeBody = observerRecursiveSize.Content.ReadAsStringAsync()
+            Assert.That(observerRecursiveSize.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerRecursiveSizeBody)
+
+            let observerSize =
+                (deserialize<GraceReturnValue<int64>> observerRecursiveSizeBody)
+                    .ReturnValue
+
+            Assert.That(observerSize, Is.EqualTo(Constants.InitialDirectorySize))
+
+            let! observerVersion =
+                BranchServerTestHelpers.getVersionByShaHashWithClientResponseAsync observerClient repositoryId parentBranch privateRoot.Sha256Hash
+
+            let! observerVersionBody = observerVersion.Content.ReadAsStringAsync()
+            Assert.That(observerVersion.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerVersionBody)
+
+            let observerDirectoryIds =
+                (deserialize<GraceReturnValue<Guid array>> observerVersionBody)
+                    .ReturnValue
+
+            Assert.That(observerDirectoryIds, Is.Empty)
+
+            do! BranchServerTestHelpers.grantBranchRoleAsync repositoryId privateBranchId branchAdminUserId "BranchAdmin"
+
+            let! branchAdminListContents =
+                BranchServerTestHelpers.listContentsByShaHashWithClientResponseAsync branchAdminClient repositoryId creatorBranch privateRoot.Sha256Hash
+
+            let! branchAdminListContentsBody = branchAdminListContents.Content.ReadAsStringAsync()
+            Assert.That(branchAdminListContents.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminListContentsBody)
+
+            let branchAdminContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> branchAdminListContentsBody)
+                    .ReturnValue
+
+            Assert.That(
+                branchAdminContents
+                |> Array.exists (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = privateRoot.DirectoryVersionId),
+                Is.True
+            )
+
+            let! branchAdminRecursiveSize =
+                BranchServerTestHelpers.getRecursiveSizeByShaHashWithClientResponseAsync branchAdminClient repositoryId creatorBranch privateRoot.Sha256Hash
+
+            let! branchAdminRecursiveSizeBody = branchAdminRecursiveSize.Content.ReadAsStringAsync()
+            Assert.That(branchAdminRecursiveSize.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminRecursiveSizeBody)
+
+            let branchAdminSize =
+                (deserialize<GraceReturnValue<int64>> branchAdminRecursiveSizeBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminSize, Is.EqualTo(fileVersion.Size))
+
+            let! branchAdminVersion =
+                BranchServerTestHelpers.getVersionByShaHashWithClientResponseAsync branchAdminClient repositoryId creatorBranch privateRoot.Sha256Hash
+
+            let! branchAdminVersionBody = branchAdminVersion.Content.ReadAsStringAsync()
+            Assert.That(branchAdminVersion.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminVersionBody)
+
+            let branchAdminDirectoryIds =
+                (deserialize<GraceReturnValue<Guid array>> branchAdminVersionBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminDirectoryIds, Does.Contain(privateRoot.DirectoryVersionId))
+        }
+
+    /// Verifies public hash reads resolve after visibility filtering when a hidden root shares the requested prefix.
+    [<Test>]
+    member _.PublicBranchHashLookupIgnoresHiddenSamePrefixRoot() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityHashPrefix"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+
+            let! observerBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBranches |> Array.exactlyOne
+
+            let! visibleBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync
+                    creatorClient
+                    repositoryId
+                    parentBranch
+                    $"VisibleHashPrefix{Guid.NewGuid():N}"
+                    "Public"
+                    "RepositoryOwned"
+
+            let! hiddenBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync
+                    creatorClient
+                    repositoryId
+                    parentBranch
+                    $"HiddenHashPrefix{Guid.NewGuid():N}"
+                    "Private"
+                    "ContributorOwned"
+
+            let! visibleBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId visibleBranchId
+            do! BranchServerTestHelpers.assertOk visibleBranchResponse
+            let! visibleBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> visibleBranchResponse
+            let visibleBranch = visibleBranchReturnValue.ReturnValue
+
+            let! hiddenBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId hiddenBranchId
+            do! BranchServerTestHelpers.assertOk hiddenBranchResponse
+            let! hiddenBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> hiddenBranchResponse
+            let hiddenBranch = hiddenBranchReturnValue.ReturnValue
+
+            let visibleChild, visibleRoot, hiddenChild, hiddenRoot, sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"visibility-filtered-prefix/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        visibleChild
+                        visibleRoot
+                        hiddenChild
+                        hiddenRoot
+                    ]
+
+            let! visibleSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    visibleBranch
+                    visibleRoot.DirectoryVersionId
+                    visibleRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk visibleSaveResponse
+
+            let! hiddenSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    hiddenBranch
+                    hiddenRoot.DirectoryVersionId
+                    hiddenRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk hiddenSaveResponse
+
+            let! listContentsResponse =
+                BranchServerTestHelpers.listContentsByBlake3HashWithClientResponseAsync observerClient repositoryId visibleBranch (Blake3Hash sharedPrefix)
+
+            let! listContentsBody = listContentsResponse.Content.ReadAsStringAsync()
+            Assert.That(listContentsResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), listContentsBody)
+
+            let listContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> listContentsBody)
+                    .ReturnValue
+
+            Assert.That(
+                listContents
+                |> Array.exists (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = visibleRoot.DirectoryVersionId),
+                Is.True
+            )
+
+            Assert.That(
+                listContents
+                |> Array.exists (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = hiddenRoot.DirectoryVersionId),
+                Is.False
+            )
+        }
+
+    /// Verifies branch reference windows discard deleted newest rows before applying visible latest/list limits.
+    [<Test>]
+    member _.BranchReferenceWindowOrdersActiveRowsPastDeletedNewestRows() =
+        let baseInstant = getCurrentInstant ()
+
+        let olderVisibleReference = { Reference.ReferenceDto.Default with ReferenceId = ReferenceId.NewGuid(); CreatedAt = baseInstant }
+
+        let deletedNewestReferences =
+            [|
+                for index in 1..35 ->
+                    { Reference.ReferenceDto.Default with
+                        ReferenceId = ReferenceId.NewGuid()
+                        CreatedAt = baseInstant.Plus(Duration.FromSeconds(float index))
+                        DeletedAt = Some(baseInstant.Plus(Duration.FromSeconds(float (index + 100))))
+                    }
+            |]
+
+        let activeReferences =
+            Array.append [| olderVisibleReference |] deletedNewestReferences
+            |> Grace.Server.Branch.activeReferencesLatestFirst
+
+        Assert.That(activeReferences, Has.Length.EqualTo(1))
+        Assert.That(activeReferences[0].ReferenceId, Is.EqualTo(olderVisibleReference.ReferenceId))
+
+    /// Verifies public reference-window scan math does not cap legitimate MaxCount values below the caller request.
+    [<Test>]
+    member _.BranchReferenceScanLimitsHonorMaxCountAboveRefillCap() =
+        let requestedMaxCount = 1500
+
+        Assert.That(Grace.Server.Branch.visibleReferenceScanLimitCap requestedMaxCount, Is.EqualTo(requestedMaxCount))
+        Assert.That(Grace.Server.Branch.initialVisibleReferenceScanLimit requestedMaxCount, Is.EqualTo(requestedMaxCount))
+        Assert.That(Grace.Server.Branch.nextVisibleReferenceScanLimit requestedMaxCount 1024, Is.EqualTo(requestedMaxCount))
+
+    /// Verifies the branch reference-list helper accepts branch authority once instead of owning a per-row branch load seam.
+    [<Test>]
+    member _.BranchReferenceFilteringUsesSingleBranchAuthorityShape() =
+        let filter: Microsoft.AspNetCore.Http.HttpContext -> Branch.BranchDto -> int -> Reference.ReferenceDto seq -> Task<Reference.ReferenceDto array> =
+            Grace.Server.Branch.filterVisibleReferenceWindowForBranch
+
+        Assert.That(box filter, Is.Not.Null)
+
     /// Verifies that regular branches in public repositories default to public repository-owned visibility.
     [<Test>]
     member _.RegularPublicRepositoryBranchDefaultsPublicRepositoryOwned() =
@@ -1454,9 +1976,9 @@ type BranchServer() =
     [<Test>]
     member _.AssignWithShaOnlyRootPrefixIgnoresNewerChildDirectoryMatch() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
-            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "AssignRootPrefix"
+            let! repositoryBranches = BranchServerTestHelpers.getRepositoryBranchesAsync repositoryId
+            let parentBranch = repositoryBranches |> Array.exactlyOne
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignRootPrefix{Guid.NewGuid():N}"
 
             /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
@@ -1781,6 +2303,12 @@ type BranchServer() =
                         secondRoot
                     ]
 
+            let! firstSaveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
+            do! BranchServerTestHelpers.assertOk firstSaveResponse
+
+            let! secondSaveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch secondRoot.DirectoryVersionId secondRoot.Sha256Hash
+            do! BranchServerTestHelpers.assertOk secondSaveResponse
+
             /// Asserts ambiguous for integration responses.
             let assertAmbiguous (response: HttpResponseMessage) =
                 task {
@@ -1874,9 +2402,10 @@ type BranchServer() =
     [<Test>]
     member _.GetRecursiveSizeWithChildDirectoryBlake3MatchesShaLookup() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
-            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "RecursiveSizeHash"
+            let! repositoryBranches = BranchServerTestHelpers.getRepositoryBranchesAsync repositoryId
+            let parentBranch = repositoryBranches |> Array.exactlyOne
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"RecursiveSizeHash{Guid.NewGuid():N}"
             let payload = Encoding.UTF8.GetBytes($"recursive-size-child-{Guid.NewGuid():N}")
             let childPath = RelativePath $"recursive-size/{Guid.NewGuid():N}"
             let filePath = RelativePath $"{childPath}/sample.txt"
@@ -1895,8 +2424,10 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload fileVersion
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch root.DirectoryVersionId root.Sha256Hash
+            do! BranchServerTestHelpers.assertOk saveResponse
 
-            let! shaResponse = BranchServerTestHelpers.getRecursiveSizeBySha256HashResponseAsync repositoryId parentBranch child.Sha256Hash
+            let! shaResponse = BranchServerTestHelpers.getRecursiveSizeBySha256HashResponseAsync repositoryId branch child.Sha256Hash
             let! shaBody = shaResponse.Content.ReadAsStringAsync()
             Assert.That(shaResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), shaBody)
 
@@ -1904,7 +2435,7 @@ type BranchServer() =
                 (deserialize<GraceReturnValue<int64>> shaBody)
                     .ReturnValue
 
-            let! blake3Response = BranchServerTestHelpers.getRecursiveSizeByBlake3HashResponseAsync repositoryId parentBranch child.Blake3Hash
+            let! blake3Response = BranchServerTestHelpers.getRecursiveSizeByBlake3HashResponseAsync repositoryId branch child.Blake3Hash
             let! blake3Body = blake3Response.Content.ReadAsStringAsync()
             Assert.That(blake3Response.StatusCode, Is.EqualTo(HttpStatusCode.OK), blake3Body)
 
@@ -1980,9 +2511,10 @@ type BranchServer() =
     [<Test>]
     member _.HashReadQueriesUseShaToDisambiguateSharedBlake3RootPrefix() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
-            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "ReadPairedHash"
+            let! repositoryBranches = BranchServerTestHelpers.getRepositoryBranchesAsync repositoryId
+            let parentBranch = repositoryBranches |> Array.exactlyOne
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ReadPairedHash{Guid.NewGuid():N}"
 
             /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
@@ -1998,8 +2530,12 @@ type BranchServer() =
                         secondRoot
                     ]
 
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk saveResponse
+
             let! listContentsResponse =
-                BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
+                BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId branch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
 
             let! listContentsBody = listContentsResponse.Content.ReadAsStringAsync()
             Assert.That(listContentsResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), listContentsBody)
@@ -2015,7 +2551,7 @@ type BranchServer() =
             )
 
             let! getVersionResponse =
-                BranchServerTestHelpers.getVersionByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
+                BranchServerTestHelpers.getVersionByShaAndBlake3HashResponseAsync repositoryId branch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
 
             let! getVersionBody = getVersionResponse.Content.ReadAsStringAsync()
             Assert.That(getVersionResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), getVersionBody)
