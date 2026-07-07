@@ -417,7 +417,11 @@ module MaterializationPlan =
                             errors.Add("TargetSelector.BranchName must be empty for ReferenceId selectors.")
                     | MaterializationTargetSelectorKind.BranchName ->
                         match selector.BranchName with
-                        | Some branchName when Constants.GraceNameRegex.IsMatch(branchName) -> ()
+                        | Some branchName when
+                            not (String.IsNullOrWhiteSpace branchName)
+                            && Constants.GraceNameRegex.IsMatch(branchName)
+                            ->
+                            ()
                         | Some branchName when not (String.IsNullOrWhiteSpace branchName) ->
                             errors.Add("TargetSelector.BranchName must be a valid Grace branch name.")
                         | _ -> errors.Add("TargetSelector.BranchName is required.")
@@ -679,11 +683,17 @@ module MaterializationPlan =
                 else
                     let mutable targetRootZipCount = 0
                     let mutable recursiveMetadataCount = 0
+                    let wholeFileIdentities = HashSet<DirectoryVersionId * RelativePath>()
                     let cacheRequiredByExecutionMode = plan.ExecutionMode = MaterializationExecutionMode.CacheRequired
+                    let cacheBypassedByExecutionMode = plan.ExecutionMode = MaterializationExecutionMode.Direct
 
                     let cacheRequiredBySelection =
                         not (isNull (box plan.CacheSelection))
                         && plan.CacheSelection.SelectionKind = MaterializationCacheSelectionKind.RequireCache
+
+                    let cacheBypassedBySelection =
+                        not (isNull (box plan.CacheSelection))
+                        && plan.CacheSelection.SelectionKind = MaterializationCacheSelectionKind.BypassCache
 
                     for descriptor in plan.RequiredArtifacts do
                         match validateArtifactDescriptor descriptor with
@@ -691,6 +701,16 @@ module MaterializationPlan =
                         | Error descriptorErrors -> errors.AddRange(descriptorErrors)
 
                         if not (isNull (box descriptor)) then
+                            if cacheBypassedByExecutionMode
+                               || cacheBypassedBySelection then
+                                match descriptor.Source with
+                                | Some source when
+                                    not (isNull (box source))
+                                    && source.SourceKind = MaterializationArtifactSourceKind.CacheEntry
+                                    ->
+                                    errors.Add("Direct/Bypass plans must not require CacheEntry artifact sources.")
+                                | _ -> ()
+
                             if cacheRequiredByExecutionMode
                                || cacheRequiredBySelection then
                                 match descriptor.Source with
@@ -715,6 +735,15 @@ module MaterializationPlan =
                             if descriptor.ArtifactKind = MaterializationArtifactKind.RecursiveDirectoryMetadata
                                && descriptor.TargetRootDirectoryVersionId = plan.TargetRootDirectoryVersionId then
                                 recursiveMetadataCount <- recursiveMetadataCount + 1
+
+                            if descriptor.ArtifactKind = MaterializationArtifactKind.WholeFileContent then
+                                match descriptor.RelativePath with
+                                | Some relativePath when
+                                    not (String.IsNullOrWhiteSpace relativePath)
+                                    && not (wholeFileIdentities.Add(descriptor.TargetRootDirectoryVersionId, relativePath))
+                                    ->
+                                    errors.Add("RequiredArtifacts must include at most one WholeFileContent for each target root and relative path.")
+                                | _ -> ()
 
                     if targetRootZipCount = 0 then
                         errors.Add("RequiredArtifacts must include DirectoryVersionZip for the target root.")

@@ -48,6 +48,16 @@ module MaterializationPlanTestData =
             MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(targetRoot, Some MaterializationArtifactSource.Deferred)
         ]
 
+    /// Builds V1 target-root artifact descriptors that are compatible with direct materialization.
+    let directRootArtifacts targetRoot =
+        [
+            MaterializationArtifactDescriptor.DirectoryVersionZip(
+                targetRoot,
+                Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip")
+            )
+            MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(targetRoot, Some MaterializationArtifactSource.Deferred)
+        ]
+
     /// Builds a valid Materialization Plan with all current artifact descriptor kinds represented.
     let validPlan () =
         MaterializationPlan.Create(
@@ -708,12 +718,17 @@ type MaterializationPlanContractTests() =
     [<TestCase(MaterializationExecutionMode.CachePreferred, MaterializationCacheSelectionKind.PreferCache)>]
     [<TestCase(MaterializationExecutionMode.CacheRequired, MaterializationCacheSelectionKind.RequireCache)>]
     member _.SupportedPlanExecutionCacheSelectionPairsValidate(mode: MaterializationExecutionMode, selectionKind: MaterializationCacheSelectionKind) =
+        let rootArtifacts =
+            match mode with
+            | MaterializationExecutionMode.Direct -> MaterializationPlanTestData.directRootArtifacts
+            | _ -> MaterializationPlanTestData.rootArtifacts
+
         let plan =
             MaterializationPlan.Create(
                 MaterializationPlanTestData.targetRootDirectoryVersionId,
                 mode,
                 { MaterializationCacheSelection.Preferred with SelectionKind = selectionKind },
-                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+                rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
             )
 
         assertValid (Validation.validatePlan plan)
@@ -787,6 +802,101 @@ type MaterializationPlanContractTests() =
         let selector = MaterializationTargetSelector.ForBranch(BranchName branchName)
 
         assertInvalid "TargetSelector.BranchName must be a valid Grace branch name." (Validation.validateTargetSelector selector)
+
+    /// Verifies that malformed branch target selector DTOs fail closed instead of reaching regex with a null input.
+    [<Test>]
+    member _.BranchTargetSelectorWithNullNameFailsValidationWithoutThrowing() =
+        let selector = { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with BranchName = Some Unchecked.defaultof<BranchName> }
+
+        Assert.DoesNotThrow(
+            Action (fun () ->
+                Validation.validateTargetSelector selector
+                |> ignore)
+        )
+
+        assertInvalid "TargetSelector.BranchName is required." (Validation.validateTargetSelector selector)
+
+    /// Verifies that direct plans reject cache-entry artifact sources even when the execution/cache pair is valid.
+    [<Test>]
+    member _.DirectBypassPlanRejectsCacheEntryArtifactSources() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Bypass,
+                [
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
+                    )
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some MaterializationArtifactSource.Deferred
+                    )
+                ]
+            )
+
+        assertInvalid "Direct/Bypass plans must not require CacheEntry artifact sources." (Validation.validatePlan plan)
+
+    /// Verifies that whole-file artifact identity is unique by target root and repository-relative path.
+    [<Test>]
+    member _.PlanRejectsDuplicateWholeFileContentForSameRootAndRelativePath() =
+        let duplicatePath = RelativePath "src/app.fs"
+
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Bypass,
+                [
+                    yield! MaterializationPlanTestData.directRootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+                    MaterializationArtifactDescriptor.WholeFileContent(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        duplicatePath,
+                        Some MaterializationPlanTestData.sha256Hash,
+                        None,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/src/app-v1.fs")
+                    )
+                    MaterializationArtifactDescriptor.WholeFileContent(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        duplicatePath,
+                        None,
+                        Some MaterializationPlanTestData.blake3Hash,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/src/app-v2.fs")
+                    )
+                ]
+            )
+
+        assertInvalid "RequiredArtifacts must include at most one WholeFileContent for each target root and relative path." (Validation.validatePlan plan)
+
+    /// Verifies that whole-file descriptors for distinct repository-relative paths remain valid in direct plans.
+    [<Test>]
+    member _.PlanAllowsWholeFileContentForDistinctRelativePaths() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Bypass,
+                [
+                    yield! MaterializationPlanTestData.directRootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+                    MaterializationArtifactDescriptor.WholeFileContent(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        RelativePath "src/app.fs",
+                        Some MaterializationPlanTestData.sha256Hash,
+                        None,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/src/app.fs")
+                    )
+                    MaterializationArtifactDescriptor.WholeFileContent(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        RelativePath "src/appsettings.json",
+                        Some(Sha256Hash "ffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffffff"),
+                        None,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/src/appsettings.json")
+                    )
+                ]
+            )
+
+        assertValid (Validation.validatePlan plan)
 
     /// Verifies that whole-file descriptors reject blank hash fields even when the other hash is valid.
     [<TestCase(true)>]
