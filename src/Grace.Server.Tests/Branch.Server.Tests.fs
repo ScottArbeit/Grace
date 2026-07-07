@@ -608,6 +608,22 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/save", createJsonContent parameters)
         }
 
+    /// Saves reference response through the supplied authenticated client.
+    let saveReferenceWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- directoryVersionId
+            parameters.Sha256Hash <- sha256Hash
+            parameters.Message <- "Private hash ownership proof save"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/save", createJsonContent parameters)
+        }
+
     /// Defines assign reference response behavior for the surrounding tests used by the server integration branch scenario.
     let assignReferenceResponseAsync repositoryId (branch: Branch.BranchDto) directoryVersionId sha256Hash =
         task {
@@ -702,6 +718,20 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/listContents", createJsonContent parameters)
         }
 
+    /// Lists contents by SHA hash through the supplied authenticated client.
+    let listContentsByShaHashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) sha256Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/listContents", createJsonContent parameters)
+        }
+
     /// Gets version by SHA and BLAKE3 hash response from the running test server.
     let getVersionByShaAndBlake3HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash blake3Hash =
         task {
@@ -717,6 +747,20 @@ module BranchServerTestHelpers =
             return! Client.PostAsync("/branch/getVersion", createJsonContent parameters)
         }
 
+    /// Gets version by SHA hash through the supplied authenticated client.
+    let getVersionByShaHashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) sha256Hash =
+        task {
+            let parameters = Parameters.Branch.GetBranchVersionParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/getVersion", createJsonContent parameters)
+        }
+
     /// Gets recursive size by SHA256 hash response from the running test server.
     let getRecursiveSizeBySha256HashResponseAsync repositoryId (branch: Branch.BranchDto) sha256Hash =
         task {
@@ -729,6 +773,20 @@ module BranchServerTestHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             return! Client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
+        }
+
+    /// Gets recursive size by SHA hash through the supplied authenticated client.
+    let getRecursiveSizeByShaHashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) sha256Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Sha256Hash <- sha256Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/getRecursiveSize", createJsonContent parameters)
         }
 
     /// Gets recursive size by BLAKE3 hash response from the running test server.
@@ -1413,6 +1471,140 @@ type BranchServer() =
             Assert.That(branchAdminSaveBucketBody, Does.Contain($"{privateReferenceId}"))
         }
 
+    /// Verifies hash-based content reads require an observable reference owner and do not treat known hashes as capabilities.
+    [<Test>]
+    member _.HashOwnedPrivateBranchContentIsHiddenFromRepositoryReaderAndVisibleToBranchAdmin() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let branchAdminUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityHashReads"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+            use branchAdminClient = BranchServerTestHelpers.createClientWithUserId branchAdminUserId
+
+            let! observerBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBranches |> Array.exactlyOne
+            let branchName = $"PrivateHashRead{Guid.NewGuid():N}"
+
+            let! privateBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch branchName "Private" "ContributorOwned"
+
+            let! creatorBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertOk creatorBranchResponse
+            let! creatorBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> creatorBranchResponse
+            let creatorBranch = creatorBranchReturnValue.ReturnValue
+
+            let payload = Encoding.UTF8.GetBytes($"private-hash-owned-content-{Guid.NewGuid():N}")
+
+            let fileVersion =
+                FileVersion.CreateWithHashes
+                    (RelativePath $"private/hash/{Guid.NewGuid():N}.txt")
+                    (BranchServerTestHelpers.sha256Hex payload)
+                    (BranchServerTestHelpers.blake3Hex payload)
+                    String.Empty
+                    false
+                    (int64 payload.Length)
+
+            let privateRoot = BranchServerTestHelpers.createRootDirectoryVersion repositoryId fileVersion
+
+            do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload fileVersion
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ privateRoot ]
+
+            let! privateSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    creatorBranch
+                    privateRoot.DirectoryVersionId
+                    privateRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk privateSaveResponse
+
+            let! observerListContents =
+                BranchServerTestHelpers.listContentsByShaHashWithClientResponseAsync observerClient repositoryId parentBranch privateRoot.Sha256Hash
+
+            let! observerListContentsBody = observerListContents.Content.ReadAsStringAsync()
+            Assert.That(observerListContents.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerListContentsBody)
+
+            let observerContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> observerListContentsBody)
+                    .ReturnValue
+
+            Assert.That(observerContents, Is.Empty)
+
+            let! observerRecursiveSize =
+                BranchServerTestHelpers.getRecursiveSizeByShaHashWithClientResponseAsync observerClient repositoryId parentBranch privateRoot.Sha256Hash
+
+            let! observerRecursiveSizeBody = observerRecursiveSize.Content.ReadAsStringAsync()
+            Assert.That(observerRecursiveSize.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerRecursiveSizeBody)
+
+            let observerSize =
+                (deserialize<GraceReturnValue<int64>> observerRecursiveSizeBody)
+                    .ReturnValue
+
+            Assert.That(observerSize, Is.EqualTo(Constants.InitialDirectorySize))
+
+            let! observerVersion =
+                BranchServerTestHelpers.getVersionByShaHashWithClientResponseAsync observerClient repositoryId parentBranch privateRoot.Sha256Hash
+
+            let! observerVersionBody = observerVersion.Content.ReadAsStringAsync()
+            Assert.That(observerVersion.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerVersionBody)
+
+            let observerDirectoryIds =
+                (deserialize<GraceReturnValue<Guid array>> observerVersionBody)
+                    .ReturnValue
+
+            Assert.That(observerDirectoryIds, Is.Empty)
+
+            do! BranchServerTestHelpers.grantBranchRoleAsync repositoryId privateBranchId branchAdminUserId "BranchAdmin"
+
+            let! branchAdminListContents =
+                BranchServerTestHelpers.listContentsByShaHashWithClientResponseAsync branchAdminClient repositoryId creatorBranch privateRoot.Sha256Hash
+
+            let! branchAdminListContentsBody = branchAdminListContents.Content.ReadAsStringAsync()
+            Assert.That(branchAdminListContents.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminListContentsBody)
+
+            let branchAdminContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> branchAdminListContentsBody)
+                    .ReturnValue
+
+            Assert.That(
+                branchAdminContents
+                |> Array.exists (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = privateRoot.DirectoryVersionId),
+                Is.True
+            )
+
+            let! branchAdminRecursiveSize =
+                BranchServerTestHelpers.getRecursiveSizeByShaHashWithClientResponseAsync branchAdminClient repositoryId creatorBranch privateRoot.Sha256Hash
+
+            let! branchAdminRecursiveSizeBody = branchAdminRecursiveSize.Content.ReadAsStringAsync()
+            Assert.That(branchAdminRecursiveSize.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminRecursiveSizeBody)
+
+            let branchAdminSize =
+                (deserialize<GraceReturnValue<int64>> branchAdminRecursiveSizeBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminSize, Is.EqualTo(fileVersion.Size))
+
+            let! branchAdminVersion =
+                BranchServerTestHelpers.getVersionByShaHashWithClientResponseAsync branchAdminClient repositoryId creatorBranch privateRoot.Sha256Hash
+
+            let! branchAdminVersionBody = branchAdminVersion.Content.ReadAsStringAsync()
+            Assert.That(branchAdminVersion.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminVersionBody)
+
+            let branchAdminDirectoryIds =
+                (deserialize<GraceReturnValue<Guid array>> branchAdminVersionBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminDirectoryIds, Does.Contain(privateRoot.DirectoryVersionId))
+        }
+
     /// Verifies that regular branches in public repositories default to public repository-owned visibility.
     [<Test>]
     member _.RegularPublicRepositoryBranchDefaultsPublicRepositoryOwned() =
@@ -2065,6 +2257,8 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload fileVersion
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId parentBranch root.DirectoryVersionId root.Sha256Hash
+            do! BranchServerTestHelpers.assertOk saveResponse
 
             let! shaResponse = BranchServerTestHelpers.getRecursiveSizeBySha256HashResponseAsync repositoryId parentBranch child.Sha256Hash
             let! shaBody = shaResponse.Content.ReadAsStringAsync()
@@ -2167,6 +2361,10 @@ type BranchServer() =
                         secondChild
                         secondRoot
                     ]
+
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId parentBranch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk saveResponse
 
             let! listContentsResponse =
                 BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)

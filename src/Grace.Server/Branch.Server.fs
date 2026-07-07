@@ -42,6 +42,8 @@ module Branch =
 
     let private branchHashLookupErrorItemKey = "BranchHashLookupError"
     let private callerSuppliedBranchIdItemKey = "CallerSuppliedBranchId"
+    let private visibleReferenceInitialScanLimit = 32
+    let private visibleReferenceMaxScanLimit = 1024
 
     /// Implements branch hash lookup description for the server request pipeline.
     let private branchHashLookupDescription (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
@@ -1009,22 +1011,63 @@ module Branch =
                         .ToArray()
         }
 
+    /// Chooses the first bounded reference-history scan size for a public reference window.
+    let private initialVisibleReferenceScanLimit maxCount =
+        if maxCount <= 0 then
+            0
+        else
+            Math.Min(visibleReferenceMaxScanLimit, Math.Max(visibleReferenceInitialScanLimit, maxCount))
+
+    /// Chooses the next bounded reference-history scan size for a public reference window refill.
+    let private nextVisibleReferenceScanLimit currentLimit =
+        if currentLimit >= visibleReferenceMaxScanLimit then
+            currentLimit
+        else
+            Math.Min(visibleReferenceMaxScanLimit, currentLimit * 2)
+
+    /// Reads and refills a bounded branch reference-history window before public max-count projection.
+    let private getVisibleReferencesWithLoader (context: HttpContext) maxCount (loadReferences: int -> Task<Reference.ReferenceDto array>) =
+        task {
+            if maxCount <= 0 then
+                return Array.empty<Reference.ReferenceDto>
+            else
+                let mutable queryLimit = initialVisibleReferenceScanLimit maxCount
+                let mutable visibleReferences = Array.empty<Reference.ReferenceDto>
+                let mutable lastFetchedCount = 0
+                let mutable keepScanning = true
+
+                while keepScanning do
+                    let! references = loadReferences queryLimit
+                    lastFetchedCount <- references.Length
+                    let! filteredReferences = filterVisibleReferenceWindow context maxCount references
+                    visibleReferences <- filteredReferences
+
+                    let nextQueryLimit = nextVisibleReferenceScanLimit queryLimit
+
+                    keepScanning <-
+                        filteredReferences.Length < maxCount
+                        && lastFetchedCount >= queryLimit
+                        && nextQueryLimit > queryLimit
+
+                    queryLimit <- nextQueryLimit
+
+                return visibleReferences
+        }
+
     /// Reads a branch reference window with hidden rows removed before max-count projection.
     let private getVisibleReferences (context: HttpContext) (branchDto: BranchDto) maxCount =
         task {
-            let queryLimit = if maxCount = 0 then 0 else Int32.MaxValue
-
-            let! references = getReferences branchDto.RepositoryId branchDto.BranchId queryLimit (getCorrelationId context)
-            return! filterVisibleReferenceWindow context maxCount references
+            return!
+                getVisibleReferencesWithLoader context maxCount (fun queryLimit ->
+                    getReferences branchDto.RepositoryId branchDto.BranchId queryLimit (getCorrelationId context))
         }
 
     /// Reads a typed branch reference window with hidden rows removed before max-count projection.
     let private getVisibleReferencesByType (context: HttpContext) (branchDto: BranchDto) referenceType maxCount =
         task {
-            let queryLimit = if maxCount = 0 then 0 else Int32.MaxValue
-
-            let! references = getReferencesByType referenceType branchDto.RepositoryId branchDto.BranchId queryLimit (getCorrelationId context)
-            return! filterVisibleReferenceWindow context maxCount references
+            return!
+                getVisibleReferencesWithLoader context maxCount (fun queryLimit ->
+                    getReferencesByType referenceType branchDto.RepositoryId branchDto.BranchId queryLimit (getCorrelationId context))
         }
 
     /// Selects the latest reference that remains observable after inherited branch visibility is applied.
@@ -1037,18 +1080,15 @@ module Branch =
     /// Builds latest reference buckets from visible rows only so hidden rows cannot occupy a requested type bucket.
     let private getLatestVisibleReferencesByTypes (context: HttpContext) (branchDto: BranchDto) (referenceTypes: ReferenceType array) =
         task {
-            let! references = getVisibleReferences context branchDto Int32.MaxValue
             let buckets = Dictionary<ReferenceType, Reference.ReferenceDto>()
 
             let mutable index = 0
 
             while index < referenceTypes.Length do
                 let referenceType = referenceTypes[index]
+                let! references = getVisibleReferencesByType context branchDto referenceType 1
 
-                references
-                    .Where(fun referenceDto -> referenceDto.ReferenceType = referenceType)
-                    .OrderByDescending(fun referenceDto -> referenceDto.CreatedAt)
-                    .FirstOrDefault(Reference.ReferenceDto.Default)
+                references.FirstOrDefault(Reference.ReferenceDto.Default)
                 |> fun referenceDto ->
                     if referenceDto.ReferenceId <> ReferenceId.Empty then
                         buckets[referenceType] <- referenceDto
@@ -1067,6 +1107,75 @@ module Branch =
                 let! branchDto = loadReferenceBranch referenceDto (getCorrelationId context)
                 let! isObservable = canObserveReferenceInBranch context branchDto referenceDto
                 return if isObservable then referenceDto else Reference.ReferenceDto.Default
+        }
+
+    /// Checks whether an observable reference's root directory owns the requested directory version.
+    let private referenceOwnsDirectoryVersion
+        (repositoryId: RepositoryId)
+        (correlationId: CorrelationId)
+        (targetDirectoryVersionId: DirectoryVersionId)
+        (referenceDto: Reference.ReferenceDto)
+        =
+        task {
+            if referenceDto.DirectoryId = targetDirectoryVersionId then
+                return true
+            else
+                let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+                let! directoryVersionDtos = directoryActorProxy.GetRecursiveDirectoryVersions false correlationId
+
+                return directoryVersionDtos.Any(fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = targetDirectoryVersionId)
+        }
+
+    /// Finds an observable branch reference that owns a directory resolved by caller-supplied hash evidence.
+    let private tryFindObservableDirectoryOwnerReference (context: HttpContext) (branchDto: BranchDto) (targetDirectoryVersionId: DirectoryVersionId) =
+        task {
+            let correlationId = getCorrelationId context
+            let! references = getVisibleReferences context branchDto visibleReferenceMaxScanLimit
+            let mutable index = 0
+            let mutable ownerReference = Reference.ReferenceDto.Default
+
+            while index < references.Length
+                  && ownerReference.ReferenceId = ReferenceId.Empty do
+                let! ownsDirectory = referenceOwnsDirectoryVersion branchDto.RepositoryId correlationId targetDirectoryVersionId references[index]
+
+                if ownsDirectory then ownerReference <- references[index]
+
+                index <- index + 1
+
+            if ownerReference.ReferenceId = ReferenceId.Empty then
+                return None
+            else
+                return Some ownerReference
+        }
+
+    /// Resolves hash-addressed directory data only when the requested branch has an observable owning reference.
+    let private tryResolveObservableDirectoryVersionByHash
+        (context: HttpContext)
+        (actorProxy: IBranchActor)
+        (repositoryId: RepositoryId)
+        (sha256Hash: Sha256Hash)
+        (blake3Hash: Blake3Hash)
+        (resolveByHash: RepositoryId
+                            -> Sha256Hash
+                            -> Blake3Hash
+                            -> CorrelationId
+                            -> Task<Services.VersionHashPrefixResolution<Grace.Types.Common.DirectoryVersion>>)
+        =
+        task {
+            let correlationId = getCorrelationId context
+
+            match! resolveByHash repositoryId sha256Hash blake3Hash correlationId with
+            | Services.UniqueMatch directoryVersion ->
+                let! branchDto = actorProxy.Get correlationId
+                let! ownerReference = tryFindObservableDirectoryOwnerReference context branchDto directoryVersion.DirectoryVersionId
+
+                match ownerReference with
+                | Some _ -> return Some directoryVersion
+                | None -> return None
+            | Services.NoMatches -> return None
+            | Services.AmbiguousMatches _ ->
+                setAmbiguousBranchHashLookupError context sha256Hash blake3Hash correlationId
+                return None
         }
 
     /// Creates a new branch.
@@ -2757,22 +2866,20 @@ module Branch =
                                     return recursiveSize
                             else
                                 match!
-                                    Services.getDirectoryVersionResolutionByHashQuery
+                                    tryResolveObservableDirectoryVersionByHash
+                                        context
+                                        actorProxy
                                         graceIds.RepositoryId
                                         listContentsParameters.Sha256Hash
                                         listContentsParameters.Blake3Hash
-                                        correlationId
+                                        Services.getDirectoryVersionResolutionByHashQuery
                                     with
-                                | Services.UniqueMatch directoryVersion ->
+                                | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
                                     return recursiveSize
-                                | Services.NoMatches -> return Constants.InitialDirectorySize
-                                | Services.AmbiguousMatches _ ->
-                                    setAmbiguousBranchHashLookupError context listContentsParameters.Sha256Hash listContentsParameters.Blake3Hash correlationId
-
-                                    return Constants.InitialDirectorySize
+                                | None -> return Constants.InitialDirectorySize
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -2874,23 +2981,21 @@ module Branch =
                                     return contents
                             else
                                 match!
-                                    Services.getRootDirectoryVersionResolutionByHashQuery
+                                    tryResolveObservableDirectoryVersionByHash
+                                        context
+                                        actorProxy
                                         graceIds.RepositoryId
                                         listContentsParameters.Sha256Hash
                                         listContentsParameters.Blake3Hash
-                                        correlationId
+                                        Services.getRootDirectoryVersionResolutionByHashQuery
                                     with
-                                | Services.UniqueMatch directoryVersion ->
+                                | Some directoryVersion ->
                                     let directoryActorProxy = DirectoryVersion.CreateActorProxy directoryVersion.DirectoryVersionId repositoryId correlationId
 
                                     let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
                                     return contents
-                                | Services.NoMatches -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
-                                | Services.AmbiguousMatches _ ->
-                                    setAmbiguousBranchHashLookupError context listContentsParameters.Sha256Hash listContentsParameters.Blake3Hash correlationId
-
-                                    return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
+                                | None -> return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
                         }
 
                     let! parameters = context |> parse<ListContentsParameters>
@@ -2951,12 +3056,14 @@ module Branch =
                 not (String.IsNullOrEmpty(parameters.Sha256Hash))
                 || not (String.IsNullOrEmpty(parameters.Blake3Hash))
             then
-                match! Services.getRootDirectoryVersionResolutionByHashQuery repositoryId parameters.Sha256Hash parameters.Blake3Hash correlationId with
-                | Services.UniqueMatch directoryVersion -> return Some directoryVersion
-                | Services.NoMatches -> return None
-                | Services.AmbiguousMatches _ ->
-                    setAmbiguousBranchHashLookupError context parameters.Sha256Hash parameters.Blake3Hash correlationId
-                    return None
+                return!
+                    tryResolveObservableDirectoryVersionByHash
+                        context
+                        actorProxy
+                        repositoryId
+                        parameters.Sha256Hash
+                        parameters.Blake3Hash
+                        Services.getRootDirectoryVersionResolutionByHashQuery
             elif
                 not
                 <| String.IsNullOrEmpty(parameters.ReferenceId)
