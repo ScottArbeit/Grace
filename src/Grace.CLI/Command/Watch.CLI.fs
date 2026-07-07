@@ -2207,6 +2207,19 @@ module Watch =
 
         { HasProcessablePendingWork = hasProcessablePendingWork; HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence () }
 
+    let mutable private readPendingWatchWorkEvidenceForStatusPublication = readPendingWatchWorkEvidence
+
+    /// Replaces the pending-work evidence reader so tests can prove IPC publication fails closed when freshness changes at the attempt limit.
+    let internal setPendingWatchWorkEvidenceReaderForWatchTests reader =
+        readPendingWatchWorkEvidenceForStatusPublication <-
+            fun () ->
+                let hasProcessablePendingWork, hasDurableWatchJournalEvidence = reader ()
+
+                { HasProcessablePendingWork = hasProcessablePendingWork; HasDurableWatchJournalEvidence = hasDurableWatchJournalEvidence }
+
+    /// Restores the default pending-work evidence reader after IPC publication tests replace it.
+    let internal resetPendingWatchWorkEvidenceReaderForWatchTests () = readPendingWatchWorkEvidenceForStatusPublication <- readPendingWatchWorkEvidence
+
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
 
@@ -2305,7 +2318,7 @@ module Watch =
                   && attempts < 2
                   && not publicationFailed do
                 attempts <- attempts + 1
-                let pendingEvidence = readPendingWatchWorkEvidence ()
+                let pendingEvidence = readPendingWatchWorkEvidenceForStatusPublication ()
                 let hasPendingWork = pendingEvidence.HasPendingWork
                 setGraceWatchHasPendingWorkForStatus hasPendingWork
                 let publicationStartedAt = getCurrentInstant ()
@@ -2340,8 +2353,14 @@ module Watch =
                     logToAnsiConsole Colors.Error $"Grace Watch failed to publish pending-work status transition: {ex.Message}"
 
                 pendingWorkChangedDuringWrite <-
-                    (readPendingWatchWorkEvidence ()).HasPendingWork
+                    (readPendingWatchWorkEvidenceForStatusPublication ())
+                        .HasPendingWork
                     <> hasPendingWork
+
+            if pendingWorkChangedDuringWrite
+               && not publicationFailed then
+                lastPublishedHasPendingWatchWork <- None
+                transitionWasPublished <- false
 
             transitionWasPublished)
 
@@ -3324,6 +3343,10 @@ module Watch =
     let private supersededCurrentBranchMaterializationRoots = Dictionary<string, SupersededCurrentBranchMaterializationRoot>(StringComparer.Ordinal)
     let private maxAnonymousCurrentBranchMaterializationRejections = 1024
     let mutable private lastPublishedCurrentBranchCleanRoot: (RepositoryId * BranchId * DirectoryVersionId) option = None
+    let mutable private lastPublishedCurrentBranchCleanRootGeneration = 0L
+
+    /// Reads the clean-root publication generation so blocked enqueue can detect when local clean authority advanced after its decision.
+    let private currentPublishedCurrentBranchCleanRootGeneration () = Volatile.Read(&lastPublishedCurrentBranchCleanRootGeneration)
     let private currentBranchMaterializationGate = new SemaphoreSlim(1, 1)
 
     /// Builds a process-local root-history key for current-branch materialization freshness checks.
@@ -3436,6 +3459,9 @@ module Watch =
                 for retiredEntry in retiredPendingEntries do
                     recordSupersededCurrentBranchMaterializationPayload retiredEntry.Payload
 
+                Interlocked.Increment(&lastPublishedCurrentBranchCleanRootGeneration)
+                |> ignore
+
                 lastPublishedCurrentBranchCleanRoot <- Some(current.RepositoryId, current.BranchId, updatedRoot))
 
     /// Records a local clean-root publication and retires stale deferred same-branch payloads.
@@ -3523,16 +3549,39 @@ module Watch =
         | _ -> false
 
     /// Records a remote Reference notification that must be retried after Watch returns to a clean state.
-    let private rememberPendingCurrentBranchMaterialization (payload: CurrentBranchReferenceNotification) reason =
+    let private rememberPendingCurrentBranchMaterialization (payload: CurrentBranchReferenceNotification) reason observedCleanRootPublicationGeneration =
         prunePendingCurrentBranchMaterializationsForActiveBranch ()
 
         if shouldRetainPendingCurrentBranchMaterialization reason then
             lock pendingCurrentBranchMaterializationLock (fun () ->
-                pendingCurrentBranchMaterializations <-
-                    pendingCurrentBranchMaterializations
-                    @ [
-                        { Payload = payload; RepositoryId = payload.RepositoryId; BranchId = payload.BranchId; Reason = reason }
-                    ])
+                let current = Current()
+
+                let cleanRootPublicationAdvanced =
+                    currentPublishedCurrentBranchCleanRootGeneration ()
+                    <> observedCleanRootPublicationGeneration
+
+                let staleBehindPublishedCleanRoot =
+                    match lastPublishedCurrentBranchCleanRoot with
+                    | Some (repositoryId, branchId, publishedRoot) ->
+                        cleanRootPublicationAdvanced
+                        && payload.RepositoryId = repositoryId
+                        && payload.BranchId = branchId
+                        && repositoryId = current.RepositoryId
+                        && branchId = current.BranchId
+                        && payload.DirectoryId <> DirectoryVersionId.Empty
+                        && not (String.IsNullOrWhiteSpace($"{payload.Sha256Hash}"))
+                        && not (String.IsNullOrWhiteSpace($"{payload.Blake3Hash}"))
+                        && payload.DirectoryId <> publishedRoot
+                    | None -> false
+
+                if staleBehindPublishedCleanRoot then
+                    recordSupersededCurrentBranchMaterializationPayload payload
+                else
+                    pendingCurrentBranchMaterializations <-
+                        pendingCurrentBranchMaterializations
+                        @ [
+                            { Payload = payload; RepositoryId = payload.RepositoryId; BranchId = payload.BranchId; Reason = reason }
+                        ])
 
     /// Reads pending current-branch materializations in arrival order for the latest-reference decision helper.
     let private pendingCurrentBranchMaterializationSnapshot () =
@@ -3666,8 +3715,16 @@ module Watch =
     /// Exposes pending current-branch materialization cleanup to deterministic Watch tests.
     let internal clearPendingCurrentBranchMaterializationsForWatchTests () = clearPendingCurrentBranchMaterializations ()
 
+    /// Exposes the clean-root publication generation so tests can prove blocked enqueue rejects payloads overtaken by a later clean publish.
+    let internal currentPublishedCurrentBranchCleanRootGenerationForWatchTests () = currentPublishedCurrentBranchCleanRootGeneration ()
+
     /// Exposes deferred materialization insertion so tests can model callbacks queued during a retry gate.
-    let internal rememberPendingCurrentBranchMaterializationForWatchTests payload reason = rememberPendingCurrentBranchMaterialization payload reason
+    let internal rememberPendingCurrentBranchMaterializationForWatchTests payload reason =
+        rememberPendingCurrentBranchMaterialization payload reason (currentPublishedCurrentBranchCleanRootGeneration ())
+
+    /// Exposes deferred insertion with an explicit observed generation so tests can model append callbacks racing with a later clean publish.
+    let internal rememberPendingCurrentBranchMaterializationWithObservedGenerationForWatchTests payload reason observedGeneration =
+        rememberPendingCurrentBranchMaterialization payload reason observedGeneration
 
     /// Captures the repository, branch, and clean local root that authorized a materialization decision.
     let private currentBranchMaterializationAuthorityFromStatus repositoryId branchId (status: GraceWatchStatus) : CurrentBranchMaterializationAuthority =
@@ -4493,9 +4550,9 @@ module Watch =
                                             |> List.toArray
 
                                         if retryDeferredPayloads.Length > 0 then
-                                            Array.concat [| providedPayloads
-                                                            unsafePendingPayloads
-                                                            retryDeferredPayloads |]
+                                            Array.concat [| unsafePendingPayloads
+                                                            retryDeferredPayloads
+                                                            providedPayloads |]
                                         else
                                             Array.append unsafePendingPayloads providedPayloads
 
@@ -4508,6 +4565,7 @@ module Watch =
                         else
                             providedPayloads
 
+                    let observedCleanRootPublicationGeneration = currentPublishedCurrentBranchCleanRootGeneration ()
                     let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus payloadArray
 
                     match decision.Reason, decision.Reference with
@@ -4538,7 +4596,7 @@ module Watch =
                             return decision
                         | Some authority ->
                             if recordPendingOnBlock then
-                                rememberPendingCurrentBranchMaterialization payload decision.Reason
+                                rememberPendingCurrentBranchMaterialization payload decision.Reason observedCleanRootPublicationGeneration
 
                             let! previousGraceStatus = operations.ReadGraceStatus()
 
@@ -4647,7 +4705,7 @@ module Watch =
 
                         if recordPendingOnBlock
                            && shouldRetainPendingCurrentBranchMaterialization reason then
-                            rememberPendingCurrentBranchMaterialization payload reason
+                            rememberPendingCurrentBranchMaterialization payload reason observedCleanRootPublicationGeneration
 
                         logToAnsiConsole
                             Colors.Verbose

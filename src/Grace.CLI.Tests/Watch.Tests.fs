@@ -14293,9 +14293,9 @@ module WatchTests =
                 .Count
             |> should equal 0)
 
-    /// Verifies that retry-deferred materialization payloads participate in live notification selection.
+    /// Verifies that retry-deferred materialization payloads do not outrank a later live notification.
     [<Test>]
-    let ``current branch materialization evaluates retry-deferred payloads before live notification`` () =
+    let ``current branch materialization live notification beats older retry-deferred payload`` () =
         withTempRepo (fun root ->
             Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
 
@@ -14334,9 +14334,9 @@ module WatchTests =
 
             let materializedStatus =
                 { previousStatus with
-                    RootDirectoryId = newerRootId
-                    RootDirectorySha256Hash = newerPayload.Sha256Hash
-                    RootDirectoryBlake3Hash = newerPayload.Blake3Hash
+                    RootDirectoryId = olderRootId
+                    RootDirectorySha256Hash = olderPayload.Sha256Hash
+                    RootDirectoryBlake3Hash = olderPayload.Blake3Hash
                 }
 
             let operations, fetchedRoots, _, appliedPayloads, publishedStatuses =
@@ -14353,12 +14353,12 @@ module WatchTests =
 
             fetchedRoots
             |> Seq.toArray
-            |> should equal [| newerRootId |]
+            |> should equal [| olderRootId |]
 
             appliedPayloads
             |> Seq.map (fun payload -> payload.ReferenceId)
             |> Seq.toArray
-            |> should equal [| newerPayload.ReferenceId |]
+            |> should equal [| olderPayload.ReferenceId |]
 
             publishedStatuses.Count |> should equal 1
 
@@ -15197,6 +15197,147 @@ module WatchTests =
 
             File.ReadAllBytes(swappedDirectoryPath)
             |> should equal remoteBytes)
+
+    /// Verifies that a deleted tracked directory blocks directory-to-file replacement when the delete lands after preflight but before final copy.
+    [<Test>]
+    let ``current branch materialization directory to file type swap preserves local deletion after preflight`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, _ = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let localDirectoryId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let swappedPath = RelativePath "deleted-type-swap"
+            let swappedDirectoryPath = Path.Combine(root, string swappedPath)
+            let nestedPath = Path.Combine(swappedDirectoryPath, "old-child.txt")
+            let remoteBytes = Encoding.UTF8.GetBytes("remote file should not recreate deleted directory")
+
+            Directory.CreateDirectory(swappedDirectoryPath)
+            |> ignore
+
+            File.WriteAllText(nestedPath, "old directory child")
+
+            let previousChild =
+                (Services.createLocalFileVersion (FileInfo(nestedPath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            let previousDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    localDirectoryId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    swappedPath
+                    (Sha256Hash "deleted-type-swap-local-directory")
+                    (Blake3Hash "deleted-type-swap-local-directory-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| previousChild |]))
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    localRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "deleted-type-swap-local-root")
+                    (Blake3Hash "deleted-type-swap-local-root-blake3")
+                    (List<DirectoryVersionId>([| localDirectoryId |]))
+                    (List<LocalFileVersion>())
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousIndex = GraceIndex()
+
+            previousIndex.TryAdd(localRootId, previousRoot)
+            |> ignore
+
+            previousIndex.TryAdd(localDirectoryId, previousDirectory)
+            |> ignore
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = previousIndex
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = previousRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = previousRoot.Blake3Hash
+                }
+
+            let remoteFile =
+                FileVersion.CreateWithHashes
+                    swappedPath
+                    (Sha256Hash "deleted-type-swap-remote-file")
+                    (Blake3Hash "deleted-type-swap-remote-file-blake3")
+                    String.Empty
+                    false
+                    (int64 remoteBytes.Length)
+
+            let remoteObjectPath = Services.getLocalObjectCachePathForFileVersion remoteFile
+
+            Directory.CreateDirectory(Path.GetDirectoryName(remoteObjectPath))
+            |> ignore
+
+            File.WriteAllBytes(remoteObjectPath, remoteBytes)
+
+            let remoteRoot =
+                DirectoryVersion.CreateWithHashes
+                    remoteRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "deleted-type-swap-remote-root")
+                    (Blake3Hash "deleted-type-swap-remote-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([| remoteFile |]))
+                    (int64 remoteBytes.Length)
+
+            let remoteDto = { DirectoryVersionDto.Default with DirectoryVersion = remoteRoot; RecursiveSize = int64 remoteBytes.Length }
+            let updatedIndex = GraceIndex()
+            let updatedRoot = remoteRoot.ToLocalDirectoryVersion DateTime.UtcNow
+
+            updatedIndex.TryAdd(remoteRootId, updatedRoot)
+            |> ignore
+
+            let updatedStatus =
+                { GraceStatus.Default with
+                    Index = updatedIndex
+                    RootDirectoryId = remoteRootId
+                    RootDirectorySha256Hash = remoteRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = remoteRoot.Blake3Hash
+                }
+
+            let deletedDuringFileGuard = ref false
+
+            let result =
+                (Services.updateWorkingDirectoryWithTargetGuard previousStatus updatedStatus [| remoteDto |] (generateCorrelationId ()) (fun mutation ->
+                    task {
+                        if
+                            not deletedDuringFileGuard.Value
+                            && not mutation.IsDirectory
+                            && String.Equals(Path.GetFullPath(mutation.FullPath), Path.GetFullPath(swappedDirectoryPath), StringComparison.OrdinalIgnoreCase)
+                        then
+                            deletedDuringFileGuard.Value <- true
+                            Directory.Delete(swappedDirectoryPath, true)
+
+                        return Ok()
+                    }))
+                    .GetAwaiter()
+                    .GetResult()
+
+            result.IsError |> should equal true
+            deletedDuringFileGuard.Value |> should equal true
+
+            File.Exists(swappedDirectoryPath)
+            |> should equal false
+
+            Directory.Exists(swappedDirectoryPath)
+            |> should equal false)
 
     /// Verifies that a remote directory can replace a tracked file at the same path.
     [<Test>]
@@ -16484,6 +16625,47 @@ module WatchTests =
             appliedPayloads.Count |> should equal 0
             publishedStatuses.Count |> should equal 0)
 
+    /// Verifies that a blocked remote cannot re-enter the retry queue after a newer local clean publication wins first.
+    [<Test>]
+    let ``current branch materialization blocked enqueue rechecks clean publication before append`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let blockedRemoteRootId = Guid.NewGuid()
+            let localCleanRootId = Guid.NewGuid()
+
+            let localCleanStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = localCleanRootId
+                    RootDirectorySha256Hash = Sha256Hash "blocked-enqueue-clean-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "blocked-enqueue-clean-root-blake3"
+                }
+
+            let blockedRemotePayload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    blockedRemoteRootId
+                    (Sha256Hash "blocked-enqueue-remote-root")
+                    (Blake3Hash "blocked-enqueue-remote-root-blake3")
+
+            let observedGenerationBeforePublication = Watch.currentPublishedCurrentBranchCleanRootGenerationForWatchTests ()
+
+            Watch.recordPublishedCurrentBranchCleanRootForWatchTests localCleanStatus
+
+            Watch.rememberPendingCurrentBranchMaterializationWithObservedGenerationForWatchTests
+                blockedRemotePayload
+                Services.LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync
+                observedGenerationBeforePublication
+
+            let pendingAfterAppendRace = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
+
+            pendingAfterAppendRace.Count |> should equal 0
+
+            pendingAfterAppendRace.LatestDirectoryId
+            |> should equal None)
+
     /// Verifies that a retired anonymous pending root blocks one duplicate stale notification for that same root.
     [<Test>]
     let ``current branch materialization local clean publication records anonymous retired root`` () =
@@ -16774,6 +16956,86 @@ module WatchTests =
             |> should equal [| newerLivePayload.ReferenceId |]
 
             publishedStatuses.Count |> should equal 1)
+
+    /// Verifies that a newer live notification beats an older retry-deferred root and clears the stale retry tail.
+    [<Test>]
+    let ``current branch materialization live reference beats older retry deferred root`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let olderRetryRootId = Guid.NewGuid()
+            let newerLiveRootId = Guid.NewGuid()
+
+            let cleanStatus =
+                { liveWatchStatus localRootId with
+                    RootDirectorySha256Hash = Sha256Hash "live-beats-retry-local"
+                    RootDirectoryBlake3Hash = Blake3Hash "live-beats-retry-local-blake3"
+                    DirectoryIds = HashSet<DirectoryVersionId>([| localRootId |])
+                }
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = cleanStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = cleanStatus.RootDirectoryBlake3Hash
+                }
+
+            let materializedStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = newerLiveRootId
+                    RootDirectorySha256Hash = Sha256Hash "live-beats-retry-newer-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "live-beats-retry-newer-root-blake3"
+                }
+
+            let olderRetryPayload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    olderRetryRootId
+                    (Sha256Hash "older-retry-root")
+                    (Blake3Hash "older-retry-root-blake3")
+
+            let newerLivePayload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    newerLiveRootId
+                    materializedStatus.RootDirectorySha256Hash
+                    materializedStatus.RootDirectoryBlake3Hash
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                olderRetryPayload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            let operations, fetchedRoots, _, appliedPayloads, publishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None cleanStatus))
+                    previousStatus
+                    materializedStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests operations true [| newerLivePayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            fetchedRoots
+            |> Seq.toArray
+            |> should equal [| newerLiveRootId |]
+
+            appliedPayloads
+            |> Seq.map (fun payload -> payload.ReferenceId)
+            |> Seq.toArray
+            |> should equal [| newerLivePayload.ReferenceId |]
+
+            publishedStatuses.Count |> should equal 1
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0)
 
     /// Verifies that deferred work still wins when a delayed live payload targets a root already retired as stale.
     [<Test>]
@@ -18708,6 +18970,47 @@ module WatchTests =
 
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal true)
+
+    /// Verifies that clean IPC publication fails closed when pending-work evidence still changes on the final allowed probe.
+    [<Test>]
+    let ``current branch materialization final ipc probe fails when pending work stays stale`` () =
+        withTempRepo (fun root ->
+            configureCurrentWatchIdentity root "current-repo" "current-branch"
+            |> ignore
+
+            Watch.clearPendingWatchWorkForTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+            Services.setGraceWatchHasPendingWorkForStatus false
+
+            let materializedStatus =
+                graceStatusTracking [| "remote.txt" |] [|
+                    "remote-dir"
+                |]
+
+            let pendingEvidenceReads =
+                Queue<bool * bool>(
+                    [|
+                        (false, false)
+                        (true, false)
+                        (false, false)
+                        (true, false)
+                    |]
+                )
+
+            Watch.setPendingWatchWorkEvidenceReaderForWatchTests (fun () -> pendingEvidenceReads.Dequeue())
+
+            try
+                let result =
+                    (Watch.publishCurrentBranchMaterializedStatusWithWriterForWatchTests materializedStatus Services.updateGraceWatchInterprocessFile)
+                        .GetAwaiter()
+                        .GetResult()
+
+                result.IsError |> should equal true
+
+                Watch.isGraceWatchResyncPendingForWatchTests ()
+                |> should equal true
+            finally
+                Watch.resetPendingWatchWorkEvidenceReaderForWatchTests ())
 
     /// Verifies that the final marker-window scan completes before clean IPC publication is allowed.
     [<Test>]

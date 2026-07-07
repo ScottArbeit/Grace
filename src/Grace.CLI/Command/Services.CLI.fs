@@ -3599,9 +3599,22 @@ module Services =
                             else
                                 // No existing file, so just copy it into place.
                                 //logToAnsiConsole Colors.Verbose $"Copying file {fileVersion.FullName} from object cache; no existing file."
-                                match! verifyTarget existingFileOnDisk.FullName false false with
-                                | Ok () -> File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
-                                | Error _ -> ()
+                                let trackedDirectoryFromPreviousGraceStatus =
+                                    previousGraceStatus.Index.Values
+                                    |> Seq.tryFind (fun directoryVersion -> directoryVersion.RelativePath = fileVersion.RelativePath)
+
+                                match trackedDirectoryFromPreviousGraceStatus with
+                                | Some _ ->
+                                    resultError <-
+                                        Some(
+                                            GraceError.Create
+                                                $"Working directory update refused to recreate remote file {fileVersion.FullName} because a tracked directory at the same path was deleted locally after preflight; retry after the tree can be re-evaluated."
+                                                correlationId
+                                        )
+                                | None ->
+                                    match! verifyTarget existingFileOnDisk.FullName false false with
+                                    | Ok () -> File.Copy(fileVersion.FullObjectPath, fileVersion.FullName)
+                                    | Error _ -> ()
 
                     // Delete unnecessary directories.
                     // Get DirectoryVersions for the subdirectories of the new DirectoryVersion.
