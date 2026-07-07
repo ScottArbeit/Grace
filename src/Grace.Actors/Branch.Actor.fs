@@ -349,7 +349,15 @@ module Branch =
                                 links
                             )
 
+                        /// Adds inherited branch visibility metadata without overwriting create-time command facts.
+                        let addInheritedMetadataIfMissing key value =
+                            if not (metadata.Properties.ContainsKey key) then
+                                metadata.Properties[ key ] <- value
+
                         metadata.Properties[ nameof (RepositoryId) ] <- $"{repositoryId}"
+                        addInheritedMetadataIfMissing "InheritedVisibility" $"{branchDto.Visibility}"
+                        addInheritedMetadataIfMissing "InheritedOwnership" $"{branchDto.Ownership}"
+                        addInheritedMetadataIfMissing "InheritedCreatorUserId" $"{branchDto.UserId}"
                         return! referenceActor.Handle referenceCommand metadata
                     }
 
@@ -378,6 +386,9 @@ module Branch =
                                               creatorUserId) ->
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
                                         if branchName <> InitialBranchName then
+                                            metadata.Properties[ "InheritedVisibility" ] <- $"{visibility}"
+                                            metadata.Properties[ "InheritedOwnership" ] <- $"{ownership}"
+                                            metadata.Properties[ "InheritedCreatorUserId" ] <- $"{creatorUserId}"
                                             // We need to get the reference that we're rebasing on, so we can get the DirectoryId and root hashes.
                                             let referenceActorProxy = Reference.CreateActorProxy basedOn repositoryId this.correlationId
                                             let! promotionDto = referenceActorProxy.Get this.correlationId

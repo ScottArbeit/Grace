@@ -152,34 +152,62 @@ module Branch =
             | Denied _ -> return false
         }
 
-    /// Checks whether RBAC already grants the caller elevated authority over the branch.
-    let private canAdministerBranch (context: HttpContext) (branchDto: BranchDto) =
+    /// Checks whether RBAC grants the requested operation over an authoritative Grace resource.
+    let private canPerformOperation (context: HttpContext) operation resource =
         task {
             let principals = PrincipalMapper.getPrincipals context.User
             let claims = PrincipalMapper.getEffectiveClaims context.User
             let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
 
-            let resource = Resource.Branch(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId, branchDto.BranchId)
-
-            match! evaluator.CheckAsync(principals, claims, Operation.BranchAdmin, resource) with
+            match! evaluator.CheckAsync(principals, claims, operation, resource) with
             | Allowed _ -> return true
             | Denied _ -> return false
+        }
+
+    /// Checks whether RBAC already grants the caller elevated authority over the branch.
+    let private canAdministerBranch (context: HttpContext) (branchDto: BranchDto) =
+        let resource = Resource.Branch(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId, branchDto.BranchId)
+        canPerformOperation context Operation.BranchAdmin resource
+
+    /// Converts the authenticated HTTP principal into the reusable visibility audience facts.
+    let private getVisibilityCallerAudience (context: HttpContext) (branchDto: BranchDto) =
+        task {
+            let callerUserId =
+                PrincipalMapper.tryGetUserId context.User
+                |> Option.map UserId
+
+            let resource = Resource.Repository(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId)
+            let! hasRepositoryAdministration = canPerformOperation context Operation.RepositoryAdmin resource
+
+            return { VisibilityCallerAudience.Anonymous with UserId = callerUserId; HasRepositoryAdministration = hasRepositoryAdministration }
+        }
+
+    /// Projects branch durable visibility facts into the shared visibility helper resource shape.
+    let private branchVisibilityResource (branchDto: BranchDto) =
+        let creatorUserId = if branchDto.UserId = UserId String.Empty then None else Some branchDto.UserId
+
+        { AuthorityKey = branchDto.BranchId; Visibility = branchDto.Visibility; Ownership = branchDto.Ownership; CreatorUserId = creatorUserId }
+
+    /// Builds branch-scoped authority only after checking the exact branch resource being considered.
+    let private getBranchResourceAudience (context: HttpContext) (branchDto: BranchDto) =
+        task {
+            let! hasBranchAdministration = canAdministerBranch context branchDto
+
+            return { VisibilityResourceAudience.None with HasBranchAdministration = hasBranchAdministration }
         }
 
     /// Checks whether the already-authenticated caller can observe the stored branch visibility boundary.
     let internal canObserveBranch (context: HttpContext) (branchDto: BranchDto) =
         task {
-            match branchDto.Visibility, branchDto.Ownership with
-            | ResourceVisibility.Public, _ -> return true
-            | _, ResourceOwnership.RepositoryOwned -> return true
-            | _, ResourceOwnership.ContributorOwned ->
-                let isCreator =
-                    PrincipalMapper.tryGetUserId context.User
-                    |> Option.map UserId
-                    |> Option.exists ((=) branchDto.UserId)
-
-                if isCreator then return true else return! canAdministerBranch context branchDto
+            let! caller = getVisibilityCallerAudience context branchDto
+            let! branchAudience = getBranchResourceAudience context branchDto
+            let resource = branchVisibilityResource branchDto
+            return VisibilityAuthorization.canObserveBranch caller (fun _ -> branchAudience) resource
         }
+
+    /// Checks inherited branch visibility for reference projections that have no independent visibility contract yet.
+    let private canObserveReferenceInBranch (context: HttpContext) (branchDto: BranchDto) (_referenceDto: Reference.ReferenceDto) =
+        canObserveBranch context branchDto
 
     /// Creates the hidden-as-missing response used when a private contributor branch exists but is not observable.
     let internal hiddenBranchError context branchId =
@@ -932,6 +960,113 @@ module Branch =
             match! requireObservableBranch context parameters with
             | Ok _ -> return! processQuery context parameters validations maxCount query
             | Error error -> return! context |> result400BadRequest error
+        }
+
+    /// Loads the branch that owns a reference so inherited visibility is evaluated from the durable branch state.
+    let private loadReferenceBranch (referenceDto: Reference.ReferenceDto) correlationId =
+        task {
+            let branchActorProxy = Branch.CreateActorProxy referenceDto.BranchId referenceDto.RepositoryId correlationId
+            return! branchActorProxy.Get correlationId
+        }
+
+    /// Filters a latest-first reference sequence before applying route limits, then restores the established response order.
+    let private filterVisibleReferenceWindow (context: HttpContext) maxCount (references: Reference.ReferenceDto seq) =
+        task {
+            if maxCount = 0 then
+                return Array.empty<Reference.ReferenceDto>
+            else
+                let correlationId = getCorrelationId context
+                let visibleReferences = List<Reference.ReferenceDto>()
+
+                let latestFirst =
+                    references
+                        .Where(fun referenceDto -> referenceDto.DeletedAt.IsNone)
+                        .OrderByDescending(fun referenceDto -> referenceDto.CreatedAt)
+                        .ToArray()
+
+                let mutable index = 0
+
+                let mutable keepScanning =
+                    index < latestFirst.Length
+                    && (maxCount < 0 || visibleReferences.Count < maxCount)
+
+                while keepScanning do
+                    let referenceDto = latestFirst[index]
+                    let! branchDto = loadReferenceBranch referenceDto correlationId
+                    let! isObservable = canObserveReferenceInBranch context branchDto referenceDto
+
+                    if isObservable then visibleReferences.Add referenceDto
+
+                    index <- index + 1
+
+                    keepScanning <-
+                        index < latestFirst.Length
+                        && (maxCount < 0 || visibleReferences.Count < maxCount)
+
+                return
+                    visibleReferences
+                        .OrderBy(fun referenceDto -> referenceDto.CreatedAt)
+                        .ToArray()
+        }
+
+    /// Reads a branch reference window with hidden rows removed before max-count projection.
+    let private getVisibleReferences (context: HttpContext) (branchDto: BranchDto) maxCount =
+        task {
+            let queryLimit = if maxCount = 0 then 0 else Int32.MaxValue
+
+            let! references = getReferences branchDto.RepositoryId branchDto.BranchId queryLimit (getCorrelationId context)
+            return! filterVisibleReferenceWindow context maxCount references
+        }
+
+    /// Reads a typed branch reference window with hidden rows removed before max-count projection.
+    let private getVisibleReferencesByType (context: HttpContext) (branchDto: BranchDto) referenceType maxCount =
+        task {
+            let queryLimit = if maxCount = 0 then 0 else Int32.MaxValue
+
+            let! references = getReferencesByType referenceType branchDto.RepositoryId branchDto.BranchId queryLimit (getCorrelationId context)
+            return! filterVisibleReferenceWindow context maxCount references
+        }
+
+    /// Selects the latest reference that remains observable after inherited branch visibility is applied.
+    let private getLatestVisibleReference (context: HttpContext) (branchDto: BranchDto) =
+        task {
+            let! references = getVisibleReferences context branchDto 1
+            return references |> Array.tryLast
+        }
+
+    /// Builds latest reference buckets from visible rows only so hidden rows cannot occupy a requested type bucket.
+    let private getLatestVisibleReferencesByTypes (context: HttpContext) (branchDto: BranchDto) (referenceTypes: ReferenceType array) =
+        task {
+            let! references = getVisibleReferences context branchDto Int32.MaxValue
+            let buckets = Dictionary<ReferenceType, Reference.ReferenceDto>()
+
+            let mutable index = 0
+
+            while index < referenceTypes.Length do
+                let referenceType = referenceTypes[index]
+
+                references
+                    .Where(fun referenceDto -> referenceDto.ReferenceType = referenceType)
+                    .OrderByDescending(fun referenceDto -> referenceDto.CreatedAt)
+                    .FirstOrDefault(Reference.ReferenceDto.Default)
+                |> fun referenceDto ->
+                    if referenceDto.ReferenceId <> ReferenceId.Empty then
+                        buckets[referenceType] <- referenceDto
+
+                index <- index + 1
+
+            return buckets :> IReadOnlyDictionary<ReferenceType, Reference.ReferenceDto>
+        }
+
+    /// Applies hidden-as-missing behavior to direct reference lookups after loading the reference's owning branch.
+    let private getObservableReferenceOrDefault (context: HttpContext) (referenceDto: Reference.ReferenceDto) =
+        task {
+            if referenceDto.ReferenceId = ReferenceId.Empty then
+                return Reference.ReferenceDto.Default
+            else
+                let! branchDto = loadReferenceBranch referenceDto (getCorrelationId context)
+                let! isObservable = canObserveReferenceInBranch context branchDto referenceDto
+                return if isObservable then referenceDto else Reference.ReferenceDto.Default
         }
 
     /// Creates a new branch.
@@ -1871,8 +2006,8 @@ module Branch =
 
                             let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId (getCorrelationId context)
 
-                            let referenceDto = referenceActorProxy.Get(getCorrelationId context)
-                            return referenceDto
+                            let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
+                            return! getObservableReferenceOrDefault context referenceDto
                         }
 
                     let! parameters = context |> parse<GetReferenceParameters>
@@ -1930,7 +2065,7 @@ module Branch =
                     let query (context: HttpContext) (maxCount: int) (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getReferences branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getVisibleReferences context branchDto maxCount
                             return results
                         }
 
@@ -2065,14 +2200,15 @@ module Branch =
                                 serialize referenceTypes
                             )
 
-                            return! getLatestReferenceByReferenceTypes referenceTypes graceIds.RepositoryId graceIds.BranchId
+                            let! branchDto = actorProxy.Get(getCorrelationId context)
+                            return! getLatestVisibleReferencesByTypes context branchDto referenceTypes
                         }
 
                     let! parameters =
                         context
                         |> parse<GetLatestReferencesByReferenceTypeParameters>
 
-                    context.Items.Add("ReferenceTypes", serialize parameters.ReferenceTypes)
+                    context.Items.Add("ReferenceTypes", parameters.ReferenceTypes)
                     let! result = processObservableQuery context parameters validations 1 query
 
                     let duration_ms = getDurationRightAligned_ms startTime
@@ -2135,8 +2271,7 @@ module Branch =
                                 (context.Items[nameof ReferenceType] :?> String)
                                 |> discriminatedUnionFromString<ReferenceType>
 
-                            let! references =
-                                getReferencesByType referenceType.Value branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! references = getVisibleReferencesByType context branchDto referenceType.Value maxCount
 
                             let sortedRefs =
                                 references
@@ -2232,7 +2367,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getPromotions branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getVisibleReferencesByType context branchDto ReferenceType.Promotion maxCount
                             return results
                         }
 
@@ -2290,7 +2425,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getCommits branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getVisibleReferencesByType context branchDto ReferenceType.Commit maxCount
                             return results
                         }
 
@@ -2348,7 +2483,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getCheckpoints branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getVisibleReferencesByType context branchDto ReferenceType.Checkpoint maxCount
                             return results
                         }
 
@@ -2407,7 +2542,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getSaves branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getVisibleReferencesByType context branchDto ReferenceType.Save maxCount
                             return results
                         }
 
@@ -2465,7 +2600,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getTags branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getVisibleReferencesByType context branchDto ReferenceType.Tag maxCount
                             return results
                         }
 
@@ -2523,7 +2658,7 @@ module Branch =
                     let query (context: HttpContext) maxCount (actorProxy: IBranchActor) =
                         task {
                             let! branchDto = actorProxy.Get(getCorrelationId context)
-                            let! results = getExternals branchDto.RepositoryId branchDto.BranchId maxCount (getCorrelationId context)
+                            let! results = getVisibleReferencesByType context branchDto ReferenceType.External maxCount
                             return results
                         }
 
@@ -2593,7 +2728,7 @@ module Branch =
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
-                                let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
+                                let! latestReference = getLatestVisibleReference context branchDto
 
                                 match latestReference with
                                 | Some latestReference ->
@@ -2611,11 +2746,15 @@ module Branch =
                                 let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                                 let! referenceDto = referenceActorProxy.Get correlationId
+                                let! referenceDto = getObservableReferenceOrDefault context referenceDto
 
-                                let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+                                if referenceDto.ReferenceId = ReferenceId.Empty then
+                                    return Constants.InitialDirectorySize
+                                else
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
 
-                                let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
-                                return recursiveSize
+                                    let! recursiveSize = directoryActorProxy.GetRecursiveSize correlationId
+                                    return recursiveSize
                             else
                                 match!
                                     Services.getDirectoryVersionResolutionByHashQuery
@@ -2703,7 +2842,7 @@ module Branch =
                             then
                                 // If we don't have a referenceId or sha256Hash, we'll get the contents of the most recent reference in the branch.
                                 let! branchDto = actorProxy.Get correlationId
-                                let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
+                                let! latestReference = getLatestVisibleReference context branchDto
 
                                 match latestReference with
                                 | Some latestReference ->
@@ -2723,12 +2862,16 @@ module Branch =
                                 let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryId correlationId
 
                                 let! referenceDto = referenceActorProxy.Get correlationId
+                                let! referenceDto = getObservableReferenceOrDefault context referenceDto
 
-                                let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+                                if referenceDto.ReferenceId = ReferenceId.Empty then
+                                    return Array.Empty<DirectoryVersion.DirectoryVersionDto>()
+                                else
+                                    let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
 
-                                let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
+                                    let! contents = directoryActorProxy.GetRecursiveDirectoryVersions listContentsParameters.ForceRecompute correlationId
 
-                                return contents
+                                    return contents
                             else
                                 match!
                                     Services.getRootDirectoryVersionResolutionByHashQuery
@@ -2818,10 +2961,17 @@ module Branch =
                 not
                 <| String.IsNullOrEmpty(parameters.ReferenceId)
             then
-                return! getRootDirectoryVersionByReferenceId repositoryId (Guid.Parse(parameters.ReferenceId)) correlationId
+                let referenceActorProxy = Reference.CreateActorProxy (Guid.Parse(parameters.ReferenceId)) repositoryId correlationId
+                let! referenceDto = referenceActorProxy.Get correlationId
+                let! referenceDto = getObservableReferenceOrDefault context referenceDto
+
+                if referenceDto.ReferenceId = ReferenceId.Empty then
+                    return None
+                else
+                    return! getRootDirectoryVersionByReferenceId repositoryId referenceDto.ReferenceId correlationId
             else
                 let! branchDto = actorProxy.Get(getCorrelationId context)
-                let! latestReference = getLatestReference branchDto.RepositoryId branchDto.BranchId
+                let! latestReference = getLatestVisibleReference context branchDto
 
                 match latestReference with
                 | Some referenceDto -> return! getRootDirectoryVersionByReferenceId repositoryId referenceDto.ReferenceId correlationId

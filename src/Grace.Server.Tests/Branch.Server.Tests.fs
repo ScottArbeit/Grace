@@ -68,6 +68,25 @@ module BranchServerTestHelpers =
             do! assertOk response
         }
 
+    /// Grants a branch-scoped role to a test user.
+    let grantBranchRoleAsync repositoryId branchId principalId roleId =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- branchId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- "branch"
+            parameters.RoleId <- roleId
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
+            do! assertOk response
+        }
+
     /// Creates an isolated repository for branch visibility route tests.
     let createRepositoryAsync repositoryNamePrefix =
         task {
@@ -235,6 +254,30 @@ module BranchServerTestHelpers =
 
         client.PostAsync(route, createJsonContent parameters)
 
+    /// Posts a branch reference-list query route with an explicit max count through the supplied test client.
+    let postBranchReferencesRouteWithMaxCountAsync (client: HttpClient) (route: string) repositoryId branchId maxCount =
+        let parameters = Parameters.Branch.GetReferencesParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.MaxCount <- maxCount
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync(route, createJsonContent parameters)
+
+    /// Posts a direct branch reference lookup through the supplied test client.
+    let postBranchReferenceLookupAsync (client: HttpClient) repositoryId branchId referenceId =
+        let parameters = Parameters.Branch.GetReferenceParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.ReferenceId <- referenceId
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync("/branch/getReference", createJsonContent parameters)
+
     /// Posts a branch version route through the supplied test client.
     let postBranchVersionRouteAsync (client: HttpClient) repositoryId branchId =
         let parameters = Parameters.Branch.GetBranchVersionParameters()
@@ -325,6 +368,29 @@ module BranchServerTestHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = Client.PostAsync("/branch/save", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<string>> response
+
+            Assert.That(returnValue.Properties.ContainsKey(nameof BranchId), Is.True)
+            Assert.That(returnValue.Properties.ContainsKey(nameof RepositoryId), Is.True)
+
+            return returnValue
+        }
+
+    /// Saves branch through the supplied authenticated client.
+    let saveBranchWithClientAsync (client: HttpClient) (repositoryId: string) (branch: Branch.BranchDto) =
+        task {
+            let parameters = Parameters.Branch.CreateReferenceParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.DirectoryVersionId <- branch.BasedOn.DirectoryId
+            parameters.Sha256Hash <- $"{branch.BasedOn.Sha256Hash}"
+            parameters.Message <- "Hosted private branch visibility proof save"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/branch/save", createJsonContent parameters)
             do! assertOk response
             let! returnValue = deserializeContent<GraceReturnValue<string>> response
 
@@ -1241,6 +1307,110 @@ type BranchServer() =
                 |> Array.exists (fun branch -> branch.BranchId = creatorBranch.BranchId),
                 Is.True
             )
+        }
+
+    /// Verifies private branch reference read surfaces hide leaked reference ids while branch admins retain observability.
+    [<Test>]
+    member _.PrivateContributorBranchReferencesAreHiddenFromObserverAndVisibleToBranchAdmin() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let branchAdminUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityReferences"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+            use branchAdminClient = BranchServerTestHelpers.createClientWithUserId branchAdminUserId
+
+            let! observerBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBranches |> Array.exactlyOne
+            let branchName = $"PrivateReference{Guid.NewGuid():N}"
+
+            let! privateBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch branchName "Private" "ContributorOwned"
+
+            let! creatorBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertOk creatorBranchResponse
+            let! creatorBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> creatorBranchResponse
+            let creatorBranch = creatorBranchReturnValue.ReturnValue
+
+            let! _saveReturnValue = BranchServerTestHelpers.saveBranchWithClientAsync creatorClient repositoryId creatorBranch
+            let! savedCreatorBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertOk savedCreatorBranchResponse
+            let! savedCreatorBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> savedCreatorBranchResponse
+            let savedCreatorBranch = savedCreatorBranchReturnValue.ReturnValue
+            let privateReferenceId = savedCreatorBranch.LatestSave.ReferenceId
+
+            Assert.That(privateReferenceId, Is.Not.EqualTo(ReferenceId.Empty))
+
+            do! BranchServerTestHelpers.grantBranchRoleAsync repositoryId privateBranchId branchAdminUserId "BranchAdmin"
+
+            let! observerEvents = BranchServerTestHelpers.postBranchIdRouteAsync observerClient "/branch/getEvents" repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerEvents
+
+            let! observerReferences = BranchServerTestHelpers.postBranchReferencesRouteAsync observerClient "/branch/getReferences" repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerReferences
+
+            let! observerDirectHidden =
+                BranchServerTestHelpers.postBranchReferenceLookupAsync observerClient repositoryId $"{parentBranch.BranchId}" $"{privateReferenceId}"
+
+            let! observerDirectHiddenBody = observerDirectHidden.Content.ReadAsStringAsync()
+            Assert.That(observerDirectHidden.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerDirectHiddenBody)
+
+            let observerHiddenReference =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto>> observerDirectHiddenBody)
+                    .ReturnValue
+
+            Assert.That(observerHiddenReference.ReferenceId, Is.EqualTo(ReferenceId.Empty))
+
+            let! observerDirectMissing =
+                BranchServerTestHelpers.postBranchReferenceLookupAsync observerClient repositoryId $"{parentBranch.BranchId}" $"{ReferenceId.NewGuid()}"
+
+            let! observerDirectMissingBody = observerDirectMissing.Content.ReadAsStringAsync()
+            Assert.That(observerDirectMissing.StatusCode, Is.EqualTo(HttpStatusCode.OK), observerDirectMissingBody)
+
+            let observerMissingReference =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto>> observerDirectMissingBody)
+                    .ReturnValue
+
+            Assert.That(observerMissingReference.ReferenceId, Is.EqualTo(observerHiddenReference.ReferenceId))
+            Assert.That(observerMissingReference.DirectoryId, Is.EqualTo(observerHiddenReference.DirectoryId))
+
+            let! branchAdminReferences =
+                BranchServerTestHelpers.postBranchReferencesRouteWithMaxCountAsync branchAdminClient "/branch/getReferences" repositoryId privateBranchId 1
+
+            let! branchAdminReferencesBody = branchAdminReferences.Content.ReadAsStringAsync()
+            Assert.That(branchAdminReferences.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminReferencesBody)
+
+            let branchAdminReferenceWindow =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto array>> branchAdminReferencesBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminReferenceWindow, Has.Length.EqualTo(1))
+            Assert.That(branchAdminReferenceWindow[0].ReferenceId, Is.EqualTo(privateReferenceId))
+
+            let! branchAdminDirect =
+                BranchServerTestHelpers.postBranchReferenceLookupAsync branchAdminClient repositoryId privateBranchId $"{privateReferenceId}"
+
+            let! branchAdminDirectBody = branchAdminDirect.Content.ReadAsStringAsync()
+            Assert.That(branchAdminDirect.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminDirectBody)
+
+            let branchAdminReference =
+                (deserialize<GraceReturnValue<Reference.ReferenceDto>> branchAdminDirectBody)
+                    .ReturnValue
+
+            Assert.That(branchAdminReference.ReferenceId, Is.EqualTo(privateReferenceId))
+
+            let! branchAdminSaveBucket =
+                BranchServerTestHelpers.postBranchReferencesRouteWithMaxCountAsync branchAdminClient "/branch/getSaves" repositoryId privateBranchId 1
+
+            let! branchAdminSaveBucketBody = branchAdminSaveBucket.Content.ReadAsStringAsync()
+            Assert.That(branchAdminSaveBucket.StatusCode, Is.EqualTo(HttpStatusCode.OK), branchAdminSaveBucketBody)
+            Assert.That(branchAdminSaveBucketBody, Does.Contain($"{privateReferenceId}"))
         }
 
     /// Verifies that regular branches in public repositories default to public repository-owned visibility.
