@@ -15522,29 +15522,54 @@ module WatchTests =
                     RootDirectoryBlake3Hash = remoteRoot.Blake3Hash
                 }
 
-            use lockedFile = new FileStream(swappedFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None)
+            let lockedFile =
+                if OperatingSystem.IsWindows() then
+                    Some(new FileStream(swappedFilePath, FileMode.Open, FileAccess.ReadWrite, FileShare.None))
+                else
+                    None
 
-            let result =
-                (Services.updateWorkingDirectoryWithTargetGuard previousStatus updatedStatus remoteDtos (generateCorrelationId ()) (fun _ ->
-                    Task.FromResult(Ok())))
-                    .GetAwaiter()
-                    .GetResult()
+            let originalRootMode = if OperatingSystem.IsWindows() then None else Some(File.GetUnixFileMode(root))
 
-            result.IsError |> should equal true
+            try
+                match originalRootMode with
+                | Some mode ->
+                    let writeBits =
+                        UnixFileMode.UserWrite
+                        ||| UnixFileMode.GroupWrite
+                        ||| UnixFileMode.OtherWrite
 
-            match result with
-            | Error error ->
-                error.Error
-                |> should contain "could not delete verified file"
+                    File.SetUnixFileMode(root, mode &&& ~~~writeBits)
+                | None -> ()
 
-                error.Error
-                |> should contain "before creating a remote directory"
-            | Ok () -> Assert.Fail("Expected file-to-directory delete failure.")
+                let result =
+                    (Services.updateWorkingDirectoryWithTargetGuard previousStatus updatedStatus remoteDtos (generateCorrelationId ()) (fun _ ->
+                        Task.FromResult(Ok())))
+                        .GetAwaiter()
+                        .GetResult()
 
-            File.Exists(swappedFilePath) |> should equal true
+                result.IsError |> should equal true
 
-            Directory.Exists(swappedFilePath)
-            |> should equal false)
+                match result with
+                | Error error ->
+                    error.Error
+                    |> should contain "could not delete verified file"
+
+                    error.Error
+                    |> should contain "before creating a remote directory"
+                | Ok () -> Assert.Fail("Expected file-to-directory delete failure.")
+
+                File.Exists(swappedFilePath) |> should equal true
+
+                Directory.Exists(swappedFilePath)
+                |> should equal false
+            finally
+                match originalRootMode with
+                | Some mode -> File.SetUnixFileMode(root, mode)
+                | None -> ()
+
+                match lockedFile with
+                | Some stream -> stream.Dispose()
+                | None -> ())
 
     /// Verifies that all target guards pass before the first remote file is copied into the working tree.
     [<Test>]
