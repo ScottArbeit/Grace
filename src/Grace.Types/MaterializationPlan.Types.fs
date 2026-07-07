@@ -449,6 +449,10 @@ module MaterializationPlan =
                 if not (isSupportedCacheSelectionKind cacheSelection.SelectionKind) then
                     errors.Add($"CacheSelection.SelectionKind '{int cacheSelection.SelectionKind}' is not supported.")
 
+                match cacheSelection.CacheScope with
+                | Some cacheScope when String.IsNullOrWhiteSpace cacheScope -> errors.Add("CacheSelection.CacheScope must not be blank when specified.")
+                | _ -> ()
+
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
 
         /// Validates that a source shape is explicit and does not invent direct URLs for cache-only artifacts.
@@ -684,6 +688,8 @@ module MaterializationPlan =
                     let mutable targetRootZipCount = 0
                     let mutable recursiveMetadataCount = 0
                     let wholeFileIdentities = HashSet<DirectoryVersionId * RelativePath>()
+                    let fileManifestIdentities = HashSet<DirectoryVersionId * StoragePoolId * ManifestAddress>()
+                    let contentBlockIdentities = HashSet<DirectoryVersionId * StoragePoolId * ContentBlockAddress>()
                     let cacheRequiredByExecutionMode = plan.ExecutionMode = MaterializationExecutionMode.CacheRequired
                     let cacheBypassedByExecutionMode = plan.ExecutionMode = MaterializationExecutionMode.Direct
 
@@ -714,15 +720,18 @@ module MaterializationPlan =
                             if cacheRequiredByExecutionMode
                                || cacheRequiredBySelection then
                                 match descriptor.Source with
-                                | Some source when isNull (box source) ->
-                                    errors.Add("CacheRequired plans must include a non-direct artifact source for every required artifact.")
+                                | Some source when
+                                    not (isNull (box source))
+                                    && source.SourceKind = MaterializationArtifactSourceKind.CacheEntry
+                                    ->
+                                    ()
                                 | Some source when
                                     not (isNull (box source))
                                     && source.SourceKind = MaterializationArtifactSourceKind.DirectUri
                                     ->
-                                    errors.Add("CacheRequired plans must not require DirectUri artifact sources.")
-                                | Some _ -> ()
-                                | None -> errors.Add("CacheRequired plans must include a non-direct artifact source for every required artifact.")
+                                    errors.Add("CacheRequired plans must require CacheEntry artifact sources for every required artifact.")
+                                | Some _ -> errors.Add("CacheRequired plans must require CacheEntry artifact sources for every required artifact.")
+                                | None -> errors.Add("CacheRequired plans must require CacheEntry artifact sources for every required artifact.")
 
                             if descriptor.TargetRootDirectoryVersionId
                                <> plan.TargetRootDirectoryVersionId then
@@ -743,6 +752,30 @@ module MaterializationPlan =
                                     && not (wholeFileIdentities.Add(descriptor.TargetRootDirectoryVersionId, relativePath))
                                     ->
                                     errors.Add("RequiredArtifacts must include at most one WholeFileContent for each target root and relative path.")
+                                | _ -> ()
+
+                            if descriptor.ArtifactKind = MaterializationArtifactKind.FileManifest then
+                                match descriptor.StoragePoolId, descriptor.ManifestAddress with
+                                | Some storagePoolId, Some manifestAddress when
+                                    not (String.IsNullOrWhiteSpace storagePoolId)
+                                    && not (String.IsNullOrWhiteSpace manifestAddress)
+                                    && not (fileManifestIdentities.Add(descriptor.TargetRootDirectoryVersionId, storagePoolId, manifestAddress))
+                                    ->
+                                    errors.Add(
+                                        "RequiredArtifacts must include at most one FileManifest for each target root, storage pool, and manifest address."
+                                    )
+                                | _ -> ()
+
+                            if descriptor.ArtifactKind = MaterializationArtifactKind.ContentBlock then
+                                match descriptor.StoragePoolId, descriptor.ContentBlockAddress with
+                                | Some storagePoolId, Some contentBlockAddress when
+                                    not (String.IsNullOrWhiteSpace storagePoolId)
+                                    && not (String.IsNullOrWhiteSpace contentBlockAddress)
+                                    && not (contentBlockIdentities.Add(descriptor.TargetRootDirectoryVersionId, storagePoolId, contentBlockAddress))
+                                    ->
+                                    errors.Add(
+                                        "RequiredArtifacts must include at most one ContentBlock for each target root, storage pool, and content block address."
+                                    )
                                 | _ -> ()
 
                     if targetRootZipCount = 0 then

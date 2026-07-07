@@ -45,7 +45,7 @@ module MaterializationPlanTestData =
     let rootArtifacts targetRoot =
         [
             MaterializationArtifactDescriptor.DirectoryVersionZip(targetRoot, Some(MaterializationArtifactSource.CacheOnly cacheKey))
-            MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(targetRoot, Some MaterializationArtifactSource.Deferred)
+            MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(targetRoot, Some(MaterializationArtifactSource.CacheOnly $"{cacheKey}/metadata"))
         ]
 
     /// Builds V1 target-root artifact descriptors that are compatible with direct materialization.
@@ -177,9 +177,9 @@ type MaterializationPlanContractTests() =
                 assertValid (Validation.validatePlan roundTrip))
         )
 
-    /// Verifies that cache-required plans can point only at cache entries or deferred sources.
+    /// Verifies that cache-required plans can point only at cache entries.
     [<Test>]
-    member _.CacheRequiredPlanAllowsCacheOnlyArtifactSourcesWithoutDirectUris() =
+    member _.CacheRequiredPlanAllowsOnlyCacheEntryArtifactSourcesWithoutDirectUris() =
         let plan = MaterializationPlanTestData.validPlan ()
 
         Assert.That(plan.ExecutionMode, Is.EqualTo(MaterializationExecutionMode.CacheRequired))
@@ -191,8 +191,7 @@ type MaterializationPlanContractTests() =
             | Some source when source.SourceKind = MaterializationArtifactSourceKind.CacheEntry ->
                 Assert.That(source.DirectUri.IsNone, Is.True)
                 assertValid (Validation.validateArtifactSource source)
-            | Some source when source.SourceKind = MaterializationArtifactSourceKind.Deferred -> Assert.That(source.DirectUri.IsNone, Is.True)
-            | _ -> Assert.Fail("CacheRequired test plan should not require a direct artifact URI.")
+            | _ -> Assert.Fail("CacheRequired test plan should require cache-entry artifact sources.")
 
     /// Verifies that CacheRequired plans fail closed when a direct source URI is present.
     [<Test>]
@@ -214,7 +213,7 @@ type MaterializationPlanContractTests() =
                 ]
             )
 
-        assertInvalid "CacheRequired plans must not require DirectUri artifact sources." (Validation.validatePlan plan)
+        assertInvalid "CacheRequired plans must require CacheEntry artifact sources for every required artifact." (Validation.validatePlan plan)
 
     /// Verifies that CacheRequired execution mode fails closed even when cache selection is inconsistent.
     [<Test>]
@@ -236,7 +235,7 @@ type MaterializationPlanContractTests() =
                 ]
             )
 
-        assertInvalid "CacheRequired plans must not require DirectUri artifact sources." (Validation.validatePlan plan)
+        assertInvalid "CacheRequired plans must require CacheEntry artifact sources for every required artifact." (Validation.validatePlan plan)
 
     /// Verifies that malformed plan DTOs with missing cache selection fail validation without throwing.
     [<Test>]
@@ -602,6 +601,93 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "Artifact CacheKey is required for CacheEntry sources." (Validation.validateArtifactSource source)
 
+    /// Verifies that cache-scope identity is either absent or a non-blank value.
+    [<TestCase("")>]
+    [<TestCase("   ")>]
+    member _.CacheSelectionRejectsBlankCacheScope(cacheScope: string) =
+        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some cacheScope }
+
+        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateCacheSelection cacheSelection)
+
+    /// Verifies that blank optional cache-scope identity fails before request and plan contracts validate.
+    [<TestCase("")>]
+    [<TestCase("   ")>]
+    member _.RequestAndPlanRejectBlankCacheScope(cacheScope: string) =
+        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some cacheScope }
+
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                cacheSelection,
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                cacheSelection,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateRequest request)
+        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validatePlan plan)
+
+    /// Verifies that null optional cache-scope identity fails before request and plan contracts validate.
+    [<Test>]
+    member _.RequestAndPlanRejectNullCacheScope() =
+        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some Unchecked.defaultof<string> }
+
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                cacheSelection,
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                cacheSelection,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validateRequest request)
+        assertInvalid "CacheSelection.CacheScope must not be blank when specified." (Validation.validatePlan plan)
+
+    /// Verifies that a non-blank cache-scope identity remains valid at request and plan seams.
+    [<Test>]
+    member _.RequestAndPlanAllowNonBlankCacheScope() =
+        let cacheSelection = { MaterializationCacheSelection.Preferred with CacheScope = Some "scope/materialization-main" }
+
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                cacheSelection,
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CachePreferred,
+                cacheSelection,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertValid (Validation.validateRequest request)
+        assertValid (Validation.validatePlan plan)
+
     /// Verifies that all current artifact kinds are accepted in request artifact selection.
     [<Test>]
     member _.RequestArtifactKindSelectionAcceptsAllCurrentKinds() =
@@ -942,7 +1028,130 @@ type MaterializationPlanContractTests() =
                 ]
             )
 
-        assertInvalid "CacheRequired plans must include a non-direct artifact source for every required artifact." (Validation.validatePlan plan)
+        assertInvalid "CacheRequired plans must require CacheEntry artifact sources for every required artifact." (Validation.validatePlan plan)
+
+    /// Verifies that cache-required plans fail closed unless each artifact source is an authoritative cache entry.
+    [<TestCase(MaterializationArtifactSourceKind.DirectUri)>]
+    [<TestCase(MaterializationArtifactSourceKind.Deferred)>]
+    member _.CacheRequiredPlanRequiresCacheEntryArtifactSources(sourceKind: MaterializationArtifactSourceKind) =
+        let source =
+            match sourceKind with
+            | MaterializationArtifactSourceKind.DirectUri -> MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip"
+            | MaterializationArtifactSourceKind.Deferred -> MaterializationArtifactSource.Deferred
+            | _ -> failwith "Unsupported source kind."
+
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                [
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(MaterializationPlanTestData.targetRootDirectoryVersionId, Some source)
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
+                    )
+                ]
+            )
+
+        assertInvalid "CacheRequired plans must require CacheEntry artifact sources for every required artifact." (Validation.validatePlan plan)
+
+    /// Verifies that duplicate FileManifest identity cannot name multiple sources for one target root and storage pool.
+    [<Test>]
+    member _.PlanRejectsDuplicateFileManifestIdentityForSameRootStoragePoolAndAddress() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                [
+                    yield! MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+                    MaterializationArtifactDescriptor.FileManifest(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.manifestAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/manifest/first")
+                    )
+                    MaterializationArtifactDescriptor.FileManifest(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.manifestAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/manifest/second")
+                    )
+                ]
+            )
+
+        assertInvalid
+            "RequiredArtifacts must include at most one FileManifest for each target root, storage pool, and manifest address."
+            (Validation.validatePlan plan)
+
+    /// Verifies that duplicate ContentBlock identity cannot name multiple sources for one target root and storage pool.
+    [<Test>]
+    member _.PlanRejectsDuplicateContentBlockIdentityForSameRootStoragePoolAndAddress() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                [
+                    yield! MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+                    MaterializationArtifactDescriptor.ContentBlock(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.contentBlockAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/block/first")
+                    )
+                    MaterializationArtifactDescriptor.ContentBlock(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.contentBlockAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/block/second")
+                    )
+                ]
+            )
+
+        assertInvalid
+            "RequiredArtifacts must include at most one ContentBlock for each target root, storage pool, and content block address."
+            (Validation.validatePlan plan)
+
+    /// Verifies that distinct CAS descriptor identities remain valid in the same target root.
+    [<Test>]
+    member _.PlanAllowsDistinctCasDescriptorIdentities() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Required,
+                [
+                    yield! MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+                    MaterializationArtifactDescriptor.FileManifest(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.manifestAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/manifest/first")
+                    )
+                    MaterializationArtifactDescriptor.FileManifest(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        ManifestAddress "1111111111111111111111111111111111111111111111111111111111111111",
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/manifest/second")
+                    )
+                    MaterializationArtifactDescriptor.ContentBlock(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        MaterializationPlanTestData.contentBlockAddress,
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/block/first")
+                    )
+                    MaterializationArtifactDescriptor.ContentBlock(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        ContentBlockAddress "2222222222222222222222222222222222222222222222222222222222222222",
+                        MaterializationPlanTestData.storagePoolId,
+                        Some(MaterializationArtifactSource.CacheOnly "cache/block/second")
+                    )
+                ]
+            )
+
+        assertValid (Validation.validatePlan plan)
 
     /// Verifies that V1 plans reject duplicate singleton root artifact descriptors.
     [<Test>]
