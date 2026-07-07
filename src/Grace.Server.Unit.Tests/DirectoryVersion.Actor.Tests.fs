@@ -6,6 +6,7 @@ open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.MaterializationPlan
 open NUnit.Framework
+open System
 open System.Threading.Tasks
 
 /// Covers deterministic DirectoryVersion projection helper behavior.
@@ -106,6 +107,27 @@ type DirectoryVersionProjectionEnsureTests() =
             match result with
             | Ok _ -> Assert.Fail("Expected recursive metadata failure to block descriptor success.")
             | Error error -> Assert.That(error.Error, Is.EqualTo("recursive metadata projection failed"))
+        }
+
+    /// Verifies unexpected recursive metadata exceptions are returned as Grace errors instead of escaping the grain call.
+    [<Test>]
+    member _.EnsureRequiredProjectionArtifactsWrapsRecursiveMetadataExceptionsAsGraceErrors() =
+        task {
+            let targetRootDirectoryVersionId = DirectoryVersionId.Parse "55555555-5555-5555-5555-555555555555"
+
+            let failingRecursiveMetadata () : Task<Result<ProjectionArtifactEvidence, GraceError>> =
+                raise (InvalidOperationException "recursive metadata storage fault")
+
+            let! result =
+                ensureRequiredProjectionArtifactsWith
+                    targetRootDirectoryVersionId
+                    (fun () -> Task.FromResult(Ok(evidence MaterializationArtifactKind.DirectoryVersionZip 123L None)))
+                    failingRecursiveMetadata
+                    "corr-recursive-throw"
+
+            match result with
+            | Ok _ -> Assert.Fail("Expected recursive metadata exception to be wrapped as a Grace error.")
+            | Error error -> Assert.That(error.Error, Does.Contain("RecursiveDirectoryMetadata projection could not be ensured."))
         }
 
     /// Verifies malformed projection evidence cannot produce a successful descriptor response.

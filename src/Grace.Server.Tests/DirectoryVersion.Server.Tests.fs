@@ -235,8 +235,22 @@ module DirectoryVersionServerTestHelpers =
             Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
 
     /// Builds a finalized FileManifest for a storage pool returned by the upload session.
-    let manifestForStoragePool (storagePoolId: StoragePoolId) (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
-        let contentBlock = ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
+    let manifestForStoragePool (storagePoolId: StoragePoolId) (bytes: byte array) (blocks: ContentBlockFormat.EncodedContentBlock array) =
+        let mutable offset = 0L
+
+        let contentBlocks =
+            blocks
+            |> Array.map (fun block ->
+                let decodedLength =
+                    match ContentBlockFormat.decode block.Payload with
+                    | Ok decoded -> decoded.Payload.Length
+                    | Error error ->
+                        Assert.Fail($"Expected test ContentBlock to decode, got {error}.")
+                        0
+
+                let contentBlock = ContentBlock.Create(block.Address, offset, int64 decodedLength)
+                offset <- offset + int64 decodedLength
+                contentBlock)
 
         let manifest =
             FileManifest.Create(
@@ -245,7 +259,7 @@ module DirectoryVersionServerTestHelpers =
                 FileContentHash(computeBlake3Hash bytes),
                 int64 bytes.Length,
                 storagePoolId,
-                [ contentBlock ]
+                contentBlocks |> Array.toList
             )
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
@@ -301,12 +315,13 @@ module DirectoryVersionServerTestHelpers =
             return deserialize<GraceReturnValue<UploadSessionDecision>> body
         }
 
-    /// Creates and finalizes one manifest-backed FileVersion through the storage routes.
-    let createManifestBackedFileVersionAsync (repositoryId: string) (relativePath: RelativePath) (payload: byte array) =
+    /// Creates and finalizes one manifest-backed FileVersion through the storage routes from caller-selected chunks.
+    let createManifestBackedFileVersionFromChunksAsync (repositoryId: string) (relativePath: RelativePath) (chunks: byte array array) =
         task {
             let correlationId = generateCorrelationId ()
             let uploadSessionId = Guid.NewGuid()
-            let block = encodeBlock payload
+            let payload = chunks |> Array.concat
+            let blocks = chunks |> Array.map encodeBlock
 
             let start = Parameters.Storage.StartManifestUploadSessionParameters()
             setStorageParameters start repositoryId correlationId
@@ -319,42 +334,58 @@ module DirectoryVersionServerTestHelpers =
             start.OperationId <- "start"
 
             let! startResult = postUploadSessionDecisionAsync "/storage/startManifestUploadSession" start
-            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId payload block
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId payload blocks
 
-            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
-            setStorageParameters register repositoryId correlationId
-            register.UploadSessionId <- uploadSessionId
-            register.AuthorizedScope <- normalizedFilePath relativePath
-            register.OperationId <- "register-0"
-            register.ContentBlockAddress <- block.Address
-            register.LogicalOffset <- 0L
-            register.LogicalLength <- int64 payload.Length
-            register.ExpectedPayloadLength <- int64 block.Payload.Length
+            let mutable logicalOffset = 0L
+            let mutable blockIndex = 0
 
-            let! _ = postUploadSessionDecisionAsync "/storage/registerContentBlockUpload" register
+            while blockIndex < blocks.Length do
+                let block = blocks[blockIndex]
 
-            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
-            setStorageParameters uploadUriParameters repositoryId correlationId
-            uploadUriParameters.UploadSessionId <- uploadSessionId
-            uploadUriParameters.AuthorizedScope <- normalizedFilePath relativePath
-            uploadUriParameters.ContentBlockAddress <- block.Address
+                let decodedLength =
+                    match ContentBlockFormat.decode block.Payload with
+                    | Ok decoded -> decoded.Payload.Length
+                    | Error error ->
+                        Assert.Fail($"Expected test ContentBlock to decode, got {error}.")
+                        0
 
-            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
-            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
-            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
-            let uploadUri = Uri uploadUriBody
-            let! uploadETag = uploadContentBlockWithSasAsync block.Payload uploadUri
+                let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+                setStorageParameters register repositoryId correlationId
+                register.UploadSessionId <- uploadSessionId
+                register.AuthorizedScope <- normalizedFilePath relativePath
+                register.OperationId <- $"register-{blockIndex}"
+                register.ContentBlockAddress <- block.Address
+                register.LogicalOffset <- logicalOffset
+                register.LogicalLength <- int64 decodedLength
+                register.ExpectedPayloadLength <- int64 block.Payload.Length
 
-            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
-            setStorageParameters confirm repositoryId correlationId
-            confirm.UploadSessionId <- uploadSessionId
-            confirm.AuthorizedScope <- normalizedFilePath relativePath
-            confirm.OperationId <- "confirm-0"
-            confirm.ContentBlockAddress <- block.Address
-            confirm.Payload <- block.Payload
-            confirm.StoragePlacement <- contentBlockPlacementFromUri uploadUri (Some uploadETag)
+                let! _ = postUploadSessionDecisionAsync "/storage/registerContentBlockUpload" register
 
-            let! _ = postUploadSessionDecisionAsync "/storage/confirmContentBlockUpload" confirm
+                let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+                setStorageParameters uploadUriParameters repositoryId correlationId
+                uploadUriParameters.UploadSessionId <- uploadSessionId
+                uploadUriParameters.AuthorizedScope <- normalizedFilePath relativePath
+                uploadUriParameters.ContentBlockAddress <- block.Address
+
+                let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+                let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+                Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+                let uploadUri = Uri uploadUriBody
+                let! uploadETag = uploadContentBlockWithSasAsync block.Payload uploadUri
+
+                let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+                setStorageParameters confirm repositoryId correlationId
+                confirm.UploadSessionId <- uploadSessionId
+                confirm.AuthorizedScope <- normalizedFilePath relativePath
+                confirm.OperationId <- $"confirm-{blockIndex}"
+                confirm.ContentBlockAddress <- block.Address
+                confirm.Payload <- block.Payload
+                confirm.StoragePlacement <- contentBlockPlacementFromUri uploadUri (Some uploadETag)
+
+                let! _ = postUploadSessionDecisionAsync "/storage/confirmContentBlockUpload" confirm
+
+                logicalOffset <- logicalOffset + int64 decodedLength
+                blockIndex <- blockIndex + 1
 
             let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
             setStorageParameters finalize repositoryId correlationId
@@ -364,9 +395,8 @@ module DirectoryVersionServerTestHelpers =
             finalize.Manifest <- manifest
 
             finalize.BlockPayloads <-
-                [|
-                    { Address = block.Address; Payload = block.Payload }
-                |]
+                blocks
+                |> Array.map (fun block -> { Address = block.Address; Payload = block.Payload })
 
             let! finalizeResult = postUploadSessionDecisionAsync "/storage/finalizeManifestUpload" finalize
             Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
@@ -375,6 +405,10 @@ module DirectoryVersionServerTestHelpers =
             fileVersion.ContentReference <- FileContentReference.FileManifest manifest
             return fileVersion
         }
+
+    /// Creates and finalizes one manifest-backed FileVersion through the storage routes.
+    let createManifestBackedFileVersionAsync (repositoryId: string) (relativePath: RelativePath) (payload: byte array) =
+        createManifestBackedFileVersionFromChunksAsync repositoryId relativePath [| payload |]
 
     /// Gets the retained zip route artifact bytes.
     let getZipBytesAsync (repositoryId: string) (directoryVersionId: DirectoryVersionId) =
@@ -688,14 +722,22 @@ type DirectoryVersionServer() =
             let wholeFilePath = RelativePath $"/zip-proof/{Guid.NewGuid():N}/whole.bin"
             let manifestFilePath = RelativePath $"/zip-proof/{Guid.NewGuid():N}/manifest.bin"
             let wholeFilePayload = DirectoryVersionServerTestHelpers.deterministicBytes "whole-file-zip-proof" 8192
-            let manifestPayload = DirectoryVersionServerTestHelpers.deterministicBytes "manifest-backed-zip-proof" 220000
+
+            let manifestPayloadChunks =
+                [|
+                    DirectoryVersionServerTestHelpers.deterministicBytes "manifest-backed-zip-proof-a" 64000
+                    DirectoryVersionServerTestHelpers.deterministicBytes "manifest-backed-zip-proof-b" 96000
+                    DirectoryVersionServerTestHelpers.deterministicBytes "manifest-backed-zip-proof-c" 60000
+                |]
+
+            let manifestPayload = manifestPayloadChunks |> Array.concat
 
             let wholeFileVersion = DirectoryVersionServerTestHelpers.createWholeFileVersion wholeFilePath wholeFilePayload
 
             let! uploadedWholeFileVersion = DirectoryVersionServerTestHelpers.uploadWholeFileAsync repositoryId wholeFileVersion wholeFilePayload
 
             let! manifestBackedFileVersion =
-                DirectoryVersionServerTestHelpers.createManifestBackedFileVersionAsync repositoryId manifestFilePath manifestPayload
+                DirectoryVersionServerTestHelpers.createManifestBackedFileVersionFromChunksAsync repositoryId manifestFilePath manifestPayloadChunks
 
             let root =
                 DirectoryVersionServerTestHelpers.createDirectoryVersionWithFiles
