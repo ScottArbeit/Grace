@@ -340,14 +340,32 @@ module MaterializationPlan =
                         match selector.DirectoryVersionId with
                         | Some directoryVersionId when directoryVersionId <> DirectoryVersionId.Empty -> ()
                         | _ -> errors.Add("TargetSelector.DirectoryVersionId is required.")
+
+                        if selector.ReferenceId.IsSome then
+                            errors.Add("TargetSelector.ReferenceId must be empty for DirectoryVersionId selectors.")
+
+                        if selector.BranchName.IsSome then
+                            errors.Add("TargetSelector.BranchName must be empty for DirectoryVersionId selectors.")
                     | MaterializationTargetSelectorKind.ReferenceId ->
                         match selector.ReferenceId with
                         | Some referenceId when referenceId <> ReferenceId.Empty -> ()
                         | _ -> errors.Add("TargetSelector.ReferenceId is required.")
+
+                        if selector.DirectoryVersionId.IsSome then
+                            errors.Add("TargetSelector.DirectoryVersionId must be empty for ReferenceId selectors.")
+
+                        if selector.BranchName.IsSome then
+                            errors.Add("TargetSelector.BranchName must be empty for ReferenceId selectors.")
                     | MaterializationTargetSelectorKind.BranchName ->
                         match selector.BranchName with
                         | Some branchName when not (String.IsNullOrWhiteSpace branchName) -> ()
                         | _ -> errors.Add("TargetSelector.BranchName is required.")
+
+                        if selector.DirectoryVersionId.IsSome then
+                            errors.Add("TargetSelector.DirectoryVersionId must be empty for BranchName selectors.")
+
+                        if selector.ReferenceId.IsSome then
+                            errors.Add("TargetSelector.ReferenceId must be empty for BranchName selectors.")
                     | _ -> errors.Add($"TargetSelector.SelectorKind '{int selector.SelectorKind}' is not supported.")
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
@@ -391,7 +409,12 @@ module MaterializationPlan =
                         match source.CacheKey with
                         | Some cacheKey when not (String.IsNullOrWhiteSpace cacheKey) -> ()
                         | _ -> errors.Add("Artifact CacheKey is required for CacheEntry sources.")
-                    | MaterializationArtifactSourceKind.Deferred -> ()
+
+                        if source.DirectUri.IsSome then
+                            errors.Add("Artifact DirectUri must be empty for CacheEntry sources.")
+                    | MaterializationArtifactSourceKind.Deferred ->
+                        if source.DirectUri.IsSome then
+                            errors.Add("Artifact DirectUri must be empty for Deferred sources.")
                     | _ -> errors.Add($"Artifact SourceKind '{int source.SourceKind}' is not supported.")
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
@@ -521,6 +544,11 @@ module MaterializationPlan =
                 else
                     let mutable hasTargetRootZip = false
                     let mutable hasRecursiveMetadata = false
+                    let cacheRequiredByExecutionMode = plan.ExecutionMode = MaterializationExecutionMode.CacheRequired
+
+                    let cacheRequiredBySelection =
+                        not (isNull (box plan.CacheSelection))
+                        && plan.CacheSelection.SelectionKind = MaterializationCacheSelectionKind.RequireCache
 
                     for descriptor in plan.RequiredArtifacts do
                         match validateArtifactDescriptor descriptor with
@@ -528,9 +556,13 @@ module MaterializationPlan =
                         | Error descriptorErrors -> errors.AddRange(descriptorErrors)
 
                         if not (isNull (box descriptor)) then
-                            if plan.CacheSelection.SelectionKind = MaterializationCacheSelectionKind.RequireCache then
+                            if cacheRequiredByExecutionMode
+                               || cacheRequiredBySelection then
                                 match descriptor.Source with
-                                | Some source when source.SourceKind = MaterializationArtifactSourceKind.DirectUri ->
+                                | Some source when
+                                    not (isNull (box source))
+                                    && source.SourceKind = MaterializationArtifactSourceKind.DirectUri
+                                    ->
                                     errors.Add("CacheRequired plans must not require DirectUri artifact sources.")
                                 | _ -> ()
 

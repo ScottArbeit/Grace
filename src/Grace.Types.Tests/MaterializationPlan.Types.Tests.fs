@@ -187,6 +187,36 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "CacheRequired plans must not require DirectUri artifact sources." (Validation.validatePlan plan)
 
+    /// Verifies that CacheRequired execution mode fails closed even when cache selection is inconsistent.
+    [<Test>]
+    member _.CacheRequiredExecutionModeWithBypassSelectionRejectsDirectUriSource() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Bypass,
+                [
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip")
+                    )
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        MaterializationPlanTestData.targetRootDirectoryVersionId,
+                        Some MaterializationArtifactSource.Deferred
+                    )
+                ]
+            )
+
+        assertInvalid "CacheRequired plans must not require DirectUri artifact sources." (Validation.validatePlan plan)
+
+    /// Verifies that malformed plan DTOs with missing cache selection fail validation without throwing.
+    [<Test>]
+    member _.NullCacheSelectionFailsValidationWithoutDereferencing() =
+        let plan = { MaterializationPlanTestData.validPlan () with CacheSelection = Unchecked.defaultof<MaterializationCacheSelection> }
+
+        Assert.DoesNotThrow(Action(fun () -> Validation.validatePlan plan |> ignore))
+        assertInvalid "CacheSelection is required." (Validation.validatePlan plan)
+
     /// Verifies that a plan response with an empty resolved root fails validation.
     [<Test>]
     member _.EmptyTargetRootFailsValidationClearly() =
@@ -389,6 +419,19 @@ type MaterializationPlanContractTests() =
         Assert.That(source.DirectUri.IsNone, Is.True)
         assertValid (Validation.validateArtifactSource source)
 
+    /// Verifies that non-direct source kinds cannot smuggle direct fetch URLs.
+    [<Test>]
+    member _.NonDirectArtifactSourcesRejectDirectUri() =
+        let cacheEntrySource =
+            { MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey with
+                DirectUri = Some "https://cache.example.test/artifacts/root.zip"
+            }
+
+        let deferredSource = { MaterializationArtifactSource.Deferred with DirectUri = Some "https://cache.example.test/artifacts/root.zip" }
+
+        assertInvalid "Artifact DirectUri must be empty for CacheEntry sources." (Validation.validateArtifactSource cacheEntrySource)
+        assertInvalid "Artifact DirectUri must be empty for Deferred sources." (Validation.validateArtifactSource deferredSource)
+
     /// Verifies that direct URI sources carry a direct location and round trip through JSON.
     [<Test>]
     member _.DirectUriSourceRoundTripsThroughJson() =
@@ -425,3 +468,23 @@ type MaterializationPlanContractTests() =
 
         Assert.That(roundTrip.RequestedArtifactKinds, Is.EquivalentTo(Enum.GetValues<MaterializationArtifactKind>()))
         assertValid (Validation.validateRequest roundTrip)
+
+    /// Verifies that each selector kind rejects identity fields owned by other selector kinds.
+    [<Test>]
+    member _.TargetSelectorsRejectAmbiguousIdentityFields() =
+        let directorySelector =
+            { MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId with
+                ReferenceId = Some MaterializationPlanTestData.referenceId
+            }
+
+        let referenceSelector =
+            { MaterializationTargetSelector.ForReference MaterializationPlanTestData.referenceId with BranchName = Some MaterializationPlanTestData.branchName }
+
+        let branchSelector =
+            { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with
+                DirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
+            }
+
+        assertInvalid "TargetSelector.ReferenceId must be empty for DirectoryVersionId selectors." (Validation.validateTargetSelector directorySelector)
+        assertInvalid "TargetSelector.BranchName must be empty for ReferenceId selectors." (Validation.validateTargetSelector referenceSelector)
+        assertInvalid "TargetSelector.DirectoryVersionId must be empty for BranchName selectors." (Validation.validateTargetSelector branchSelector)
