@@ -3293,6 +3293,7 @@ module Watch =
     type private SupersededCurrentBranchMaterializationRoot = { ReferenceIds: HashSet<ReferenceId>; mutable AnonymousRejectionsRemaining: int }
 
     let private supersededCurrentBranchMaterializationRoots = Dictionary<string, SupersededCurrentBranchMaterializationRoot>(StringComparer.Ordinal)
+    let private maxAnonymousCurrentBranchMaterializationRejections = 1024
     let mutable private lastPublishedCurrentBranchCleanRoot: (RepositoryId * BranchId * DirectoryVersionId) option = None
     let private currentBranchMaterializationGate = new SemaphoreSlim(1, 1)
 
@@ -3312,6 +3313,10 @@ module Watch =
             supersededCurrentBranchMaterializationRoots[key] <- created
             created
 
+    /// Adds one bounded root-only stale rejection for a retired anonymous notification copy.
+    let private incrementAnonymousCurrentBranchMaterializationRejections (entry: SupersededCurrentBranchMaterializationRoot) =
+        entry.AnonymousRejectionsRemaining <- min maxAnonymousCurrentBranchMaterializationRejections (entry.AnonymousRejectionsRemaining + 1)
+
     /// Records a skipped or applied notification as stale without permanently banning its root value.
     let private recordSupersededCurrentBranchMaterializationPayload (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
@@ -3321,7 +3326,7 @@ module Watch =
                 entry.ReferenceIds.Add(payload.ReferenceId)
                 |> ignore
             else
-                entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1)
+                incrementAnonymousCurrentBranchMaterializationRejections entry)
 
     /// Records a clean root that a successful current-branch materialization moved past when no Reference identity is available.
     let private recordSupersededCurrentBranchMaterializationRoot (authority: CurrentBranchMaterializationAuthority) (updatedStatus: GraceStatus) =
@@ -3330,7 +3335,7 @@ module Watch =
             lock pendingCurrentBranchMaterializationLock (fun () ->
                 let entry = supersededCurrentBranchMaterializationRootEntry authority.RepositoryId authority.BranchId authority.RootDirectoryId
 
-                entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1)
+                incrementAnonymousCurrentBranchMaterializationRejections entry)
 
     /// Records a locally published clean-root advancement so delayed remote roots cannot roll Watch backward.
     let private recordPublishedCurrentBranchCleanRootWithPendingPolicy retirePendingEntries (updatedStatus: GraceStatus) =
@@ -3355,6 +3360,20 @@ module Watch =
 
                             pendingCurrentBranchMaterializations <- retained
                             retired
+                        | None when
+                            pendingCurrentBranchMaterializations
+                            |> List.exists (fun pending ->
+                                pending.RepositoryId = current.RepositoryId
+                                && pending.BranchId = current.BranchId)
+                            ->
+                            let retired, retained =
+                                pendingCurrentBranchMaterializations
+                                |> List.partition (fun pending ->
+                                    pending.RepositoryId = current.RepositoryId
+                                    && pending.BranchId = current.BranchId)
+
+                            pendingCurrentBranchMaterializations <- retained
+                            retired
                         | _ -> []
                     else
                         []
@@ -3366,7 +3385,7 @@ module Watch =
                     && previousRoot <> updatedRoot
                     ->
                     let entry = supersededCurrentBranchMaterializationRootEntry current.RepositoryId current.BranchId previousRoot
-                    entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1
+                    incrementAnonymousCurrentBranchMaterializationRejections entry
                 | _ -> ()
 
                 for retiredEntry in retiredPendingEntries do
@@ -4135,16 +4154,19 @@ module Watch =
                                         correlationId
                                 )
                 | None ->
-                    if File.Exists(fullPath) then
+                    if
+                        File.Exists(fullPath)
+                        || Directory.Exists(fullPath)
+                    then
                         requestGraceWatchExplicitResync
-                            $"Current-branch remote materialization detected a new local file at target {relativePath} before overwrite for Reference {payload.ReferenceId}."
+                            $"Current-branch remote materialization detected new local work at file target {relativePath} before overwrite for Reference {payload.ReferenceId}."
 
                         consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
 
                         return
                             Error(
                                 GraceError.Create
-                                    $"Current-branch remote materialization refused to overwrite new local file {relativePath}; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                    $"Current-branch remote materialization refused to overwrite new local work at file target {relativePath}; Reference {payload.ReferenceId} was retired as stale behind local work."
                                     correlationId
                             )
                     else
@@ -4371,12 +4393,15 @@ module Watch =
                                     && peekSupersededCurrentBranchMaterializationRoot payload
                                 | _ -> false
 
-                            if providedDecision.Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
-                               && not providedPayloadTargetsKnownStaleRoot then
-                                Array.append
-                                    providedPayloads
-                                    (pendingUnsafeCurrentBranchMaterializationSnapshot ()
-                                     |> List.toArray)
+                            if providedDecision.Reason = LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired then
+                                let pendingPayloads =
+                                    pendingUnsafeCurrentBranchMaterializationSnapshot ()
+                                    |> List.toArray
+
+                                if providedPayloadTargetsKnownStaleRoot then
+                                    if pendingPayloads.Length > 0 then pendingPayloads else providedPayloads
+                                else
+                                    Array.append pendingPayloads providedPayloads
                             else
                                 providedPayloads
                         else
