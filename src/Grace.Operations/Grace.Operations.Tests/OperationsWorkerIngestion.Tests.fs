@@ -152,6 +152,42 @@ type private BlockingCompleteMessageActions(events: List<string>) =
             settlements.Add("dead-letter", Some reason)
             Task.CompletedTask
 
+/// Throws from one configured settlement path while recording any fallback settlement attempts.
+type private ThrowingSettlementMessageActions(events: List<string>, operationToThrow: string) =
+    let settlements = ResizeArray<string * string option>()
+
+    /// Returns the settlements recorded by the fake actions.
+    member _.Settlements = settlements |> Seq.toList
+
+    interface IOperationsUsageMessageActions with
+
+        member _.CompleteAsync(_cancellationToken) =
+            if operationToThrow = "complete" then
+                events.Add("complete-failed")
+                Task.FromException(InvalidOperationException("forced complete failure with SharedAccessKey=secret"))
+            else
+                events.Add("complete")
+                settlements.Add("complete", None)
+                Task.CompletedTask
+
+        member _.AbandonAsync(_cancellationToken) =
+            if operationToThrow = "abandon" then
+                events.Add("abandon-failed")
+                Task.FromException(InvalidOperationException("forced abandon failure with SharedAccessKey=secret"))
+            else
+                events.Add("abandon")
+                settlements.Add("abandon", None)
+                Task.CompletedTask
+
+        member _.DeadLetterAsync(reason, _description, _cancellationToken) =
+            if operationToThrow = "dead-letter" then
+                events.Add("dead-letter-failed")
+                Task.FromException(InvalidOperationException("forced dead-letter failure with SharedAccessKey=secret"))
+            else
+                events.Add("dead-letter")
+                settlements.Add("dead-letter", Some reason)
+                Task.CompletedTask
+
 /// Fakes the operations data-layer boundary for deterministic processor tests.
 type private StubUsageFactStore(storeAsync: UsageFact -> CancellationToken -> Task<Result<UsageFactPersistenceResult, string list>>, events: List<string>) =
     let storedFacts = ResizeArray<UsageFact>()
@@ -299,8 +335,8 @@ type OperationsWorkerIngestionTests() =
                                          getConfigKey Constants.EnvironmentVariables.AzureServiceBusConnectionString,
                                          "Endpoint=sb://operations.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=fake"
                                      )
-                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.MaxConcurrentCallsEnvironmentVariable, "7")
-                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.PrefetchCountEnvironmentVariable, "29") ]
+                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.MaxConcurrentCallsEnvironmentVariable, "1")
+                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.PrefetchCountEnvironmentVariable, "0") ]
 
         let settings = OperationsWorkerSettings.fromConfiguration configuration
 
@@ -316,10 +352,44 @@ type OperationsWorkerIngestionTests() =
                         Is.EqualTo("Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;")
                     )
 
-                    Assert.That(value.MaxConcurrentCalls, Is.EqualTo(7))
-                    Assert.That(value.PrefetchCount, Is.EqualTo(29)))
+                    Assert.That(value.MaxConcurrentCalls, Is.EqualTo(1))
+                    Assert.That(value.PrefetchCount, Is.EqualTo(0)))
             )
         | Error errors -> Assert.Fail(String.Join("; ", errors))
+
+    /// Verifies receive recovery is configured only for modes where callback start cannot be stale.
+    [<Test>]
+    member _.WorkerSettingsRejectUnsafeReceiveRecoveryModes() =
+        let configuration =
+            configurationFromPairs [ KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic,
+                                         "operations-topic"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.ProcessorSubscriptionEnvironmentVariable,
+                                         OperationsWorkerSettings.DefaultProcessorSubscriptionName
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey OperationsWorkerSettings.SqlConnectionStringEnvironmentVariable,
+                                         "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+                                     )
+                                     KeyValuePair<string, string>(
+                                         getConfigKey Constants.EnvironmentVariables.AzureServiceBusConnectionString,
+                                         "Endpoint=sb://operations.servicebus.windows.net/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=fake"
+                                     )
+                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.MaxConcurrentCallsEnvironmentVariable, "2")
+                                     KeyValuePair<string, string>(getConfigKey OperationsWorkerSettings.PrefetchCountEnvironmentVariable, "1") ]
+
+        match OperationsWorkerSettings.fromConfiguration configuration with
+        | Ok _ -> Assert.Fail("Unsafe receive recovery settings must be rejected.")
+        | Error errors ->
+            let errorText = String.Join("; ", errors)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(errorText, Does.Contain($"{OperationsWorkerSettings.MaxConcurrentCallsEnvironmentVariable} must be '1'"))
+                    Assert.That(errorText, Does.Contain($"{OperationsWorkerSettings.PrefetchCountEnvironmentVariable} must be '0'")))
+            )
 
     /// Verifies DebugLocal opts into admin bootstrap so fresh local SQL containers get the operations database.
     [<Test>]
@@ -1280,6 +1350,131 @@ type OperationsWorkerIngestionTests() =
                     Assert.That(dependencyFailure, Does.Not.Contain("settlement-secret"))
                     Assert.That(eventText events, Is.EqualTo("store|complete-waiting|complete"))
                     Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
+    /// Verifies completion failures are owned by Service Bus settlement readiness, not runtime storage readiness.
+    [<Test>]
+    member _.CompleteFailureRecordsServiceBusSettlementFailureWithoutFallbackAbandon() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("27272727-2727-4727-8727-272727272727"))
+
+            let processor, _store, _actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let actions = ThrowingSettlementMessageActions(events, "complete")
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let snapshot = readinessSnapshot readiness
+
+            let dependencyFailure =
+                snapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("store|complete-failed"))
+                    Assert.That(actions.Settlements, Is.Empty)
+                    Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(snapshot.DependencyFailure, Is.EqualTo(Some "Service Bus settlement failed (complete, InvalidOperationException)."))
+                    Assert.That(dependencyFailure, Does.Not.Contain("Runtime processing dependency failed"))
+                    Assert.That(dependencyFailure, Does.Not.Contain("SharedAccessKey=secret")))
+            )
+        }
+
+    /// Verifies dead-letter failures are owned by Service Bus settlement readiness, not runtime storage readiness.
+    [<Test>]
+    member _.DeadLetterFailureRecordsServiceBusSettlementFailureWithoutFallbackAbandon() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("28282828-2828-4828-8828-282828282828"))
+
+            let processor, store, _actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let actions = ThrowingSettlementMessageActions(events, "dead-letter")
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun value -> { value with Subject = "FutureOperationalFact" }
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let snapshot = readinessSnapshot readiness
+
+            let dependencyFailure =
+                snapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(eventText events, Is.EqualTo("dead-letter-failed"))
+                    Assert.That(actions.Settlements, Is.Empty)
+                    Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(snapshot.DependencyFailure, Is.EqualTo(Some "Service Bus settlement failed (dead-letter, InvalidOperationException)."))
+                    Assert.That(dependencyFailure, Does.Not.Contain("Runtime processing dependency failed"))
+                    Assert.That(dependencyFailure, Does.Not.Contain("SharedAccessKey=secret")))
+            )
+        }
+
+    /// Verifies fallback abandon success cannot clear a settlement failure from a different Service Bus operation.
+    [<Test>]
+    member _.FallbackAbandonSuccessDoesNotClearCompleteSettlementFailure() =
+        task {
+            let completeFailureFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("29292929-2929-4929-8929-292929292929"))
+
+            let storageFailureFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("30303030-3030-4030-8030-303030303030"))
+
+            let processor, _store, _actions, events, readiness =
+                createProcessorWithReadiness (fun storedFact _ ->
+                    if storedFact.UsageFactId = storageFailureFact.UsageFactId then
+                        Task.FromException<Result<UsageFactPersistenceResult, string list>>(InvalidOperationException("forced SQL failure"))
+                    else
+                        Task.FromResult(Ok(accepted storedFact)))
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            let completeFailureActions = ThrowingSettlementMessageActions(events, "complete")
+            let storageFailureActions = RecordingMessageActions(events)
+
+            let completeFailureMessage =
+                completeFailureFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let storageFailureMessage =
+                storageFailureFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(completeFailureMessage, completeFailureActions, CancellationToken.None)
+            do! processor.ProcessMessageAsync(storageFailureMessage, storageFailureActions, CancellationToken.None)
+
+            let snapshot = readinessSnapshot readiness
+
+            let dependencyFailure =
+                snapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("store|complete-failed|store|abandon"))
+                    Assert.That(completeFailureActions.Settlements, Is.Empty)
+                    Assert.That(settlementText storageFailureActions.Settlements, Is.EqualTo("abandon"))
+                    Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(dependencyFailure, Does.Contain("Service Bus settlement failed (complete, InvalidOperationException)."))
+                    Assert.That(dependencyFailure, Does.Contain("Runtime processing dependency failed (InvalidOperationException).")))
             )
         }
 

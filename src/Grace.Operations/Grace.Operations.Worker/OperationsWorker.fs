@@ -116,7 +116,13 @@ type internal OperationsUsageReadinessFailureSource =
     | ServiceBusProcessorRuntime = 4
 
 /// Tracks one active readiness failure and the ordering point needed for source-owned recovery.
-type internal OperationsUsageReadinessFailure = { Source: OperationsUsageReadinessFailureSource; Description: string; Version: int64 }
+type internal OperationsUsageReadinessFailure =
+    {
+        Source: OperationsUsageReadinessFailureSource
+        Description: string
+        Version: int64
+        RecoveryKey: string option
+    }
 
 /// Captures the current readiness ordering point for one in-flight message.
 type OperationsUsageReadinessAttempt = { FailureVersion: int64 }
@@ -146,7 +152,7 @@ type IOperationsUsageReadinessRecorder =
     abstract MarkServiceBusReceiveFailure: description: string -> unit
 
     /// Records a redacted Service Bus callback, settlement, or lock failure that prevents the worker from being ready.
-    abstract MarkServiceBusProcessorFailure: description: string -> unit
+    abstract MarkServiceBusProcessorFailure: description: string * recoveryKey: string option -> unit
 
     /// Clears a Service Bus receive or link failure only when a later received message proves the link recovered.
     abstract MarkServiceBusReceiveSuccess: attempt: OperationsUsageReadinessAttempt -> unit
@@ -154,8 +160,8 @@ type IOperationsUsageReadinessRecorder =
     /// Clears runtime-owned processing failures only when this success started after that failure.
     abstract MarkRuntimeProcessingSuccess: attempt: OperationsUsageReadinessAttempt -> unit
 
-    /// Clears Service Bus processor-owned settlement failures only after a later settlement succeeds.
-    abstract MarkServiceBusProcessorSuccess: attempt: OperationsUsageReadinessAttempt -> unit
+    /// Clears Service Bus processor-owned settlement failures only after the same settlement path succeeds later.
+    abstract MarkServiceBusProcessorSuccess: attempt: OperationsUsageReadinessAttempt * recoveryKey: string -> unit
 
     /// Records the latest unsupported ingestion contract observed at the broker boundary.
     abstract MarkUnsupportedContract: description: string -> unit
@@ -174,6 +180,7 @@ type OperationsUsageReadinessState() =
                                                                                            Description =
                                                                                                "Operations usage worker has not completed dependency startup."
                                                                                            Version = failureVersion
+                                                                                           RecoveryKey = None
                                                                                        }
 
     let mutable lastUnsupportedContract: string option = None
@@ -194,16 +201,25 @@ type OperationsUsageReadinessState() =
             |> fun descriptions -> String.Join("; ", descriptions)
             |> Some
 
-    let recordFailure source description =
+    let recordFailure source description recoveryKey =
         failureVersion <- failureVersion + 1L
 
-        dependencyFailures[source] <- { Source = source; Description = description; Version = failureVersion }
+        dependencyFailures[source] <- { Source = source; Description = description; Version = failureVersion; RecoveryKey = recoveryKey }
 
     let clearFailure source = dependencyFailures.Remove source |> ignore
 
     let clearFailureWhenFresh source attempt =
         match dependencyFailures.TryGetValue source with
         | true, failure when failure.Version <= attempt.FailureVersion -> clearFailure source
+        | _ -> ()
+
+    let clearServiceBusProcessorFailureWhenFresh attempt recoveryKey =
+        match dependencyFailures.TryGetValue OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime with
+        | true, failure when
+            failure.Version <= attempt.FailureVersion
+            && failure.RecoveryKey = Some recoveryKey
+            ->
+            clearFailure OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime
         | _ -> ()
 
     let snapshot () =
@@ -225,16 +241,17 @@ type OperationsUsageReadinessState() =
 
         member _.BeginProcessingAttempt() = lock gate (fun () -> { FailureVersion = failureVersion })
 
-        member _.MarkDependencyFailure(description) = lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.StartupDependency description)
+        member _.MarkDependencyFailure(description) =
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.StartupDependency description None)
 
         member _.MarkRuntimeProcessingFailure(description) =
-            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.RuntimeProcessingDependency description)
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.RuntimeProcessingDependency description None)
 
         member _.MarkServiceBusReceiveFailure(description) =
-            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusReceiveLink description)
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusReceiveLink description None)
 
-        member _.MarkServiceBusProcessorFailure(description) =
-            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime description)
+        member _.MarkServiceBusProcessorFailure(description, recoveryKey) =
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime description recoveryKey)
 
         member _.MarkServiceBusReceiveSuccess(attempt) =
             lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.ServiceBusReceiveLink attempt)
@@ -242,14 +259,25 @@ type OperationsUsageReadinessState() =
         member _.MarkRuntimeProcessingSuccess(attempt) =
             lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.RuntimeProcessingDependency attempt)
 
-        member _.MarkServiceBusProcessorSuccess(attempt) =
-            lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime attempt)
+        member _.MarkServiceBusProcessorSuccess(attempt, recoveryKey) = lock gate (fun () -> clearServiceBusProcessorFailureWhenFresh attempt recoveryKey)
 
         member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
 
 /// Records runtime readiness transitions that must stay visible through the shared health-check state.
 [<RequireQualifiedAccess>]
 module internal OperationsUsageReadinessTransitions =
+
+    /// Identifies the Service Bus settlement operation that proves a matching processor failure recovered.
+    [<Literal>]
+    let CompleteSettlementRecoveryKey = "complete"
+
+    /// Identifies the Service Bus abandon operation that proves a matching processor failure recovered.
+    [<Literal>]
+    let AbandonSettlementRecoveryKey = "abandon"
+
+    /// Identifies the Service Bus dead-letter operation that proves a matching processor failure recovered.
+    [<Literal>]
+    let DeadLetterSettlementRecoveryKey = "dead-letter"
 
     /// Identifies processor sources where a later receive proves broker receive/session-link recovery.
     let private isReceiveRecoverySource errorSource =
@@ -263,6 +291,15 @@ module internal OperationsUsageReadinessTransitions =
         | ServiceBusErrorSource.RenewLock -> false
         | _ -> false
 
+    /// Maps Azure Service Bus error sources to the concrete settlement proof that may recover them later.
+    let private serviceBusProcessorRecoveryKey errorSource =
+        match errorSource with
+        | ServiceBusErrorSource.Complete
+        | ServiceBusErrorSource.ProcessMessageCallback
+        | ServiceBusErrorSource.RenewLock -> Some CompleteSettlementRecoveryKey
+        | ServiceBusErrorSource.Abandon -> Some AbandonSettlementRecoveryKey
+        | _ -> None
+
     /// Records a redacted Service Bus processor fault observed after startup.
     let recordServiceBusProcessorFault (readiness: IOperationsUsageReadinessRecorder) (errorSource: ServiceBusErrorSource) (ex: exn) =
         let description = $"Service Bus processor fault ({errorSource}, {ex.GetType().Name})."
@@ -270,15 +307,20 @@ module internal OperationsUsageReadinessTransitions =
         if isReceiveRecoverySource errorSource then
             readiness.MarkServiceBusReceiveFailure(description)
         else
-            readiness.MarkServiceBusProcessorFailure(description)
+            readiness.MarkServiceBusProcessorFailure(description, serviceBusProcessorRecoveryKey errorSource)
+
+    /// Records a redacted Service Bus settlement failure observed inside explicit worker settlement calls.
+    let recordServiceBusSettlementFailure (readiness: IOperationsUsageReadinessRecorder) recoveryKey (ex: exn) =
+        let description = $"Service Bus settlement failed ({recoveryKey}, {ex.GetType().Name})."
+        readiness.MarkServiceBusProcessorFailure(description, Some recoveryKey)
 
     /// Records a later receive-side proof that a Service Bus processor receive or link fault recovered.
     let recordServiceBusReceiveSuccess (readiness: IOperationsUsageReadinessRecorder) (attempt: OperationsUsageReadinessAttempt) =
         readiness.MarkServiceBusReceiveSuccess(attempt)
 
     /// Records a later settlement-side proof that a Service Bus processor settlement fault recovered.
-    let recordServiceBusProcessorSuccess (readiness: IOperationsUsageReadinessRecorder) (attempt: OperationsUsageReadinessAttempt) =
-        readiness.MarkServiceBusProcessorSuccess(attempt)
+    let recordServiceBusProcessorSuccess (readiness: IOperationsUsageReadinessRecorder) (attempt: OperationsUsageReadinessAttempt) recoveryKey =
+        readiness.MarkServiceBusProcessorSuccess(attempt, recoveryKey)
 
     /// Records a redacted runtime processing dependency failure that should recover after a later successful message.
     let recordRuntimeProcessingFailure (readiness: IOperationsUsageReadinessRecorder) (ex: exn) =
@@ -465,6 +507,18 @@ module OperationsWorkerSettings =
         | :? InvalidOperationException
         | :? TypeInitializationException -> None
 
+    /// Adds a validation error when the worker is configured for a receive mode that cannot prove recovery safely.
+    let private validateReceiveProofMode maxConcurrentCalls prefetchCount (errors: ResizeArray<string>) =
+        if maxConcurrentCalls <> 1 then
+            errors.Add(
+                $"{MaxConcurrentCallsEnvironmentVariable} must be '1' because callback start ordering cannot prove Service Bus receive/link recovery when concurrent callbacks are enabled."
+            )
+
+        if prefetchCount <> 0 then
+            errors.Add(
+                $"{PrefetchCountEnvironmentVariable} must be '0' because prefetched callbacks cannot prove Service Bus receive/link recovery after a later receive fault."
+            )
+
     /// Builds validated worker settings from configuration.
     let fromConfiguration (configuration: IConfiguration) =
         let topicName = settingOrDefault configuration Constants.EnvironmentVariables.AzureServiceBusOperationalFactsTopic Constants.GraceOperationalFactsTopic
@@ -500,6 +554,11 @@ module OperationsWorkerSettings =
                 $"{Constants.EnvironmentVariables.AzureServiceBusConnectionString} or {Constants.EnvironmentVariables.AzureServiceBusNamespace} is required."
             )
 
+        let maxConcurrentCalls = positiveIntSetting configuration MaxConcurrentCallsEnvironmentVariable 1
+        let prefetchCount = nonNegativeIntSetting configuration PrefetchCountEnvironmentVariable 0
+
+        validateReceiveProofMode maxConcurrentCalls prefetchCount errors
+
         if errors.Count > 0 then
             Error(List.ofSeq errors)
         else
@@ -516,8 +575,8 @@ module OperationsWorkerSettings =
                             serviceBusNamespace
                             |> Option.orElseWith serviceBusNamespaceFromAzureEnvironment
                     SchemaBootstrapMode = schemaBootstrapMode configuration
-                    MaxConcurrentCalls = positiveIntSetting configuration MaxConcurrentCallsEnvironmentVariable 4
-                    PrefetchCount = nonNegativeIntSetting configuration PrefetchCountEnvironmentVariable 0
+                    MaxConcurrentCalls = maxConcurrentCalls
+                    PrefetchCount = prefetchCount
                 }
 
 /// Handles one usage fact message through validation, SQL persistence, and explicit Service Bus settlement.
@@ -538,12 +597,36 @@ type OperationsUsageIngestionProcessor
     /// Builds a bounded diagnostic description without including the message body.
     let describeErrors (errors: string list) = String.Join("; ", errors)
 
+    /// Runs one explicit Service Bus settlement call and records only matching settlement recovery proof.
+    let settleAsync readinessAttempt recoveryKey settlementName (settle: unit -> Task) (cancellationToken: CancellationToken) =
+        task {
+            try
+                do! settle ()
+                OperationsUsageReadinessTransitions.recordServiceBusProcessorSuccess readiness readinessAttempt recoveryKey
+                return true
+            with
+            | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> return false
+            | ex ->
+                OperationsUsageReadinessTransitions.recordServiceBusSettlementFailure readiness recoveryKey ex
+
+                logger.LogError(
+                    ex,
+                    "Service Bus settlement failed during operations UsageFact processing. Settlement: {Settlement}; RecoveryKey: {RecoveryKey}.",
+                    settlementName,
+                    recoveryKey
+                )
+
+                return false
+        }
+
     /// Dead-letters an invalid usage message with deterministic reason metadata.
     let deadLetterAsync readinessAttempt reason description (actions: IOperationsUsageMessageActions) cancellationToken =
-        task {
-            do! actions.DeadLetterAsync(reason, description, cancellationToken)
-            OperationsUsageReadinessTransitions.recordServiceBusProcessorSuccess readiness readinessAttempt
-        }
+        settleAsync
+            readinessAttempt
+            OperationsUsageReadinessTransitions.DeadLetterSettlementRecoveryKey
+            "dead-letter"
+            (fun () -> actions.DeadLetterAsync(reason, description, cancellationToken))
+            cancellationToken
 
     /// Configures lightweight schema pre-parsing to match Grace's shared JSON reader leniency.
     let usageFactSchemaDocumentOptions =
@@ -644,17 +727,20 @@ type OperationsUsageIngestionProcessor
                         messageType |> Option.defaultValue "<missing>"
                     )
 
-                    do!
+                    let! _ =
                         deadLetterAsync
                             readinessAttempt
                             "UnsupportedOperationalFactEnvelope"
                             "Message subject or graceMessageType is not supported by the operations usage worker."
                             actions
                             cancellationToken
+
+                    ()
                 else
                     match tryReadUsageFactSchemaVersion message.Body with
                     | Some schemaVersion when schemaVersion <> UsageFactSchemaVersion ->
-                        do! deadLetterUnsupportedSchemaAsync readinessAttempt schemaVersion message actions cancellationToken
+                        let! _ = deadLetterUnsupportedSchemaAsync readinessAttempt schemaVersion message actions cancellationToken
+                        ()
                     | _ ->
                         let usageFact = deserializeUsageFact message.Body
 
@@ -669,9 +755,11 @@ type OperationsUsageIngestionProcessor
                                 describeErrors errors
                             )
 
-                            do! deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                            let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                            ()
                         elif usageFact.SchemaVersion <> UsageFactSchemaVersion then
-                            do! deadLetterUnsupportedSchemaAsync readinessAttempt usageFact.SchemaVersion message actions cancellationToken
+                            let! _ = deadLetterUnsupportedSchemaAsync readinessAttempt usageFact.SchemaVersion message actions cancellationToken
+                            ()
                         else
                             match UsageFact.Validate usageFact with
                             | Error errors ->
@@ -683,7 +771,8 @@ type OperationsUsageIngestionProcessor
                                     describeErrors errors
                                 )
 
-                                do! deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                                let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                                ()
                             | Ok () ->
                                 let! stored = store.StoreUsageFactAsync(usageFact, cancellationToken)
 
@@ -697,7 +786,8 @@ type OperationsUsageIngestionProcessor
                                         describeErrors errors
                                     )
 
-                                    do! deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                                    let! _ = deadLetterAsync readinessAttempt "InvalidUsageFact" (describeErrors errors) actions cancellationToken
+                                    ()
                                 | Ok result ->
                                     logger.LogInformation(
                                         "Processed operational UsageFact. UsageFactId: {UsageFactId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}; Status: {Status}; BucketStart: {BucketStart}.",
@@ -711,8 +801,16 @@ type OperationsUsageIngestionProcessor
                                     )
 
                                     readiness.MarkRuntimeProcessingSuccess(readinessAttempt)
-                                    do! actions.CompleteAsync cancellationToken
-                                    OperationsUsageReadinessTransitions.recordServiceBusProcessorSuccess readiness readinessAttempt
+
+                                    let! _ =
+                                        settleAsync
+                                            readinessAttempt
+                                            OperationsUsageReadinessTransitions.CompleteSettlementRecoveryKey
+                                            "complete"
+                                            (fun () -> actions.CompleteAsync cancellationToken)
+                                            cancellationToken
+
+                                    ()
             with
             | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
                 logger.LogWarning(
@@ -730,7 +828,8 @@ type OperationsUsageIngestionProcessor
                     message.DeliveryCount
                 )
 
-                do! deadLetterAsync readinessAttempt "MalformedUsageFactJson" "UsageFact JSON could not be deserialized." actions cancellationToken
+                let! _ = deadLetterAsync readinessAttempt "MalformedUsageFactJson" "UsageFact JSON could not be deserialized." actions cancellationToken
+                ()
             | ex ->
                 OperationsUsageReadinessTransitions.recordRuntimeProcessingFailure readiness ex
 
@@ -742,8 +841,15 @@ type OperationsUsageIngestionProcessor
                     message.DeliveryCount
                 )
 
-                do! actions.AbandonAsync cancellationToken
-                OperationsUsageReadinessTransitions.recordServiceBusProcessorSuccess readiness readinessAttempt
+                let! _ =
+                    settleAsync
+                        readinessAttempt
+                        OperationsUsageReadinessTransitions.AbandonSettlementRecoveryKey
+                        "abandon"
+                        (fun () -> actions.AbandonAsync cancellationToken)
+                        cancellationToken
+
+                ()
         }
 
 /// Adapts Azure Service Bus message settlement to the worker's fakeable action interface.
@@ -863,7 +969,8 @@ type OperationsUsageWorkerService
                                 OperationsUsageServiceBusMessage.processReceivedMessageAsync
                                     readiness
                                     processor
-                                    (settings.PrefetchCount = 0)
+                                    (settings.MaxConcurrentCalls = 1
+                                     && settings.PrefetchCount = 0)
                                     args.Message
                                     actions
                                     args.CancellationToken)

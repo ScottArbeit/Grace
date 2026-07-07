@@ -200,9 +200,11 @@ These capture failure classification, retryability, cleanup notes, and runtime m
   usage facts and minute aggregates. Aspire local run mode points this at the local SQL Server container and database
   `GraceOperations`.
 - `grace__operations_worker__max_concurrent_calls`: Optional Service Bus processor concurrency override. Defaults to
-  `4`.
-- `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `0` so
-  receive/link readiness recovery is not proven by callbacks draining prefetched messages.
+  `1`. The worker rejects values above `1` because concurrent callback start ordering cannot prove receive/link
+  readiness recovery after a later Service Bus receive fault.
+- `grace__operations_worker__prefetch_count`: Optional Service Bus processor prefetch override. Defaults to `0`. The
+  worker rejects positive values because prefetched callbacks cannot prove receive/link readiness recovery after a later
+  Service Bus receive fault.
 
 The operations worker reads from `grace__azure_service_bus__operational_facts_topic` and requires
 `grace__azure_service_bus__operational_facts_processor_subscription` to be exactly `operational-facts-processor`.
