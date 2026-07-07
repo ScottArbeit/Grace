@@ -1744,6 +1744,19 @@ module Services =
             downloadFiles
             correlationId
 
+    /// Downloads missing working-directory materialization objects before target mutation starts.
+    let mutable private downloadFileVersionsForWorkingDirectoryUpdate = downloadFileVersionsFromObjectStorage
+
+    /// Replaces missing-object download behavior for working-directory mutation regression tests.
+    let internal setDownloadFileVersionsForWorkingDirectoryUpdateForTests
+        (downloadFileVersions: GetDownloadUriParameters -> IEnumerable<FileVersion> -> string -> Task<Result<unit, string>>)
+        =
+        downloadFileVersionsForWorkingDirectoryUpdate <- downloadFileVersions
+
+    /// Restores production object download behavior after working-directory mutation regression tests.
+    let internal resetDownloadFileVersionsForWorkingDirectoryUpdateForTests () =
+        downloadFileVersionsForWorkingDirectoryUpdate <- downloadFileVersionsFromObjectStorage
+
     /// Reads find file version for upload metadata data needed by the command workflow without changing remote state.
     let internal findFileVersionForUploadMetadata (fileVersions: IEnumerable<FileVersion>) (uploadMetadata: UploadMetadata) =
         fileVersions.First (fun fileVersion ->
@@ -3599,7 +3612,7 @@ module Services =
                                         CorrelationId = correlationId
                                     )
 
-                                match! downloadFileVersionsFromObjectStorage getDownloadUriParameters [| sourceFileVersion |] correlationId with
+                                match! downloadFileVersionsForWorkingDirectoryUpdate getDownloadUriParameters [| sourceFileVersion |] correlationId with
                                 | Ok _ ->
                                     logToAnsiConsole Colors.Verbose $"Downloaded {objectFilePath} from the object storage provider."
 
@@ -3610,8 +3623,12 @@ module Services =
                                         $"An error occurred while downloading a file from the object storage provider. CorrelationId: {correlationId}."
 
                                     logToAnsiConsole Colors.Error $"{error}"
+                                    resultError <- Some(GraceError.Create $"{error}" correlationId)
 
-                            if Directory.Exists(existingFileOnDisk.FullName) then
+                            if
+                                resultError.IsNone
+                                && Directory.Exists(existingFileOnDisk.FullName)
+                            then
                                 match! verifyTarget existingFileOnDisk.FullName true true with
                                 | Error _ -> ()
                                 | Ok () ->
@@ -3621,7 +3638,7 @@ module Services =
                                         match! verifyTarget existingFileOnDisk.FullName false false with
                                         | Ok () -> copyObjectFileToWorkingFile objectFilePath fileFullName
                                         | Error _ -> ()
-                            elif existingFileOnDisk.Exists then
+                            elif resultError.IsNone && existingFileOnDisk.Exists then
                                 // Need to compare existing file to new version from the object cache.
                                 let findFileVersionFromPreviousGraceStatus =
                                     previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
@@ -3654,7 +3671,7 @@ module Services =
                                                 $"Working directory update refused to create remote file {fileFullName} because local content appeared at the target after preflight; retry after the tree can be re-evaluated."
                                                 correlationId
                                         )
-                            else
+                            else if resultError.IsNone then
                                 // No existing file, so just copy it into place.
                                 //logToAnsiConsole Colors.Verbose $"Copying file {fileVersion.FullName} from object cache; no existing file."
                                 let trackedDirectoryFromPreviousGraceStatus =

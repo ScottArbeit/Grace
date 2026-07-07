@@ -13740,6 +13740,10 @@ module WatchTests =
     let private materializationInspection persistedMode status : Services.GraceWatchStatusInspection =
         { Exists = true; Status = Some status; PersistedMode = persistedMode; SafetyFlags = status.SafetyFlags; ReadError = None }
 
+    /// Builds an ambiguous Watch IPC inspection where retry state must be preserved.
+    let private missingMaterializationInspection () : Services.GraceWatchStatusInspection =
+        { Exists = false; Status = None; PersistedMode = None; SafetyFlags = [| "requiresExplicitResync" |]; ReadError = None }
+
     /// Builds a current-branch Reference notification for Watch remote materialization tests.
     let private currentBranchReferencePayload repositoryId branchId directoryId sha256Hash blake3Hash =
         { CurrentBranchReferenceNotification.Default with
@@ -14065,6 +14069,109 @@ module WatchTests =
 
             pendingStatus.LatestReason
             |> should equal (Some Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired))
+
+    /// Verifies that ambiguous write-boundary IPC failures preserve the remote payload for retry.
+    [<Test>]
+    let ``current branch materialization preserves pending retry when write boundary ipc is unavailable`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let cleanStatus = liveWatchStatus localRootId
+
+            let payload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    remoteRootId
+                    (Sha256Hash "ipc-unavailable-remote-root")
+                    (Blake3Hash "ipc-unavailable-remote-root-blake3")
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = cleanStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = cleanStatus.RootDirectoryBlake3Hash
+                }
+
+            let updatedStatus =
+                { previousStatus with
+                    RootDirectoryId = remoteRootId
+                    RootDirectorySha256Hash = payload.Sha256Hash
+                    RootDirectoryBlake3Hash = payload.Blake3Hash
+                }
+
+            let inspectionReadCount = ref 0
+            let inspection = ref (materializationInspection None cleanStatus)
+
+            let operations, fetchedRoots, downloadBatches, appliedPayloads, publishedStatuses =
+                recordingMaterializationOperations inspection previousStatus updatedStatus [| DirectoryVersionDto.Default |]
+
+            let ipcFailingOperations =
+                { operations with
+                    InspectWatchStatus =
+                        fun () ->
+                            incr inspectionReadCount
+
+                            if inspectionReadCount.Value = 1 then
+                                Task.FromResult(materializationInspection None cleanStatus)
+                            else
+                                Task.FromResult(missingMaterializationInspection ())
+                }
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests ipcFailingOperations true [| payload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            fetchedRoots.ToArray()
+            |> should equal [| remoteRootId |]
+
+            downloadBatches.Count |> should equal 1
+            appliedPayloads.Count |> should equal 0
+            publishedStatuses.Count |> should equal 0
+
+            Watch.isGraceWatchResyncPendingForWatchTests ()
+            |> should equal true
+
+            let pendingStatus = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
+
+            pendingStatus.Count |> should equal 1
+
+            pendingStatus.LatestReferenceId
+            |> should equal (Some payload.ReferenceId)
+
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let retryOperations, retryFetchedRoots, retryDownloadBatches, retryAppliedPayloads, retryPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None cleanStatus))
+                    previousStatus
+                    updatedStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests retryOperations true [| payload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            retryFetchedRoots.ToArray()
+            |> should equal [| remoteRootId |]
+
+            retryDownloadBatches.Count |> should equal 1
+
+            retryAppliedPayloads
+            |> Seq.map (fun applied -> applied.ReferenceId)
+            |> Seq.toArray
+            |> should equal [| payload.ReferenceId |]
+
+            retryPublishedStatuses
+            |> Seq.map (fun status -> status.RootDirectoryId)
+            |> Seq.toArray
+            |> should equal [| remoteRootId |])
 
     /// Verifies that remote materialization refuses to apply after the local root changed during network work.
     [<Test>]
@@ -14978,6 +15085,122 @@ module WatchTests =
 
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false)
+
+    /// Verifies that missing object fallback download failure aborts before target mutation.
+    [<Test>]
+    let ``current branch materialization aborts file replacement when fallback object download fails`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+            Watch.clearGraceWatchResyncPendingForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let relativePath = RelativePath "missing-object-download.txt"
+            let workingFilePath = Path.Combine(root, string relativePath)
+            let previousBytes = Encoding.UTF8.GetBytes("previous file content that must survive")
+            let remoteBytes = Encoding.UTF8.GetBytes("remote content that never reaches the local object cache")
+
+            File.WriteAllBytes(workingFilePath, previousBytes)
+
+            let previousFile =
+                (Services.createLocalFileVersion (FileInfo(workingFilePath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            let previousRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    localRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "missing-download-local-root")
+                    (Blake3Hash "missing-download-local-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| previousFile |]))
+                    (int64 previousBytes.Length)
+                    DateTime.UtcNow
+
+            let previousIndex = GraceIndex()
+
+            previousIndex.TryAdd(localRootId, previousRoot)
+            |> ignore
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = previousIndex
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = previousRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = previousRoot.Blake3Hash
+                }
+
+            let remoteFile =
+                FileVersion.CreateWithHashes
+                    relativePath
+                    (Sha256Hash "missing-download-remote-file")
+                    (Blake3Hash "missing-download-remote-file-blake3")
+                    String.Empty
+                    false
+                    (int64 remoteBytes.Length)
+
+            let remoteRoot =
+                DirectoryVersion.CreateWithHashes
+                    remoteRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "missing-download-remote-root")
+                    (Blake3Hash "missing-download-remote-root-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>([| remoteFile |]))
+                    (int64 remoteBytes.Length)
+
+            let remoteDto = { DirectoryVersionDto.Default with DirectoryVersion = remoteRoot; RecursiveSize = int64 remoteBytes.Length }
+            let remoteObjectPath = Services.getLocalObjectCachePathForFileVersion remoteFile
+
+            File.Exists(remoteObjectPath)
+            |> should equal false
+
+            let updatedIndex = GraceIndex()
+            let updatedRoot = remoteRoot.ToLocalDirectoryVersion DateTime.UtcNow
+
+            updatedIndex.TryAdd(remoteRootId, updatedRoot)
+            |> ignore
+
+            let updatedStatus =
+                { GraceStatus.Default with
+                    Index = updatedIndex
+                    RootDirectoryId = remoteRootId
+                    RootDirectorySha256Hash = remoteRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = remoteRoot.Blake3Hash
+                }
+
+            let verifyCalls = ref 0
+
+            try
+                Services.setDownloadFileVersionsForWorkingDirectoryUpdateForTests (fun _ _ correlationId ->
+                    Task.FromResult<Result<unit, string>>(Error($"test-controlled object download failure {correlationId}")))
+
+                let result =
+                    (Services.updateWorkingDirectoryWithTargetGuard previousStatus updatedStatus [| remoteDto |] (generateCorrelationId ()) (fun _ ->
+                        incr verifyCalls
+                        Task.FromResult<Result<unit, GraceError>>(Ok())))
+                        .GetAwaiter()
+                        .GetResult()
+
+                result.IsError |> should equal true
+                verifyCalls.Value |> should equal 1
+
+                File.ReadAllBytes(workingFilePath)
+                |> should equal previousBytes
+
+                File.Exists(remoteObjectPath)
+                |> should equal false
+            finally
+                Services.resetDownloadFileVersionsForWorkingDirectoryUpdateForTests ())
 
     /// Verifies that durable-only pending evidence is published through the captured branch IPC writer.
     [<Test>]
@@ -18283,9 +18506,9 @@ module WatchTests =
             let pendingStatus = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
             pendingStatus.Count |> should equal 0)
 
-    /// Verifies that a rootless Reference preserves pending materialization work when authority is ambiguous.
+    /// Verifies that a rootless concrete Reference retires older same-branch pending materialization work.
     [<Test>]
-    let ``current branch materialization rootless reference preserves pending materialization`` () =
+    let ``current branch materialization rootless concrete reference retires older pending materialization`` () =
         withTempRepo (fun root ->
             Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
 
@@ -18337,52 +18560,13 @@ module WatchTests =
                 .GetResult()
             |> ignore
 
-            Watch
-                .pendingCurrentBranchMaterializationStatusForWatchTests()
-                .Count
-            |> should equal 1
+            let pendingStatus = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
 
-            let previousStatus =
-                { GraceStatus.Default with
-                    RootDirectoryId = localRootId
-                    RootDirectorySha256Hash = cleanStatus.RootDirectorySha256Hash
-                    RootDirectoryBlake3Hash = cleanStatus.RootDirectoryBlake3Hash
-                }
+            pendingStatus.Count |> should equal 0)
 
-            let materializedStatus =
-                { previousStatus with
-                    RootDirectoryId = olderRemoteRootId
-                    RootDirectorySha256Hash = olderPayload.Sha256Hash
-                    RootDirectoryBlake3Hash = olderPayload.Blake3Hash
-                }
-
-            let retryOperations, retryFetchedRoots, retryDownloadBatches, retryAppliedPayloads, retryPublishedStatuses =
-                recordingMaterializationOperations
-                    (ref (materializationInspection None cleanStatus))
-                    previousStatus
-                    materializedStatus
-                    [| DirectoryVersionDto.Default |]
-
-            (Watch.retryPendingCurrentBranchMaterializationForWatchTests retryOperations)
-                .GetAwaiter()
-                .GetResult()
-            |> ignore
-
-            retryFetchedRoots.ToArray()
-            |> should equal [| olderRemoteRootId |]
-
-            retryDownloadBatches.Count |> should equal 1
-
-            retryAppliedPayloads
-            |> Seq.map (fun payload -> payload.ReferenceId)
-            |> Seq.toArray
-            |> should equal [| olderPayload.ReferenceId |]
-
-            retryPublishedStatuses.Count |> should equal 1)
-
-    /// Verifies that partial root identity cannot retire newer deferred materialization work.
+    /// Verifies that a partial concrete Reference retires older same-branch pending materialization work.
     [<Test>]
-    let ``current branch materialization partial root identity preserves pending materialization`` () =
+    let ``current branch materialization partial concrete reference retires older pending materialization`` () =
         withTempRepo (fun root ->
             Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
 
@@ -18445,10 +18629,7 @@ module WatchTests =
 
             let pendingStatus = Watch.pendingCurrentBranchMaterializationStatusForWatchTests ()
 
-            pendingStatus.Count |> should equal 1
-
-            pendingStatus.LatestReferenceId
-            |> should equal (Some olderPayload.ReferenceId))
+            pendingStatus.Count |> should equal 0)
 
     /// Verifies that retry exceptions are contained so Watch can keep the deferred payload.
     [<Test>]

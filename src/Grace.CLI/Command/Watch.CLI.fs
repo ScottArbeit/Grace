@@ -3522,16 +3522,9 @@ module Watch =
     /// Reports whether a remote root is known stale without spending bounded anonymous root-only authority.
     let private peekSupersededCurrentBranchMaterializationRoot payload = isSupersededCurrentBranchMaterializationRootWithAnonymousPolicy false payload
 
-    /// Reports whether a Reference notification carries enough root identity to supersede pending work.
-    let private currentBranchReferenceHasUsableRootIdentity (payload: CurrentBranchReferenceNotification) =
-        payload.DirectoryId <> DirectoryVersionId.Empty
-        && not (String.IsNullOrWhiteSpace($"{payload.Sha256Hash}"))
-        && not (String.IsNullOrWhiteSpace($"{payload.Blake3Hash}"))
-
-    /// Retires older deferred materializations only when an unusable Reference still proves newer root authority.
+    /// Retires older deferred materializations when a newer concrete same-branch Reference supersedes their retry order.
     let private retirePendingCurrentBranchMaterializationsBeforeUnusableReference (payload: CurrentBranchReferenceNotification) =
-        if payload.ReferenceId <> ReferenceId.Empty
-           && currentBranchReferenceHasUsableRootIdentity payload then
+        if payload.ReferenceId <> ReferenceId.Empty then
             lock pendingCurrentBranchMaterializationLock (fun () ->
                 let superseded, retained =
                     pendingCurrentBranchMaterializations
@@ -3822,6 +3815,12 @@ module Watch =
         && currentGraceStatus.RootDirectorySha256Hash = updatedGraceStatus.RootDirectorySha256Hash
         && currentGraceStatus.RootDirectoryBlake3Hash = updatedGraceStatus.RootDirectoryBlake3Hash
 
+    /// Names the trust result for one Watch IPC probe at a remote materialization write boundary.
+    type private CurrentBranchMaterializationWriteBoundaryTrust =
+        | WriteBoundaryClean
+        | WriteBoundaryProvenLocalOrRootAdvance
+        | WriteBoundaryAmbiguousAuthority
+
     /// Confirms Watch still has no queued local work at the marker-time materialization boundary.
     let private currentBranchMaterializationInspectionStillCleanForWrite
         (authority: CurrentBranchMaterializationAuthority)
@@ -3839,6 +3838,41 @@ module Watch =
             && status.RootDirectorySha256Hash = authority.RootDirectorySha256Hash
             && status.RootDirectoryBlake3Hash = authority.RootDirectoryBlake3Hash
         | _ -> false
+
+    /// Classifies Watch IPC evidence without treating missing, unreadable, or stale IPC as proven local work.
+    let private classifyCurrentBranchMaterializationWriteBoundaryInspection
+        (authority: CurrentBranchMaterializationAuthority)
+        (inspection: GraceWatchStatusInspection)
+        =
+        if currentBranchMaterializationInspectionStillCleanForWrite authority inspection then
+            WriteBoundaryClean
+        else
+            match inspection.Status with
+            | Some _ when
+                inspection.IsFresh
+                && not inspection.HasCurrentRepositoryIdentity
+                ->
+                WriteBoundaryProvenLocalOrRootAdvance
+            | Some status when
+                inspection.IsFresh
+                && inspection.HasCurrentRepositoryIdentity
+                && currentBranchMaterializationRootDirectoryStillCurrent authority
+                ->
+                let rootAdvanced =
+                    status.RootDirectoryId
+                    <> authority.RootDirectoryId
+                    || status.RootDirectorySha256Hash
+                       <> authority.RootDirectorySha256Hash
+                    || status.RootDirectoryBlake3Hash
+                       <> authority.RootDirectoryBlake3Hash
+
+                if rootAdvanced
+                   || status.HasPendingWatchWork
+                   || not status.IsWorkingTreeClean then
+                    WriteBoundaryProvenLocalOrRootAdvance
+                else
+                    WriteBoundaryAmbiguousAuthority
+            | _ -> WriteBoundaryAmbiguousAuthority
 
     /// Reports whether the remote reference is already known as stale by reference authority.
     let private currentBranchReferenceTargetsKnownNonCurrentRoot (status: GraceWatchStatus) (payload: CurrentBranchReferenceNotification) =
@@ -4524,19 +4558,30 @@ module Watch =
                                     else
                                         let! writeBoundaryInspection = inspectGraceWatchStatus ()
 
-                                        if not (currentBranchMaterializationInspectionStillCleanForWrite authority writeBoundaryInspection) then
+                                        match classifyCurrentBranchMaterializationWriteBoundaryInspection authority writeBoundaryInspection with
+                                        | WriteBoundaryProvenLocalOrRootAdvance ->
                                             consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
 
                                             requestGraceWatchExplicitResync
-                                                $"Current-branch remote materialization observed pending local work at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+                                                $"Current-branch remote materialization observed pending local work or root advancement at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
 
                                             return
                                                 Error(
                                                     GraceError.Create
-                                                        $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                                        $"Current-branch remote materialization refused because Watch proved local work or root advancement before writing remote files; Reference {payload.ReferenceId} was retired as stale behind local authority."
                                                         correlationId
                                                 )
-                                        else
+                                        | WriteBoundaryAmbiguousAuthority ->
+                                            requestGraceWatchExplicitResync
+                                                $"Current-branch remote materialization could not prove Watch IPC authority at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+
+                                            return
+                                                Error(
+                                                    GraceError.Create
+                                                        $"Current-branch remote materialization refused because Watch IPC authority was unavailable before writing remote files; Reference {payload.ReferenceId} remains pending for retry."
+                                                        correlationId
+                                                )
+                                        | WriteBoundaryClean ->
                                             match!
                                                 verifyCurrentBranchMaterializationPreWriteContentCleanAndRetireStalePayload
                                                     payload
@@ -4547,19 +4592,30 @@ module Watch =
                                             | Ok () ->
                                                 let! finalWriteBoundaryInspection = inspectGraceWatchStatus ()
 
-                                                if not (currentBranchMaterializationInspectionStillCleanForWrite authority finalWriteBoundaryInspection) then
+                                                match classifyCurrentBranchMaterializationWriteBoundaryInspection authority finalWriteBoundaryInspection with
+                                                | WriteBoundaryProvenLocalOrRootAdvance ->
                                                     consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
 
                                                     requestGraceWatchExplicitResync
-                                                        $"Current-branch remote materialization observed pending local work after the pre-write scan for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+                                                        $"Current-branch remote materialization observed pending local work or root advancement after the pre-write scan for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
 
                                                     return
                                                         Error(
                                                             GraceError.Create
-                                                                $"Current-branch remote materialization refused because Watch observed pending local work after the pre-write scan; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                                                $"Current-branch remote materialization refused because Watch proved local work or root advancement after the pre-write scan; Reference {payload.ReferenceId} was retired as stale behind local authority."
                                                                 correlationId
                                                         )
-                                                else
+                                                | WriteBoundaryAmbiguousAuthority ->
+                                                    requestGraceWatchExplicitResync
+                                                        $"Current-branch remote materialization could not prove Watch IPC authority after the pre-write scan for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+
+                                                    return
+                                                        Error(
+                                                            GraceError.Create
+                                                                $"Current-branch remote materialization refused because Watch IPC authority was unavailable after the pre-write scan; Reference {payload.ReferenceId} remains pending for retry."
+                                                                correlationId
+                                                        )
+                                                | WriteBoundaryClean ->
                                                     match!
                                                         updateWorkingDirectoryWithTargetGuardAtRoot
                                                             authority.RootDirectory
@@ -4751,18 +4807,28 @@ module Watch =
                                         else
                                             let! writeBoundaryInspection = operations.InspectWatchStatus()
 
-                                            if not (currentBranchMaterializationInspectionStillCleanForWrite authority writeBoundaryInspection) then
+                                            match classifyCurrentBranchMaterializationWriteBoundaryInspection authority writeBoundaryInspection with
+                                            | WriteBoundaryProvenLocalOrRootAdvance ->
                                                 consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
 
                                                 requestGraceWatchExplicitResync
-                                                    $"Current-branch remote materialization observed pending local work at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+                                                    $"Current-branch remote materialization observed pending local work or root advancement at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
 
                                                 logToAnsiConsole
                                                     Colors.Error
-                                                    $"Current-branch remote materialization refused because Watch observed pending local work before writing remote files; Reference {payload.ReferenceId} was retired as stale behind local work."
+                                                    $"Current-branch remote materialization refused because Watch proved local work or root advancement before writing remote files; Reference {payload.ReferenceId} was retired as stale behind local authority."
 
                                                 return decision
-                                            else
+                                            | WriteBoundaryAmbiguousAuthority ->
+                                                requestGraceWatchExplicitResync
+                                                    $"Current-branch remote materialization could not prove Watch IPC authority at the remote write boundary for Reference {payload.ReferenceId}; incremental confidence is suspended until resync completes."
+
+                                                logToAnsiConsole
+                                                    Colors.Error
+                                                    $"Current-branch remote materialization refused because Watch IPC authority was unavailable before writing remote files; Reference {payload.ReferenceId} remains pending for retry."
+
+                                                return decision
+                                            | WriteBoundaryClean ->
                                                 match! operations.ApplyRemoteDirectory payload authority previousGraceStatus directoryVersionDtos correlationId
                                                     with
                                                 | Error error ->
