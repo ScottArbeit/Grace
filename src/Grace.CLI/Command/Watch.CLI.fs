@@ -3656,8 +3656,15 @@ module Watch =
             && candidate.Sha256Hash = payload.Sha256Hash
             && candidate.Blake3Hash = payload.Blake3Hash
 
+    /// Reports whether a consumed pending payload still needs stale-root credit after the current boundary already retired it.
+    let private shouldRecordConsumedPendingCurrentBranchMaterialization (boundaryAlreadyRecorded: bool) (boundaryIndex: int) (candidateIndex: int) =
+        not (
+            boundaryAlreadyRecorded
+            && candidateIndex = boundaryIndex
+        )
+
     /// Removes deferred materializations through an applied or proven no-op Reference while preserving newer tail work.
-    let private forgetPendingCurrentBranchMaterializationsThrough (payload: CurrentBranchReferenceNotification) =
+    let private forgetPendingCurrentBranchMaterializationsThrough (boundaryAlreadyRecorded: bool) (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
             let pendingByIndex =
                 pendingCurrentBranchMaterializations
@@ -3676,12 +3683,13 @@ module Watch =
                     |> List.choose (fun (candidateIndex, candidate) ->
                         if candidateIndex <= index
                            || currentBranchMaterializationPayloadMatchesConsumptionBoundary payload candidate.Payload then
-                            Some candidate
+                            Some(candidateIndex, candidate)
                         else
                             None)
 
-                for consumedEntry in consumedEntries do
-                    recordSupersededCurrentBranchMaterializationPayload consumedEntry.Payload
+                for consumedEntryIndex, consumedEntry in consumedEntries do
+                    if shouldRecordConsumedPendingCurrentBranchMaterialization boundaryAlreadyRecorded index consumedEntryIndex then
+                        recordSupersededCurrentBranchMaterializationPayload consumedEntry.Payload
 
                 pendingCurrentBranchMaterializations <-
                     pendingByIndex
@@ -3698,7 +3706,7 @@ module Watch =
     /// Consumes a remote payload after durable status reached disk but before resync prevents completion.
     let private consumeDurablyAppliedCurrentBranchMaterializationBeforeResync (payload: CurrentBranchReferenceNotification) =
         recordSupersededCurrentBranchMaterializationPayload payload
-        forgetPendingCurrentBranchMaterializationsThrough payload
+        forgetPendingCurrentBranchMaterializationsThrough true payload
 
     /// Exposes durable-apply consumption to tests without forcing full filesystem materialization setup.
     let internal consumeDurablyAppliedCurrentBranchMaterializationBeforeResyncForWatchTests payload =
@@ -4587,7 +4595,7 @@ module Watch =
                             localStatus
                             |> Option.exists (fun status -> currentBranchReferenceTargetsKnownNonCurrentRoot status payload)
                             ->
-                            forgetPendingCurrentBranchMaterializationsThrough payload
+                            forgetPendingCurrentBranchMaterializationsThrough false payload
 
                             logToAnsiConsole
                                 Colors.Verbose
@@ -4679,7 +4687,7 @@ module Watch =
                                                         try
                                                             do! operations.PublishWatchStatus authority updatedStatus
                                                             recordSupersededCurrentBranchMaterializationRoot authority updatedStatus
-                                                            forgetPendingCurrentBranchMaterializationsThrough payload
+                                                            forgetPendingCurrentBranchMaterializationsThrough false payload
 
                                                             logToAnsiConsole
                                                                 Colors.Highlighted
@@ -4696,7 +4704,7 @@ module Watch =
                                                             logToAnsiConsole Colors.Error $"{Markup.Escape(ex.Message)}"
                                                             return decision
                     | LatestCurrentBranchReferenceDecisionReason.SameRoot, Some payload ->
-                        forgetPendingCurrentBranchMaterializationsThrough payload
+                        forgetPendingCurrentBranchMaterializationsThrough false payload
                         return decision
                     | LatestCurrentBranchReferenceDecisionReason.SameRoot, None -> return decision
                     | reason, Some payload ->

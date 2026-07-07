@@ -19195,6 +19195,95 @@ module WatchTests =
             appliedPayloads.Count |> should equal 0
             publishedStatuses.Count |> should equal 0)
 
+    /// Verifies that retiring one queued anonymous payload grants exactly one later stale-root rejection credit.
+    [<Test>]
+    let ``current branch materialization boundary path retires one queued anonymous payload with one rejection credit`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let oldRootId = Guid.NewGuid()
+            let newerRootId = Guid.NewGuid()
+
+            let oldStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = oldRootId
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-single-old-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-single-old-root-blake3"
+                }
+
+            let newerStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = newerRootId
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-single-new-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-single-new-root-blake3"
+                }
+
+            let liveNewerStatus =
+                { liveWatchStatus newerRootId with
+                    RootDirectorySha256Hash = newerStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = newerStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| newerRootId |])
+                }
+
+            let anonymousPayload =
+                { currentBranchReferencePayload
+                      currentRepositoryId
+                      currentBranchId
+                      oldRootId
+                      oldStatus.RootDirectorySha256Hash
+                      oldStatus.RootDirectoryBlake3Hash with
+                    ReferenceId = ReferenceId.Empty
+                }
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                anonymousPayload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            Watch.consumeDurablyAppliedCurrentBranchMaterializationBeforeResyncForWatchTests anonymousPayload
+
+            let skippedOperations, skippedFetchedRoots, skippedDownloads, skippedAppliedPayloads, skippedPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None liveNewerStatus))
+                    newerStatus
+                    oldStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests skippedOperations true [| anonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            skippedFetchedRoots.Count |> should equal 0
+            skippedDownloads.Count |> should equal 0
+            skippedAppliedPayloads.Count |> should equal 0
+            skippedPublishedStatuses.Count |> should equal 0
+
+            let materializingOperations, materializingFetchedRoots, materializingDownloads, materializingAppliedPayloads, materializingPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None liveNewerStatus))
+                    newerStatus
+                    oldStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests materializingOperations true [| anonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            materializingFetchedRoots.ToArray()
+            |> should equal [| oldRootId |]
+
+            materializingDownloads.Count |> should equal 1
+
+            materializingAppliedPayloads
+            |> Seq.map (fun payload -> payload.ReferenceId)
+            |> Seq.toArray
+            |> should equal [| ReferenceId.Empty |]
+
+            materializingPublishedStatuses.Count
+            |> should equal 1)
+
     /// Verifies that anonymous stale-root history does not reject a concrete new Reference by root alone.
     [<Test>]
     let ``current branch materialization allows concrete reference returning to anonymous stale root`` () =
@@ -19353,6 +19442,124 @@ module WatchTests =
                 [|
                     legitimateReturnPayload.ReferenceId
                 |])
+
+    /// Verifies that consuming two queued anonymous duplicates preserves two bounded later stale-root rejections.
+    [<Test>]
+    let ``current branch materialization keeps one stale-root rejection credit per consumed anonymous duplicate`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let oldRootId = Guid.NewGuid()
+            let newerRootId = Guid.NewGuid()
+
+            let oldStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = oldRootId
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-duplicate-old-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-duplicate-old-root-blake3"
+                }
+
+            let newerStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = newerRootId
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-duplicate-new-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-duplicate-new-root-blake3"
+                }
+
+            let liveNewerStatus =
+                { liveWatchStatus newerRootId with
+                    RootDirectorySha256Hash = newerStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = newerStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| newerRootId |])
+                }
+
+            let anonymousPayload =
+                { currentBranchReferencePayload
+                      currentRepositoryId
+                      currentBranchId
+                      oldRootId
+                      oldStatus.RootDirectorySha256Hash
+                      oldStatus.RootDirectoryBlake3Hash with
+                    ReferenceId = ReferenceId.Empty
+                }
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                anonymousPayload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                anonymousPayload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            Watch.consumeDurablyAppliedCurrentBranchMaterializationBeforeResyncForWatchTests anonymousPayload
+
+            let firstSkippedOperations, firstSkippedFetchedRoots, firstSkippedDownloads, firstSkippedAppliedPayloads, firstSkippedPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None liveNewerStatus))
+                    newerStatus
+                    oldStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests firstSkippedOperations true [| anonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            firstSkippedFetchedRoots.Count |> should equal 0
+            firstSkippedDownloads.Count |> should equal 0
+
+            firstSkippedAppliedPayloads.Count
+            |> should equal 0
+
+            firstSkippedPublishedStatuses.Count
+            |> should equal 0
+
+            let secondSkippedOperations, secondSkippedFetchedRoots, secondSkippedDownloads, secondSkippedAppliedPayloads, secondSkippedPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None liveNewerStatus))
+                    newerStatus
+                    oldStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests secondSkippedOperations true [| anonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            secondSkippedFetchedRoots.Count |> should equal 0
+            secondSkippedDownloads.Count |> should equal 0
+
+            secondSkippedAppliedPayloads.Count
+            |> should equal 0
+
+            secondSkippedPublishedStatuses.Count
+            |> should equal 0
+
+            let materializingOperations, materializingFetchedRoots, materializingDownloads, materializingAppliedPayloads, materializingPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None liveNewerStatus))
+                    newerStatus
+                    oldStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests materializingOperations true [| anonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            materializingFetchedRoots.ToArray()
+            |> should equal [| oldRootId |]
+
+            materializingDownloads.Count |> should equal 1
+
+            materializingAppliedPayloads
+            |> Seq.map (fun payload -> payload.ReferenceId)
+            |> Seq.toArray
+            |> should equal [| ReferenceId.Empty |]
+
+            materializingPublishedStatuses.Count
+            |> should equal 1)
 
     /// Verifies that deferred remote materialization state is scoped to the active branch.
     [<Test>]
