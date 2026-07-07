@@ -41,6 +41,7 @@ open System.Threading.Tasks
 module Branch =
 
     let private branchHashLookupErrorItemKey = "BranchHashLookupError"
+    let private callerSuppliedBranchIdItemKey = "CallerSuppliedBranchId"
 
     /// Implements branch hash lookup description for the server request pipeline.
     let private branchHashLookupDescription (sha256Hash: Sha256Hash) (blake3Hash: Blake3Hash) =
@@ -151,21 +152,72 @@ module Branch =
             | Denied _ -> return false
         }
 
-    /// Checks whether the already-authorized caller can observe the stored branch visibility boundary.
+    /// Checks whether RBAC already grants the caller elevated authority over the branch.
+    let private canAdministerBranch (context: HttpContext) (branchDto: BranchDto) =
+        task {
+            let principals = PrincipalMapper.getPrincipals context.User
+            let claims = PrincipalMapper.getEffectiveClaims context.User
+            let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+            let resource = Resource.Branch(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId, branchDto.BranchId)
+
+            match! evaluator.CheckAsync(principals, claims, Operation.BranchAdmin, resource) with
+            | Allowed _ -> return true
+            | Denied _ -> return false
+        }
+
+    /// Checks whether the already-authenticated caller can observe the stored branch visibility boundary.
     let internal canObserveBranch (context: HttpContext) (branchDto: BranchDto) =
-        match branchDto.Visibility, branchDto.Ownership with
-        | ResourceVisibility.Public, _ -> true
-        | _, ResourceOwnership.RepositoryOwned -> true
-        | _, ResourceOwnership.ContributorOwned ->
-            PrincipalMapper.tryGetUserId context.User
-            |> Option.map UserId
-            |> Option.exists ((=) branchDto.UserId)
+        task {
+            match branchDto.Visibility, branchDto.Ownership with
+            | ResourceVisibility.Public, _ -> return true
+            | _, ResourceOwnership.RepositoryOwned -> return true
+            | _, ResourceOwnership.ContributorOwned ->
+                let isCreator =
+                    PrincipalMapper.tryGetUserId context.User
+                    |> Option.map UserId
+                    |> Option.exists ((=) branchDto.UserId)
+
+                if isCreator then return true else return! canAdministerBranch context branchDto
+        }
 
     /// Creates the hidden-as-missing response used when a private contributor branch exists but is not observable.
     let internal hiddenBranchError context branchId =
-        (GraceError.Create (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) (getCorrelationId context))
-            .enhance(nameof BranchId, branchId)
-            .enhance ("Path", context.Request.Path.Value)
+        let error = GraceError.Create (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) (getCorrelationId context)
+
+        branchId
+        |> Option.iter (fun callerSuppliedBranchId ->
+            error.enhance (nameof BranchId, callerSuppliedBranchId)
+            |> ignore)
+
+        error.enhance ("Path", context.Request.Path.Value)
+
+    /// Returns a caller-supplied branch id without exposing ids resolved from branch-name-only requests.
+    let private callerSuppliedBranchId (context: HttpContext) (parameters: #BranchParameters) =
+        let mutable callerSuppliedBranchIdItem = null
+
+        let branchId =
+            if context.Items.TryGetValue(callerSuppliedBranchIdItemKey, &callerSuppliedBranchIdItem) then
+                callerSuppliedBranchIdItem :?> string
+            else
+                parameters.BranchId
+
+        if String.IsNullOrWhiteSpace branchId then None else Some(Guid.Parse branchId)
+
+    /// Loads the branch selected by middleware and enforces hidden-as-missing visibility before route data is returned.
+    let private requireObservableBranch (context: HttpContext) (parameters: #BranchParameters) =
+        task {
+            let graceIds = getGraceIds context
+            let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId (getCorrelationId context)
+            let! branchDto = actorProxy.Get(getCorrelationId context)
+            let! isObservable = canObserveBranch context branchDto
+
+            if isObservable then
+                return Ok(actorProxy, branchDto)
+            else
+                return Error(hiddenBranchError context (callerSuppliedBranchId context parameters))
+        }
+
 
     /// Validates an optional visibility input without accepting deferred values.
     let private visibilityInputIsImplemented (visibility: string) =
@@ -866,6 +918,20 @@ module Branch =
                         .enhance ("Path", context.Request.Path.Value)
 
                 return! context |> result500ServerError graceError
+        }
+
+    /// Runs the normal branch query pipeline only after the target branch is observable to the caller.
+    let private processObservableQuery<'T, 'U when 'T :> BranchParameters>
+        (context: HttpContext)
+        (parameters: 'T)
+        (validations: Validations<'T>)
+        maxCount
+        (query: QueryResult<IBranchActor, 'U>)
+        =
+        task {
+            match! requireObservableBranch context parameters with
+            | Ok _ -> return! processQuery context parameters validations maxCount query
+            | Error error -> return! context |> result400BadRequest error
         }
 
     /// Creates a new branch.
@@ -1625,9 +1691,11 @@ module Branch =
                     let! parameters = context |> parse<GetBranchParameters>
                     let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId (getCorrelationId context)
                     let! branchDto = actorProxy.Get(getCorrelationId context)
+                    let! isObservable = canObserveBranch context branchDto
 
                     let! result =
-                        if canObserveBranch context branchDto then
+                        match isObservable with
+                        | true ->
                             let graceReturnValue =
                                 (GraceReturnValue.Create branchDto (getCorrelationId context))
                                     .enhance(getParametersAsDictionary parameters)
@@ -1638,9 +1706,9 @@ module Branch =
                                     .enhance ("Path", context.Request.Path.Value)
 
                             context |> result200Ok graceReturnValue
-                        else
+                        | false ->
                             context
-                            |> result400BadRequest (hiddenBranchError context graceIds.BranchId)
+                            |> result400BadRequest (hiddenBranchError context (callerSuppliedBranchId context parameters))
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -1695,7 +1763,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetBranchParameters>
-                    let! result = processQuery context parameters validations 1 query
+                    let! result = processObservableQuery context parameters validations 1 query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -1749,7 +1817,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<BranchParameters>
-                    let! result = processQuery context parameters validations 1 query
+                    let! result = processObservableQuery context parameters validations 1 query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -1809,7 +1877,7 @@ module Branch =
 
                     let! parameters = context |> parse<GetReferenceParameters>
                     context.Items[ "ReferenceId" ] <- parameters.ReferenceId
-                    let! result = processQuery context parameters validations 1 query
+                    let! result = processObservableQuery context parameters validations 1 query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -1867,7 +1935,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2005,7 +2073,7 @@ module Branch =
                         |> parse<GetLatestReferencesByReferenceTypeParameters>
 
                     context.Items.Add("ReferenceTypes", serialize parameters.ReferenceTypes)
-                    let! result = processQuery context parameters validations 1 query
+                    let! result = processObservableQuery context parameters validations 1 query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2111,7 +2179,7 @@ module Branch =
                         |> parse<GetDiffsForReferenceTypeParameters>
 
                     context.Items.Add(nameof ReferenceType, parameters.ReferenceType)
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2169,7 +2237,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2227,7 +2295,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2285,7 +2353,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2344,7 +2412,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2402,7 +2470,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2460,7 +2528,7 @@ module Branch =
                         }
 
                     let! parameters = context |> parse<GetReferencesParameters>
-                    let! result = processQuery context parameters validations (parameters.MaxCount) query
+                    let! result = processObservableQuery context parameters validations (parameters.MaxCount) query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2570,7 +2638,7 @@ module Branch =
 
                     let! parameters = context |> parse<ListContentsParameters>
                     context.Items[ "ListContentsParameters" ] <- parameters
-                    let! result = processQuery context parameters validations 1 query
+                    let! result = processObservableQuery context parameters validations 1 query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2684,7 +2752,7 @@ module Branch =
 
                     let! parameters = context |> parse<ListContentsParameters>
                     context.Items[ "ListContentsParameters" ] <- parameters
-                    let! result = processQuery context parameters validations 1 query
+                    let! result = processObservableQuery context parameters validations 1 query
 
                     let duration_ms = getDurationRightAligned_ms startTime
 
@@ -2872,6 +2940,7 @@ module Branch =
             let repositoryIdFromRoute = graceIds.RepositoryId
 
             let! parameters = context |> parse<GetBranchVersionParameters>
+            context.Items[ callerSuppliedBranchIdItemKey ] <- parameters.BranchId
 
             let! repositoryIdOption =
                 resolveRepositoryId graceIds.OwnerId graceIds.OrganizationId parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId
@@ -2880,7 +2949,7 @@ module Branch =
 
             // Now that we've populated BranchId for sure...
             context.Items.Add("GetVersionParameters", parameters)
-            return! processQuery context parameters getVersionValidations 1 getVersionQuery
+            return! processObservableQuery context parameters getVersionValidations 1 getVersionQuery
         }
 
     /// Handles the Grace Server get version request.

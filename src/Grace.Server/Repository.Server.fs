@@ -11,8 +11,10 @@ open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
+open Grace.Shared.Authorization
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Repository
+open Grace.Types.Authorization
 open Grace.Types.Branch
 open Grace.Types.Repository
 open Grace.Types.Common
@@ -24,6 +26,7 @@ open Grace.Shared.Validation
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
 open Microsoft.AspNetCore.Mvc
+open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Logging
 open NodaTime
 open OpenTelemetry.Trace
@@ -46,15 +49,56 @@ module Repository =
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Repository.Server")
 
+    /// Checks whether RBAC grants elevated branch administration authority for repository branch materialization.
+    let private canAdministerBranch (context: HttpContext) (branchDto: BranchDto) =
+        task {
+            let principals = PrincipalMapper.getPrincipals context.User
+            let claims = PrincipalMapper.getEffectiveClaims context.User
+            let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+            let resource = Resource.Branch(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId, branchDto.BranchId)
+
+            match! evaluator.CheckAsync(principals, claims, Operation.BranchAdmin, resource) with
+            | Allowed _ -> return true
+            | Denied _ -> return false
+        }
+
     /// Determines whether the caller may observe a branch in repository branch list materialization.
     let internal canObserveBranch (context: HttpContext) (branchDto: BranchDto) =
-        match branchDto.Visibility, branchDto.Ownership with
-        | ResourceVisibility.Public, _ -> true
-        | _, ResourceOwnership.RepositoryOwned -> true
-        | _, ResourceOwnership.ContributorOwned ->
-            PrincipalMapper.tryGetUserId context.User
-            |> Option.map UserId
-            |> Option.exists ((=) branchDto.UserId)
+        task {
+            match branchDto.Visibility, branchDto.Ownership with
+            | ResourceVisibility.Public, _ -> return true
+            | _, ResourceOwnership.RepositoryOwned -> return true
+            | _, ResourceOwnership.ContributorOwned ->
+                let isCreator =
+                    PrincipalMapper.tryGetUserId context.User
+                    |> Option.map UserId
+                    |> Option.exists ((=) branchDto.UserId)
+
+                if isCreator then return true else return! canAdministerBranch context branchDto
+        }
+
+    /// Applies branch visibility before route-level limits so hidden branches do not create observable list gaps.
+    let private filterObservableBranches (context: HttpContext) maxCount (branches: BranchDto seq) =
+        task {
+            let visibleBranches = List<BranchDto>()
+            use enumerator = branches.GetEnumerator()
+
+            let mutable keepScanning =
+                visibleBranches.Count < maxCount
+                && enumerator.MoveNext()
+
+            while keepScanning do
+                let! isObservable = canObserveBranch context enumerator.Current
+
+                if isObservable then visibleBranches.Add enumerator.Current
+
+                keepScanning <-
+                    visibleBranches.Count < maxCount
+                    && enumerator.MoveNext()
+
+            return visibleBranches.ToArray()
+        }
 
     /// Coordinates process command with post success processing for Grace Server.
     let processCommandWithPostSuccess<'T when 'T :> RepositoryParameters>
@@ -834,11 +878,15 @@ module Repository =
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
 
                             let! branches =
-                                getBranches graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId maxCount includeDeleted (getCorrelationId context)
+                                getBranches
+                                    graceIds.OwnerId
+                                    graceIds.OrganizationId
+                                    graceIds.RepositoryId
+                                    Int32.MaxValue
+                                    includeDeleted
+                                    (getCorrelationId context)
 
-                            return
-                                branches
-                                |> Array.filter (canObserveBranch context)
+                            return! filterObservableBranches context maxCount branches
                         }
 
                     let! parameters = context |> parse<GetBranchesParameters>
@@ -970,7 +1018,8 @@ module Repository =
                                     .Select(fun branchId -> Guid.Parse(branchId))
 
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
-                            return! getBranchesByBranchId repositoryId branchIds maxCount includeDeleted
+                            let! branches = getBranchesByBranchId repositoryId branchIds maxCount includeDeleted
+                            return! filterObservableBranches context maxCount branches
                         }
 
                     let! parameters = context |> parse<GetBranchesByBranchIdParameters>

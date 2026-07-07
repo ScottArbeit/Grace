@@ -201,6 +201,51 @@ module BranchServerTestHelpers =
     let getBranchResponseAsync (client: HttpClient) repositoryId branchId =
         client.PostAsync("/branch/get", createJsonContent (getBranchParameters repositoryId branchId))
 
+    /// Gets branch response by branch name through the supplied test client.
+    let getBranchByNameResponseAsync (client: HttpClient) repositoryId branchName =
+        let parameters = Parameters.Branch.GetBranchParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchName <- branchName
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync("/branch/get", createJsonContent parameters)
+
+    /// Posts a branch id scoped query route through the supplied test client.
+    let postBranchIdRouteAsync (client: HttpClient) (route: string) repositoryId branchId =
+        let parameters = Parameters.Branch.GetBranchParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync(route, createJsonContent parameters)
+
+    /// Posts a branch reference-list query route through the supplied test client.
+    let postBranchReferencesRouteAsync (client: HttpClient) (route: string) repositoryId branchId =
+        let parameters = Parameters.Branch.GetReferencesParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.MaxCount <- 10
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync(route, createJsonContent parameters)
+
+    /// Posts a branch version route through the supplied test client.
+    let postBranchVersionRouteAsync (client: HttpClient) repositoryId branchId =
+        let parameters = Parameters.Branch.GetBranchVersionParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync("/branch/getVersion", createJsonContent parameters)
+
     /// Gets repository branches through the supplied test client.
     let getRepositoryBranchesWithClientAsync (client: HttpClient) repositoryId =
         task {
@@ -212,6 +257,39 @@ module BranchServerTestHelpers =
             parameters.CorrelationId <- generateCorrelationId ()
 
             let! response = client.PostAsync("/repository/getBranches", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
+        }
+
+    /// Gets a limited repository branch list through the supplied test client.
+    let getRepositoryBranchesWithLimitAsync (client: HttpClient) repositoryId maxCount =
+        task {
+            let parameters = Parameters.Repository.GetBranchesParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.MaxCount <- maxCount
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/repository/getBranches", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
+        }
+
+    /// Gets repository branches by branch id through the supplied test client.
+    let getRepositoryBranchesByBranchIdWithClientAsync (client: HttpClient) repositoryId branchIds =
+        task {
+            let parameters = Parameters.Repository.GetBranchesByBranchIdParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchIds <- branchIds
+            parameters.MaxCount <- 100
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/repository/getBranchesByBranchId", createJsonContent parameters)
             do! assertOk response
             let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
             return returnValue.ReturnValue
@@ -1073,14 +1151,17 @@ type BranchServer() =
         task {
             let creatorUserId = $"{Guid.NewGuid()}"
             let observerUserId = $"{Guid.NewGuid()}"
+            let adminUserId = $"{Guid.NewGuid()}"
             let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityPublic"
 
             do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
             do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
             do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId adminUserId "RepositoryAdmin"
 
             use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
             use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+            use adminClient = BranchServerTestHelpers.createClientWithUserId adminUserId
 
             let! observerBefore = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
             let parentBranch = observerBefore |> Array.exactlyOne
@@ -1101,6 +1182,25 @@ type BranchServer() =
             let! observerGet = BranchServerTestHelpers.getBranchResponseAsync observerClient repositoryId branchId
             do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerGet
 
+            let! observerGetByName = BranchServerTestHelpers.getBranchByNameResponseAsync observerClient repositoryId branchName
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerGetByName
+            let! observerGetByNameBody = observerGetByName.Content.ReadAsStringAsync()
+            let observerGetByNameError = deserialize<GraceError> observerGetByNameBody
+
+            Assert.That(observerGetByNameError.Properties.ContainsKey(nameof BranchId), Is.False)
+
+            let! observerEvents = BranchServerTestHelpers.postBranchIdRouteAsync observerClient "/branch/getEvents" repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerEvents
+
+            let! observerReferences = BranchServerTestHelpers.postBranchReferencesRouteAsync observerClient "/branch/getReferences" repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerReferences
+
+            let! observerPromotions = BranchServerTestHelpers.postBranchReferencesRouteAsync observerClient "/branch/getPromotions" repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerPromotions
+
+            let! observerVersion = BranchServerTestHelpers.postBranchVersionRouteAsync observerClient repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerVersion
+
             let! observerAfter = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
 
             Assert.That(observerAfter.Length, Is.EqualTo(observerBefore.Length))
@@ -1109,6 +1209,37 @@ type BranchServer() =
                 observerAfter
                 |> Array.exists (fun branch -> branch.BranchId = creatorBranch.BranchId),
                 Is.False
+            )
+
+            let! observerByBranchId =
+                BranchServerTestHelpers.getRepositoryBranchesByBranchIdWithClientAsync observerClient repositoryId [| creatorBranch.BranchId |]
+
+            Assert.That(observerByBranchId, Is.Empty)
+
+            let visibleBranchName = $"VisibleRepositoryOwned{Guid.NewGuid():N}"
+
+            let! visibleBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch visibleBranchName "Public" "RepositoryOwned"
+
+            let! visibleBranch = BranchServerTestHelpers.waitForBranchAsync repositoryId visibleBranchId
+            let! observerLimited = BranchServerTestHelpers.getRepositoryBranchesWithLimitAsync observerClient repositoryId 2
+            Assert.That(observerLimited.Length, Is.EqualTo(2))
+
+            Assert.That(
+                observerLimited
+                |> Array.exists (fun branch -> branch.BranchId = visibleBranch.BranchId),
+                Is.True
+            )
+
+            let! adminGet = BranchServerTestHelpers.getBranchResponseAsync adminClient repositoryId branchId
+            do! BranchServerTestHelpers.assertOk adminGet
+
+            let! adminBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync adminClient repositoryId
+
+            Assert.That(
+                adminBranches
+                |> Array.exists (fun branch -> branch.BranchId = creatorBranch.BranchId),
+                Is.True
             )
         }
 
