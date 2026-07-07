@@ -1,5 +1,6 @@
 namespace Grace.Actors
 
+open Blake3
 open Azure.Storage.Blobs
 open Azure.Storage.Blobs.Models
 open Azure.Storage.Blobs.Specialized
@@ -21,6 +22,7 @@ open Grace.Types.Repository
 open Grace.Types.DirectoryVersion
 open Grace.Types.Common
 open Grace.Types.ContentBlockMetadata
+open Grace.Types.MaterializationPlan
 open Microsoft.Extensions.Logging
 open Microsoft.Extensions.ObjectPool
 open NodaTime
@@ -57,6 +59,428 @@ module DirectoryVersion =
             elapsedMs: float
         | MissingInStorage of fileVersion: FileVersion * elapsedMs: float
         | ValidationError of fileVersion: FileVersion * errorMessage: string * elapsedMs: float
+
+    /// Captures artifact evidence produced after a DirectoryVersion projection has been created or reused.
+    type ProjectionArtifactEvidence =
+        {
+            ArtifactKind: MaterializationArtifactKind
+            SizeInBytes: int64
+            Sha256Hash: Sha256Hash option
+            Blake3Hash: Blake3Hash option
+            Source: MaterializationArtifactSource option
+        }
+
+    /// Converts projection artifact evidence into the canonical descriptor used by Materialization Plans.
+    let private descriptorFromProjectionEvidence targetRootDirectoryVersionId expectedArtifactKind correlationId evidence =
+        if evidence.ArtifactKind <> expectedArtifactKind then
+            Error(GraceError.Create $"Projection helper returned {evidence.ArtifactKind} evidence while ensuring {expectedArtifactKind}." correlationId)
+        elif evidence.SizeInBytes < 0L then
+            Error(GraceError.Create $"Projection helper returned a negative size for {expectedArtifactKind}." correlationId)
+        else
+            match expectedArtifactKind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                Ok(
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(
+                        targetRootDirectoryVersionId,
+                        evidence.SizeInBytes,
+                        evidence.Sha256Hash,
+                        evidence.Blake3Hash,
+                        evidence.Source
+                    )
+                )
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                Ok(
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        targetRootDirectoryVersionId,
+                        evidence.SizeInBytes,
+                        evidence.Sha256Hash,
+                        evidence.Blake3Hash,
+                        evidence.Source
+                    )
+                )
+            | unsupported -> Error(GraceError.Create $"Projection helper does not support {unsupported} descriptors." correlationId)
+
+    /// Runs one projection helper and converts unexpected storage or actor failures into Grace errors.
+    let private ensureProjectionArtifactEvidence artifactKind ensureArtifact correlationId =
+        task {
+            try
+                return! ensureArtifact ()
+            with
+            | ex -> return Error(GraceError.CreateWithException ex $"{artifactKind} projection could not be ensured." correlationId)
+        }
+
+    /// Ensures v1 target-root projection artifacts and returns canonical descriptors for the represented root.
+    let ensureRequiredProjectionArtifactsWith
+        targetRootDirectoryVersionId
+        (ensureDirectoryVersionZip: unit -> Task<Result<ProjectionArtifactEvidence, GraceError>>)
+        (ensureRecursiveDirectoryMetadata: unit -> Task<Result<ProjectionArtifactEvidence, GraceError>>)
+        correlationId
+        =
+        task {
+            match! ensureProjectionArtifactEvidence MaterializationArtifactKind.DirectoryVersionZip ensureDirectoryVersionZip correlationId with
+            | Error error -> return Error error
+            | Ok zipEvidence ->
+                match descriptorFromProjectionEvidence targetRootDirectoryVersionId MaterializationArtifactKind.DirectoryVersionZip correlationId zipEvidence
+                    with
+                | Error error -> return Error error
+                | Ok zipDescriptor ->
+                    match!
+                        ensureProjectionArtifactEvidence MaterializationArtifactKind.RecursiveDirectoryMetadata ensureRecursiveDirectoryMetadata correlationId
+                        with
+                    | Error error -> return Error error
+                    | Ok metadataEvidence ->
+                        match
+                            descriptorFromProjectionEvidence
+                                targetRootDirectoryVersionId
+                                MaterializationArtifactKind.RecursiveDirectoryMetadata
+                                correlationId
+                                metadataEvidence
+                            with
+                        | Error error -> return Error error
+                        | Ok metadataDescriptor ->
+                            return
+                                Ok [| zipDescriptor
+                                      metadataDescriptor |]
+        }
+
+    /// Computes the SHA-256 integrity value for an artifact payload.
+    let private sha256HashForBytes (bytes: byte array) =
+        SHA256.HashData(bytes)
+        |> Convert.ToHexString
+        |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+    /// Computes the SHA-256 integrity value for a blob without retaining the blob payload in actor memory.
+    let private sha256HashForBlobStream (blobClient: BlockBlobClient) (blobName: string) =
+        task {
+            use! blobStream = blobClient.OpenReadAsync(position = 0L, bufferSize = (64 * 1024))
+            return! computeSha256ForFile blobStream (RelativePath blobName)
+        }
+
+    /// Reads a blob payload and reports absence as a projection failure.
+    let private readRequiredBlobPayload (blobClient: BlockBlobClient) missingMessage correlationId =
+        task {
+            let! exists = blobClient.ExistsAsync()
+
+            if exists.Value then
+                let! download = blobClient.DownloadContentAsync()
+                return Ok(download.Value.Content.ToArray())
+            else
+                return Error(GraceError.Create missingMessage correlationId)
+        }
+
+    /// Describes a projection blob after the actor has ensured it exists.
+    let private describeProjectionBlob (repositoryDto: RepositoryDto) blobName artifactKind source correlationId =
+        task {
+            try
+                let! blobClient = getAzureBlobClient repositoryDto blobName correlationId
+                let missingMessage = $"Projection artifact '{blobName}' was not created."
+                let! exists = blobClient.ExistsAsync()
+
+                if not exists.Value then
+                    return Error(GraceError.Create missingMessage correlationId)
+                else
+                    let! properties = blobClient.GetPropertiesAsync()
+                    let! sha256Hash = sha256HashForBlobStream blobClient blobName
+
+                    return
+                        Ok
+                            {
+                                ArtifactKind = artifactKind
+                                SizeInBytes = properties.Value.ContentLength
+                                Sha256Hash = Some sha256Hash
+                                Blake3Hash = None
+                                Source = source
+                            }
+            with
+            | ex -> return Error(GraceError.CreateWithException ex $"Projection artifact '{blobName}' could not be described." correlationId)
+        }
+
+    /// Copies whole-file storage bytes into a zip entry using the existing stored-payload convention.
+    let private writeWholeFileZipEntryPayload (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (zipEntryStream: Stream) correlationId =
+        task {
+            let! fileBlobClient = getReadableAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
+
+            let! exists = fileBlobClient.ExistsAsync()
+
+            if exists.Value then
+                use! blobStream = fileBlobClient.OpenReadAsync(position = 0L, bufferSize = (64 * 1024))
+                do! blobStream.CopyToAsync(zipEntryStream)
+                return Ok()
+            else
+                return
+                    Error(
+                        GraceError.Create
+                            $"Whole-file content for '{fileVersion.RelativePath}' was missing while creating a DirectoryVersion zip projection."
+                            correlationId
+                    )
+        }
+
+    /// Resolves finalized content-block metadata for a manifest-backed zip entry.
+    let private resolveManifestContentBlockMetadata repositoryId (fileVersion: FileVersion) (manifest: FileManifest) contentBlockAddress correlationId =
+        task {
+            let dedupeIndexActor = orleansClient.CreateActorProxyWithCorrelationId<IDedupeIndexActor>("dedupe-index:v1", correlationId)
+
+            let! metadata =
+                dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata(
+                    manifest.StoragePoolId,
+                    repositoryId,
+                    fileVersion.RelativePath,
+                    manifest.ManifestAddress,
+                    contentBlockAddress,
+                    correlationId
+                )
+
+            match metadata with
+            | Some metadata -> return Ok metadata
+            | None ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"FileManifest '{manifest.ManifestAddress}' for '{fileVersion.RelativePath}' has no finalized placement evidence for ContentBlock '{contentBlockAddress}'."
+                            correlationId
+                    )
+        }
+
+    /// Reads one finalized encoded content block payload for manifest-backed zip materialization.
+    let private readManifestContentBlockPayload (metadata: ContentBlockMetadata) contentBlockAddress correlationId =
+        task {
+            match! getAzureContentBlockClientForPlacement metadata.StoragePlacement correlationId with
+            | Error error -> return Error error
+            | Ok blobClient ->
+                match!
+                    readRequiredBlobPayload
+                        blobClient
+                        $"ContentBlock '{contentBlockAddress}' was missing while creating a DirectoryVersion zip projection."
+                        correlationId
+                    with
+                | Error error -> return Error error
+                | Ok payload -> return Ok payload
+        }
+
+    /// Validates manifest shape before writing any zip entry bytes.
+    let private validateManifestBackedZipEntryShape (manifest: FileManifest) correlationId =
+        if isNull (box manifest) then
+            Error(GraceError.Create "FileManifest content reference was null while creating a DirectoryVersion zip projection." correlationId)
+        elif manifest.Size <= 0L then
+            Error(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' must declare a positive size." correlationId)
+        elif isNull manifest.Blocks
+             || manifest.Blocks.Count = 0 then
+            Error(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' must include at least one ContentBlock." correlationId)
+        elif String.IsNullOrWhiteSpace(manifest.ChunkingSuiteId) then
+            Error(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' must include a chunking suite." correlationId)
+        elif manifest.ChunkingSuiteId
+             <> RabinChunking.SuiteName then
+            Error(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' uses unsupported chunking suite '{manifest.ChunkingSuiteId}'." correlationId)
+        elif not (ContentAddress.isValidAddress manifest.FileContentHash) then
+            Error(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' has an invalid file content hash." correlationId)
+        elif not (ContentAddress.isValidAddress manifest.ManifestAddress) then
+            Error(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' has an invalid manifest address." correlationId)
+        else
+            let expectedManifestAddress = ContentAddress.computeManifestAddressForManifest manifest
+
+            if manifest.ManifestAddress
+               <> expectedManifestAddress then
+                Error(
+                    GraceError.Create
+                        $"FileManifest '{manifest.ManifestAddress}' does not match its canonical manifest address '{expectedManifestAddress}'."
+                        correlationId
+                )
+            else
+                let mutable expectedOffset = 0L
+                let mutable error: GraceError option = None
+                let mutable index = 0
+
+                while index < manifest.Blocks.Count && error.IsNone do
+                    let block = manifest.Blocks[index]
+
+                    if isNull (box block) then
+                        error <- Some(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' has a null ContentBlock at index {index}." correlationId)
+                    elif not (ContentAddress.isValidAddress block.Address) then
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"FileManifest '{manifest.ManifestAddress}' has an invalid ContentBlock address at index {index}."
+                                    correlationId
+                            )
+                    elif block.Size <= 0L then
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"FileManifest '{manifest.ManifestAddress}' has a non-positive ContentBlock size at index {index}."
+                                    correlationId
+                            )
+                    elif block.Offset <> expectedOffset then
+                        error <-
+                            Some(
+                                GraceError.Create
+                                    $"FileManifest '{manifest.ManifestAddress}' has an out-of-order ContentBlock range at index {index}."
+                                    correlationId
+                            )
+                    else
+                        expectedOffset <- expectedOffset + block.Size
+
+                    index <- index + 1
+
+                match error with
+                | Some graceError -> Error graceError
+                | None when expectedOffset <> manifest.Size ->
+                    Error(
+                        GraceError.Create
+                            $"FileManifest '{manifest.ManifestAddress}' ranges cover {expectedOffset} bytes, expected {manifest.Size} bytes."
+                            correlationId
+                    )
+                | None -> Ok()
+
+    /// Decodes and validates one manifest content block before the zip writer streams it to the entry.
+    let private validateManifestContentBlockPayload (manifest: FileManifest) (blockIndex: int) (encodedPayload: byte array) correlationId =
+        let block = manifest.Blocks[blockIndex]
+
+        match ContentBlockFormat.decode encodedPayload with
+        | Error decodeError ->
+            Error(
+                GraceError.Create
+                    $"ContentBlock '{block.Address}' could not be decoded while creating a DirectoryVersion zip projection: {decodeError}."
+                    correlationId
+            )
+        | Ok decodedBlock ->
+            match ContentBlockFormat.validateAddress block.Address decodedBlock with
+            | Error addressError ->
+                Error(
+                    GraceError.Create
+                        $"ContentBlock '{block.Address}' did not match its address while creating a DirectoryVersion zip projection: {addressError}."
+                        correlationId
+                )
+            | Ok () ->
+                let decodedLength = decodedBlock.Payload.Length
+
+                if int64 decodedLength <> block.Size then
+                    Error(
+                        GraceError.Create
+                            $"ContentBlock '{block.Address}' decoded to {decodedLength} bytes while FileManifest '{manifest.ManifestAddress}' expected {block.Size} bytes."
+                            correlationId
+                    )
+                else
+                    Ok decodedBlock.Payload
+
+    /// Streams manifest-backed file bytes into a DirectoryVersion zip entry while validating final file hashes.
+    let private writeManifestBackedZipEntryPayload
+        (repositoryDto: RepositoryDto)
+        (fileVersion: FileVersion)
+        (manifest: FileManifest)
+        (zipEntryStream: Stream)
+        correlationId
+        =
+        task {
+            match validateManifestBackedZipEntryShape manifest correlationId with
+            | Error error -> return Error error
+            | Ok () ->
+                use targetStream =
+                    if fileVersion.IsBinary then
+                        zipEntryStream
+                    else
+                        new GZipStream(zipEntryStream, CompressionLevel.SmallestSize, leaveOpen = true) :> Stream
+
+                use sha256Hasher = IncrementalHash.CreateHash(HashAlgorithmName.SHA256)
+                let mutable blake3Hasher = Hasher.New()
+                let mutable blockIndex = 0
+                let mutable writtenBytes = 0L
+                let mutable error: GraceError option = None
+
+                while blockIndex < manifest.Blocks.Count && error.IsNone do
+                    let block = manifest.Blocks[blockIndex]
+
+                    match! resolveManifestContentBlockMetadata repositoryDto.RepositoryId fileVersion manifest block.Address correlationId with
+                    | Error graceError -> error <- Some graceError
+                    | Ok metadata ->
+                        match! readManifestContentBlockPayload metadata block.Address correlationId with
+                        | Error graceError -> error <- Some graceError
+                        | Ok payload ->
+                            match validateManifestContentBlockPayload manifest blockIndex payload correlationId with
+                            | Error graceError -> error <- Some graceError
+                            | Ok decodedPayload ->
+                                let decodedLength = decodedPayload.Length
+                                sha256Hasher.AppendData(decodedPayload, 0, decodedLength)
+                                blake3Hasher.Update(decodedPayload.AsSpan(0, decodedLength))
+                                do! targetStream.WriteAsync(decodedPayload, 0, decodedLength)
+                                writtenBytes <- writtenBytes + int64 decodedLength
+
+                    blockIndex <- blockIndex + 1
+
+                match error with
+                | Some graceError -> return Error graceError
+                | None when writtenBytes <> manifest.Size ->
+                    return
+                        Error(
+                            GraceError.Create
+                                $"FileManifest '{manifest.ManifestAddress}' wrote {writtenBytes} bytes while {manifest.Size} bytes were required."
+                                correlationId
+                        )
+                | None ->
+                    targetStream.Flush()
+
+                    let sha256Hash =
+                        sha256Hasher.GetHashAndReset()
+                        |> Convert.ToHexString
+                        |> fun value -> Sha256Hash(value.ToLowerInvariant())
+
+                    let blake3Bytes = stackalloc<byte> Hash.Size
+                    blake3Hasher.Finalize(blake3Bytes)
+                    let blake3Hash = Blake3Hash(byteArrayToString blake3Bytes)
+                    let manifestFileContentHash = FileContentHash(string blake3Hash)
+
+                    if manifest.FileContentHash
+                       <> manifestFileContentHash then
+                        return Error(GraceError.Create $"FileManifest '{manifest.ManifestAddress}' bytes do not match its FileContentHash." correlationId)
+                    elif not (String.Equals(string sha256Hash, string fileVersion.Sha256Hash, StringComparison.OrdinalIgnoreCase)) then
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"FileManifest '{manifest.ManifestAddress}' bytes do not match FileVersion.Sha256Hash for '{fileVersion.RelativePath}'."
+                                    correlationId
+                            )
+                    elif
+                        not (String.IsNullOrWhiteSpace fileVersion.Blake3Hash)
+                        && not (String.Equals(string blake3Hash, string fileVersion.Blake3Hash, StringComparison.OrdinalIgnoreCase))
+                    then
+                        return
+                            Error(
+                                GraceError.Create
+                                    $"FileManifest '{manifest.ManifestAddress}' bytes do not match FileVersion.Blake3Hash for '{fileVersion.RelativePath}'."
+                                    correlationId
+                            )
+                    else
+                        return Ok()
+        }
+
+    /// Writes the bytes that should be stored for one file entry in a DirectoryVersion zip projection.
+    let private writeZipEntryPayload (repositoryDto: RepositoryDto) (fileVersion: FileVersion) (zipEntryStream: Stream) correlationId =
+        task {
+            let contentReference =
+                if isNull (box fileVersion.ContentReference) then
+                    FileContentReference.WholeFileContent
+                else
+                    fileVersion.ContentReference
+
+            match contentReference.ReferenceType with
+            | FileContentReferenceType.WholeFileContent -> return! writeWholeFileZipEntryPayload repositoryDto fileVersion zipEntryStream correlationId
+            | FileContentReferenceType.FileManifest ->
+                match contentReference.Manifest with
+                | Some manifest -> return! writeManifestBackedZipEntryPayload repositoryDto fileVersion manifest zipEntryStream correlationId
+                | None ->
+                    return
+                        Error(
+                            GraceError.Create
+                                $"FileManifest content reference for '{fileVersion.RelativePath}' was missing while creating a DirectoryVersion zip projection."
+                                correlationId
+                        )
+            | unsupported ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Unsupported content reference '{unsupported}' for '{fileVersion.RelativePath}' while creating a DirectoryVersion zip projection."
+                            correlationId
+                    )
+        }
 
     /// Validates recursive directory versions complete before the operation continues.
     let validateRecursiveDirectoryVersionsComplete rootDirectoryVersionId (directoryVersionDtos: DirectoryVersionDto seq) correlationId =
@@ -1554,16 +1978,13 @@ module DirectoryVersion =
 
                             // Step 4: Process the files in the current directory.
                             for fileVersion in fileVersions do
+                                let zipEntry = archive.CreateEntry(fileVersion.RelativePath, CompressionLevel.NoCompression)
+                                zipEntry.Comment <- fileVersion.GetObjectFileName
+                                use zipEntryStream = zipEntry.Open()
 
-                                let! fileBlobClient = getReadableAzureBlobClientForFileVersion repositoryDto fileVersion correlationId
-                                let! existsResult = fileBlobClient.ExistsAsync()
-
-                                if existsResult.Value = true then
-                                    use! fileStream = fileBlobClient.OpenReadAsync()
-                                    let zipEntry = archive.CreateEntry(fileVersion.RelativePath, CompressionLevel.NoCompression)
-                                    zipEntry.Comment <- fileVersion.GetObjectFileName
-                                    use zipEntryStream = zipEntry.Open()
-                                    do! fileStream.CopyToAsync(zipEntryStream)
+                                match! writeZipEntryPayload repositoryDto fileVersion zipEntryStream correlationId with
+                                | Error error -> raise (InvalidOperationException error.Error)
+                                | Ok () -> ()
 
                             // Step 5: Upload the new ZIP to Azure Blob Storage
                             archive.Dispose() // Dispose the archive before uploading to ensure it's properly flushed to the disk.
@@ -1620,4 +2041,53 @@ module DirectoryVersion =
 
                         let! uriWithSas = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
                         return uriWithSas
+                }
+
+            /// Ensures the target-root zip and recursive metadata projection artifacts exist and returns descriptors for both.
+            member this.EnsureRequiredProjectionArtifacts correlationId =
+                this.correlationId <- correlationId
+
+                task {
+                    let directoryVersion = directoryVersionDto.DirectoryVersion
+                    let repositoryActorProxy = Repository.CreateActorProxy directoryVersion.OrganizationId directoryVersion.RepositoryId correlationId
+                    let! repositoryDto = repositoryActorProxy.Get correlationId
+
+                    /// Ensures and describes the target-root zip projection.
+                    let ensureZip () =
+                        task {
+                            try
+                                let! zipUri =
+                                    (this :> IDirectoryVersionActor)
+                                        .GetZipFileUri correlationId
+
+                                let blobName = getZipFileBlobName directoryVersion.DirectoryVersionId
+                                let source = Some(MaterializationArtifactSource.Direct(zipUri.AbsoluteUri))
+
+                                return! describeProjectionBlob repositoryDto blobName MaterializationArtifactKind.DirectoryVersionZip source correlationId
+                            with
+                            | ex -> return Error(GraceError.CreateWithException ex "DirectoryVersion zip projection could not be ensured." correlationId)
+                        }
+
+                    /// Ensures and describes the recursive metadata projection.
+                    let ensureRecursiveMetadata () =
+                        task {
+                            let! recursiveDirectoryVersions =
+                                (this :> IDirectoryVersionActor)
+                                    .GetRecursiveDirectoryVersions
+                                    false
+                                    correlationId
+
+                            match validateRecursiveDirectoryVersionsComplete directoryVersion.DirectoryVersionId recursiveDirectoryVersions correlationId with
+                            | Error error -> return Error error
+                            | Ok _ ->
+                                let blobName = getRecursiveDirectoryVersionsCacheFileName directoryVersion.DirectoryVersionId
+                                let source = Some(MaterializationArtifactSource.CacheOnly blobName)
+
+                                return!
+                                    describeProjectionBlob repositoryDto blobName MaterializationArtifactKind.RecursiveDirectoryMetadata source correlationId
+                        }
+
+                    match! ensureRequiredProjectionArtifactsWith directoryVersion.DirectoryVersionId ensureZip ensureRecursiveMetadata correlationId with
+                    | Error error -> return Error error
+                    | Ok descriptors -> return Ok(GraceReturnValue.Create descriptors correlationId)
                 }
