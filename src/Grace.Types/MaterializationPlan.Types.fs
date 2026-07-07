@@ -43,6 +43,33 @@ module MaterializationPlan =
         | CacheEntry = 2
         | Deferred = 3
 
+    /// Builds the canonical artifact identity for the zip projection of a represented directory root.
+    let canonicalDirectoryVersionZipIdentity (representedRootDirectoryVersionId: DirectoryVersionId) =
+        $"{Constants.GraceZipFilesFolderName}/{representedRootDirectoryVersionId}.zip"
+
+    /// Builds the canonical artifact identity for the recursive metadata projection of a represented directory root.
+    let canonicalRecursiveDirectoryMetadataIdentity (representedRootDirectoryVersionId: DirectoryVersionId) = $"{representedRootDirectoryVersionId}.msgpack"
+
+    /// Builds the canonical descriptor identity for whole-file bytes under one represented root.
+    let canonicalWholeFileContentIdentity (representedRootDirectoryVersionId: DirectoryVersionId) (relativePath: RelativePath) =
+        $"whole-file/{representedRootDirectoryVersionId}/{relativePath}"
+
+    /// Builds the canonical descriptor identity for a manifest-backed artifact under one represented root.
+    let canonicalFileManifestIdentity
+        (representedRootDirectoryVersionId: DirectoryVersionId)
+        (storagePoolId: StoragePoolId)
+        (manifestAddress: ManifestAddress)
+        =
+        $"file-manifest/{representedRootDirectoryVersionId}/{storagePoolId}/{manifestAddress}"
+
+    /// Builds the canonical descriptor identity for a content block artifact under one represented root.
+    let canonicalContentBlockIdentity
+        (representedRootDirectoryVersionId: DirectoryVersionId)
+        (storagePoolId: StoragePoolId)
+        (contentBlockAddress: ContentBlockAddress)
+        =
+        $"content-block/{representedRootDirectoryVersionId}/{storagePoolId}/{contentBlockAddress}"
+
     /// Selects a target before server-side resolution to one immutable root DirectoryVersionId.
     [<CLIMutable; GenerateSerializer>]
     type MaterializationTargetSelector =
@@ -148,7 +175,10 @@ module MaterializationPlan =
         {
             Class: string
             ArtifactKind: MaterializationArtifactKind
+            CanonicalArtifactIdentity: string option
+            RepresentedRootDirectoryVersionId: DirectoryVersionId option
             TargetRootDirectoryVersionId: DirectoryVersionId
+            SizeInBytes: int64 option
             RelativePath: RelativePath option
             Sha256Hash: Sha256Hash option
             Blake3Hash: Blake3Hash option
@@ -159,14 +189,24 @@ module MaterializationPlan =
         }
 
         /// Describes the target-root zip artifact for a resolved immutable directory root.
-        static member DirectoryVersionZip(targetRootDirectoryVersionId: DirectoryVersionId, source: MaterializationArtifactSource option) =
+        static member DirectoryVersionZip
+            (
+                targetRootDirectoryVersionId: DirectoryVersionId,
+                sizeInBytes: int64,
+                sha256Hash: Sha256Hash option,
+                blake3Hash: Blake3Hash option,
+                source: MaterializationArtifactSource option
+            ) =
             {
                 Class = nameof MaterializationArtifactDescriptor
                 ArtifactKind = MaterializationArtifactKind.DirectoryVersionZip
+                CanonicalArtifactIdentity = Some(canonicalDirectoryVersionZipIdentity targetRootDirectoryVersionId)
+                RepresentedRootDirectoryVersionId = Some targetRootDirectoryVersionId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
+                SizeInBytes = Some sizeInBytes
                 RelativePath = None
-                Sha256Hash = None
-                Blake3Hash = None
+                Sha256Hash = sha256Hash
+                Blake3Hash = blake3Hash
                 ManifestAddress = None
                 ContentBlockAddress = None
                 StoragePoolId = None
@@ -174,14 +214,24 @@ module MaterializationPlan =
             }
 
         /// Describes recursive metadata for the same immutable target root as the plan response.
-        static member RecursiveDirectoryMetadata(targetRootDirectoryVersionId: DirectoryVersionId, source: MaterializationArtifactSource option) =
+        static member RecursiveDirectoryMetadata
+            (
+                targetRootDirectoryVersionId: DirectoryVersionId,
+                sizeInBytes: int64,
+                sha256Hash: Sha256Hash option,
+                blake3Hash: Blake3Hash option,
+                source: MaterializationArtifactSource option
+            ) =
             {
                 Class = nameof MaterializationArtifactDescriptor
                 ArtifactKind = MaterializationArtifactKind.RecursiveDirectoryMetadata
+                CanonicalArtifactIdentity = Some(canonicalRecursiveDirectoryMetadataIdentity targetRootDirectoryVersionId)
+                RepresentedRootDirectoryVersionId = Some targetRootDirectoryVersionId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
+                SizeInBytes = Some sizeInBytes
                 RelativePath = None
-                Sha256Hash = None
-                Blake3Hash = None
+                Sha256Hash = sha256Hash
+                Blake3Hash = blake3Hash
                 ManifestAddress = None
                 ContentBlockAddress = None
                 StoragePoolId = None
@@ -200,7 +250,10 @@ module MaterializationPlan =
             {
                 Class = nameof MaterializationArtifactDescriptor
                 ArtifactKind = MaterializationArtifactKind.WholeFileContent
+                CanonicalArtifactIdentity = Some(canonicalWholeFileContentIdentity targetRootDirectoryVersionId relativePath)
+                RepresentedRootDirectoryVersionId = Some targetRootDirectoryVersionId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
+                SizeInBytes = None
                 RelativePath = Some relativePath
                 Sha256Hash = sha256Hash
                 Blake3Hash = blake3Hash
@@ -221,7 +274,10 @@ module MaterializationPlan =
             {
                 Class = nameof MaterializationArtifactDescriptor
                 ArtifactKind = MaterializationArtifactKind.FileManifest
+                CanonicalArtifactIdentity = Some(canonicalFileManifestIdentity targetRootDirectoryVersionId storagePoolId manifestAddress)
+                RepresentedRootDirectoryVersionId = Some targetRootDirectoryVersionId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
+                SizeInBytes = None
                 RelativePath = None
                 Sha256Hash = None
                 Blake3Hash = None
@@ -242,7 +298,10 @@ module MaterializationPlan =
             {
                 Class = nameof MaterializationArtifactDescriptor
                 ArtifactKind = MaterializationArtifactKind.ContentBlock
+                CanonicalArtifactIdentity = Some(canonicalContentBlockIdentity targetRootDirectoryVersionId storagePoolId contentBlockAddress)
+                RepresentedRootDirectoryVersionId = Some targetRootDirectoryVersionId
                 TargetRootDirectoryVersionId = targetRootDirectoryVersionId
+                SizeInBytes = None
                 RelativePath = None
                 Sha256Hash = None
                 Blake3Hash = None
@@ -503,22 +562,56 @@ module MaterializationPlan =
                 if descriptor.TargetRootDirectoryVersionId = DirectoryVersionId.Empty then
                     errors.Add("Artifact TargetRootDirectoryVersionId is required.")
 
+            let requireRepresentedRoot artifactKind =
+                match descriptor.RepresentedRootDirectoryVersionId with
+                | Some representedRootDirectoryVersionId when representedRootDirectoryVersionId = DirectoryVersionId.Empty ->
+                    errors.Add($"Artifact RepresentedRootDirectoryVersionId is required for {artifactKind} descriptors.")
+                | Some representedRootDirectoryVersionId when representedRootDirectoryVersionId = descriptor.TargetRootDirectoryVersionId -> ()
+                | Some _ -> errors.Add("Artifact RepresentedRootDirectoryVersionId must match TargetRootDirectoryVersionId.")
+                | None -> errors.Add($"Artifact RepresentedRootDirectoryVersionId is required for {artifactKind} descriptors.")
+
+            let requireCanonicalArtifactIdentity expected artifactKind =
+                match descriptor.CanonicalArtifactIdentity with
+                | Some artifactIdentity when String.Equals(artifactIdentity, expected, StringComparison.Ordinal) -> ()
+                | Some _ -> errors.Add($"Artifact CanonicalArtifactIdentity must be {expected} for {artifactKind} descriptors.")
+                | None -> errors.Add($"Artifact CanonicalArtifactIdentity is required for {artifactKind} descriptors.")
+
+            let validateOptionalSize artifactKind =
+                match descriptor.SizeInBytes with
+                | Some sizeInBytes when sizeInBytes >= 0L -> ()
+                | Some _ -> errors.Add($"Artifact SizeInBytes must be non-negative for {artifactKind} descriptors.")
+                | None -> ()
+
+            let requireSize artifactKind =
+                match descriptor.SizeInBytes with
+                | Some sizeInBytes when sizeInBytes >= 0L -> ()
+                | Some _ -> errors.Add($"Artifact SizeInBytes must be non-negative for {artifactKind} descriptors.")
+                | None -> errors.Add($"Artifact SizeInBytes is required for {artifactKind} descriptors.")
+
             let requireStoragePool () =
                 match descriptor.StoragePoolId with
                 | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) -> ()
                 | _ -> errors.Add("Artifact StoragePoolId is required for CAS artifact descriptors.")
 
-            let requireCanonicalSha256Hash () =
+            let requireCanonicalSha256Hash artifactKind =
                 match descriptor.Sha256Hash with
                 | Some sha256Hash when isCanonicalLowercaseHexAddress sha256Hash -> ()
-                | Some _ -> errors.Add("Artifact Sha256Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors.")
+                | Some _ -> errors.Add($"Artifact Sha256Hash must be a canonical lowercase 64-character hexadecimal value for {artifactKind} descriptors.")
                 | None -> ()
 
-            let requireCanonicalBlake3Hash () =
+            let requireCanonicalBlake3Hash artifactKind =
                 match descriptor.Blake3Hash with
                 | Some blake3Hash when isCanonicalLowercaseHexAddress blake3Hash -> ()
-                | Some _ -> errors.Add("Artifact Blake3Hash must be a canonical lowercase 64-character hexadecimal value for WholeFileContent descriptors.")
+                | Some _ -> errors.Add($"Artifact Blake3Hash must be a canonical lowercase 64-character hexadecimal value for {artifactKind} descriptors.")
                 | None -> ()
+
+            let requireAnyIntegrity artifactKind =
+                requireCanonicalSha256Hash artifactKind
+                requireCanonicalBlake3Hash artifactKind
+
+                if descriptor.Sha256Hash.IsNone
+                   && descriptor.Blake3Hash.IsNone then
+                    errors.Add($"Artifact Sha256Hash or Blake3Hash is required for {artifactKind} descriptors.")
 
             let rejectRelativePath artifactKind =
                 if descriptor.RelativePath.IsSome then
@@ -545,7 +638,6 @@ module MaterializationPlan =
 
             let rejectNonRootDescriptorIdentity artifactKind =
                 rejectRelativePath artifactKind
-                rejectHashes artifactKind
                 rejectManifestAddress artifactKind
                 rejectContentBlockAddress artifactKind
                 rejectStoragePool artifactKind
@@ -560,47 +652,76 @@ module MaterializationPlan =
                 if not (isSupportedArtifactKind descriptor.ArtifactKind) then
                     errors.Add($"ArtifactKind '{int descriptor.ArtifactKind}' is not supported.")
                 else
+                    let artifactKind = string descriptor.ArtifactKind
+
+                    requireTargetRoot ()
+                    requireRepresentedRoot artifactKind
+
                     match descriptor.ArtifactKind with
-                    | MaterializationArtifactKind.DirectoryVersionZip
+                    | MaterializationArtifactKind.DirectoryVersionZip ->
+                        let expectedIdentity = canonicalDirectoryVersionZipIdentity descriptor.TargetRootDirectoryVersionId
+
+                        requireCanonicalArtifactIdentity expectedIdentity artifactKind
+                        requireSize artifactKind
+                        requireAnyIntegrity artifactKind
+                        rejectNonRootDescriptorIdentity artifactKind
                     | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
-                        requireTargetRoot ()
-                        rejectNonRootDescriptorIdentity (string descriptor.ArtifactKind)
+                        let expectedIdentity = canonicalRecursiveDirectoryMetadataIdentity descriptor.TargetRootDirectoryVersionId
+
+                        requireCanonicalArtifactIdentity expectedIdentity artifactKind
+                        requireSize artifactKind
+                        requireAnyIntegrity artifactKind
+                        rejectNonRootDescriptorIdentity artifactKind
                     | MaterializationArtifactKind.WholeFileContent ->
-                        requireTargetRoot ()
+                        validateOptionalSize artifactKind
+
+                        match descriptor.RelativePath with
+                        | Some relativePath ->
+                            requireCanonicalArtifactIdentity
+                                (canonicalWholeFileContentIdentity descriptor.TargetRootDirectoryVersionId relativePath)
+                                artifactKind
+                        | None -> ()
 
                         match descriptor.RelativePath with
                         | Some relativePath when isNormalizedRepositoryRelativePath relativePath -> ()
                         | Some _ -> errors.Add("Artifact RelativePath must be a normalized repository-relative path for WholeFileContent descriptors.")
                         | _ -> errors.Add("Artifact RelativePath is required for WholeFileContent descriptors.")
 
-                        requireCanonicalSha256Hash ()
-                        requireCanonicalBlake3Hash ()
+                        requireAnyIntegrity artifactKind
 
-                        if descriptor.Sha256Hash.IsNone
-                           && descriptor.Blake3Hash.IsNone then
-                            errors.Add("Artifact Sha256Hash or Blake3Hash is required for WholeFileContent descriptors.")
-
-                        rejectManifestAddress (string descriptor.ArtifactKind)
-                        rejectContentBlockAddress (string descriptor.ArtifactKind)
-                        rejectStoragePool (string descriptor.ArtifactKind)
+                        rejectManifestAddress artifactKind
+                        rejectContentBlockAddress artifactKind
+                        rejectStoragePool artifactKind
                     | MaterializationArtifactKind.FileManifest ->
-                        requireTargetRoot ()
+                        validateOptionalSize artifactKind
 
                         match descriptor.ManifestAddress with
-                        | Some manifestAddress when isCanonicalLowercaseHexAddress manifestAddress -> ()
+                        | Some manifestAddress when isCanonicalLowercaseHexAddress manifestAddress ->
+                            match descriptor.StoragePoolId with
+                            | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) ->
+                                requireCanonicalArtifactIdentity
+                                    (canonicalFileManifestIdentity descriptor.TargetRootDirectoryVersionId storagePoolId manifestAddress)
+                                    artifactKind
+                            | _ -> ()
                         | Some _ ->
                             errors.Add("Artifact ManifestAddress must be a canonical lowercase 64-character hexadecimal value for FileManifest descriptors.")
                         | _ -> errors.Add("Artifact ManifestAddress is required for FileManifest descriptors.")
 
                         requireStoragePool ()
-                        rejectRelativePath (string descriptor.ArtifactKind)
-                        rejectHashes (string descriptor.ArtifactKind)
-                        rejectContentBlockAddress (string descriptor.ArtifactKind)
+                        rejectRelativePath artifactKind
+                        rejectHashes artifactKind
+                        rejectContentBlockAddress artifactKind
                     | MaterializationArtifactKind.ContentBlock ->
-                        requireTargetRoot ()
+                        validateOptionalSize artifactKind
 
                         match descriptor.ContentBlockAddress with
-                        | Some contentBlockAddress when isCanonicalLowercaseHexAddress contentBlockAddress -> ()
+                        | Some contentBlockAddress when isCanonicalLowercaseHexAddress contentBlockAddress ->
+                            match descriptor.StoragePoolId with
+                            | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) ->
+                                requireCanonicalArtifactIdentity
+                                    (canonicalContentBlockIdentity descriptor.TargetRootDirectoryVersionId storagePoolId contentBlockAddress)
+                                    artifactKind
+                            | _ -> ()
                         | Some _ ->
                             errors.Add(
                                 "Artifact ContentBlockAddress must be a canonical lowercase 64-character hexadecimal value for ContentBlock descriptors."
@@ -608,9 +729,9 @@ module MaterializationPlan =
                         | _ -> errors.Add("Artifact ContentBlockAddress is required for ContentBlock descriptors.")
 
                         requireStoragePool ()
-                        rejectRelativePath (string descriptor.ArtifactKind)
-                        rejectHashes (string descriptor.ArtifactKind)
-                        rejectManifestAddress (string descriptor.ArtifactKind)
+                        rejectRelativePath artifactKind
+                        rejectHashes artifactKind
+                        rejectManifestAddress artifactKind
                     | _ -> errors.Add($"ArtifactKind '{int descriptor.ArtifactKind}' is not supported.")
 
                 match descriptor.Source with

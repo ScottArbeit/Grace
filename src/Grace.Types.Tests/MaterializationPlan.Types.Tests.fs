@@ -29,6 +29,21 @@ module MaterializationPlanTestData =
     /// Provides a deterministic cache entry key that does not imply a direct source URL.
     let cacheKey = "cache/materialization/11111111/root.zip"
 
+    /// Provides the canonical identity used by existing directory-version zip storage.
+    let directoryVersionZipIdentity = "Grace-ZipFiles/11111111-1111-1111-1111-111111111111.zip"
+
+    /// Provides the canonical identity used by existing recursive directory metadata storage.
+    let recursiveDirectoryMetadataIdentity = "11111111-1111-1111-1111-111111111111.msgpack"
+
+    /// Provides a deterministic byte length for projection artifact descriptor validation.
+    let projectionArtifactSize = 4096L
+
+    /// Provides a canonical lowercase SHA-256 hash value for root projection descriptor validation.
+    let projectionArtifactSha256Hash = Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+
+    /// Provides a canonical lowercase BLAKE3 hash value for root projection descriptor validation.
+    let projectionArtifactBlake3Hash = Blake3Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+
     /// Provides a canonical lowercase BLAKE3 manifest address for descriptor validation.
     let manifestAddress = ManifestAddress "5dd11fdb1534c0f1c4fecca3c07498f9b59a7dff26d69fe78e43f7ce50d90895"
 
@@ -41,21 +56,38 @@ module MaterializationPlanTestData =
     /// Provides a canonical lowercase BLAKE3 hash value for whole-file descriptor validation.
     let blake3Hash = Blake3Hash "89abcdef0123456789abcdef0123456789abcdef0123456789abcdef01234567"
 
+    /// Builds a root zip descriptor with explicit identity, represented root, size, and integrity.
+    let directoryVersionZip targetRoot source =
+        MaterializationArtifactDescriptor.DirectoryVersionZip(
+            targetRoot,
+            projectionArtifactSize,
+            Some projectionArtifactSha256Hash,
+            Some projectionArtifactBlake3Hash,
+            source
+        )
+
+    /// Builds a recursive metadata descriptor with explicit identity, represented root, size, and integrity.
+    let recursiveDirectoryMetadata targetRoot source =
+        MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+            targetRoot,
+            projectionArtifactSize,
+            Some projectionArtifactSha256Hash,
+            Some projectionArtifactBlake3Hash,
+            source
+        )
+
     /// Builds the V1 required target-root artifact descriptors for the supplied root.
     let rootArtifacts targetRoot =
         [
-            MaterializationArtifactDescriptor.DirectoryVersionZip(targetRoot, Some(MaterializationArtifactSource.CacheOnly cacheKey))
-            MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(targetRoot, Some(MaterializationArtifactSource.CacheOnly $"{cacheKey}/metadata"))
+            directoryVersionZip targetRoot (Some(MaterializationArtifactSource.CacheOnly cacheKey))
+            recursiveDirectoryMetadata targetRoot (Some(MaterializationArtifactSource.CacheOnly $"{cacheKey}/metadata"))
         ]
 
     /// Builds V1 target-root artifact descriptors that are compatible with direct materialization.
     let directRootArtifacts targetRoot =
         [
-            MaterializationArtifactDescriptor.DirectoryVersionZip(
-                targetRoot,
-                Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip")
-            )
-            MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(targetRoot, Some MaterializationArtifactSource.Deferred)
+            directoryVersionZip targetRoot (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip"))
+            recursiveDirectoryMetadata targetRoot (Some MaterializationArtifactSource.Deferred)
         ]
 
     /// Builds a valid Materialization Plan with all current artifact descriptor kinds represented.
@@ -202,14 +234,12 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.CacheRequired,
                 MaterializationCacheSelection.Required,
                 [
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip")
-                    )
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
-                    )
+                    MaterializationPlanTestData.directoryVersionZip
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip"))
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey))
                 ]
             )
 
@@ -224,14 +254,12 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.CacheRequired,
                 MaterializationCacheSelection.Bypass,
                 [
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip")
-                    )
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some MaterializationArtifactSource.Deferred
-                    )
+                    MaterializationPlanTestData.directoryVersionZip
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip"))
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some MaterializationArtifactSource.Deferred)
                 ]
             )
 
@@ -273,7 +301,10 @@ type MaterializationPlanContractTests() =
             {
                 Class = nameof MaterializationArtifactDescriptor
                 ArtifactKind = MaterializationArtifactKind.WholeFileContent
+                CanonicalArtifactIdentity = None
+                RepresentedRootDirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
                 TargetRootDirectoryVersionId = MaterializationPlanTestData.targetRootDirectoryVersionId
+                SizeInBytes = None
                 RelativePath = None
                 Sha256Hash = None
                 Blake3Hash = None
@@ -287,6 +318,165 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "Artifact RelativePath is required for WholeFileContent descriptors." result
         assertInvalid "Artifact Sha256Hash or Blake3Hash is required for WholeFileContent descriptors." result
+
+    /// Verifies that root projection artifacts use deterministic identities instead of retrieval locations.
+    [<Test>]
+    member _.ProjectionArtifactsBuildCanonicalIdentityForRepresentedRoot() =
+        let zip =
+            MaterializationPlanTestData.directoryVersionZip
+                MaterializationPlanTestData.targetRootDirectoryVersionId
+                (Some(MaterializationArtifactSource.Direct "https://cache.example.test/transient/downloads/root.zip?token=abc"))
+
+        let metadata =
+            MaterializationPlanTestData.recursiveDirectoryMetadata
+                MaterializationPlanTestData.targetRootDirectoryVersionId
+                (Some(MaterializationArtifactSource.CacheOnly "cache/temporary/metadata-entry"))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(zip.CanonicalArtifactIdentity, Is.EqualTo(Some MaterializationPlanTestData.directoryVersionZipIdentity))
+                Assert.That(metadata.CanonicalArtifactIdentity, Is.EqualTo(Some MaterializationPlanTestData.recursiveDirectoryMetadataIdentity))
+                Assert.That(zip.RepresentedRootDirectoryVersionId, Is.EqualTo(Some MaterializationPlanTestData.targetRootDirectoryVersionId))
+                Assert.That(metadata.RepresentedRootDirectoryVersionId, Is.EqualTo(Some MaterializationPlanTestData.targetRootDirectoryVersionId))
+                Assert.That(zip.SizeInBytes, Is.EqualTo(Some MaterializationPlanTestData.projectionArtifactSize))
+                Assert.That(metadata.SizeInBytes, Is.EqualTo(Some MaterializationPlanTestData.projectionArtifactSize))
+                Assert.That(zip.CanonicalArtifactIdentity, Is.Not.EqualTo(zip.Source.Value.DirectUri))
+                Assert.That(metadata.CanonicalArtifactIdentity, Is.Not.EqualTo(metadata.Source.Value.CacheKey))
+                assertValid (Validation.validateArtifactDescriptor zip)
+                assertValid (Validation.validateArtifactDescriptor metadata))
+        )
+
+    /// Verifies that projection artifact identity must match the represented root and existing storage naming.
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip,
+               "https://cache.example.test/transient/downloads/root.zip",
+               "Artifact CanonicalArtifactIdentity must be Grace-ZipFiles/11111111-1111-1111-1111-111111111111.zip for DirectoryVersionZip descriptors.")>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata,
+               "Grace-ZipFiles/22222222-2222-2222-2222-222222222222.zip",
+               "Artifact CanonicalArtifactIdentity must be 11111111-1111-1111-1111-111111111111.msgpack for RecursiveDirectoryMetadata descriptors.")>]
+    member _.ProjectionArtifactsRejectMismatchedCanonicalIdentity(kind: MaterializationArtifactKind, artifactIdentity: string, expected: string) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                { MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    CanonicalArtifactIdentity = Some artifactIdentity
+                }
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                { MaterializationPlanTestData.recursiveDirectoryMetadata MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    CanonicalArtifactIdentity = Some artifactIdentity
+                }
+            | _ -> failwith "Unsupported projection artifact kind."
+
+        assertInvalid expected (Validation.validateArtifactDescriptor descriptor)
+
+    /// Verifies that projection artifacts cannot omit represented root, byte length, or integrity.
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip)>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata)>]
+    member _.ProjectionArtifactsRejectMissingRepresentedRootSizeAndIntegrity(kind: MaterializationArtifactKind) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                { MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    RepresentedRootDirectoryVersionId = None
+                    SizeInBytes = None
+                    Sha256Hash = None
+                    Blake3Hash = None
+                }
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                { MaterializationPlanTestData.recursiveDirectoryMetadata MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    RepresentedRootDirectoryVersionId = None
+                    SizeInBytes = None
+                    Sha256Hash = None
+                    Blake3Hash = None
+                }
+            | _ -> failwith "Unsupported projection artifact kind."
+
+        let result = Validation.validateArtifactDescriptor descriptor
+
+        assertInvalid $"Artifact RepresentedRootDirectoryVersionId is required for {string kind} descriptors." result
+        assertInvalid $"Artifact SizeInBytes is required for {string kind} descriptors." result
+        assertInvalid $"Artifact Sha256Hash or Blake3Hash is required for {string kind} descriptors." result
+
+    /// Verifies that projection artifacts cannot rely on byte length without integrity evidence.
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip)>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata)>]
+    member _.ProjectionArtifactsRejectSizeOnlyIntegrity(kind: MaterializationArtifactKind) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                { MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    Sha256Hash = None
+                    Blake3Hash = None
+                }
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                { MaterializationPlanTestData.recursiveDirectoryMetadata MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    Sha256Hash = None
+                    Blake3Hash = None
+                }
+            | _ -> failwith "Unsupported projection artifact kind."
+
+        assertInvalid $"Artifact Sha256Hash or Blake3Hash is required for {string kind} descriptors." (Validation.validateArtifactDescriptor descriptor)
+
+    /// Verifies that projection artifacts reject metadata that names a different represented root.
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip)>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata)>]
+    member _.ProjectionArtifactsRejectRepresentedRootMismatch(kind: MaterializationArtifactKind) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                { MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    RepresentedRootDirectoryVersionId = Some MaterializationPlanTestData.otherDirectoryVersionId
+                }
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                { MaterializationPlanTestData.recursiveDirectoryMetadata MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    RepresentedRootDirectoryVersionId = Some MaterializationPlanTestData.otherDirectoryVersionId
+                }
+            | _ -> failwith "Unsupported projection artifact kind."
+
+        assertInvalid "Artifact RepresentedRootDirectoryVersionId must match TargetRootDirectoryVersionId." (Validation.validateArtifactDescriptor descriptor)
+
+    /// Verifies that projection artifact integrity uses the same canonical lowercase digest rules as file content.
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip, true, "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA")>]
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip, false, "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbg")>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata, true, "")>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata, false, "bbbbbbbbbbbbbbbb")>]
+    member _.ProjectionArtifactsRejectMalformedIntegrity(kind: MaterializationArtifactKind, evaluateSha256: bool, malformedHash: string) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                MaterializationPlanTestData.recursiveDirectoryMetadata MaterializationPlanTestData.targetRootDirectoryVersionId None
+            | _ -> failwith "Unsupported projection artifact kind."
+
+        let malformedDescriptor =
+            if evaluateSha256 then
+                { descriptor with Sha256Hash = Some(Sha256Hash malformedHash) }
+            else
+                { descriptor with Blake3Hash = Some(Blake3Hash malformedHash) }
+
+        let expected =
+            if evaluateSha256 then
+                $"Artifact Sha256Hash must be a canonical lowercase 64-character hexadecimal value for {string kind} descriptors."
+            else
+                $"Artifact Blake3Hash must be a canonical lowercase 64-character hexadecimal value for {string kind} descriptors."
+
+        assertInvalid expected (Validation.validateArtifactDescriptor malformedDescriptor)
+
+    /// Verifies that projection artifact size must be a concrete non-negative byte length.
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip)>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata)>]
+    member _.ProjectionArtifactsRejectNegativeSize(kind: MaterializationArtifactKind) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                { MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None with SizeInBytes = Some -1L }
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                { MaterializationPlanTestData.recursiveDirectoryMetadata MaterializationPlanTestData.targetRootDirectoryVersionId None with
+                    SizeInBytes = Some -1L
+                }
+            | _ -> failwith "Unsupported projection artifact kind."
+
+        assertInvalid $"Artifact SizeInBytes must be non-negative for {string kind} descriptors." (Validation.validateArtifactDescriptor descriptor)
 
     /// Verifies that CAS artifact descriptors require StoragePoolId.
     [<TestCase(MaterializationArtifactKind.FileManifest)>]
@@ -323,16 +513,14 @@ type MaterializationPlanContractTests() =
         let descriptor =
             match kind with
             | MaterializationArtifactKind.DirectoryVersionZip ->
-                MaterializationArtifactDescriptor.DirectoryVersionZip(MaterializationPlanTestData.targetRootDirectoryVersionId, None)
+                MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None
             | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
-                MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(MaterializationPlanTestData.targetRootDirectoryVersionId, None)
+                MaterializationPlanTestData.recursiveDirectoryMetadata MaterializationPlanTestData.targetRootDirectoryVersionId None
             | _ -> failwith "Unsupported test kind."
 
         let ambiguousDescriptor =
             { descriptor with
                 RelativePath = Some(RelativePath "src/app.fs")
-                Sha256Hash = Some(Sha256Hash "sha256-file")
-                Blake3Hash = Some(Blake3Hash "blake3-file")
                 ManifestAddress = Some(ManifestAddress "manifest-blake3-abc123")
                 ContentBlockAddress = Some(ContentBlockAddress "block-blake3-def456")
                 StoragePoolId = Some MaterializationPlanTestData.storagePoolId
@@ -341,8 +529,6 @@ type MaterializationPlanContractTests() =
         let result = Validation.validateArtifactDescriptor ambiguousDescriptor
 
         assertInvalid $"Artifact RelativePath must be empty for {string kind} descriptors." result
-        assertInvalid $"Artifact Sha256Hash must be empty for {string kind} descriptors." result
-        assertInvalid $"Artifact Blake3Hash must be empty for {string kind} descriptors." result
         assertInvalid $"Artifact ManifestAddress must be empty for {string kind} descriptors." result
         assertInvalid $"Artifact ContentBlockAddress must be empty for {string kind} descriptors." result
         assertInvalid $"Artifact StoragePoolId must be empty for {string kind} descriptors." result
@@ -444,10 +630,9 @@ type MaterializationPlanContractTests() =
     [<Test>]
     member _.InvalidArtifactKindValueFailsValidationClearly() =
         let descriptor =
-            MaterializationArtifactDescriptor.DirectoryVersionZip(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                Some MaterializationArtifactSource.Deferred
-            )
+            MaterializationPlanTestData.directoryVersionZip
+                MaterializationPlanTestData.targetRootDirectoryVersionId
+                (Some MaterializationArtifactSource.Deferred)
 
         let invalidDescriptor = { descriptor with ArtifactKind = enum<MaterializationArtifactKind> 999 }
 
@@ -512,10 +697,9 @@ type MaterializationPlanContractTests() =
     [<Test>]
     member _.UnknownArtifactKindStringFailsDeserializationClearly() =
         let descriptor =
-            MaterializationArtifactDescriptor.DirectoryVersionZip(
-                MaterializationPlanTestData.targetRootDirectoryVersionId,
-                Some MaterializationArtifactSource.Deferred
-            )
+            MaterializationPlanTestData.directoryVersionZip
+                MaterializationPlanTestData.targetRootDirectoryVersionId
+                (Some MaterializationArtifactSource.Deferred)
 
         let json =
             (serialize descriptor)
@@ -544,10 +728,9 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.Direct,
                 MaterializationCacheSelection.Bypass,
                 [
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some MaterializationArtifactSource.Deferred
-                    )
+                    MaterializationPlanTestData.directoryVersionZip
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some MaterializationArtifactSource.Deferred)
                 ]
             )
 
@@ -562,10 +745,9 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.Direct,
                 MaterializationCacheSelection.Bypass,
                 [
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some MaterializationArtifactSource.Deferred
-                    )
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some MaterializationArtifactSource.Deferred)
                 ]
             )
 
@@ -581,10 +763,9 @@ type MaterializationPlanContractTests() =
                 MaterializationCacheSelection.Bypass,
                 [
                     yield! MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(
-                        MaterializationPlanTestData.otherDirectoryVersionId,
-                        Some MaterializationArtifactSource.Deferred
-                    )
+                    MaterializationPlanTestData.directoryVersionZip
+                        MaterializationPlanTestData.otherDirectoryVersionId
+                        (Some MaterializationArtifactSource.Deferred)
                 ]
             )
 
@@ -993,14 +1174,12 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.Direct,
                 MaterializationCacheSelection.Bypass,
                 [
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
-                    )
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some MaterializationArtifactSource.Deferred
-                    )
+                    MaterializationPlanTestData.directoryVersionZip
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey))
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some MaterializationArtifactSource.Deferred)
                 ]
             )
 
@@ -1159,11 +1338,10 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.CacheRequired,
                 MaterializationCacheSelection.Required,
                 [
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(MaterializationPlanTestData.targetRootDirectoryVersionId, None)
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
-                    )
+                    MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId None
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey))
                 ]
             )
 
@@ -1185,11 +1363,10 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.CacheRequired,
                 MaterializationCacheSelection.Required,
                 [
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(MaterializationPlanTestData.targetRootDirectoryVersionId, Some source)
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey)
-                    )
+                    MaterializationPlanTestData.directoryVersionZip MaterializationPlanTestData.targetRootDirectoryVersionId (Some source)
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.CacheOnly MaterializationPlanTestData.cacheKey))
                 ]
             )
 
@@ -1342,22 +1519,18 @@ type MaterializationPlanContractTests() =
                 MaterializationExecutionMode.Direct,
                 MaterializationCacheSelection.Bypass,
                 [
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip")
-                    )
-                    MaterializationArtifactDescriptor.DirectoryVersionZip(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root-copy.zip")
-                    )
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some MaterializationArtifactSource.Deferred
-                    )
-                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
-                        MaterializationPlanTestData.targetRootDirectoryVersionId,
-                        Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/metadata.json")
-                    )
+                    MaterializationPlanTestData.directoryVersionZip
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip"))
+                    MaterializationPlanTestData.directoryVersionZip
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root-copy.zip"))
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some MaterializationArtifactSource.Deferred)
+                    MaterializationPlanTestData.recursiveDirectoryMetadata
+                        MaterializationPlanTestData.targetRootDirectoryVersionId
+                        (Some(MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/metadata.json"))
                 ]
             )
 
