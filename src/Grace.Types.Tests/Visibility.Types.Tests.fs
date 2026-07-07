@@ -8,8 +8,19 @@ open Grace.Shared.Parameters.Visibility
 open Grace.Types.Common
 open Grace.Types.Visibility
 open MessagePack
+open Microsoft.FSharp.Reflection
 open NUnit.Framework
 open System
+
+/// Proves visibility inputs compose with existing branch route parameters without replacing the route base class.
+type private BranchCreateVisibilityParameters() =
+    inherit CreateBranchParameters()
+
+    /// Accepted visibility input for implemented public surfaces; deferred values such as security embargoes are rejected.
+    member val public Visibility = String.Empty with get, set
+
+    /// Accepted ownership input for implemented public surfaces; arbitrary contributor owner identifiers are rejected.
+    member val public Ownership = String.Empty with get, set
 
 /// Contains tests covering shared visibility and ownership contract behavior.
 [<Parallelizable(ParallelScope.All)>]
@@ -40,6 +51,14 @@ type VisibilityContractTests() =
         Assert.That(typeof<CreateBranchParameters>.GetProperty ("Ownership"), Is.Null)
         Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Visibility"), Is.Null)
         Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Ownership"), Is.Null)
+
+    /// Verifies that ordinal and advertised visibility defaults do not fail open.
+    [<Test>]
+    member _.VisibilityDefaultsFailClosed() =
+        let firstCase = FSharpType.GetUnionCases(typeof<ResourceVisibility>)[0]
+
+        Assert.That(firstCase.Name, Is.EqualTo(nameof ResourceVisibility.Private))
+        Assert.That(ResourceVisibility.Default, Is.EqualTo(ResourceVisibility.Private))
 
     /// Verifies that shared visibility and ownership values round-trip through MessagePack.
     [<Test>]
@@ -106,22 +125,37 @@ type VisibilityContractTests() =
             Is.True
         )
 
-    /// Verifies that shared parameters reject deferred public visibility input.
+    /// Verifies that visibility helpers compose with parameter types that already inherit route identity.
     [<Test>]
-    member _.SharedParametersRejectDeferredVisibilityAtPublicBoundary() =
-        let parameters = VisibilityOwnershipParameters()
+    member _.SharedVisibilityHelpersComposeWithRouteParameterBases() =
+        let parameters = BranchCreateVisibilityParameters()
+        parameters.OwnerName <- "owner"
+        parameters.OrganizationName <- "organization"
+        parameters.RepositoryName <- "repository"
+        parameters.BranchName <- "main"
         parameters.Visibility <- "SecurityEmbargoed"
         parameters.Ownership <- "ContributorOwned"
 
-        Assert.That(parameters.TryParseVisibility().IsNone, Is.True)
-        Assert.That(parameters.TryParseOwnership(), Is.EqualTo(Some ResourceOwnership.ContributorOwned))
+        Assert.That(parameters.OwnerName, Is.EqualTo("owner"))
+        Assert.That(parameters.OrganizationName, Is.EqualTo("organization"))
+        Assert.That(parameters.RepositoryName, Is.EqualTo("repository"))
+        Assert.That(parameters.BranchName, Is.EqualTo("main"))
 
-    /// Verifies that shared parameters reject arbitrary ownership at the public boundary.
+        Assert.That(
+            tryParseVisibilityInput parameters.Visibility
+            |> Option.isNone,
+            Is.True
+        )
+
+        Assert.That(tryParseOwnershipInput parameters.Ownership, Is.EqualTo(Some ResourceOwnership.ContributorOwned))
+
+    /// Verifies that ownership helpers reject arbitrary ownership at the public boundary.
     [<Test>]
-    member _.SharedParametersRejectArbitraryOwnershipAtPublicBoundary() =
-        let parameters = VisibilityOwnershipParameters()
-        parameters.Visibility <- "Private"
-        parameters.Ownership <- "OwnerId:11111111-1111-1111-1111-111111111111"
+    member _.SharedOwnershipHelpersRejectArbitraryOwnershipAtPublicBoundary() =
+        Assert.That(tryParseVisibilityInput "Private", Is.EqualTo(Some ResourceVisibility.Private))
 
-        Assert.That(parameters.TryParseVisibility(), Is.EqualTo(Some ResourceVisibility.Private))
-        Assert.That(parameters.TryParseOwnership().IsNone, Is.True)
+        Assert.That(
+            tryParseOwnershipInput "OwnerId:11111111-1111-1111-1111-111111111111"
+            |> Option.isNone,
+            Is.True
+        )

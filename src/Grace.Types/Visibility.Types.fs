@@ -11,11 +11,11 @@ module Visibility =
     /// Defines the repository, branch, reference, and promotion-set audience values that Grace implements today.
     [<KnownType("GetKnownTypes"); GenerateSerializer>]
     type ResourceVisibility =
-        | Public
         | Private
+        | Public
 
-        /// Keeps existing repository contracts public unless a caller explicitly chooses private behavior.
-        static member Default = ResourceVisibility.Public
+        /// Keeps omitted or default-initialized visibility values private until authoritative repository policy is applied.
+        static member Default = ResourceVisibility.Private
 
         /// Parses only implemented public visibility inputs; deferred values such as SecurityEmbargoed stay rejected.
         static member TryParsePublicInput(value: string) =
