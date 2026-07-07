@@ -12,6 +12,35 @@ schema is intentionally narrow:
 The ingestion hot path still uses reviewed raw SQL for the durable insert and aggregate update. That path preserves the
 `UsageFactId` idempotency lock and the aggregate `MERGE ... WITH (HOLDLOCK)` behavior that the worker depends on.
 
+## Hot/Cold Raw Payload Archive
+
+Raw payloads stay hot in SQL only for the configured Operations archive retention window. When archive Blob settings
+are supplied, the Operations archive worker writes one deterministic compressed JSONL Blob per `UsageFactId` after that
+window and records Blob authority before it clears `ops.RawUsageFact.RawPayload`. Existing ingestion-only local hosts
+that do not provide archive settings continue to start without registering the archive hosted service; partial archive
+settings still fail startup instead of silently running with missing Blob authority.
+
+Archive Blob names are deterministic and scope-qualified:
+
+```text
+usage-facts/v1/observedYear=<yyyy>/observedMonth=<MM>/ownerId=<owner-guid>/organizationId=<organization-guid>/repositoryId=<repository-guid>/usageFactId=<usage-fact-guid>.jsonl.gz
+```
+
+Each Blob contains one gzip-compressed JSONL record with archive schema version, usage fact identity, Grace scope,
+storage pool, quantity, observed UTC timestamp, and the exact accepted broker payload as base64. SQL stores:
+
+- `ArchiveState`, where `0` is hot, `1` is Blob-verified with hot payload retained, and `2` is archived with hot
+  payload cleared.
+- `ArchiveBlobName`, the deterministic Blob pointer.
+- `ArchiveChecksumSha256Hex`, the SHA-256 checksum of the compressed Blob bytes.
+- `ArchiveByteLength`, the exact compressed Blob byte length.
+- `ArchiveVerifiedAtUtc` and `ArchivedAtUtc`, the two ordering points for partial-success resume.
+
+The worker verifies Blob checksum and byte length from Blob storage before recording `ArchiveState = 1`, then verifies
+the same Blob pointer again before clearing `RawPayload` and setting `ArchiveState = 2`. If the Blob is missing,
+corrupt, or different from the SQL pointer, cleanup fails loudly and the hot payload is not cleared. A retry can resume
+from `ArchiveState = 1` without rewriting the Blob.
+
 ## Monthly Partitioning
 
 The current raw fact and minute aggregate tables are monthly partitioned by the UTC time columns used by range queries

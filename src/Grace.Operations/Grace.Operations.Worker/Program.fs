@@ -1,6 +1,9 @@
 namespace Grace.Operations.Worker
 
 open Grace.Operations.Data
+open Azure.Core
+open Azure.Identity
+open Azure.Storage.Blobs
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Diagnostics.HealthChecks
 open Microsoft.Extensions.Hosting
@@ -18,6 +21,11 @@ module Program =
                 .ConfigureServices(fun context services ->
                     let settings =
                         match OperationsWorkerSettings.fromConfiguration context.Configuration with
+                        | Ok value -> value
+                        | Error errors -> invalidOp (String.Join("; ", errors))
+
+                    let archiveSettings =
+                        match OperationsUsageArchiveSettings.tryFromConfiguration context.Configuration with
                         | Ok value -> value
                         | Error errors -> invalidOp (String.Join("; ", errors))
 
@@ -60,7 +68,34 @@ module Program =
                     |> ignore
 
                     services.AddHostedService<OperationsUsageWorkerService>()
-                    |> ignore)
+                    |> ignore
+
+                    match archiveSettings with
+                    | Some archiveSettings ->
+                        services.AddSingleton(archiveSettings) |> ignore
+
+                        services.AddSingleton<IOperationsUsageArchiveStore> (fun _ ->
+                            SqlOperationsUsageArchiveStore(settings.SqlConnectionString) :> IOperationsUsageArchiveStore)
+                        |> ignore
+
+                        services.AddSingleton<IOperationsUsageArchiveBlobStore> (fun _ ->
+                            let containerClient =
+                                match archiveSettings.BlobConnectionString, archiveSettings.BlobServiceUri with
+                                | Some connectionString, _ -> BlobContainerClient(connectionString, archiveSettings.BlobContainerName)
+                                | None, Some serviceUri ->
+                                    BlobServiceClient(Uri serviceUri, DefaultAzureCredential() :> TokenCredential)
+                                        .GetBlobContainerClient(archiveSettings.BlobContainerName)
+                                | None, None -> invalidOp "Operations archive Blob storage must be configured."
+
+                            AzureOperationsUsageArchiveBlobStore(containerClient) :> IOperationsUsageArchiveBlobStore)
+                        |> ignore
+
+                        services.AddSingleton<OperationsUsageArchiveProcessor>()
+                        |> ignore
+
+                        services.AddHostedService<OperationsUsageArchiveWorkerService>()
+                        |> ignore
+                    | None -> ())
                 .Build()
                 .Run()
 
