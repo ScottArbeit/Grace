@@ -153,6 +153,18 @@ type OperationsUsageReadinessState() =
 
         member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
 
+/// Records runtime readiness transitions that must stay visible through the shared health-check state.
+[<RequireQualifiedAccess>]
+module internal OperationsUsageReadinessTransitions =
+
+    /// Records a redacted Service Bus processor fault observed after startup.
+    let recordServiceBusProcessorFault (readiness: IOperationsUsageReadinessRecorder) (errorSource: ServiceBusErrorSource) (ex: exn) =
+        readiness.MarkDependencyFailure($"Service Bus processor fault ({errorSource}, {ex.GetType().Name}).")
+
+    /// Records a redacted runtime processing dependency failure that should recover after a later successful message.
+    let recordRuntimeProcessingFailure (readiness: IOperationsUsageReadinessRecorder) (ex: exn) =
+        readiness.MarkDependencyFailure($"Runtime processing dependency failed ({ex.GetType().Name}).")
+
 /// Adapts Operations ingestion readiness to the standard .NET health-check surface.
 type OperationsUsageReadinessHealthCheck(readiness: IOperationsUsageReadinessProbe) =
 
@@ -565,6 +577,7 @@ type OperationsUsageIngestionProcessor
                                     )
 
                                     do! actions.CompleteAsync cancellationToken
+                                    readiness.MarkReady()
             with
             | :? OperationCanceledException when cancellationToken.IsCancellationRequested ->
                 logger.LogWarning(
@@ -584,6 +597,8 @@ type OperationsUsageIngestionProcessor
 
                 do! deadLetterAsync "MalformedUsageFactJson" "UsageFact JSON could not be deserialized." actions cancellationToken
             | ex ->
+                OperationsUsageReadinessTransitions.recordRuntimeProcessingFailure readiness ex
+
                 logger.LogError(
                     ex,
                     "Abandoning operational UsageFact message after transient processing failure. MessageId: {MessageId}; CorrelationId: {CorrelationId}; DeliveryCount: {DeliveryCount}.",
@@ -699,6 +714,8 @@ type OperationsUsageWorkerService
 
                         azureProcessor.add_ProcessErrorAsync (
                             Func<ProcessErrorEventArgs, Task> (fun args ->
+                                OperationsUsageReadinessTransitions.recordServiceBusProcessorFault readiness args.ErrorSource args.Exception
+
                                 logger.LogError(
                                     args.Exception,
                                     "Operations usage Service Bus processor fault. ErrorSource: {ErrorSource}; EntityPath: {EntityPath}; FullyQualifiedNamespace: {FullyQualifiedNamespace}.",

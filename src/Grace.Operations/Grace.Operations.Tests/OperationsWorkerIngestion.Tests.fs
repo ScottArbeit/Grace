@@ -205,6 +205,11 @@ type OperationsWorkerIngestionTests() =
         snapshot.LastUnsupportedContract
         |> Option.defaultValue String.Empty
 
+    /// Returns the current readiness snapshot for state-transition assertions.
+    let readinessSnapshot (readiness: OperationsUsageReadinessState) =
+        (readiness :> IOperationsUsageReadinessProbe)
+            .GetSnapshot()
+
     /// Creates an accepted persistence result for a fact.
     let accepted fact =
         { Status = UsageFactPersistenceStatus.Accepted; UsageFactId = fact.UsageFactId; Aggregate = Some(OperationsWorkerIngestionTestData.aggregateFor fact) }
@@ -378,6 +383,32 @@ type OperationsWorkerIngestionTests() =
                 Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
                 Assert.That(snapshot.SupportedUsageFactSchemaVersion, Is.EqualTo(UsageFactSchemaVersion))
                 Assert.That(snapshot.DependencyFailure, Is.EqualTo(None)))
+        )
+
+    /// Verifies post-start Service Bus processor faults downgrade readiness through the shared worker state.
+    [<Test>]
+    member _.ServiceBusProcessorReceiveFaultDowngradesReadinessAfterStartup() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+
+        recorder.MarkReady()
+
+        OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+            recorder
+            Azure.Messaging.ServiceBus.ServiceBusErrorSource.Receive
+            (InvalidOperationException("receive-link-secret"))
+
+        let snapshot = readinessSnapshot readiness
+
+        let dependencyFailure =
+            snapshot.DependencyFailure
+            |> Option.defaultValue String.Empty
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(snapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Receive, InvalidOperationException)."))
+                Assert.That(dependencyFailure, Does.Not.Contain("receive-link-secret")))
         )
 
     /// Verifies the standard health-check adapter exposes redacted readiness data.
@@ -713,8 +744,14 @@ type OperationsWorkerIngestionTests() =
         task {
             let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("dddddddd-dddd-dddd-dddd-dddddddddddd"))
 
-            let processor, store, actions, events =
-                createProcessor (fun _ _ -> Task.FromException<Result<UsageFactPersistenceResult, string list>>(InvalidOperationException("forced SQL failure")))
+            let processor, store, actions, events, readiness =
+                createProcessorWithReadiness (fun _ _ ->
+                    Task.FromException<Result<UsageFactPersistenceResult, string list>>(
+                        InvalidOperationException("forced SQL failure with SharedAccessKey=secret")
+                    ))
+
+            (readiness :> IOperationsUsageReadinessRecorder)
+                .MarkReady()
 
             let message =
                 fact
@@ -723,11 +760,70 @@ type OperationsWorkerIngestionTests() =
 
             do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
 
+            let snapshot = readinessSnapshot readiness
+
+            let dependencyFailure =
+                snapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(List.length store.StoredFacts, Is.EqualTo(1))
                     Assert.That(eventText events, Is.EqualTo("store|abandon"))
-                    Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon")))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon"))
+                    Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(snapshot.DependencyFailure, Is.EqualTo(Some "Runtime processing dependency failed (InvalidOperationException)."))
+                    Assert.That(dependencyFailure, Does.Not.Contain("SharedAccessKey=secret")))
+            )
+        }
+
+    /// Verifies a later durable success clears a runtime dependency failure recorded by an earlier storage exception.
+    [<Test>]
+    member _.StorageFailureReadinessClearsAfterLaterSuccess() =
+        task {
+            let firstFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("18181818-1818-4818-8818-181818181818"))
+
+            let secondFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("19191919-1919-4919-8919-191919191919"))
+
+            let mutable shouldFail = true
+
+            let processor, _store, actions, events, readiness =
+                createProcessorWithReadiness (fun storedFact _ ->
+                    if shouldFail then
+                        shouldFail <- false
+                        Task.FromException<Result<UsageFactPersistenceResult, string list>>(InvalidOperationException("forced SQL failure"))
+                    else
+                        Task.FromResult(Ok(accepted storedFact)))
+
+            (readiness :> IOperationsUsageReadinessRecorder)
+                .MarkReady()
+
+            let firstMessage =
+                firstFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let secondMessage =
+                secondFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(firstMessage, actions, CancellationToken.None)
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            do! processor.ProcessMessageAsync(secondMessage, actions, CancellationToken.None)
+
+            let recoveredSnapshot = readinessSnapshot readiness
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(eventText events, Is.EqualTo("store|abandon|store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon|complete"))
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Runtime processing dependency failed (InvalidOperationException)."))
+                    Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                    Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None)))
             )
         }
 
