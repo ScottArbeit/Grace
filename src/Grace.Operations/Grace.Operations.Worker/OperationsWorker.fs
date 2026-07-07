@@ -124,6 +124,9 @@ type internal OperationsUsageReadinessFailure =
         RecoveryKey: string option
     }
 
+/// Identifies one independently recoverable readiness failure within a dependency surface.
+type internal OperationsUsageReadinessFailureKey = { Source: OperationsUsageReadinessFailureSource; RecoveryKey: string option }
+
 /// Captures the current readiness ordering point for one in-flight message.
 type OperationsUsageReadinessAttempt = { FailureVersion: int64 }
 
@@ -172,16 +175,19 @@ type OperationsUsageReadinessState() =
 
     let mutable failureVersion = 0L
 
-    let dependencyFailures = Dictionary<OperationsUsageReadinessFailureSource, OperationsUsageReadinessFailure>()
+    let dependencyFailures = Dictionary<OperationsUsageReadinessFailureKey, OperationsUsageReadinessFailure>()
+
+    let failureKey source recoveryKey = { Source = source; RecoveryKey = recoveryKey }
 
     do
-        dependencyFailures[OperationsUsageReadinessFailureSource.StartupDependency] <- {
-                                                                                           Source = OperationsUsageReadinessFailureSource.StartupDependency
-                                                                                           Description =
-                                                                                               "Operations usage worker has not completed dependency startup."
-                                                                                           Version = failureVersion
-                                                                                           RecoveryKey = None
-                                                                                       }
+        let startupKey = failureKey OperationsUsageReadinessFailureSource.StartupDependency None
+
+        dependencyFailures[startupKey] <- {
+                                              Source = OperationsUsageReadinessFailureSource.StartupDependency
+                                              Description = "Operations usage worker has not completed dependency startup."
+                                              Version = failureVersion
+                                              RecoveryKey = None
+                                          }
 
     let mutable lastUnsupportedContract: string option = None
 
@@ -196,7 +202,10 @@ type OperationsUsageReadinessState() =
             None
         else
             dependencyFailures.Values
-            |> Seq.sortBy (fun failure -> int failure.Source)
+            |> Seq.sortBy (fun failure ->
+                int failure.Source,
+                failure.RecoveryKey
+                |> Option.defaultValue String.Empty)
             |> Seq.map (fun failure -> failure.Description)
             |> fun descriptions -> String.Join("; ", descriptions)
             |> Some
@@ -204,22 +213,25 @@ type OperationsUsageReadinessState() =
     let recordFailure source description recoveryKey =
         failureVersion <- failureVersion + 1L
 
-        dependencyFailures[source] <- { Source = source; Description = description; Version = failureVersion; RecoveryKey = recoveryKey }
+        dependencyFailures[failureKey source recoveryKey] <- { Source = source; Description = description; Version = failureVersion; RecoveryKey = recoveryKey }
 
-    let clearFailure source = dependencyFailures.Remove source |> ignore
+    let clearFailure source recoveryKey =
+        dependencyFailures.Remove(failureKey source recoveryKey)
+        |> ignore
 
     let clearFailureWhenFresh source attempt =
-        match dependencyFailures.TryGetValue source with
-        | true, failure when failure.Version <= attempt.FailureVersion -> clearFailure source
+        let key = failureKey source None
+
+        match dependencyFailures.TryGetValue key with
+        | true, failure when failure.Version <= attempt.FailureVersion -> clearFailure source None
         | _ -> ()
 
     let clearServiceBusProcessorFailureWhenFresh attempt recoveryKey =
-        match dependencyFailures.TryGetValue OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime with
-        | true, failure when
-            failure.Version <= attempt.FailureVersion
-            && failure.RecoveryKey = Some recoveryKey
-            ->
-            clearFailure OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime
+        let key = failureKey OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime (Some recoveryKey)
+
+        match dependencyFailures.TryGetValue key with
+        | true, failure when failure.Version <= attempt.FailureVersion ->
+            clearFailure OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime (Some recoveryKey)
         | _ -> ()
 
     let snapshot () =
@@ -237,7 +249,7 @@ type OperationsUsageReadinessState() =
 
     interface IOperationsUsageReadinessRecorder with
 
-        member _.MarkReady() = lock gate (fun () -> clearFailure OperationsUsageReadinessFailureSource.StartupDependency)
+        member _.MarkReady() = lock gate (fun () -> clearFailure OperationsUsageReadinessFailureSource.StartupDependency None)
 
         member _.BeginProcessingAttempt() = lock gate (fun () -> { FailureVersion = failureVersion })
 
@@ -279,6 +291,10 @@ module internal OperationsUsageReadinessTransitions =
     [<Literal>]
     let DeadLetterSettlementRecoveryKey = "dead-letter"
 
+    /// Identifies lock-renewal failures that require renewal-side recovery proof instead of ordinary message completion.
+    [<Literal>]
+    let RenewLockRecoveryKey = "renew-lock"
+
     /// Identifies processor sources where a later receive proves broker receive/session-link recovery.
     let private isReceiveRecoverySource errorSource =
         match errorSource with
@@ -295,9 +311,9 @@ module internal OperationsUsageReadinessTransitions =
     let private serviceBusProcessorRecoveryKey errorSource =
         match errorSource with
         | ServiceBusErrorSource.Complete
-        | ServiceBusErrorSource.ProcessMessageCallback
-        | ServiceBusErrorSource.RenewLock -> Some CompleteSettlementRecoveryKey
+        | ServiceBusErrorSource.ProcessMessageCallback -> Some CompleteSettlementRecoveryKey
         | ServiceBusErrorSource.Abandon -> Some AbandonSettlementRecoveryKey
+        | ServiceBusErrorSource.RenewLock -> Some RenewLockRecoveryKey
         | _ -> None
 
     /// Records a redacted Service Bus processor fault observed after startup.

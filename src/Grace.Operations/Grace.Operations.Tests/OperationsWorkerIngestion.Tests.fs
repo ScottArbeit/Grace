@@ -1478,6 +1478,96 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies settlement recovery clears only the matching settlement failure when multiple owners are active.
+    [<Test>]
+    member _.SettlementRecoveryKeepsEarlierDifferentSettlementFailureActive() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+        recorder.MarkReady()
+
+        OperationsUsageReadinessTransitions.recordServiceBusSettlementFailure
+            recorder
+            OperationsUsageReadinessTransitions.CompleteSettlementRecoveryKey
+            (InvalidOperationException("complete-secret"))
+
+        OperationsUsageReadinessTransitions.recordServiceBusSettlementFailure
+            recorder
+            OperationsUsageReadinessTransitions.AbandonSettlementRecoveryKey
+            (InvalidOperationException("abandon-secret"))
+
+        let failedSnapshot = readinessSnapshot readiness
+        let recoveryAttempt = recorder.BeginProcessingAttempt()
+
+        OperationsUsageReadinessTransitions.recordServiceBusProcessorSuccess
+            recorder
+            recoveryAttempt
+            OperationsUsageReadinessTransitions.AbandonSettlementRecoveryKey
+
+        let recoveredSnapshot = readinessSnapshot readiness
+
+        let failedDependency =
+            failedSnapshot.DependencyFailure
+            |> Option.defaultValue String.Empty
+
+        let recoveredDependency =
+            recoveredSnapshot.DependencyFailure
+            |> Option.defaultValue String.Empty
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(failedDependency, Does.Contain("Service Bus settlement failed (complete, InvalidOperationException)."))
+                Assert.That(failedDependency, Does.Contain("Service Bus settlement failed (abandon, InvalidOperationException)."))
+                Assert.That(failedDependency, Does.Not.Contain("complete-secret"))
+                Assert.That(failedDependency, Does.Not.Contain("abandon-secret"))
+                Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(recoveredDependency, Does.Contain("Service Bus settlement failed (complete, InvalidOperationException)."))
+                Assert.That(recoveredDependency, Does.Not.Contain("Service Bus settlement failed (abandon, InvalidOperationException).")))
+        )
+
+    /// Verifies ordinary message completion does not clear a lock-renewal processor fault.
+    [<Test>]
+    member _.OrdinaryCompletionDoesNotClearRenewLockProcessorFailure() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("31313131-3131-4131-8131-313131313131"))
+
+            let processor, _store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                ServiceBusErrorSource.RenewLock
+                (InvalidOperationException("renew-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let completedSnapshot = readinessSnapshot readiness
+
+            let dependencyFailure =
+                completedSnapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (RenewLock, InvalidOperationException)."))
+                    Assert.That(completedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(completedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (RenewLock, InvalidOperationException)."))
+                    Assert.That(dependencyFailure, Does.Not.Contain("renew-secret"))
+                    Assert.That(eventText events, Is.EqualTo("store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
     /// Verifies a successful abandon settlement clears a prior abandon-side Service Bus processor failure.
     [<Test>]
     member _.SuccessfulAbandonClearsServiceBusProcessorFailureAfterSettlement() =
