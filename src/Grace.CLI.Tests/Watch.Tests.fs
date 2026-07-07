@@ -14717,9 +14717,9 @@ module WatchTests =
                 equal
                 [|
                     "remote-deleted-dir"
-                    "remote-deleted-dir\\nested\\old-nested-child.txt"
-                    "remote-deleted-dir\\old-child.txt"
-                    "remote-deleted-dir\\nested"
+                    Path.Combine("remote-deleted-dir", "nested", "old-nested-child.txt")
+                    Path.Combine("remote-deleted-dir", "old-child.txt")
+                    Path.Combine("remote-deleted-dir", "nested")
                     "remote-deleted-dir"
                 |]
 
