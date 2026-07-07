@@ -175,6 +175,13 @@ type OperationsUsageStorageTests() =
         let migrator = context.GetService<IMigrator>()
         migrator.GenerateScript(options = MigrationsSqlGenerationOptions.Idempotent)
 
+    /// Generates an Operations migration script between two named migration points without opening SQL Server.
+    let migrationScriptFromTo fromMigration toMigration =
+        use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsMigrationScript;Integrated Security=true;"
+
+        let migrator = context.GetService<IMigrator>()
+        migrator.GenerateScript(fromMigration, toMigration, MigrationsSqlGenerationOptions.Idempotent)
+
     /// Reads the EF entity metadata that future migrations use for raw fact schema drift.
     let rawFactEntityType () : IEntityType =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsMigrationModel;Integrated Security=true;"
@@ -356,6 +363,96 @@ type OperationsUsageStorageTests() =
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_RawUsageFact_ScopeKindObservedAt"))
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_UsageAggregateMinute_ScopeKindBucket"))
                 Assert.That(script, Does.Contain("[ops].[__EFMigrationsHistory]")))
+        )
+
+    /// Verifies reviewed partition boundaries are exact UTC month starts for range and retention alignment.
+    [<Test>]
+    member _.MonthlyPartitionBoundariesUseUtcMonthStarts() =
+        let boundaries = OperationsUsagePartitioningSql.InitialMonthlyBoundariesUtc
+
+        let allBoundariesAreMonthStarts =
+            boundaries
+            |> Array.forall (fun boundary ->
+                boundary.Kind = DateTimeKind.Utc
+                && boundary.Day = 1
+                && boundary.Hour = 0
+                && boundary.Minute = 0
+                && boundary.Second = 0
+                && boundary.Millisecond = 0)
+
+        let allBoundariesAreContiguousMonths =
+            boundaries
+            |> Seq.pairwise
+            |> Seq.forall (fun (previous, current) -> current = previous.AddMonths(1))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(boundaries, Has.Length.EqualTo(37))
+                Assert.That(boundaries[0], Is.EqualTo(DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)))
+                Assert.That(boundaries[boundaries.Length - 1], Is.EqualTo(DateTime(2029, 1, 1, 0, 0, 0, DateTimeKind.Utc)))
+                Assert.That(allBoundariesAreMonthStarts, Is.True)
+                Assert.That(allBoundariesAreContiguousMonths, Is.True))
+        )
+
+    /// Verifies the monthly partitioning migration aligns table and index storage with UTC time columns.
+    [<Test>]
+    member _.MonthlyPartitioningMigrationScriptAlignsTablesAndIndexes() =
+        let script = migrationScript ()
+        let partitionFunctionIndex = script.IndexOf("CREATE PARTITION FUNCTION PF_ops_OperationsUsageMonthUtc", StringComparison.Ordinal)
+        let rawClusteredIndex = script.IndexOf("CREATE CLUSTERED INDEX CX_ops_RawUsageFact_ObservedAtUtc_UsageFactId", StringComparison.Ordinal)
+        let aggregatePartitionPlacement = script.IndexOf("ON PS_ops_OperationsUsageMonthUtc(BucketStartUtc)", StringComparison.Ordinal)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(partitionFunctionIndex, Is.GreaterThanOrEqualTo(0))
+                Assert.That(script, Does.Contain("AS RANGE RIGHT FOR VALUES"))
+                Assert.That(script, Does.Contain("'2026-07-01T00:00:00.0000000'"))
+                Assert.That(script, Does.Contain("'2029-01-01T00:00:00.0000000'"))
+                Assert.That(script, Does.Contain("THROW 57105"))
+                Assert.That(script, Does.Contain("@ExpectedPartitionBoundaries"))
+                Assert.That(script, Does.Contain("CREATE PARTITION SCHEME PS_ops_OperationsUsageMonthUtc"))
+                Assert.That(script, Does.Contain("ALL TO ([PRIMARY])"))
+                Assert.That(rawClusteredIndex, Is.GreaterThan(partitionFunctionIndex))
+                Assert.That(script, Does.Contain("ON ops.RawUsageFact (ObservedAtUtc, UsageFactId)"))
+                Assert.That(script, Does.Contain("ON PS_ops_OperationsUsageMonthUtc(ObservedAtUtc)"))
+                Assert.That(script, Does.Contain("PRIMARY KEY NONCLUSTERED (UsageFactId)"))
+                Assert.That(aggregatePartitionPlacement, Is.GreaterThan(partitionFunctionIndex))
+                Assert.That(script, Does.Contain("ON ops.RawUsageFact (OwnerId, OrganizationId, RepositoryId, FactKind, ObservedAtUtc)"))
+                Assert.That(script, Does.Contain("ON ops.UsageAggregateMinute (OwnerId, OrganizationId, RepositoryId, FactKind, BucketStartUtc)")))
+        )
+
+    /// Verifies partitioning is limited to current Operations tables and keeps local SQL Server testability.
+    [<Test>]
+    member _.MonthlyPartitioningMigrationStaysInsideCurrentUsageTables() =
+        let script = migrationScript ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(script, Does.Contain("OBJECT_ID(N'ops.RawUsageFact', N'U')"))
+                Assert.That(script, Does.Contain("OBJECT_ID(N'ops.UsageAggregateMinute', N'U')"))
+                Assert.That(script, Does.Contain("THROW 57101"))
+                Assert.That(script, Does.Contain("THROW 57102"))
+                Assert.That(script, Does.Contain("THROW 57103"))
+                Assert.That(script, Does.Contain("THROW 57104"))
+                Assert.That(script, Does.Not.Contain("ProviderLog"))
+                Assert.That(script, Does.Not.Contain("ChargeLedger"))
+                Assert.That(script, Does.Not.Contain("BillingPeriod"))
+                Assert.That(script, Does.Not.Contain("CREATE DATABASE"))
+                Assert.That(script, Does.Not.Contain("ONLINE = ON")))
+        )
+
+    /// Verifies rollback returns to the baseline unpartitioned keys and removes unused partition structures.
+    [<Test>]
+    member _.MonthlyPartitioningRollbackScriptRestoresBaselineLayout() =
+        let script = migrationScriptFromTo "20260707120000_AddOperationsMonthlyPartitioning" "20260707000000_AddRawUsageFactPayload"
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(script, Does.Contain("PRIMARY KEY CLUSTERED (UsageFactId)"))
+                Assert.That(script, Does.Contain("ON ops.RawUsageFact (OwnerId, OrganizationId, RepositoryId, FactKind, ObservedAtUtc)"))
+                Assert.That(script, Does.Contain("ON [PRIMARY]"))
+                Assert.That(script, Does.Contain("DROP PARTITION SCHEME PS_ops_OperationsUsageMonthUtc"))
+                Assert.That(script, Does.Contain("DROP PARTITION FUNCTION PF_ops_OperationsUsageMonthUtc")))
         )
 
     /// Verifies the initial migration records the target model used by future migration diffs.
