@@ -21,7 +21,7 @@ module MaterializationPlanTestData =
     let referenceId = ReferenceId.Parse("33333333-3333-3333-3333-333333333333")
 
     /// Provides a deterministic branch name for selector serialization coverage.
-    let branchName = BranchName "feature/cache-plan"
+    let branchName = BranchName "feature-cache-plan"
 
     /// Provides a deterministic storage pool id for CAS descriptor coverage.
     let storagePoolId = StoragePoolId "storage-pool-main"
@@ -105,10 +105,11 @@ type MaterializationPlanContractTests() =
     [<TestCase(MaterializationExecutionMode.CacheRequired)>]
     member _.ExecutionModesRoundTripThroughJson(mode: MaterializationExecutionMode) =
         let cacheSelection =
-            if mode = MaterializationExecutionMode.CacheRequired then
-                MaterializationCacheSelection.Required
-            else
-                MaterializationCacheSelection.Preferred
+            match mode with
+            | MaterializationExecutionMode.Direct -> MaterializationCacheSelection.Bypass
+            | MaterializationExecutionMode.CachePreferred -> MaterializationCacheSelection.Preferred
+            | MaterializationExecutionMode.CacheRequired -> MaterializationCacheSelection.Required
+            | _ -> MaterializationCacheSelection.Preferred
 
         let request =
             MaterializationPlanRequest.Create(
@@ -649,6 +650,143 @@ type MaterializationPlanContractTests() =
             )
 
         assertInvalid "CacheRequired materialization must use RequireCache selection." (Validation.validatePlan plan)
+
+    /// Verifies that each supported public execution/cache-selection request pair is intentional.
+    [<TestCase(MaterializationExecutionMode.Direct, MaterializationCacheSelectionKind.BypassCache)>]
+    [<TestCase(MaterializationExecutionMode.CachePreferred, MaterializationCacheSelectionKind.PreferCache)>]
+    [<TestCase(MaterializationExecutionMode.CacheRequired, MaterializationCacheSelectionKind.RequireCache)>]
+    member _.SupportedRequestExecutionCacheSelectionPairsValidate(mode: MaterializationExecutionMode, selectionKind: MaterializationCacheSelectionKind) =
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                mode,
+                { MaterializationCacheSelection.Preferred with SelectionKind = selectionKind },
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        assertValid (Validation.validateRequest request)
+
+    /// Verifies that unsupported public execution/cache-selection request pairs fail closed.
+    [<TestCase(MaterializationExecutionMode.Direct, MaterializationCacheSelectionKind.PreferCache, "Direct materialization must use BypassCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.Direct,
+               MaterializationCacheSelectionKind.RequireCache,
+               "Direct materialization must not use RequireCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CachePreferred,
+               MaterializationCacheSelectionKind.BypassCache,
+               "CachePreferred materialization must use PreferCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CachePreferred,
+               MaterializationCacheSelectionKind.RequireCache,
+               "CachePreferred materialization must use PreferCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CacheRequired,
+               MaterializationCacheSelectionKind.BypassCache,
+               "CacheRequired materialization must not use BypassCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CacheRequired,
+               MaterializationCacheSelectionKind.PreferCache,
+               "CacheRequired materialization must use RequireCache selection.")>]
+    member _.UnsupportedRequestExecutionCacheSelectionPairsFailValidation
+        (
+            mode: MaterializationExecutionMode,
+            selectionKind: MaterializationCacheSelectionKind,
+            expected: string
+        ) =
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                mode,
+                { MaterializationCacheSelection.Preferred with SelectionKind = selectionKind },
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        assertInvalid expected (Validation.validateRequest request)
+
+    /// Verifies that each supported public execution/cache-selection plan pair is intentional.
+    [<TestCase(MaterializationExecutionMode.Direct, MaterializationCacheSelectionKind.BypassCache)>]
+    [<TestCase(MaterializationExecutionMode.CachePreferred, MaterializationCacheSelectionKind.PreferCache)>]
+    [<TestCase(MaterializationExecutionMode.CacheRequired, MaterializationCacheSelectionKind.RequireCache)>]
+    member _.SupportedPlanExecutionCacheSelectionPairsValidate(mode: MaterializationExecutionMode, selectionKind: MaterializationCacheSelectionKind) =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                mode,
+                { MaterializationCacheSelection.Preferred with SelectionKind = selectionKind },
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertValid (Validation.validatePlan plan)
+
+    /// Verifies that unsupported public execution/cache-selection plan pairs fail closed.
+    [<TestCase(MaterializationExecutionMode.Direct, MaterializationCacheSelectionKind.PreferCache, "Direct materialization must use BypassCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.Direct,
+               MaterializationCacheSelectionKind.RequireCache,
+               "Direct materialization must not use RequireCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CachePreferred,
+               MaterializationCacheSelectionKind.BypassCache,
+               "CachePreferred materialization must use PreferCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CachePreferred,
+               MaterializationCacheSelectionKind.RequireCache,
+               "CachePreferred materialization must use PreferCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CacheRequired,
+               MaterializationCacheSelectionKind.BypassCache,
+               "CacheRequired materialization must not use BypassCache selection.")>]
+    [<TestCase(MaterializationExecutionMode.CacheRequired,
+               MaterializationCacheSelectionKind.PreferCache,
+               "CacheRequired materialization must use RequireCache selection.")>]
+    member _.UnsupportedPlanExecutionCacheSelectionPairsFailValidation
+        (
+            mode: MaterializationExecutionMode,
+            selectionKind: MaterializationCacheSelectionKind,
+            expected: string
+        ) =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                mode,
+                { MaterializationCacheSelection.Preferred with SelectionKind = selectionKind },
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertInvalid expected (Validation.validatePlan plan)
+
+    /// Verifies that direct execution cannot also require Grace Cache artifact sourcing.
+    [<Test>]
+    member _.DirectRequestWithRequireCacheSelectionFailsValidationClearly() =
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Required,
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        assertInvalid "Direct materialization must not use RequireCache selection." (Validation.validateRequest request)
+
+    /// Verifies that direct plans cannot claim every artifact must come from Grace Cache.
+    [<Test>]
+    member _.DirectPlanWithRequireCacheSelectionFailsValidationClearly() =
+        let plan =
+            MaterializationPlan.Create(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.Direct,
+                MaterializationCacheSelection.Required,
+                MaterializationPlanTestData.rootArtifacts MaterializationPlanTestData.targetRootDirectoryVersionId
+            )
+
+        assertInvalid "Direct materialization must not use RequireCache selection." (Validation.validatePlan plan)
+
+    /// Verifies that branch target selectors use the same Grace object-name contract as branch commands.
+    [<TestCase("feature/cache-plan")>]
+    [<TestCase("1feature")>]
+    [<TestCase("f")>]
+    member _.BranchTargetSelectorsRejectNamesThatBranchCommandsReject(branchName: string) =
+        let selector = MaterializationTargetSelector.ForBranch(BranchName branchName)
+
+        assertInvalid "TargetSelector.BranchName must be a valid Grace branch name." (Validation.validateTargetSelector selector)
 
     /// Verifies that whole-file descriptors reject blank hash fields even when the other hash is valid.
     [<TestCase(true)>]

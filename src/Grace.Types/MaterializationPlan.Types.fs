@@ -1,5 +1,6 @@
 namespace Grace.Types
 
+open Grace.Shared
 open Grace.Types.Common
 open Orleans
 open System
@@ -358,22 +359,26 @@ module MaterializationPlan =
                    && segment <> "."
                    && segment <> "..")
 
-        /// Rejects public cache controls where cache-required mode is not paired with RequireCache selection.
-        let rejectCacheRequiredSelectionMismatch
+        /// Rejects public execution/cache-selection combinations that have contradictory cache authority.
+        let rejectUnsupportedExecutionCacheSelectionPair
             (executionMode: MaterializationExecutionMode)
             (cacheSelection: MaterializationCacheSelection)
             (errors: ResizeArray<string>)
             =
-            if
-                executionMode = MaterializationExecutionMode.CacheRequired
-                && not (isNull (box cacheSelection))
-            then
-                if cacheSelection.SelectionKind
-                   <> MaterializationCacheSelectionKind.RequireCache then
-                    errors.Add("CacheRequired materialization must use RequireCache selection.")
-
-                if cacheSelection.SelectionKind = MaterializationCacheSelectionKind.BypassCache then
+            if not (isNull (box cacheSelection)) then
+                match executionMode, cacheSelection.SelectionKind with
+                | MaterializationExecutionMode.Direct, MaterializationCacheSelectionKind.BypassCache -> ()
+                | MaterializationExecutionMode.CachePreferred, MaterializationCacheSelectionKind.PreferCache -> ()
+                | MaterializationExecutionMode.CacheRequired, MaterializationCacheSelectionKind.RequireCache -> ()
+                | MaterializationExecutionMode.Direct, MaterializationCacheSelectionKind.RequireCache ->
+                    errors.Add("Direct materialization must not use RequireCache selection.")
+                | MaterializationExecutionMode.Direct, MaterializationCacheSelectionKind.PreferCache ->
+                    errors.Add("Direct materialization must use BypassCache selection.")
+                | MaterializationExecutionMode.CacheRequired, MaterializationCacheSelectionKind.BypassCache ->
                     errors.Add("CacheRequired materialization must not use BypassCache selection.")
+                | MaterializationExecutionMode.CacheRequired, _ -> errors.Add("CacheRequired materialization must use RequireCache selection.")
+                | MaterializationExecutionMode.CachePreferred, _ -> errors.Add("CachePreferred materialization must use PreferCache selection.")
+                | _ -> ()
 
         /// Validates the target selector before server-side target-root resolution.
         let validateTargetSelector (selector: MaterializationTargetSelector) =
@@ -412,7 +417,9 @@ module MaterializationPlan =
                             errors.Add("TargetSelector.BranchName must be empty for ReferenceId selectors.")
                     | MaterializationTargetSelectorKind.BranchName ->
                         match selector.BranchName with
-                        | Some branchName when not (String.IsNullOrWhiteSpace branchName) -> ()
+                        | Some branchName when Constants.GraceNameRegex.IsMatch(branchName) -> ()
+                        | Some branchName when not (String.IsNullOrWhiteSpace branchName) ->
+                            errors.Add("TargetSelector.BranchName must be a valid Grace branch name.")
                         | _ -> errors.Add("TargetSelector.BranchName is required.")
 
                         if selector.DirectoryVersionId.IsSome then
@@ -628,7 +635,7 @@ module MaterializationPlan =
                 | Ok () -> ()
                 | Error cacheErrors -> errors.AddRange(cacheErrors)
 
-                rejectCacheRequiredSelectionMismatch request.ExecutionMode request.CacheSelection errors
+                rejectUnsupportedExecutionCacheSelectionPair request.ExecutionMode request.CacheSelection errors
 
                 if
                     isNull (box request.RequestedArtifactKinds)
@@ -662,7 +669,7 @@ module MaterializationPlan =
                 | Ok () -> ()
                 | Error cacheErrors -> errors.AddRange(cacheErrors)
 
-                rejectCacheRequiredSelectionMismatch plan.ExecutionMode plan.CacheSelection errors
+                rejectUnsupportedExecutionCacheSelectionPair plan.ExecutionMode plan.CacheSelection errors
 
                 if
                     isNull (box plan.RequiredArtifacts)
