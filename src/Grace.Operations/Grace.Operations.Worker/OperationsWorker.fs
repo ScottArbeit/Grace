@@ -110,7 +110,13 @@ type internal OperationsUsageReadinessFailureSource =
     | RuntimeProcessingDependency = 2
 
     /// Service Bus receive/link failures are cleared only by receive-side recovery proof.
-    | ServiceBusProcessor = 3
+    | ServiceBusReceiveLink = 3
+
+    /// Service Bus processor callback, settlement, or lock failures remain visible until their owner proves recovery.
+    | ServiceBusProcessorRuntime = 4
+
+/// Tracks one active readiness failure and the ordering point needed for source-owned recovery.
+type internal OperationsUsageReadinessFailure = { Source: OperationsUsageReadinessFailureSource; Description: string; Version: int64 }
 
 /// Captures the current readiness ordering point for one in-flight message.
 type OperationsUsageReadinessAttempt = { FailureVersion: int64 }
@@ -136,7 +142,10 @@ type IOperationsUsageReadinessRecorder =
     /// Records a redacted runtime storage or processing failure that prevents the worker from being ready.
     abstract MarkRuntimeProcessingFailure: description: string -> unit
 
-    /// Records a redacted Service Bus receive or link failure that prevents the worker from being ready.
+    /// Records a redacted Service Bus receive or session-link failure that prevents the worker from being ready.
+    abstract MarkServiceBusReceiveFailure: description: string -> unit
+
+    /// Records a redacted Service Bus callback, settlement, or lock failure that prevents the worker from being ready.
     abstract MarkServiceBusProcessorFailure: description: string -> unit
 
     /// Clears a Service Bus receive or link failure only when a later received message proves the link recovered.
@@ -153,32 +162,53 @@ type OperationsUsageReadinessState() =
     let gate = obj ()
 
     let mutable failureVersion = 0L
-    let mutable status = OperationsUsageReadinessStatus.NotReady
 
-    let mutable dependencyFailure =
-        Some
-            {|
-                Source = OperationsUsageReadinessFailureSource.StartupDependency
-                Description = "Operations usage worker has not completed dependency startup."
-                Version = failureVersion
-            |}
+    let dependencyFailures = Dictionary<OperationsUsageReadinessFailureSource, OperationsUsageReadinessFailure>()
+
+    do
+        dependencyFailures[OperationsUsageReadinessFailureSource.StartupDependency] <- {
+                                                                                           Source = OperationsUsageReadinessFailureSource.StartupDependency
+                                                                                           Description =
+                                                                                               "Operations usage worker has not completed dependency startup."
+                                                                                           Version = failureVersion
+                                                                                       }
 
     let mutable lastUnsupportedContract: string option = None
 
+    let readinessStatus () =
+        if dependencyFailures.Count = 0 then
+            OperationsUsageReadinessStatus.Ready
+        else
+            OperationsUsageReadinessStatus.NotReady
+
+    let dependencyFailureDescription () =
+        if dependencyFailures.Count = 0 then
+            None
+        else
+            dependencyFailures.Values
+            |> Seq.sortBy (fun failure -> int failure.Source)
+            |> Seq.map (fun failure -> failure.Description)
+            |> fun descriptions -> String.Join("; ", descriptions)
+            |> Some
+
     let recordFailure source description =
         failureVersion <- failureVersion + 1L
-        status <- OperationsUsageReadinessStatus.NotReady
 
-        dependencyFailure <- Some {| Source = source; Description = description; Version = failureVersion |}
+        dependencyFailures[source] <- { Source = source; Description = description; Version = failureVersion }
+
+    let clearFailure source = dependencyFailures.Remove source |> ignore
+
+    let clearFailureWhenFresh source attempt =
+        match dependencyFailures.TryGetValue source with
+        | true, failure when failure.Version <= attempt.FailureVersion -> clearFailure source
+        | _ -> ()
 
     let snapshot () =
         lock gate (fun () ->
             {
-                Status = status
+                Status = readinessStatus ()
                 SupportedUsageFactSchemaVersion = UsageFactSchemaVersion
-                DependencyFailure =
-                    dependencyFailure
-                    |> Option.map (fun failure -> failure.Description)
+                DependencyFailure = dependencyFailureDescription ()
                 LastUnsupportedContract = lastUnsupportedContract
             })
 
@@ -188,10 +218,7 @@ type OperationsUsageReadinessState() =
 
     interface IOperationsUsageReadinessRecorder with
 
-        member _.MarkReady() =
-            lock gate (fun () ->
-                status <- OperationsUsageReadinessStatus.Ready
-                dependencyFailure <- None)
+        member _.MarkReady() = lock gate (fun () -> clearFailure OperationsUsageReadinessFailureSource.StartupDependency)
 
         member _.BeginProcessingAttempt() = lock gate (fun () -> { FailureVersion = failureVersion })
 
@@ -200,32 +227,17 @@ type OperationsUsageReadinessState() =
         member _.MarkRuntimeProcessingFailure(description) =
             lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.RuntimeProcessingDependency description)
 
+        member _.MarkServiceBusReceiveFailure(description) =
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusReceiveLink description)
+
         member _.MarkServiceBusProcessorFailure(description) =
-            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusProcessor description)
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime description)
 
         member _.MarkServiceBusReceiveSuccess(attempt) =
-            lock gate (fun () ->
-                match dependencyFailure with
-                | Some failure when
-                    failure.Source = OperationsUsageReadinessFailureSource.ServiceBusProcessor
-                    && failure.Version <= attempt.FailureVersion
-                    ->
-                    status <- OperationsUsageReadinessStatus.Ready
-                    dependencyFailure <- None
-                | None -> status <- OperationsUsageReadinessStatus.Ready
-                | Some _ -> ())
+            lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.ServiceBusReceiveLink attempt)
 
         member _.MarkRuntimeProcessingSuccess(attempt) =
-            lock gate (fun () ->
-                match dependencyFailure with
-                | Some failure when
-                    failure.Source = OperationsUsageReadinessFailureSource.RuntimeProcessingDependency
-                    && failure.Version <= attempt.FailureVersion
-                    ->
-                    status <- OperationsUsageReadinessStatus.Ready
-                    dependencyFailure <- None
-                | None -> status <- OperationsUsageReadinessStatus.Ready
-                | Some _ -> ())
+            lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.RuntimeProcessingDependency attempt)
 
         member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
 
@@ -233,9 +245,26 @@ type OperationsUsageReadinessState() =
 [<RequireQualifiedAccess>]
 module internal OperationsUsageReadinessTransitions =
 
+    /// Identifies processor sources where a later receive proves broker receive/session-link recovery.
+    let private isReceiveRecoverySource errorSource =
+        match errorSource with
+        | ServiceBusErrorSource.Receive
+        | ServiceBusErrorSource.AcceptSession
+        | ServiceBusErrorSource.CloseSession -> true
+        | ServiceBusErrorSource.Complete
+        | ServiceBusErrorSource.Abandon
+        | ServiceBusErrorSource.ProcessMessageCallback
+        | ServiceBusErrorSource.RenewLock -> false
+        | _ -> false
+
     /// Records a redacted Service Bus processor fault observed after startup.
     let recordServiceBusProcessorFault (readiness: IOperationsUsageReadinessRecorder) (errorSource: ServiceBusErrorSource) (ex: exn) =
-        readiness.MarkServiceBusProcessorFailure($"Service Bus processor fault ({errorSource}, {ex.GetType().Name}).")
+        let description = $"Service Bus processor fault ({errorSource}, {ex.GetType().Name})."
+
+        if isReceiveRecoverySource errorSource then
+            readiness.MarkServiceBusReceiveFailure(description)
+        else
+            readiness.MarkServiceBusProcessorFailure(description)
 
     /// Records a later receive-side proof that a Service Bus processor receive or link fault recovered.
     let recordServiceBusReceiveSuccess (readiness: IOperationsUsageReadinessRecorder) (attempt: OperationsUsageReadinessAttempt) =

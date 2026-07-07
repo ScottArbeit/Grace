@@ -969,6 +969,176 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies receive-side recovery cannot hide an unresolved runtime storage failure.
+    [<Test>]
+    member _.ReceiveRecoveryKeepsStorageFailureUntilLaterDurableSuccess() =
+        task {
+            let failingFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("21212121-2121-4121-8121-212121212121"))
+
+            let blockedSuccessFact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("22222222-2222-4222-8222-222222222222"))
+
+            let mutable shouldFail = true
+
+            let storeStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let durableSuccess = TaskCompletionSource<Result<UsageFactPersistenceResult, string list>>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let processor, _store, actions, events, readiness =
+                createProcessorWithReadiness (fun storedFact _ ->
+                    if shouldFail then
+                        shouldFail <- false
+                        Task.FromException<Result<UsageFactPersistenceResult, string list>>(InvalidOperationException("forced SQL failure"))
+                    else
+                        storeStarted.SetResult(())
+                        durableSuccess.Task)
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            let failingMessage =
+                failingFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            do! processor.ProcessMessageAsync(failingMessage, actions, CancellationToken.None)
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                Azure.Messaging.ServiceBus.ServiceBusErrorSource.Receive
+                (InvalidOperationException("receive-link-secret"))
+
+            let combinedFailureSnapshot = readinessSnapshot readiness
+
+            let blockedSuccessMessage =
+                blockedSuccessFact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let processing = processor.ProcessMessageAsync(blockedSuccessMessage, actions, CancellationToken.None)
+
+            do! storeStarted.Task
+
+            let receiveRecoveredSnapshot = readinessSnapshot readiness
+
+            durableSuccess.SetResult(Ok(accepted blockedSuccessFact))
+            do! processing
+
+            let storageRecoveredSnapshot = readinessSnapshot readiness
+
+            let combinedFailure =
+                combinedFailureSnapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(combinedFailureSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(combinedFailure, Does.Contain("Runtime processing dependency failed (InvalidOperationException)."))
+                    Assert.That(combinedFailure, Does.Contain("Service Bus processor fault (Receive, InvalidOperationException)."))
+                    Assert.That(combinedFailure, Does.Not.Contain("receive-link-secret"))
+                    Assert.That(receiveRecoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+
+                    Assert.That(
+                        receiveRecoveredSnapshot.DependencyFailure,
+                        Is.EqualTo(Some "Runtime processing dependency failed (InvalidOperationException).")
+                    )
+
+                    Assert.That(storageRecoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                    Assert.That(storageRecoveredSnapshot.DependencyFailure, Is.EqualTo(None))
+                    Assert.That(eventText events, Is.EqualTo("store|abandon|store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("abandon|complete")))
+            )
+        }
+
+    /// Verifies startup-ready proof clears only startup-owned dependency failure state.
+    [<Test>]
+    member _.StartupReadyDoesNotClearCallbackFailureRecordedAfterProcessorStart() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+
+        OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+            recorder
+            Azure.Messaging.ServiceBus.ServiceBusErrorSource.ProcessMessageCallback
+            (InvalidOperationException("callback-secret"))
+
+        recorder.MarkReady()
+
+        let snapshot = readinessSnapshot readiness
+
+        let dependencyFailure =
+            snapshot.DependencyFailure
+            |> Option.defaultValue String.Empty
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(snapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (ProcessMessageCallback, InvalidOperationException)."))
+                Assert.That(dependencyFailure, Does.Not.Contain("callback-secret")))
+        )
+
+    /// Verifies a settlement-side Service Bus processor failure is not cleared by receive-side recovery.
+    [<Test>]
+    member _.ReceiveRecoveryDoesNotClearNonReceiveServiceBusProcessorFailure() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("23232323-2323-4323-8323-232323232323"))
+
+            let storeStarted = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let durableSuccess = TaskCompletionSource<Result<UsageFactPersistenceResult, string list>>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+            let processor, _store, actions, events, readiness =
+                createProcessorWithReadiness (fun storedFact _ ->
+                    storeStarted.SetResult(())
+                    durableSuccess.Task)
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                Azure.Messaging.ServiceBus.ServiceBusErrorSource.Complete
+                (InvalidOperationException("settlement-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+
+            let processing = processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            do! storeStarted.Task
+
+            let receiveRecoveredSnapshot = readinessSnapshot readiness
+
+            durableSuccess.SetResult(Ok(accepted fact))
+            do! processing
+
+            let completedSnapshot = readinessSnapshot readiness
+
+            let dependencyFailure =
+                completedSnapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Complete, InvalidOperationException)."))
+                    Assert.That(receiveRecoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+
+                    Assert.That(
+                        receiveRecoveredSnapshot.DependencyFailure,
+                        Is.EqualTo(Some "Service Bus processor fault (Complete, InvalidOperationException).")
+                    )
+
+                    Assert.That(completedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(completedSnapshot.DependencyFailure, Is.EqualTo(Some "Service Bus processor fault (Complete, InvalidOperationException)."))
+                    Assert.That(dependencyFailure, Does.Not.Contain("settlement-secret"))
+                    Assert.That(eventText events, Is.EqualTo("store|complete"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("complete")))
+            )
+        }
+
     /// Verifies an older in-flight success cannot clear a newer runtime dependency failure.
     [<Test>]
     member _.StaleInFlightSuccessDoesNotClearNewerDependencyFailure() =
