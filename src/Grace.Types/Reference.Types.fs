@@ -3,6 +3,7 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.Visibility
 open NodaTime
 open Orleans
 open System
@@ -43,6 +44,7 @@ module Reference =
         | RemoveLink of link: ReferenceLinkType
         | DeleteLogical of force: bool * DeleteReason: DeleteReason
         | DeletePhysical
+        | Reveal of operationId: string * reason: string
         | Undelete
 
         /// Returns known nested union types for serializers.
@@ -67,6 +69,7 @@ module Reference =
         | LinkRemoved of link: ReferenceLinkType
         | LogicalDeleted of force: bool * DeleteReason: DeleteReason
         | PhysicalDeleted
+        | Revealed of operationId: string * revealedBy: string * reason: string * fromVisibility: ResourceVisibility * toVisibility: ResourceVisibility
         | Undeleted
 
         /// Returns known nested union types for serializers.
@@ -96,6 +99,13 @@ module Reference =
             ReferenceType: ReferenceType
             ReferenceText: ReferenceText
             Links: ReferenceLinkType seq
+            Visibility: ResourceVisibility
+            Ownership: ResourceOwnership
+            CreatorUserId: UserId option
+            LastRevealOperationId: string option
+            RevealedBy: string option
+            RevealedAt: Instant option
+            RevealReason: string option
             CreatedBy: string option
             CreatedAt: Instant
             UpdatedAt: Instant option
@@ -118,6 +128,13 @@ module Reference =
                 ReferenceType = Save
                 ReferenceText = ReferenceText String.Empty
                 Links = Seq.empty
+                Visibility = ResourceVisibility.Private
+                Ownership = ResourceOwnership.RepositoryOwned
+                CreatorUserId = None
+                LastRevealOperationId = None
+                RevealedBy = None
+                RevealedAt = None
+                RevealReason = None
                 CreatedBy = None
                 CreatedAt = Constants.DefaultTimestamp
                 UpdatedAt = None
@@ -185,6 +202,22 @@ module Reference =
                         ReferenceType = referenceType
                         ReferenceText = referenceText
                         Links = links
+                        Visibility =
+                            match referenceEvent.Metadata.Properties.TryGetValue("InheritedVisibility") with
+                            | true, value ->
+                                ResourceVisibility.TryParsePublicInput value
+                                |> Option.defaultValue ResourceVisibility.Private
+                            | _ -> ResourceVisibility.Private
+                        Ownership =
+                            match referenceEvent.Metadata.Properties.TryGetValue("InheritedOwnership") with
+                            | true, value ->
+                                ResourceOwnership.TryParsePublicInput value
+                                |> Option.defaultValue ResourceOwnership.RepositoryOwned
+                            | _ -> ResourceOwnership.RepositoryOwned
+                        CreatorUserId =
+                            match referenceEvent.Metadata.Properties.TryGetValue("InheritedCreatorUserId") with
+                            | true, value when not (String.IsNullOrWhiteSpace value) -> Some(UserId value)
+                            | _ -> None
                         CreatedBy =
                             if String.IsNullOrWhiteSpace referenceEvent.Metadata.Principal then
                                 None
@@ -207,6 +240,14 @@ module Reference =
                     }
                 | LogicalDeleted (force, deleteReason) -> { currentReferenceDto with DeletedAt = Some(getCurrentInstant ()); DeleteReason = deleteReason }
                 | PhysicalDeleted -> currentReferenceDto // Do nothing because it's about to be deleted anyway.
+                | Revealed (operationId, revealedBy, reason, _, toVisibility) ->
+                    { currentReferenceDto with
+                        Visibility = toVisibility
+                        LastRevealOperationId = Some operationId
+                        RevealedBy = if String.IsNullOrWhiteSpace revealedBy then None else Some revealedBy
+                        RevealedAt = Some referenceEvent.Metadata.Timestamp
+                        RevealReason = if String.IsNullOrWhiteSpace reason then None else Some reason
+                    }
                 | Undeleted -> { currentReferenceDto with DeletedAt = None; DeleteReason = String.Empty }
 
             { newReferenceDto with UpdatedAt = Some referenceEvent.Metadata.Timestamp }

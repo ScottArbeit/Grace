@@ -18,6 +18,7 @@ open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.RepositoryContentCounter
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Microsoft.Extensions.Logging
 open NodaTime
 open Orleans
@@ -361,6 +362,24 @@ module Reference =
             && referenceDto.ReferenceText = referenceText
             && (referenceDto.Links |> Seq.toArray) = (links |> Seq.toArray)
         | _ -> false
+
+    /// Finds the durable reveal event for the supplied operation id so reveal retries do not depend on correlation ids.
+    let internal tryFindRevealEventByOperationId operationId (events: seq<ReferenceEvent>) =
+        events
+        |> Seq.tryPick (fun referenceEvent ->
+            match referenceEvent.Event with
+            | Revealed (eventOperationId, revealedBy, reason, fromVisibility, toVisibility) when eventOperationId = operationId ->
+                Some(referenceEvent.Metadata, revealedBy, reason, fromVisibility, toVisibility)
+            | _ -> None)
+
+    /// Checks whether an already-persisted reveal event represents the same semantic reveal command.
+    let internal revealEventMatchesCommand operationId reason revealedBy toVisibility (events: seq<ReferenceEvent>) =
+        match tryFindRevealEventByOperationId operationId events with
+        | Some (_, eventRevealedBy, eventReason, _, eventToVisibility) ->
+            String.Equals(eventReason, reason, StringComparison.Ordinal)
+            && String.Equals(eventRevealedBy, revealedBy, StringComparison.Ordinal)
+            && eventToVisibility = toVisibility
+        | None -> false
 
     /// Attempts to create manifest contribution start and returns no value when the required invariant is not met.
     let tryCreateManifestContributionStart plan intent =
@@ -804,7 +823,12 @@ module Reference =
                             if createCommandMatchesReference referenceDto command then
                                 return Ok command
                             else
-                                return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
+                                match command with
+                                | Reveal (operationId, reason) when
+                                    revealEventMatchesCommand operationId reason metadata.Principal ResourceVisibility.Public state.State
+                                    ->
+                                    return Ok command
+                                | _ -> return Error(GraceError.Create (getErrorMessage ReferenceError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
                             | Create (referenceId,
@@ -928,6 +952,11 @@ module Reference =
                             match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
                             | Ok () -> return Ok(existingReferenceReturnValue ())
                             | Error graceError -> return Error graceError
+                        | Reveal (operationId, reason) when
+                            referenceDto.Visibility = ResourceVisibility.Public
+                            && revealEventMatchesCommand operationId reason metadata.Principal ResourceVisibility.Public state.State
+                            ->
+                            return Ok(existingReferenceReturnValue ())
                         | _ ->
                             let! (referenceEventTypeResult: Result<ReferenceEventType, GraceError>) =
                                 task {
@@ -1026,6 +1055,27 @@ module Reference =
                                             this.DeactivateOnIdle()
                                             return Ok PhysicalDeleted
                                         | Error graceError -> return Error graceError
+                                    | Reveal (operationId, reason) ->
+                                        if String.IsNullOrWhiteSpace operationId then
+                                            return Error(GraceError.Create "Reference reveal operationId is required." metadata.CorrelationId)
+                                        elif referenceDto.DeletedAt.IsSome then
+                                            return Error(GraceError.Create "Deleted references cannot be revealed." metadata.CorrelationId)
+                                        elif referenceDto.Visibility = ResourceVisibility.Public then
+                                            if revealEventMatchesCommand operationId reason metadata.Principal ResourceVisibility.Public state.State then
+                                                return Error(GraceError.Create "Reference reveal operation was already applied." metadata.CorrelationId)
+                                            else
+                                                return Error(GraceError.Create "Reference is already public." metadata.CorrelationId)
+                                        else
+                                            match tryFindRevealEventByOperationId operationId state.State with
+                                            | Some _ ->
+                                                return
+                                                    Error(
+                                                        GraceError.Create
+                                                            "Reference reveal operationId was already used for a different reveal."
+                                                            metadata.CorrelationId
+                                                    )
+                                            | None ->
+                                                return Ok(Revealed(operationId, metadata.Principal, reason, referenceDto.Visibility, ResourceVisibility.Public))
                                     | Undelete -> return Ok Undeleted
                                 }
 

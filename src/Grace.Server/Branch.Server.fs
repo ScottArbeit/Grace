@@ -207,9 +207,87 @@ module Branch =
             return VisibilityAuthorization.canObserveBranch caller (fun _ -> branchAudience) resource
         }
 
-    /// Checks inherited branch visibility for reference projections that have no independent visibility contract yet.
-    let private canObserveReferenceInBranch (context: HttpContext) (branchDto: BranchDto) (_referenceDto: Reference.ReferenceDto) =
-        canObserveBranch context branchDto
+    /// Projects reference durable visibility facts into the shared visibility helper resource shape.
+    let private referenceVisibilityResource (referenceDto: Reference.ReferenceDto) =
+        {
+            AuthorityKey = referenceDto.ReferenceId
+            Visibility = referenceDto.Visibility
+            Ownership = referenceDto.Ownership
+            CreatorUserId = referenceDto.CreatorUserId
+        }
+
+    /// Checks branch and reference visibility before a reference can reach public read, list, hash, or traversal surfaces.
+    let private canObserveReferenceInBranch (context: HttpContext) (branchDto: BranchDto) (referenceDto: Reference.ReferenceDto) =
+        task {
+            let! branchObservable = canObserveBranch context branchDto
+
+            if not branchObservable then
+                return false
+            else
+                let! caller = getVisibilityCallerAudience context branchDto
+                let resource = referenceVisibilityResource referenceDto
+                return VisibilityAuthorization.canObserveReference caller (fun _ -> VisibilityResourceAudience.None) resource
+        }
+
+    /// Validates that a reveal will not disclose hidden reference or promotion-review links.
+    let private validateRevealLinks repositoryId selectedReferenceId (referenceDto: Reference.ReferenceDto) correlationId =
+        task {
+            let linkArray = referenceDto.Links |> Seq.toArray
+            let mutable index = 0
+            let mutable error: GraceError option = None
+
+            while index < linkArray.Length && error.IsNone do
+                match linkArray[index] with
+                | ReferenceLinkType.BasedOn basedOnReferenceId when basedOnReferenceId <> selectedReferenceId ->
+                    let basedOnActorProxy = Reference.CreateActorProxy basedOnReferenceId repositoryId correlationId
+                    let! basedOnReference = basedOnActorProxy.Get correlationId
+
+                    if basedOnReference.ReferenceId = ReferenceId.Empty then
+                        error <-
+                            Some(
+                                (GraceError.Create "Reference reveal cannot follow a missing BasedOn reference." correlationId)
+                                    .enhance(nameof ReferenceId, selectedReferenceId)
+                                    .enhance ("BasedOnReferenceId", basedOnReferenceId)
+                            )
+                    elif basedOnReference.Visibility
+                         <> ResourceVisibility.Public then
+                        error <-
+                            Some(
+                                (GraceError.Create "Reference reveal cannot disclose a private BasedOn reference." correlationId)
+                                    .enhance(nameof ReferenceId, selectedReferenceId)
+                                    .enhance ("BasedOnReferenceId", basedOnReferenceId)
+                            )
+                | ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                | ReferenceLinkType.PromotionSetTerminal promotionSetId ->
+                    error <-
+                        Some(
+                            (GraceError.Create "Reference reveal cannot disclose promotion review metadata in this slice." correlationId)
+                                .enhance(nameof ReferenceId, selectedReferenceId)
+                                .enhance (nameof PromotionSetId, promotionSetId)
+                        )
+                | _ -> ()
+
+                index <- index + 1
+
+            match error with
+            | Some error -> return Error error
+            | None -> return Ok()
+        }
+
+    /// Revalidates root graph completeness immediately before the durable reveal event is persisted.
+    let private validateRevealGraph repositoryId (referenceDto: Reference.ReferenceDto) correlationId =
+        task {
+            let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+            let! directoryVersionDtos = directoryActorProxy.GetRecursiveDirectoryVersions true correlationId
+
+            return
+                Reference.validateRecursiveDirectoryVersionsComplete
+                    referenceDto.DirectoryId
+                    (directoryVersionDtos
+                     |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
+                    correlationId
+                |> Result.map (fun _ -> ())
+        }
 
     /// Creates the hidden-as-missing response used when a private contributor branch exists but is not observable.
     let internal hiddenBranchError context branchId =
@@ -2291,6 +2369,113 @@ module Branch =
                     return!
                         context
                         |> result500ServerError (GraceError.CreateWithException ex String.Empty (getCorrelationId context))
+            }
+
+    /// Reveals one private reference after revalidating graph completeness and hidden-link safety.
+    let RevealReference: HttpHandler =
+        fun (next: HttpFunc) (context: HttpContext) ->
+            task {
+                let startTime = getCurrentInstant ()
+                let graceIds = getGraceIds context
+                let repositoryId = graceIds.RepositoryId
+                let correlationId = getCorrelationId context
+
+                try
+                    let! parameters = context |> parse<RevealReferenceParameters>
+                    let parameterDictionary = getParametersAsDictionary parameters
+
+                    let badRequest message =
+                        (GraceError.Create message correlationId)
+                            .enhance(parameterDictionary)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof BranchId, graceIds.BranchId)
+                            .enhance ("Path", context.Request.Path.Value)
+
+                    if parameters.ReferenceId = ReferenceId.Empty then
+                        return!
+                            context
+                            |> result400BadRequest (badRequest (ReferenceError.getErrorMessage ReferenceError.InvalidReferenceId))
+                    elif String.IsNullOrWhiteSpace parameters.OperationId then
+                        return!
+                            context
+                            |> result400BadRequest (badRequest "Reference reveal operationId is required.")
+                    else
+                        let referenceActorProxy = Reference.CreateActorProxy parameters.ReferenceId repositoryId correlationId
+                        let! referenceDto = referenceActorProxy.Get correlationId
+
+                        if referenceDto.ReferenceId = ReferenceId.Empty then
+                            return!
+                                context
+                                |> result400BadRequest (badRequest (ReferenceError.getErrorMessage ReferenceError.ReferenceIdDoesNotExist))
+                        elif referenceDto.RepositoryId <> repositoryId
+                             || referenceDto.BranchId <> graceIds.BranchId then
+                            return!
+                                context
+                                |> result400BadRequest (badRequest (ReferenceError.getErrorMessage ReferenceError.ReferenceIdDoesNotExist))
+                        else
+                            let revealPrincipal =
+                                PrincipalMapper.tryGetUserId context.User
+                                |> Option.defaultValue String.Empty
+
+                            let metadata = EventMetadata.New correlationId revealPrincipal
+                            metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                            metadata.Properties[ nameof BranchId ] <- $"{graceIds.BranchId}"
+                            metadata.Properties[ nameof ReferenceId ] <- $"{parameters.ReferenceId}"
+                            metadata.Properties[ "ReferenceRevealOperationId" ] <- parameters.OperationId
+
+                            /// Runs the durable actor transition after route-local reveal preconditions have passed or replay is detected.
+                            let executeReveal () =
+                                task {
+                                    match!
+                                        referenceActorProxy.Handle
+                                            (Grace.Types.Reference.ReferenceCommand.Reveal(parameters.OperationId, parameters.Reason))
+                                            metadata
+                                        with
+                                    | Ok revealReturnValue ->
+                                        let graceReturnValue =
+                                            (GraceReturnValue.Create revealReturnValue.ReturnValue correlationId)
+                                                .enhance(parameterDictionary)
+                                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                                .enhance(nameof BranchId, graceIds.BranchId)
+                                                .enhance(nameof ReferenceId, parameters.ReferenceId)
+                                                .enhance ("Path", context.Request.Path.Value)
+
+                                        return! context |> result200Ok graceReturnValue
+                                    | Error error -> return! context |> result400BadRequest error
+                                }
+
+                            if referenceDto.Visibility = ResourceVisibility.Public
+                               && referenceDto.LastRevealOperationId = Some parameters.OperationId then
+                                return! executeReveal ()
+                            else
+                                match! validateRevealGraph repositoryId referenceDto correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok () ->
+                                    match! validateRevealLinks repositoryId parameters.ReferenceId referenceDto correlationId with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok () -> return! executeReveal ()
+                with
+                | ex ->
+                    let duration_ms = getDurationRightAligned_ms startTime
+
+                    log.LogError(
+                        ex,
+                        "{CurrentInstant}: Node: {HostName}; Duration: {duration_ms}ms; CorrelationId: {correlationId}; Error in {path}; BranchId: {branchId}.",
+                        getCurrentInstantExtended (),
+                        getMachineName,
+                        duration_ms,
+                        correlationId,
+                        context.Request.Path,
+                        graceIds.BranchIdString
+                    )
+
+                    return!
+                        context
+                        |> result500ServerError (GraceError.CreateWithException ex String.Empty correlationId)
             }
 
     /// Annotates a server-known file from an existing reference in a branch.

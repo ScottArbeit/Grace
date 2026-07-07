@@ -96,6 +96,13 @@ module Branch =
     type GetReferenceParameters() =
         inherit BranchQueryParameters()
 
+    /// Parameters for the /branch/revealReference endpoint.
+    type RevealReferenceParameters() =
+        inherit BranchParameters()
+        member val public ReferenceId: ReferenceId = ReferenceId.Empty with get, set
+        member val public OperationId = String.Empty with get, set
+        member val public Reason = String.Empty with get, set
+
     /// Parameters for the /branch/getReferences and /branch/get[reference] endpoints.
     type GetReferencesParameters() =
         inherit BranchParameters()

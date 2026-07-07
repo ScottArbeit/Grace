@@ -104,6 +104,7 @@
         { "method": "POST", "path": "/branch/getRecursiveSize" },
         { "method": "POST", "path": "/branch/getVersion" },
         { "method": "POST", "path": "/branch/listContents" },
+        { "method": "POST", "path": "/branch/revealReference" },
         { "method": "POST", "path": "/branch/setPromotionMode" },
         { "method": "POST", "path": "/branch/updateParentBranch" },
         { "method": "POST", "path": "/repository/setAllowsLargeFiles" },

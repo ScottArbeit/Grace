@@ -4,6 +4,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Reference
+open Grace.Types.Visibility
 open NodaTime
 open NUnit.Framework
 open System
@@ -118,3 +119,39 @@ type ReferenceDtoTests() =
         Assert.That(deleted.CreatedBy, Is.EqualTo(Some "alice@example.test"))
         Assert.That(linked.UpdatedAt, Is.EqualTo(Some(timestamp + Duration.FromMinutes(1.0))))
         Assert.That(deleted.UpdatedAt, Is.EqualTo(Some(timestamp + Duration.FromMinutes(2.0))))
+
+    /// Verifies that created event inherits durable visibility metadata.
+    [<Test>]
+    member _.CreatedEventInheritsVisibilityMetadata() =
+        let referenceEvent = createdEvent "alice@example.test"
+        referenceEvent.Metadata.Properties[ "InheritedVisibility" ] <- "Public"
+        referenceEvent.Metadata.Properties[ "InheritedOwnership" ] <- "ContributorOwned"
+        referenceEvent.Metadata.Properties[ "InheritedCreatorUserId" ] <- "creator-user-1"
+
+        let updated = ReferenceDto.UpdateDto referenceEvent ReferenceDto.Default
+
+        Assert.That(updated.Visibility, Is.EqualTo(ResourceVisibility.Public))
+        Assert.That(updated.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
+        Assert.That(updated.CreatorUserId, Is.EqualTo(Some(UserId "creator-user-1")))
+
+    /// Verifies that reveal events persist public visibility and operation id replay evidence.
+    [<Test>]
+    member _.RevealEventPersistsPublicVisibilityAndOperationEvidence() =
+        let created = ReferenceDto.UpdateDto (createdEvent "alice@example.test") ReferenceDto.Default
+
+        let revealTimestamp = timestamp + Duration.FromMinutes(5.0)
+
+        let revealEvent =
+            {
+                Event =
+                    ReferenceEventType.Revealed("reveal-op-1", "reviewer@example.test", "accepted work", ResourceVisibility.Private, ResourceVisibility.Public)
+                Metadata = createMetadata "reviewer@example.test" revealTimestamp
+            }
+
+        let revealed = ReferenceDto.UpdateDto revealEvent created
+
+        Assert.That(revealed.Visibility, Is.EqualTo(ResourceVisibility.Public))
+        Assert.That(revealed.LastRevealOperationId, Is.EqualTo(Some "reveal-op-1"))
+        Assert.That(revealed.RevealedBy, Is.EqualTo(Some "reviewer@example.test"))
+        Assert.That(revealed.RevealedAt, Is.EqualTo(Some revealTimestamp))
+        Assert.That(revealed.RevealReason, Is.EqualTo(Some "accepted work"))

@@ -414,6 +414,7 @@ type EndpointAuthorizationManifestTests() =
             "POST", "/branch/commit"
             "POST", "/branch/createExternal"
             "POST", "/branch/promote"
+            "POST", "/branch/revealReference"
             "POST", "/branch/save"
             "POST", "/branch/tag"
         ]
