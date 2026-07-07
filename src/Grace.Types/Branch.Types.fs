@@ -4,6 +4,7 @@ open Grace.Shared
 open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Reference
+open Grace.Types.Visibility
 open Grace.Types.Common
 open NodaTime
 open Orleans
@@ -157,6 +158,8 @@ module Branch =
             OwnerId: OwnerId
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
+            Visibility: ResourceVisibility
+            Ownership: ResourceOwnership
             BasedOn: ReferenceDto
             UserId: UserId
             AssignEnabled: bool
@@ -190,6 +193,8 @@ module Branch =
                 OwnerId = OwnerId.Empty
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
+                Visibility = ResourceVisibility.Default
+                Ownership = ResourceOwnership.Default
                 BasedOn = ReferenceDto.Default
                 UserId = UserId String.Empty
                 AssignEnabled = false

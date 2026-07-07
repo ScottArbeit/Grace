@@ -3,6 +3,7 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Microsoft.Extensions.Configuration
 open NodaTime
 open Orleans
@@ -142,6 +143,8 @@ module PromotionSet =
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
             TargetBranchId: BranchId
+            Visibility: ResourceVisibility
+            Ownership: ResourceOwnership
             OnBehalfOf: UserId list
             Steps: PromotionSetStep list
             ComputedAgainstParentTerminalPromotionReferenceId: ReferenceId option
@@ -166,6 +169,8 @@ module PromotionSet =
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
                 TargetBranchId = BranchId.Empty
+                Visibility = ResourceVisibility.Default
+                Ownership = ResourceOwnership.Default
                 OnBehalfOf = []
                 Steps = []
                 ComputedAgainstParentTerminalPromotionReferenceId = Option.None

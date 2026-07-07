@@ -50,6 +50,7 @@
         <Compile Include="Parameters\Owner.Parameters.fs" />
         <Compile Include="Parameters\Organization.Parameters.fs" />
         <Compile Include="Parameters\Repository.Parameters.fs" />
+        <Compile Include="Parameters\Visibility.Parameters.fs" />
         <Compile Include="Parameters\Branch.Parameters.fs" />
         <Compile Include="Parameters\Reference.Parameters.fs" />
         <Compile Include="Parameters\Directory.Parameters.fs" />
