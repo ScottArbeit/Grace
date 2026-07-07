@@ -49,6 +49,10 @@ The V1 required artifact set is:
 Those artifacts must agree on the same DirectoryVersionId. A cache hit for only one artifact is a partial local presence
 state, not proof that the plan is complete or authorized for a different caller.
 
+Because V1 artifacts materialize the full target root, Grace may serve them only to callers whose current grant
+authorizes the whole target-root scope. Narrowed path-scope grants must be denied for full-root artifacts until a future
+ADR or issue accepts path-scoped artifact shapes and their matching recursive metadata contract.
+
 ## Deferred
 
 The following designs are deferred and out of scope for this baseline:

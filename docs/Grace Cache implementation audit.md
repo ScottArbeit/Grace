@@ -58,7 +58,7 @@ review-ready:
 - Grace Cache service registration and identity.
 - Read-through behavior and cache-hit enforcement.
 - Prefetch behavior and retention refresh.
-- Cache metadata, cleanup, and chunk-store liveness.
+- Cache artifact metadata, cleanup, and artifact completeness.
 - Watch dependency impact for #473 and #552.
 - Operations dependency impact for #554.
 - Public docs and generated contracts.
@@ -131,37 +131,40 @@ docs-only classification with current evidence for the behavior they own.
 
 ### Read-Through Behavior
 
-- Implementation seam: Grace Cache request handling that serves chunks only when a current
-  ContentAccessGrant authorizes RecursiveDirectoryVersions containing those ChunkAddresses.
-- Proof seam: tests for authorized hit, unauthorized hit, stale metadata, missing chunk, wrong path
-  scope, and server-authority refresh where the contract requires it.
+- Implementation seam: Grace Cache request handling that serves only complete Materialization Plan
+  artifacts after a current grant authorizes the plan's full target-root scope.
+- Proof seam: tests for authorized complete-plan hit, unauthorized hit, stale artifact metadata,
+  partial artifact presence, narrowed path-scope grant rejection for full-root artifacts, and
+  server-authority refresh where the contract requires it.
 - Status classification: `not applicable` to this docs-only scaffold.
 - Issue or PR evidence: #609 creates the audit slot; read-through work must add current proof before
   claiming cache reads.
-- Residual risk or rationale: physical chunk presence in the Cache Chunk Store is not permission or
-  liveness.
+- Residual risk or rationale: local artifact presence is not permission, liveness, or proof that a
+  caller may fetch a full target-root materialization.
 
 ### Prefetch Behavior
 
-- Implementation seam: configured prefetch subscriptions, source resolution, fetch scheduling,
-  cache metadata writes, retention refresh, and failure reporting.
-- Proof seam: tests for authorized prefetch, denied prefetch, duplicate subscription, partial fetch,
-  retry, cancellation, and retention refresh without creating separate retention classes.
+- Implementation seam: configured prefetch subscriptions, Materialization Plan resolution, artifact
+  fetch scheduling, artifact metadata writes, retention refresh, grant enforcement, and failure
+  reporting.
+- Proof seam: tests for authorized full-root prefetch, denied prefetch, duplicate subscription,
+  partial artifact fetch, retry, cancellation, artifact completeness checks, and retention refresh
+  without creating separate retention classes.
 - Status classification: `not applicable` to this docs-only scaffold.
 - Issue or PR evidence: #609 creates the audit slot; prefetch work must cite the owning issue or PR.
-- Residual risk or rationale: prefetch can place chunks in cache before a requester needs them, but
-  serving still requires per-call authorization.
+- Residual risk or rationale: prefetch can place plan artifacts in cache before a requester needs
+  them, but serving still requires per-call authorization for the artifact scope.
 
 ### Cache Metadata And Cleanup
 
-- Implementation seam: Cache Reference Metadata, Cache Retention, Cache Chunk Store liveness, expiry
-  decisions, and cleanup side effects.
-- Proof seam: tests for metadata creation, retention refresh, expiry, cleanup after partial failure,
-  shared chunk retention, and no pinning in v1.
+- Implementation seam: Cache Artifact Metadata, Cache Retention, artifact completeness state, expiry
+  decisions, and cleanup side effects for target-root zips plus recursive metadata.
+- Proof seam: tests for metadata creation, retention refresh, expiry, cleanup after partial artifact
+  failure, shared artifact retention, and no pinning in v1.
 - Status classification: `not applicable` to this docs-only scaffold.
 - Issue or PR evidence: #609 creates the audit slot; cleanup work must cite its owning issue or PR.
-- Residual risk or rationale: cache cleanup must not infer global content liveness from chunk
-  presence alone.
+- Residual risk or rationale: cache cleanup must not infer authorization, artifact completeness, or
+  global content liveness from local artifact presence alone.
 
 ### Watch Dependencies
 
