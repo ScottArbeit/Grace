@@ -3108,6 +3108,10 @@ module Services =
     /// Describes one working-tree path that a remote directory update is about to replace or remove.
     type WorkingDirectoryTargetMutation = { FullPath: string; IsDirectory: bool; DeletesExistingContent: bool }
 
+    /// Builds a stable key for one working-tree mutation guard decision.
+    let private workingDirectoryMutationKey (mutation: WorkingDirectoryTargetMutation) =
+        $"{Path.GetFullPath(mutation.FullPath)}|{mutation.IsDirectory}|{mutation.DeletesExistingContent}"
+
     /// Updates the working directory to match the contents of new DirectoryVersions after checking each mutation target.
     ///
     /// In general, this means copying new and changed files into place, and removing deleted files and directories.
@@ -3120,6 +3124,123 @@ module Services =
         =
         task {
             let mutable resultError: GraceError option = None
+            let newDirectoryVersionDtoArray = newDirectoryVersionDtos |> Seq.toArray
+
+            let mutationKeyComparer =
+                if OperatingSystem.IsWindows() then
+                    StringComparer.OrdinalIgnoreCase
+                else
+                    StringComparer.Ordinal
+
+            let preflightedTargets = Dictionary<string, WorkingDirectoryTargetMutation>(mutationKeyComparer)
+
+            let rememberTarget fullPath isDirectory deletesExistingContent =
+                let mutation = { FullPath = Path.GetFullPath(fullPath); IsDirectory = isDirectory; DeletesExistingContent = deletesExistingContent }
+
+                preflightedTargets[workingDirectoryMutationKey mutation] <- mutation
+
+            let directoryMatchesUpdatedSubdirectory
+                (updatedGraceStatus: GraceStatus)
+                (newDirectoryVersion: LocalDirectoryVersion)
+                (subdirectoryInfo: DirectoryInfo)
+                =
+                let relativeSubdirectoryPath = Path.GetRelativePath(Current().RootDirectory, subdirectoryInfo.FullName)
+
+                newDirectoryVersion.Directories
+                |> Seq.map (fun directoryVersionId -> updatedGraceStatus.Index[directoryVersionId])
+                |> Seq.exists (fun subdirectoryVersion -> subdirectoryVersion.RelativePath = relativeSubdirectoryPath)
+
+            let collectDirectoryTreeDeleteTargets (directoryInfo: DirectoryInfo) =
+                let childFiles =
+                    directoryInfo.EnumerateFiles("*", SearchOption.AllDirectories)
+                    |> Seq.sortByDescending (fun fileInfo -> fileInfo.FullName.Length)
+                    |> Seq.toArray
+
+                let childDirectories =
+                    directoryInfo.EnumerateDirectories("*", SearchOption.AllDirectories)
+                    |> Seq.sortByDescending (fun childDirectoryInfo -> childDirectoryInfo.FullName.Length)
+                    |> Seq.toArray
+                    |> fun directories -> Array.append directories [| directoryInfo |]
+
+                for fileInfo in childFiles do
+                    rememberTarget fileInfo.FullName false true
+
+                for childDirectoryInfo in childDirectories do
+                    rememberTarget childDirectoryInfo.FullName true true
+
+            let collectWorkingDirectoryMutationTargets () =
+                try
+                    for newDirectoryVersionDto in newDirectoryVersionDtoArray do
+                        let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion.ToLocalDirectoryVersion DateTime.UtcNow
+
+                        if not (Directory.Exists(newDirectoryVersion.FullName)) then
+                            rememberTarget newDirectoryVersion.FullName true false
+
+                        let previousDirectoryVersion =
+                            previousGraceStatus.Index.Values.FirstOrDefault(
+                                (fun dv -> dv.RelativePath = newDirectoryVersion.RelativePath),
+                                LocalDirectoryVersion.Default
+                            )
+
+                        let sourceFileVersions = newDirectoryVersionDto.DirectoryVersion.Files.ToArray()
+
+                        let newLocalFileVersions =
+                            sourceFileVersions
+                            |> Array.map (fun file -> file.ToLocalFileVersion DateTime.UtcNow)
+
+                        for fileVersion in newLocalFileVersions do
+                            let existingFileOnDisk = FileInfo(fileVersion.FullName)
+
+                            if existingFileOnDisk.Exists then
+                                let findFileVersionFromPreviousGraceStatus =
+                                    previousDirectoryVersion.Files.Where(fun f -> f.RelativePath = fileVersion.RelativePath)
+
+                                if findFileVersionFromPreviousGraceStatus.Count() > 0 then
+                                    let fileVersionFromPreviousGraceStatus = findFileVersionFromPreviousGraceStatus.First()
+
+                                    if existingFileOnDisk.Length <> fileVersion.Size
+                                       || fileVersionFromPreviousGraceStatus.Sha256Hash
+                                          <> fileVersion.Sha256Hash
+                                       || (fileVersionFromPreviousGraceStatus.Blake3Hash
+                                           <> Blake3Hash String.Empty
+                                           && fileVersion.Blake3Hash <> Blake3Hash String.Empty
+                                           && fileVersionFromPreviousGraceStatus.Blake3Hash
+                                              <> fileVersion.Blake3Hash) then
+                                        rememberTarget existingFileOnDisk.FullName false true
+                            else
+                                rememberTarget existingFileOnDisk.FullName false false
+
+                        if Directory.Exists(newDirectoryVersion.FullName) then
+                            let directoryInfo = DirectoryInfo(newDirectoryVersion.FullName)
+
+                            for subdirectoryInfo in directoryInfo.EnumerateDirectories().ToArray() do
+                                if
+                                    not (directoryMatchesUpdatedSubdirectory updatedGraceStatus newDirectoryVersion subdirectoryInfo)
+                                    && shouldNotIgnoreDirectory subdirectoryInfo.FullName
+                                then
+                                    rememberTarget subdirectoryInfo.FullName true true
+                                    collectDirectoryTreeDeleteTargets subdirectoryInfo
+
+                            for fileInfo in directoryInfo.EnumerateFiles() do
+                                if not
+                                   <| newLocalFileVersions.Any(fun fileVersion -> fileVersion.FullName = fileInfo.FullName)
+                                   && not <| shouldIgnoreFile fileInfo.FullName then
+                                    rememberTarget fileInfo.FullName false true
+                with
+                | :? IOException as ex ->
+                    resultError <-
+                        Some(
+                            GraceError.Create
+                                $"Working directory update could not enumerate target mutations before remote writes; retry after the tree can be re-evaluated: {ex.Message}"
+                                correlationId
+                        )
+                | :? UnauthorizedAccessException as ex ->
+                    resultError <-
+                        Some(
+                            GraceError.Create
+                                $"Working directory update could not enumerate target mutations before remote writes; retry after the tree can be re-evaluated: {ex.Message}"
+                                correlationId
+                        )
 
             let verifyTarget fullPath isDirectory deletesExistingContent =
                 task {
@@ -3134,6 +3255,14 @@ module Services =
                             resultError <- Some error
                             return Error error
                 }
+
+            collectWorkingDirectoryMutationTargets ()
+
+            for mutation in preflightedTargets.Values do
+                if resultError.IsNone then
+                    match! verifyTarget mutation.FullPath mutation.IsDirectory mutation.DeletesExistingContent with
+                    | Ok () -> ()
+                    | Error _ -> ()
 
             /// Deletes a directory tree only after every child reaches the same overwrite boundary as the parent.
             let deleteDirectoryTreeWithTargetGuard (directoryInfo: DirectoryInfo) =
@@ -3168,23 +3297,26 @@ module Services =
                         if resultError.IsNone then
                             for fileInfo in childFiles do
                                 if resultError.IsNone then
-                                    try
-                                        fileInfo.Delete()
-                                    with
-                                    | :? IOException as ex ->
-                                        resultError <-
-                                            Some(
-                                                GraceError.Create
-                                                    $"Working directory update could not delete verified child file {fileInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
-                                                    correlationId
-                                            )
-                                    | :? UnauthorizedAccessException as ex ->
-                                        resultError <-
-                                            Some(
-                                                GraceError.Create
-                                                    $"Working directory update could not delete verified child file {fileInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
-                                                    correlationId
-                                            )
+                                    match! verifyTarget fileInfo.FullName false true with
+                                    | Error _ -> ()
+                                    | Ok () ->
+                                        try
+                                            fileInfo.Delete()
+                                        with
+                                        | :? IOException as ex ->
+                                            resultError <-
+                                                Some(
+                                                    GraceError.Create
+                                                        $"Working directory update could not delete verified child file {fileInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                                        correlationId
+                                                )
+                                        | :? UnauthorizedAccessException as ex ->
+                                            resultError <-
+                                                Some(
+                                                    GraceError.Create
+                                                        $"Working directory update could not delete verified child file {fileInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
+                                                        correlationId
+                                                )
 
                             for childDirectoryInfo in childDirectories do
                                 if resultError.IsNone then
@@ -3223,7 +3355,7 @@ module Services =
                 }
 
             // Loop through each new DirectoryVersion.
-            for newDirectoryVersionDto in newDirectoryVersionDtos do
+            for newDirectoryVersionDto in newDirectoryVersionDtoArray do
                 if resultError.IsNone then
                     let newDirectoryVersion = newDirectoryVersionDto.DirectoryVersion
                     // Get the previous DirectoryVersion, so we can compare contents below.
@@ -3233,7 +3365,16 @@ module Services =
                             LocalDirectoryVersion.Default
                         )
                     // Ensure that the directory exists on disk.
-                    let directoryInfo = Directory.CreateDirectory(newDirectoryVersion.FullName)
+                    let! directoryCreateGuard =
+                        if Directory.Exists(newDirectoryVersion.FullName) then
+                            Task.FromResult(Ok())
+                        else
+                            verifyTarget newDirectoryVersion.FullName true false
+
+                    let directoryInfo =
+                        match directoryCreateGuard with
+                        | Ok () -> Directory.CreateDirectory(newDirectoryVersion.FullName)
+                        | Error _ -> DirectoryInfo(newDirectoryVersion.FullName)
 
                     // Copy new and existing files into place.
                     let sourceFileVersions = newDirectoryVersion.Files.ToArray()

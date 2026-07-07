@@ -3244,6 +3244,7 @@ module Watch =
         {
             RepositoryId: RepositoryId
             BranchId: BranchId
+            RootDirectory: string
             RootDirectoryId: DirectoryVersionId
             RootDirectorySha256Hash: Sha256Hash
             RootDirectoryBlake3Hash: Blake3Hash
@@ -3569,10 +3570,36 @@ module Watch =
         {
             RepositoryId = repositoryId
             BranchId = branchId
+            RootDirectory = Current().RootDirectory
             RootDirectoryId = status.RootDirectoryId
             RootDirectorySha256Hash = status.RootDirectorySha256Hash
             RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
         }
+
+    /// Compares materialization root paths without allowing malformed IPC paths to escape the write-boundary check.
+    let private currentBranchMaterializationRootDirectoriesMatch expectedRoot observedRoot =
+        if
+            String.IsNullOrWhiteSpace(expectedRoot)
+            || String.IsNullOrWhiteSpace(observedRoot)
+        then
+            false
+        else
+            try
+                String.Equals(
+                    Path
+                        .GetFullPath(expectedRoot)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    Path
+                        .GetFullPath(observedRoot)
+                        .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar),
+                    watchPathComparison
+                )
+            with
+            | _ -> false
+
+    /// Confirms the repository root path still identifies the same working tree captured by materialization authority.
+    let private currentBranchMaterializationRootDirectoryStillCurrent (authority: CurrentBranchMaterializationAuthority) =
+        currentBranchMaterializationRootDirectoriesMatch authority.RootDirectory (Current().RootDirectory)
 
     /// Confirms that a GraceStatus snapshot still matches the clean root that authorized remote materialization.
     let internal currentBranchMaterializationRootMatchesAuthority (authority: CurrentBranchMaterializationAuthority) (currentGraceStatus: GraceStatus) =
@@ -3586,6 +3613,7 @@ module Watch =
 
         current.RepositoryId = authority.RepositoryId
         && current.BranchId = authority.BranchId
+        && currentBranchMaterializationRootDirectoryStillCurrent authority
         && currentBranchMaterializationRootMatchesAuthority authority currentGraceStatus
 
     /// Confirms Watch still has no queued local work at the marker-time materialization boundary.
@@ -3597,6 +3625,10 @@ module Watch =
         | Some status when inspection.IsUsable ->
             status.IsWorkingTreeClean
             && not status.HasPendingWatchWork
+            && status.RepositoryId = authority.RepositoryId
+            && status.BranchId = authority.BranchId
+            && currentBranchMaterializationRootDirectoryStillCurrent authority
+            && currentBranchMaterializationRootDirectoriesMatch authority.RootDirectory status.RootDirectory
             && status.RootDirectoryId = authority.RootDirectoryId
             && status.RootDirectorySha256Hash = authority.RootDirectorySha256Hash
             && status.RootDirectoryBlake3Hash = authority.RootDirectoryBlake3Hash
@@ -3855,12 +3887,12 @@ module Watch =
         verifyMarkerWindow
         =
         task {
-            match! publishStatus updatedGraceStatus with
+            match! verifyMarkerWindow () with
             | Error error ->
                 consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
                 return Error error
             | Ok () ->
-                match! verifyMarkerWindow () with
+                match! publishStatus updatedGraceStatus with
                 | Error error ->
                     consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
                     return Error error
@@ -4219,12 +4251,7 @@ module Watch =
                                                         consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
                                                         do! upsertObjectCache updatedGraceStatus.Index.Values
 
-                                                        return!
-                                                            completeDurablyAppliedCurrentBranchMaterialization
-                                                                payload
-                                                                updatedGraceStatus
-                                                                publishCurrentBranchMaterializedStatus
-                                                                (fun () -> Task.FromResult(Ok()))
+                                                        return Ok updatedGraceStatus
                                 })
                             (fun _ ->
                                 task {
@@ -4245,7 +4272,13 @@ module Watch =
             GetDirectoryVersionsRecursive = getDirectoryVersionsRecursive
             DownloadDirectoryFiles = downloadDirectoryFiles
             ApplyRemoteDirectory = applyRemoteDirectory
-            PublishWatchStatus = fun _ -> Task.FromResult(())
+            PublishWatchStatus =
+                fun graceStatus ->
+                    task {
+                        match! publishCurrentBranchMaterializedStatus graceStatus with
+                        | Ok () -> ()
+                        | Error error -> return raise (InvalidOperationException(error.Error))
+                    }
         }
 
     /// Processes current-branch Reference candidates through the clean gate and optional remote materialization.
