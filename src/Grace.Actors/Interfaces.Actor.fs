@@ -24,6 +24,7 @@ open Grace.Types.Artifact
 open Grace.Types.UploadSession
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
+open Grace.Types.MaterializationPlan
 open Grace.Types.Common
 open Grace.Shared.Utilities
 open NodaTime
@@ -215,6 +216,9 @@ module Interfaces =
 
         /// Returns the Uri, with a shared access signature, to download the .zip file containing the contents of this directory and all subdirectories. If the .zip file doesn't exist, it will be created.
         abstract member GetZipFileUri: correlationId: CorrelationId -> Task<UriWithSharedAccessSignature>
+
+        /// Ensures the target-root projection artifacts required by v1 materialization planning exist and describes them.
+        abstract member EnsureRequiredProjectionArtifacts: correlationId: CorrelationId -> Task<GraceResult<MaterializationArtifactDescriptor array>>
 
         /// Delete the DirectoryVersion and all subdirectories and files.
         abstract member Delete: correlationId: CorrelationId -> Task<GraceResult<string>>

@@ -13,6 +13,7 @@ open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Resources.Text
 open Grace.Types.DirectoryVersion
 open Grace.Types.Common
+open Grace.Types.MaterializationPlan
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
@@ -51,6 +52,10 @@ module DirectoryVersion =
                     StringSplitOptions.RemoveEmptyEntries
                 )
                 .Length
+
+    /// Ensures projection artifacts required for target-root materialization planning through the DirectoryVersion actor.
+    let ensureTargetRootProjectionArtifacts (actorProxy: IDirectoryVersionActor) correlationId : Task<GraceResult<MaterializationArtifactDescriptor array>> =
+        actorProxy.EnsureRequiredProjectionArtifacts correlationId
 
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> DirectoryVersionParameters>

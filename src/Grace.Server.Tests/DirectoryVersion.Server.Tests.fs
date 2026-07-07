@@ -1,23 +1,51 @@
 namespace Grace.Server.Tests
 
+open Azure
+open Azure.Storage.Blobs
+open Azure.Storage.Blobs.Models
+open Azure.Storage.Blobs.Specialized
 open Grace.Server.Tests.Services
 open Grace.Shared
 open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
+open Grace.Types.ContentBlockMetadata
+open Grace.Types.UploadSession
 open Grace.Types
 open Grace.Types.Common
 open Grace.Types.DirectoryVersion
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.IO
+open System.IO.Compression
 open System.Net
 open System.Net.Http
+open System.Security.Cryptography
+open System.Text
 
 /// Groups shared helpers for directory version server test helpers.
 module DirectoryVersionServerTestHelpers =
     /// Captures directory version model values used by the test suite.
     type DirectoryVersionModel = Grace.Types.Common.DirectoryVersion
+
+    /// Computes the canonical SHA-256 hash for bytes used by test FileVersions.
+    let computeSha256Hash (bytes: byte array) =
+        SHA256.HashData(bytes)
+        |> Convert.ToHexString
+        |> fun value -> value.ToLowerInvariant()
+
+    /// Computes the canonical BLAKE3 hash for bytes used by test FileVersions.
+    let computeBlake3Hash (bytes: byte array) = ContentAddress.computeBlake3Hex bytes
+
+    /// Builds deterministic byte payloads for directory projection storage tests.
+    let deterministicBytes (label: string) (length: int) =
+        let seed = Encoding.UTF8.GetBytes(label)
+
+        [|
+            for index in 0 .. length - 1 do
+                byte ((int seed[index % seed.Length] + index * 17) % 251)
+        |]
 
     /// Normalizes d directory size for hash for stable assertions.
     let normalizedDirectorySizeForHash (directoryVersion: DirectoryVersionModel) =
@@ -25,6 +53,19 @@ module DirectoryVersionServerTestHelpers =
             0L
         else
             directoryVersion.Size
+
+    /// Normalizes file paths for stable directory preimage assertions.
+    let normalizedFilePath (relativePath: RelativePath) = RelativePath(normalizeFilePath $"{relativePath}")
+
+    /// Builds a binary FileVersion with whole-file content reference.
+    let createWholeFileVersion (relativePath: RelativePath) (payload: byte array) =
+        FileVersion.CreateWithHashes
+            (normalizedFilePath relativePath)
+            (Sha256Hash(computeSha256Hash payload))
+            (Blake3Hash(computeBlake3Hash payload))
+            String.Empty
+            true
+            (int64 payload.Length)
 
     let createDirectoryVersion
         (directoryVersionId: DirectoryVersionId)
@@ -63,6 +104,37 @@ module DirectoryVersionServerTestHelpers =
             (List<DirectoryVersionId>(childDirectoryIds))
             (List<FileVersion>())
             Constants.InitialDirectorySize
+
+    let createDirectoryVersionWithFiles
+        (directoryVersionId: DirectoryVersionId)
+        (repositoryId: string)
+        (relativePath: RelativePath)
+        (files: FileVersion seq)
+        : DirectoryVersionModel
+        =
+        let fileVersions = files |> Seq.toArray
+
+        let entries =
+            fileVersions
+            |> Seq.map (fun fileVersion ->
+                DirectoryVersionPreimageEntry.File fileVersion.RelativePath fileVersion.Size fileVersion.Blake3Hash fileVersion.Sha256Hash)
+            |> Seq.toArray
+
+        let sha256Hash = computeSha256ForDirectoryEntries relativePath entries
+        let blake3Hash = computeBlake3ForDirectory relativePath entries
+
+        DirectoryVersionModel.CreateWithHashes
+            directoryVersionId
+            (Guid.Parse ownerId)
+            (Guid.Parse organizationId)
+            (Guid.Parse repositoryId)
+            relativePath
+            sha256Hash
+            blake3Hash
+            (List<DirectoryVersionId>())
+            (List<FileVersion>(fileVersions))
+            (fileVersions
+             |> Seq.sumBy (fun fileVersion -> fileVersion.Size))
 
     /// Builds create parameters for route calls.
     let createParameters (directoryVersion: DirectoryVersionModel) =
@@ -118,6 +190,220 @@ module DirectoryVersionServerTestHelpers =
             parameters.DirectoryVersions.Add(directoryVersion)
 
         parameters
+
+    /// Builds storage parameters for route calls used by manifest-backed DirectoryVersion tests.
+    let setStorageParameters (parameters: Parameters.Storage.StorageParameters) (repositoryId: string) correlationId =
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.CorrelationId <- correlationId
+
+    /// Asserts OK for helper route calls declared before the shared module assertOk helper.
+    let assertProjectionHelperOk (response: HttpResponseMessage) =
+        task {
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+        }
+
+    /// Uploads a binary whole-file object and returns the server-normalized FileVersion.
+    let uploadWholeFileAsync (repositoryId: string) (fileVersion: FileVersion) (payload: byte array) =
+        task {
+            let parameters = Parameters.Storage.GetUploadMetadataForFilesParameters()
+            setStorageParameters parameters repositoryId (generateCorrelationId ())
+            parameters.FileVersions <- [| fileVersion |]
+
+            let! uploadResponse = Client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent parameters)
+            do! assertProjectionHelperOk uploadResponse
+            let! uploadMetadata = deserializeContent<GraceReturnValue<List<Parameters.Storage.UploadMetadata>>> uploadResponse
+            let metadata = uploadMetadata.ReturnValue |> Seq.exactlyOne
+
+            use payloadStream = new MemoryStream(payload, writable = false)
+            let blockBlobClient = BlockBlobClient(metadata.BlobUriWithSasToken)
+            let! response = blockBlobClient.UploadAsync(payloadStream, BlobUploadOptions())
+            Assert.That(response.GetRawResponse().Status, Is.EqualTo(int HttpStatusCode.Created))
+
+            fileVersion.ContentReference <- metadata.ContentReference
+            return fileVersion
+        }
+
+    /// Encodes bytes as one content block for manifest upload tests.
+    let encodeBlock (bytes: byte array) =
+        match ContentBlockFormat.encode [ { PhysicalOffset = 0L; Bytes = bytes } ] with
+        | Ok block -> block
+        | Error error ->
+            Assert.Fail($"Expected test ContentBlock to encode, got {error}.")
+            Unchecked.defaultof<ContentBlockFormat.EncodedContentBlock>
+
+    /// Builds a finalized FileManifest for a storage pool returned by the upload session.
+    let manifestForStoragePool (storagePoolId: StoragePoolId) (bytes: byte array) (block: ContentBlockFormat.EncodedContentBlock) =
+        let contentBlock = ContentBlock.Create(block.Address, 0L, int64 bytes.Length)
+
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress String.Empty,
+                ChunkingSuiteId RabinChunking.SuiteName,
+                FileContentHash(computeBlake3Hash bytes),
+                int64 bytes.Length,
+                storagePoolId,
+                [ contentBlock ]
+            )
+
+        { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    /// Parses placement details from a content block SAS URI and upload ETag.
+    let contentBlockPlacementFromUri (blobUriWithSasToken: Uri) eTag =
+        let pathSegments =
+            blobUriWithSasToken
+                .AbsolutePath
+                .Trim('/')
+                .Split([| '/' |], StringSplitOptions.RemoveEmptyEntries)
+            |> Array.map Uri.UnescapeDataString
+
+        let isPathStyleAzurite =
+            blobUriWithSasToken.Host.Equals("localhost", StringComparison.OrdinalIgnoreCase)
+            || IPAddress.TryParse(blobUriWithSasToken.Host)
+               |> fst
+
+        let accountName =
+            if isPathStyleAzurite && pathSegments.Length >= 3 then
+                pathSegments[0]
+            else
+                let host = blobUriWithSasToken.Host
+                let firstDot = host.IndexOf('.')
+                if firstDot > 0 then host.Substring(0, firstDot) else host
+
+        let containerIndex = if isPathStyleAzurite then 1 else 0
+
+        {
+            StorageAccountName = accountName
+            StorageContainerName = StorageContainerName pathSegments[containerIndex]
+            ObjectKey = String.Join("/", pathSegments |> Array.skip (containerIndex + 1))
+            ETag = eTag
+        }
+
+    /// Uploads content block bytes through a SAS URI.
+    let uploadContentBlockWithSasAsync (payload: byte array) (uploadUri: Uri) =
+        task {
+            let blockBlobClient = BlockBlobClient(uploadUri)
+            use payloadStream = new MemoryStream(payload, writable = false)
+            let options = BlobUploadOptions()
+            options.Conditions <- BlobRequestConditions(IfNoneMatch = ETag.All)
+            let! response = blockBlobClient.UploadAsync(payloadStream, options)
+            return response.Value.ETag.ToString()
+        }
+
+    /// Posts an upload session command and returns the decision payload.
+    let postUploadSessionDecisionAsync (route: string) parameters =
+        task {
+            let! response = Client.PostAsync(route, createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            return deserialize<GraceReturnValue<UploadSessionDecision>> body
+        }
+
+    /// Creates and finalizes one manifest-backed FileVersion through the storage routes.
+    let createManifestBackedFileVersionAsync (repositoryId: string) (relativePath: RelativePath) (payload: byte array) =
+        task {
+            let correlationId = generateCorrelationId ()
+            let uploadSessionId = Guid.NewGuid()
+            let block = encodeBlock payload
+
+            let start = Parameters.Storage.StartManifestUploadSessionParameters()
+            setStorageParameters start repositoryId correlationId
+            start.UploadSessionId <- uploadSessionId
+            start.AuthorizedScope <- normalizedFilePath relativePath
+            start.FileContentHash <- FileContentHash(computeBlake3Hash payload)
+            start.ExpectedSize <- int64 payload.Length
+            start.ChunkingSuiteId <- RabinChunking.SuiteName
+            start.SamplingPolicySnapshot <- "directory-version-zip-test"
+            start.OperationId <- "start"
+
+            let! startResult = postUploadSessionDecisionAsync "/storage/startManifestUploadSession" start
+            let manifest = manifestForStoragePool startResult.ReturnValue.Session.StoragePoolId payload block
+
+            let register = Parameters.Storage.RegisterContentBlockUploadParameters()
+            setStorageParameters register repositoryId correlationId
+            register.UploadSessionId <- uploadSessionId
+            register.AuthorizedScope <- normalizedFilePath relativePath
+            register.OperationId <- "register-0"
+            register.ContentBlockAddress <- block.Address
+            register.LogicalOffset <- 0L
+            register.LogicalLength <- int64 payload.Length
+            register.ExpectedPayloadLength <- int64 block.Payload.Length
+
+            let! _ = postUploadSessionDecisionAsync "/storage/registerContentBlockUpload" register
+
+            let uploadUriParameters = Parameters.Storage.GetContentBlockUploadUriParameters()
+            setStorageParameters uploadUriParameters repositoryId correlationId
+            uploadUriParameters.UploadSessionId <- uploadSessionId
+            uploadUriParameters.AuthorizedScope <- normalizedFilePath relativePath
+            uploadUriParameters.ContentBlockAddress <- block.Address
+
+            let! uploadUriResponse = Client.PostAsync("/storage/getContentBlockUploadUri", createJsonContent uploadUriParameters)
+            let! uploadUriBody = uploadUriResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadUriBody)
+            let uploadUri = Uri uploadUriBody
+            let! uploadETag = uploadContentBlockWithSasAsync block.Payload uploadUri
+
+            let confirm = Parameters.Storage.ConfirmContentBlockUploadParameters()
+            setStorageParameters confirm repositoryId correlationId
+            confirm.UploadSessionId <- uploadSessionId
+            confirm.AuthorizedScope <- normalizedFilePath relativePath
+            confirm.OperationId <- "confirm-0"
+            confirm.ContentBlockAddress <- block.Address
+            confirm.Payload <- block.Payload
+            confirm.StoragePlacement <- contentBlockPlacementFromUri uploadUri (Some uploadETag)
+
+            let! _ = postUploadSessionDecisionAsync "/storage/confirmContentBlockUpload" confirm
+
+            let finalize = Parameters.Storage.FinalizeManifestUploadParameters()
+            setStorageParameters finalize repositoryId correlationId
+            finalize.UploadSessionId <- uploadSessionId
+            finalize.AuthorizedScope <- normalizedFilePath relativePath
+            finalize.OperationId <- "finalize"
+            finalize.Manifest <- manifest
+
+            finalize.BlockPayloads <-
+                [|
+                    { Address = block.Address; Payload = block.Payload }
+                |]
+
+            let! finalizeResult = postUploadSessionDecisionAsync "/storage/finalizeManifestUpload" finalize
+            Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
+
+            let fileVersion = createWholeFileVersion relativePath payload
+            fileVersion.ContentReference <- FileContentReference.FileManifest manifest
+            return fileVersion
+        }
+
+    /// Gets the retained zip route artifact bytes.
+    let getZipBytesAsync (repositoryId: string) (directoryVersionId: DirectoryVersionId) =
+        task {
+            let parameters = Parameters.DirectoryVersion.GetZipFileParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.DirectoryVersionId <- $"{directoryVersionId}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/directory/getZipFile", createJsonContent parameters)
+            do! assertProjectionHelperOk response
+            let! returnValue = deserializeContent<GraceReturnValue<UriWithSharedAccessSignature>> response
+            let blobClient = BlobClient(returnValue.ReturnValue)
+            let! download = blobClient.DownloadContentAsync()
+            return download.Value.Content.ToArray()
+        }
+
+    /// Reads a zip entry into a byte array.
+    let readZipEntryBytes (zipBytes: byte array) (entryName: string) =
+        use stream = new MemoryStream(zipBytes, writable = false)
+        use archive = new ZipArchive(stream, ZipArchiveMode.Read)
+        let entry = archive.GetEntry(entryName)
+        Assert.That(entry, Is.Not.Null, $"Expected zip entry '{entryName}'.")
+        use entryStream = entry.Open()
+        use output = new MemoryStream()
+        entryStream.CopyTo(output)
+        output.ToArray()
 
     /// Builds a deterministic same SHA256 prefix directory pair for integration setup fixture for the server integration directory Version assertions.
     let createSameSha256PrefixDirectoryPair repositoryId pathPrefix =
@@ -391,4 +677,47 @@ type DirectoryVersionServer() =
 
             let! fetchedChild = DirectoryVersionServerTestHelpers.getDirectoryVersionAsync repositoryId childId
             DirectoryVersionServerTestHelpers.assertDirectoryVersionDto child fetchedChild
+        }
+
+    /// Verifies the retained zip route preserves bytes for mixed whole-file and FileManifest-backed files.
+    [<Test>]
+    member _.GetZipFilePreservesManifestBackedFileBytes() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let rootId = Guid.NewGuid()
+            let wholeFilePath = RelativePath $"/zip-proof/{Guid.NewGuid():N}/whole.bin"
+            let manifestFilePath = RelativePath $"/zip-proof/{Guid.NewGuid():N}/manifest.bin"
+            let wholeFilePayload = DirectoryVersionServerTestHelpers.deterministicBytes "whole-file-zip-proof" 8192
+            let manifestPayload = DirectoryVersionServerTestHelpers.deterministicBytes "manifest-backed-zip-proof" 220000
+
+            let wholeFileVersion = DirectoryVersionServerTestHelpers.createWholeFileVersion wholeFilePath wholeFilePayload
+
+            let! uploadedWholeFileVersion = DirectoryVersionServerTestHelpers.uploadWholeFileAsync repositoryId wholeFileVersion wholeFilePayload
+
+            let! manifestBackedFileVersion =
+                DirectoryVersionServerTestHelpers.createManifestBackedFileVersionAsync repositoryId manifestFilePath manifestPayload
+
+            let root =
+                DirectoryVersionServerTestHelpers.createDirectoryVersionWithFiles
+                    rootId
+                    repositoryId
+                    "/"
+                    [
+                        uploadedWholeFileVersion
+                        manifestBackedFileVersion
+                    ]
+
+            let! saveResponse =
+                Client.PostAsync("/directory/saveDirectoryVersions", createJsonContent (DirectoryVersionServerTestHelpers.saveParameters repositoryId [ root ]))
+
+            do! DirectoryVersionServerTestHelpers.assertOk saveResponse
+
+            let! zipBytes = DirectoryVersionServerTestHelpers.getZipBytesAsync repositoryId rootId
+
+            let wholeFileEntry = DirectoryVersionServerTestHelpers.readZipEntryBytes zipBytes uploadedWholeFileVersion.RelativePath
+
+            let manifestEntry = DirectoryVersionServerTestHelpers.readZipEntryBytes zipBytes manifestBackedFileVersion.RelativePath
+
+            Assert.That(Convert.ToBase64String(wholeFileEntry), Is.EqualTo(Convert.ToBase64String(wholeFilePayload)))
+            Assert.That(Convert.ToBase64String(manifestEntry), Is.EqualTo(Convert.ToBase64String(manifestPayload)))
         }
