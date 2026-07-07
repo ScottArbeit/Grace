@@ -5,6 +5,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Visibility
 open NodaTime
 open Orleans
 open System
@@ -36,7 +37,10 @@ module Branch =
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
-            initialPermissions: ReferenceType seq
+            initialPermissions: ReferenceType seq *
+            visibility: ResourceVisibility *
+            ownership: ResourceOwnership *
+            creatorUserId: UserId
         | Rebase of basedOn: ReferenceId
         | SetName of newName: BranchName
         | Assign of directoryVersionId: DirectoryVersionId * sha256Hash: Sha256Hash * blake3Hash: Blake3Hash * referenceText: ReferenceText
@@ -75,7 +79,10 @@ module Branch =
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
-            initialPermissions: ReferenceType seq
+            initialPermissions: ReferenceType seq *
+            visibility: ResourceVisibility *
+            ownership: ResourceOwnership *
+            creatorUserId: UserId
         | Rebased of basedOn: ReferenceId
         | NameSet of newName: BranchName
         | Assigned of
@@ -159,6 +166,8 @@ module Branch =
             RepositoryId: RepositoryId
             BasedOn: ReferenceDto
             UserId: UserId
+            Visibility: ResourceVisibility
+            Ownership: ResourceOwnership
             AssignEnabled: bool
             PromotionEnabled: bool
             CommitEnabled: bool
@@ -192,6 +201,8 @@ module Branch =
                 RepositoryId = RepositoryId.Empty
                 BasedOn = ReferenceDto.Default
                 UserId = UserId String.Empty
+                Visibility = ResourceVisibility.Private
+                Ownership = ResourceOwnership.RepositoryOwned
                 AssignEnabled = false
                 PromotionEnabled = false
                 CommitEnabled = false
@@ -219,7 +230,17 @@ module Branch =
 
             let newBranchDto =
                 match branchEventType with
-                | Created (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, initialPermissions) ->
+                | Created (branchId,
+                           branchName,
+                           parentBranchId,
+                           basedOn,
+                           ownerId,
+                           organizationId,
+                           repositoryId,
+                           initialPermissions,
+                           visibility,
+                           ownership,
+                           creatorUserId) ->
                     let basedOnReferenceDto =
                         deserialize<ReferenceDto> (
                             branchEvent
@@ -237,6 +258,9 @@ module Branch =
                             OwnerId = ownerId
                             OrganizationId = organizationId
                             RepositoryId = repositoryId
+                            UserId = creatorUserId
+                            Visibility = visibility
+                            Ownership = ownership
                             CreatedAt = branchEvent.Metadata.Timestamp
                         }
 

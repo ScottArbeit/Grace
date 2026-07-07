@@ -140,7 +140,7 @@ module Branch =
                 try
                     // If the branchEvent is Created or Rebased, we need to get the reference that the branch is based on for updating the branchDto.
                     match branchEvent.Event with
-                    | Created (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
+                    | Created (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions, _, _, _) ->
                         let! basedOnReferenceDto =
                             if basedOn <> ReferenceId.Empty then
                                 task {
@@ -308,7 +308,17 @@ module Branch =
                             return Error(GraceError.Create (getErrorMessage BranchError.DuplicateCorrelationId) metadata.CorrelationId)
                         else
                             match command with
-                            | BranchCommand.Create (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
+                            | BranchCommand.Create (branchId,
+                                                    branchName,
+                                                    parentBranchId,
+                                                    basedOn,
+                                                    ownerId,
+                                                    organizationId,
+                                                    repositoryId,
+                                                    branchPermissions,
+                                                    _,
+                                                    _,
+                                                    _) ->
                                 match branchDto.UpdatedAt with
                                 | Some _ -> return Error(GraceError.Create (BranchError.getErrorMessage BranchAlreadyExists) metadata.CorrelationId)
                                 | None -> return Ok command
@@ -355,7 +365,17 @@ module Branch =
                             let! event =
                                 task {
                                     match command with
-                                    | Create (branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions) ->
+                                    | Create (branchId,
+                                              branchName,
+                                              parentBranchId,
+                                              basedOn,
+                                              ownerId,
+                                              organizationId,
+                                              repositoryId,
+                                              branchPermissions,
+                                              visibility,
+                                              ownership,
+                                              creatorUserId) ->
                                         // Add an initial Rebase reference to this branch that points to the BasedOn reference, unless we're creating `main`.
                                         if branchName <> InitialBranchName then
                                             // We need to get the reference that we're rebasing on, so we can get the DirectoryId and root hashes.
@@ -387,7 +407,21 @@ module Branch =
                                         memoryCache.CreateBranchNameEntry(repositoryId, branchName, branchId)
 
                                         return
-                                            Ok(Created(branchId, branchName, parentBranchId, basedOn, ownerId, organizationId, repositoryId, branchPermissions))
+                                            Ok(
+                                                Created(
+                                                    branchId,
+                                                    branchName,
+                                                    parentBranchId,
+                                                    basedOn,
+                                                    ownerId,
+                                                    organizationId,
+                                                    repositoryId,
+                                                    branchPermissions,
+                                                    visibility,
+                                                    ownership,
+                                                    creatorUserId
+                                                )
+                                            )
                                     | BranchCommand.Rebase referenceId ->
                                         metadata.Properties[ "BasedOn" ] <- $"{referenceId}"
                                         metadata.Properties[ nameof ReferenceId ] <- $"{referenceId}"

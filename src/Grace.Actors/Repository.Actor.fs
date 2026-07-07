@@ -18,6 +18,7 @@ open Grace.Types.Branch
 open Grace.Types.DirectoryVersion
 open Grace.Types.Reminder
 open Grace.Types.Repository
+open Grace.Types.Visibility
 open Grace.Types.Events
 open Grace.Types.Common
 open Grace.Shared.Utilities
@@ -115,7 +116,10 @@ module Repository =
                                         ownerId,
                                         organizationId,
                                         repositoryId,
-                                        initialBranchPermissions
+                                        initialBranchPermissions,
+                                        ResourceVisibility.Private,
+                                        ResourceOwnership.RepositoryOwned,
+                                        UserId String.Empty
                                     )
 
                                 match! branchActor.Handle createInitialBranchCommand repositoryEvent.Metadata with

@@ -13,6 +13,7 @@ open Grace.Types
 open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.PersonalAccessToken
+open Grace.Types.Visibility
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -27,20 +28,76 @@ open System.Threading.Tasks
 /// Groups shared helpers for branch server test helpers.
 module BranchServerTestHelpers =
     /// Asserts ok for integration responses.
-    let private assertOk (response: HttpResponseMessage) =
+    let assertOk (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
         }
 
     /// Asserts bad request grace error for integration responses.
-    let private assertBadRequestGraceError (expectedError: string) (response: HttpResponseMessage) =
+    let assertBadRequestGraceError (expectedError: string) (response: HttpResponseMessage) =
         task {
             let! body = response.Content.ReadAsStringAsync()
             Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), body)
             let error = deserialize<GraceError> body
             Assert.That(error.Error, Is.EqualTo(expectedError))
             Assert.That(error.CorrelationId, Is.Not.Empty)
+        }
+
+    /// Builds an authenticated test client for a specific Grace user id.
+    let createClientWithUserId (userId: string) =
+        let client = new HttpClient(BaseAddress = Client.BaseAddress, Timeout = Client.Timeout)
+        client.DefaultRequestHeaders.Add("x-grace-user-id", userId)
+        client
+
+    /// Grants a repository-scoped role to a test user.
+    let grantRepositoryRoleAsync repositoryId principalId roleId =
+        task {
+            let parameters = Parameters.Access.GrantRoleParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.PrincipalType <- "User"
+            parameters.PrincipalId <- principalId
+            parameters.ScopeKind <- "repo"
+            parameters.RoleId <- roleId
+            parameters.Source <- "test"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/authorize/grant-role", createJsonContent parameters)
+            do! assertOk response
+        }
+
+    /// Creates an isolated repository for branch visibility route tests.
+    let createRepositoryAsync repositoryNamePrefix =
+        task {
+            let repositoryId = $"{Guid.NewGuid()}"
+            let parameters = Parameters.Repository.CreateRepositoryParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.RepositoryName <- $"{repositoryNamePrefix}{Guid.NewGuid():N}"
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/repository/create", createJsonContent parameters)
+            do! assertOk response
+            return repositoryId
+        }
+
+    /// Sets repository visibility through the public route.
+    let setRepositoryVisibilityAsync repositoryId visibility =
+        task {
+            let parameters = Parameters.Repository.SetRepositoryVisibilityParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.Visibility <- visibility
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            do! grantRepositoryRoleAsync repositoryId testUserId "RepositoryAdmin"
+
+            let! response = Client.PostAsync("/repository/setVisibility", createJsonContent parameters)
+            do! assertOk response
         }
 
     /// Builds get branch parameters for route calls.
@@ -116,6 +173,126 @@ module BranchServerTestHelpers =
             Assert.That(returnedBranchId, Is.EqualTo(Guid.Parse(branchId)))
 
             return! waitForBranchAsync repositoryId branchId
+        }
+
+    /// Creates a branch with optional visibility and ownership route inputs.
+    let createBranchWithVisibilityAsync (client: HttpClient) (repositoryId: string) (parentBranch: Branch.BranchDto) (branchName: string) visibility ownership =
+        task {
+            let branchId = $"{Guid.NewGuid()}"
+            let parameters = Parameters.Branch.CreateBranchParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- branchId
+            parameters.BranchName <- branchName
+            parameters.ParentBranchId <- $"{parentBranch.BranchId}"
+            parameters.ParentBranchName <- $"{parentBranch.BranchName}"
+            parameters.Visibility <- visibility
+            parameters.Ownership <- ownership
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/branch/create", createJsonContent parameters)
+            do! assertOk response
+
+            return branchId
+        }
+
+    /// Gets branch response through the supplied test client.
+    let getBranchResponseAsync (client: HttpClient) repositoryId branchId =
+        client.PostAsync("/branch/get", createJsonContent (getBranchParameters repositoryId branchId))
+
+    /// Gets branch response by branch name through the supplied test client.
+    let getBranchByNameResponseAsync (client: HttpClient) repositoryId branchName =
+        let parameters = Parameters.Branch.GetBranchParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchName <- branchName
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync("/branch/get", createJsonContent parameters)
+
+    /// Posts a branch id scoped query route through the supplied test client.
+    let postBranchIdRouteAsync (client: HttpClient) (route: string) repositoryId branchId =
+        let parameters = Parameters.Branch.GetBranchParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync(route, createJsonContent parameters)
+
+    /// Posts a branch reference-list query route through the supplied test client.
+    let postBranchReferencesRouteAsync (client: HttpClient) (route: string) repositoryId branchId =
+        let parameters = Parameters.Branch.GetReferencesParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.MaxCount <- 10
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync(route, createJsonContent parameters)
+
+    /// Posts a branch version route through the supplied test client.
+    let postBranchVersionRouteAsync (client: HttpClient) repositoryId branchId =
+        let parameters = Parameters.Branch.GetBranchVersionParameters()
+        parameters.OwnerId <- ownerId
+        parameters.OrganizationId <- organizationId
+        parameters.RepositoryId <- repositoryId
+        parameters.BranchId <- branchId
+        parameters.CorrelationId <- generateCorrelationId ()
+
+        client.PostAsync("/branch/getVersion", createJsonContent parameters)
+
+    /// Gets repository branches through the supplied test client.
+    let getRepositoryBranchesWithClientAsync (client: HttpClient) repositoryId =
+        task {
+            let parameters = Parameters.Repository.GetBranchesParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.MaxCount <- 100
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/repository/getBranches", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
+        }
+
+    /// Gets a limited repository branch list through the supplied test client.
+    let getRepositoryBranchesWithLimitAsync (client: HttpClient) repositoryId maxCount =
+        task {
+            let parameters = Parameters.Repository.GetBranchesParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.MaxCount <- maxCount
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/repository/getBranches", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
+        }
+
+    /// Gets repository branches by branch id through the supplied test client.
+    let getRepositoryBranchesByBranchIdWithClientAsync (client: HttpClient) repositoryId branchIds =
+        task {
+            let parameters = Parameters.Repository.GetBranchesByBranchIdParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchIds <- branchIds
+            parameters.MaxCount <- 100
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = client.PostAsync("/repository/getBranchesByBranchId", createJsonContent parameters)
+            do! assertOk response
+            let! returnValue = deserializeContent<GraceReturnValue<Branch.BranchDto array>> response
+            return returnValue.ReturnValue
         }
 
     /// Gets repository branches from the running test server.
@@ -966,6 +1143,175 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.assertMissingRepositoryAsync ()
             do! BranchServerTestHelpers.assertMissingBranchAsync repositoryId
+        }
+
+    /// Verifies that private contributor-owned branches are durable for the creator and hidden from repository readers.
+    [<Test>]
+    member _.PrivateContributorOwnedBranchInPublicRepositoryIsHiddenFromObserver() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let adminUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityPublic"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId adminUserId "RepositoryAdmin"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+            use adminClient = BranchServerTestHelpers.createClientWithUserId adminUserId
+
+            let! observerBefore = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBefore |> Array.exactlyOne
+            let branchName = $"PrivateContributor{Guid.NewGuid():N}"
+
+            let! branchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch branchName "Private" "ContributorOwned"
+
+            let! creatorResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId branchId
+            do! BranchServerTestHelpers.assertOk creatorResponse
+            let! creatorReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> creatorResponse
+            let creatorBranch = creatorReturnValue.ReturnValue
+
+            Assert.That(creatorBranch.Visibility, Is.EqualTo(ResourceVisibility.Private))
+            Assert.That(creatorBranch.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
+            Assert.That(creatorBranch.UserId, Is.EqualTo(UserId creatorUserId))
+
+            let! observerGet = BranchServerTestHelpers.getBranchResponseAsync observerClient repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerGet
+
+            let! observerGetByName = BranchServerTestHelpers.getBranchByNameResponseAsync observerClient repositoryId branchName
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerGetByName
+            let! observerGetByNameBody = observerGetByName.Content.ReadAsStringAsync()
+            let observerGetByNameError = deserialize<GraceError> observerGetByNameBody
+
+            Assert.That(observerGetByNameError.Properties.ContainsKey(nameof BranchId), Is.False)
+
+            let! observerEvents = BranchServerTestHelpers.postBranchIdRouteAsync observerClient "/branch/getEvents" repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerEvents
+
+            let! observerReferences = BranchServerTestHelpers.postBranchReferencesRouteAsync observerClient "/branch/getReferences" repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerReferences
+
+            let! observerPromotions = BranchServerTestHelpers.postBranchReferencesRouteAsync observerClient "/branch/getPromotions" repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerPromotions
+
+            let! observerVersion = BranchServerTestHelpers.postBranchVersionRouteAsync observerClient repositoryId branchId
+            do! BranchServerTestHelpers.assertBadRequestGraceError (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) observerVersion
+
+            let! observerAfter = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+
+            Assert.That(observerAfter.Length, Is.EqualTo(observerBefore.Length))
+
+            Assert.That(
+                observerAfter
+                |> Array.exists (fun branch -> branch.BranchId = creatorBranch.BranchId),
+                Is.False
+            )
+
+            let! observerByBranchId =
+                BranchServerTestHelpers.getRepositoryBranchesByBranchIdWithClientAsync observerClient repositoryId [| creatorBranch.BranchId |]
+
+            Assert.That(observerByBranchId, Is.Empty)
+
+            let visibleBranchName = $"VisibleRepositoryOwned{Guid.NewGuid():N}"
+
+            let! visibleBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch visibleBranchName "Public" "RepositoryOwned"
+
+            let! visibleBranch = BranchServerTestHelpers.waitForBranchAsync repositoryId visibleBranchId
+            let! observerLimited = BranchServerTestHelpers.getRepositoryBranchesWithLimitAsync observerClient repositoryId 2
+            Assert.That(observerLimited.Length, Is.EqualTo(2))
+
+            Assert.That(
+                observerLimited
+                |> Array.exists (fun branch -> branch.BranchId = visibleBranch.BranchId),
+                Is.True
+            )
+
+            let! adminGet = BranchServerTestHelpers.getBranchResponseAsync adminClient repositoryId branchId
+            do! BranchServerTestHelpers.assertOk adminGet
+
+            let! adminBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync adminClient repositoryId
+
+            Assert.That(
+                adminBranches
+                |> Array.exists (fun branch -> branch.BranchId = creatorBranch.BranchId),
+                Is.True
+            )
+        }
+
+    /// Verifies that regular branches in public repositories default to public repository-owned visibility.
+    [<Test>]
+    member _.RegularPublicRepositoryBranchDefaultsPublicRepositoryOwned() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityDefaultPublic"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+
+            let! observerBefore = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBefore |> Array.exactlyOne
+            let branchName = $"PublicDefault{Guid.NewGuid():N}"
+
+            let! branchId = BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch branchName String.Empty String.Empty
+
+            let! observerResponse = BranchServerTestHelpers.getBranchResponseAsync observerClient repositoryId branchId
+            do! BranchServerTestHelpers.assertOk observerResponse
+            let! observerReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> observerResponse
+            let branch = observerReturnValue.ReturnValue
+
+            Assert.That(branch.Visibility, Is.EqualTo(ResourceVisibility.Public))
+            Assert.That(branch.Ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
+
+            let! observerAfter = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            Assert.That(observerAfter.Length, Is.EqualTo(observerBefore.Length + 1))
+
+            Assert.That(
+                observerAfter
+                |> Array.exists (fun candidate -> candidate.BranchId = branch.BranchId),
+                Is.True
+            )
+        }
+
+    /// Verifies that regular branches in private repositories default to private repository-owned visibility.
+    [<Test>]
+    member _.RegularPrivateRepositoryBranchDefaultsPrivateRepositoryOwned() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityDefaultPrivate"
+
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+
+            let! observerBefore = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBefore |> Array.exactlyOne
+            let branchName = $"PrivateDefault{Guid.NewGuid():N}"
+
+            let! branchId = BranchServerTestHelpers.createBranchWithVisibilityAsync creatorClient repositoryId parentBranch branchName String.Empty String.Empty
+
+            let! observerResponse = BranchServerTestHelpers.getBranchResponseAsync observerClient repositoryId branchId
+            do! BranchServerTestHelpers.assertOk observerResponse
+            let! observerReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> observerResponse
+            let branch = observerReturnValue.ReturnValue
+
+            Assert.That(branch.Visibility, Is.EqualTo(ResourceVisibility.Private))
+            Assert.That(branch.Ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
+
+            let! observerAfter = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            Assert.That(observerAfter.Length, Is.EqualTo(observerBefore.Length + 1))
         }
 
     /// Verifies the save with directory version ID and SHA prefix hydrates full root hashes scenario.

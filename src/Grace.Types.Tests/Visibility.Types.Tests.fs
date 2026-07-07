@@ -26,11 +26,11 @@ type private BranchCreateVisibilityParameters() =
 [<Parallelizable(ParallelScope.All)>]
 type VisibilityContractTests() =
 
-    /// Verifies that branch, reference, and promotion-set DTOs defer serialized visibility and ownership fields.
+    /// Verifies that branch DTOs now expose implemented visibility fields while later surfaces still defer them.
     [<Test>]
-    member _.CurrentDtosDoNotExposeDeferredVisibilityOrOwnershipFields() =
-        Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Visibility"), Is.Null)
-        Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Ownership"), Is.Null)
+    member _.CurrentDtosExposeOnlyImplementedBranchVisibilityAndOwnershipFields() =
+        Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Visibility"), Is.Not.Null)
+        Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Ownership"), Is.Not.Null)
         Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Visibility"), Is.Null)
         Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Ownership"), Is.Null)
         Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Visibility"), Is.Null)
@@ -44,11 +44,11 @@ type VisibilityContractTests() =
         Assert.That(typeof<DirectoryVersion>.GetProperty ("Visibility"), Is.Null)
         Assert.That(typeof<DirectoryVersion>.GetProperty ("Ownership"), Is.Null)
 
-    /// Verifies that current create endpoints do not expose no-op visibility inputs before route behavior exists.
+    /// Verifies that branch create exposes implemented visibility inputs while later routes do not accept no-ops.
     [<Test>]
-    member _.CurrentCreateParametersDoNotExposeVisibilityOrOwnershipFields() =
-        Assert.That(typeof<CreateBranchParameters>.GetProperty ("Visibility"), Is.Null)
-        Assert.That(typeof<CreateBranchParameters>.GetProperty ("Ownership"), Is.Null)
+    member _.CurrentCreateParametersExposeOnlyImplementedBranchVisibilityAndOwnershipFields() =
+        Assert.That(typeof<CreateBranchParameters>.GetProperty ("Visibility"), Is.Not.Null)
+        Assert.That(typeof<CreateBranchParameters>.GetProperty ("Ownership"), Is.Not.Null)
         Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Visibility"), Is.Null)
         Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Ownership"), Is.Null)
 
