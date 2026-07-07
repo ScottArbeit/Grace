@@ -14582,9 +14582,9 @@ module WatchTests =
             Watch.isGraceWatchResyncPendingForWatchTests ()
             |> should equal false)
 
-    /// Verifies that recursive directory deletion rechecks child boundaries before removing the tree.
+    /// Verifies that recursive directory deletion verifies the full tree before removing children.
     [<Test>]
-    let ``current branch materialization target guard blocks racing child before directory delete`` () =
+    let ``current branch materialization target guard verifies directory tree before deletion`` () =
         withTempRepo (fun root ->
             Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
 
@@ -14597,7 +14597,6 @@ module WatchTests =
             let deletedChildPath = Path.Combine(deletedDirectoryPath, "old-child.txt")
             let nestedDirectoryPath = Path.Combine(deletedDirectoryPath, "nested")
             let nestedChildPath = Path.Combine(nestedDirectoryPath, "old-nested-child.txt")
-            let racingChildPath = Path.Combine(deletedDirectoryPath, "racing-child.txt")
 
             Directory.CreateDirectory(deletedDirectoryPath)
             |> ignore
@@ -14686,26 +14685,166 @@ module WatchTests =
                     RootDirectoryBlake3Hash = remoteRoot.Blake3Hash
                 }
 
-            let directoryVerifyCount = ref 0
+            let verifiedTargets = List<string>()
+            let parentDirectoryVerificationCount = ref 0
 
             let result =
                 (Services.updateWorkingDirectoryWithTargetGuard previousStatus updatedStatus [| remoteDto |] (generateCorrelationId ()) (fun mutation ->
                     task {
+                        verifiedTargets.Add(Path.GetRelativePath(root, mutation.FullPath))
+
                         if
                             mutation.IsDirectory
                             && String.Equals(mutation.FullPath, deletedDirectoryPath, StringComparison.OrdinalIgnoreCase)
                         then
-                            incr directoryVerifyCount
+                            incr parentDirectoryVerificationCount
 
-                            if directoryVerifyCount.Value = 2 then
-                                File.WriteAllText(racingChildPath, "racing child after directory boundary")
-
-                        return Ok()
+                            if parentDirectoryVerificationCount.Value = 1 then
+                                return Ok()
+                            else
+                                return Error(GraceError.Create "test-controlled parent directory verification failure" (generateCorrelationId ()))
+                        else
+                            return Ok()
                     }))
                     .GetAwaiter()
                     .GetResult()
 
             result.IsError |> should equal true
+
+            verifiedTargets
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    "remote-deleted-dir"
+                    "remote-deleted-dir\\nested\\old-nested-child.txt"
+                    "remote-deleted-dir\\old-child.txt"
+                    "remote-deleted-dir\\nested"
+                    "remote-deleted-dir"
+                |]
+
+            File.ReadAllText(deletedChildPath)
+            |> should equal "old clean child"
+
+            File.ReadAllText(nestedChildPath)
+            |> should equal "old clean nested child"
+
+            Directory.Exists(nestedDirectoryPath)
+            |> should equal true
+
+            Directory.Exists(deletedDirectoryPath)
+            |> should equal true)
+
+    /// Verifies that recursive directory deletion can remove the tree after every target is verified.
+    [<Test>]
+    let ``current branch materialization target guard deletes directory tree after verification`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, _ = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let localRootId = Guid.NewGuid()
+            let deletedDirectoryId = Guid.NewGuid()
+            let remoteRootId = Guid.NewGuid()
+            let deletedDirectoryRelativePath = RelativePath "remote-deleted-dir"
+            let deletedDirectoryPath = Path.Combine(root, string deletedDirectoryRelativePath)
+            let deletedChildPath = Path.Combine(deletedDirectoryPath, "old-child.txt")
+            let nestedDirectoryPath = Path.Combine(deletedDirectoryPath, "nested")
+            let nestedChildPath = Path.Combine(nestedDirectoryPath, "old-nested-child.txt")
+
+            Directory.CreateDirectory(deletedDirectoryPath)
+            |> ignore
+
+            Directory.CreateDirectory(nestedDirectoryPath)
+            |> ignore
+
+            File.WriteAllText(deletedChildPath, "old clean child")
+            File.WriteAllText(nestedChildPath, "old clean nested child")
+
+            let previousChild =
+                (Services.createLocalFileVersion (FileInfo(deletedChildPath)))
+                    .GetAwaiter()
+                    .GetResult()
+                    .Value
+
+            let previousDeletedDirectory =
+                LocalDirectoryVersion.CreateWithHashes
+                    deletedDirectoryId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    deletedDirectoryRelativePath
+                    (Sha256Hash "directory-delete-child-local")
+                    (Blake3Hash "directory-delete-child-local-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<LocalFileVersion>([| previousChild |]))
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousRoot =
+                LocalDirectoryVersion.CreateWithHashes
+                    localRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "directory-delete-root-local")
+                    (Blake3Hash "directory-delete-root-local-blake3")
+                    (List<DirectoryVersionId>([| deletedDirectoryId |]))
+                    (List<LocalFileVersion>())
+                    previousChild.Size
+                    DateTime.UtcNow
+
+            let previousIndex = GraceIndex()
+
+            previousIndex.TryAdd(localRootId, previousRoot)
+            |> ignore
+
+            previousIndex.TryAdd(deletedDirectoryId, previousDeletedDirectory)
+            |> ignore
+
+            let previousStatus =
+                { GraceStatus.Default with
+                    Index = previousIndex
+                    RootDirectoryId = localRootId
+                    RootDirectorySha256Hash = previousRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = previousRoot.Blake3Hash
+                }
+
+            let remoteRoot =
+                DirectoryVersion.CreateWithHashes
+                    remoteRootId
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    currentRepositoryId
+                    Constants.RootDirectoryPath
+                    (Sha256Hash "directory-delete-root-remote")
+                    (Blake3Hash "directory-delete-root-remote-blake3")
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>())
+                    0L
+
+            let remoteDto = { DirectoryVersionDto.Default with DirectoryVersion = remoteRoot; RecursiveSize = 0L }
+            let updatedRoot = remoteRoot.ToLocalDirectoryVersion DateTime.UtcNow
+            let updatedIndex = GraceIndex()
+
+            updatedIndex.TryAdd(remoteRootId, updatedRoot)
+            |> ignore
+
+            let updatedStatus =
+                { GraceStatus.Default with
+                    Index = updatedIndex
+                    RootDirectoryId = remoteRootId
+                    RootDirectorySha256Hash = remoteRoot.Sha256Hash
+                    RootDirectoryBlake3Hash = remoteRoot.Blake3Hash
+                }
+
+            let result =
+                (Services.updateWorkingDirectoryWithTargetGuard previousStatus updatedStatus [| remoteDto |] (generateCorrelationId ()) (fun _ ->
+                    Task.FromResult(Ok())))
+                    .GetAwaiter()
+                    .GetResult()
+
+            result.IsOk |> should equal true
 
             File.Exists(deletedChildPath)
             |> should equal false
@@ -14713,8 +14852,8 @@ module WatchTests =
             Directory.Exists(nestedDirectoryPath)
             |> should equal false
 
-            File.ReadAllText(racingChildPath)
-            |> should equal "racing child after directory boundary")
+            Directory.Exists(deletedDirectoryPath)
+            |> should equal false)
 
     /// Verifies that anonymous pending consumption uses root identity instead of treating every empty ReferenceId as equal.
     [<Test>]
@@ -14921,6 +15060,222 @@ module WatchTests =
             downloadBatches.Count |> should equal 0
             appliedPayloads.Count |> should equal 0
             publishedStatuses.Count |> should equal 0)
+
+    /// Verifies that a retired anonymous pending root blocks one duplicate stale notification for that same root.
+    [<Test>]
+    let ``current branch materialization local clean publication records anonymous retired root`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let olderLocalRootId = Guid.NewGuid()
+            let newerLocalRootId = Guid.NewGuid()
+
+            let olderLocalStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = olderLocalRootId
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-retired-local"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-retired-local-blake3"
+                }
+
+            let newerLocalStatus =
+                { GraceStatus.Default with
+                    RootDirectoryId = newerLocalRootId
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-retired-newer-local"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-retired-newer-local-blake3"
+                }
+
+            let retiredAnonymousPayload =
+                { currentBranchReferencePayload
+                      currentRepositoryId
+                      currentBranchId
+                      olderLocalRootId
+                      olderLocalStatus.RootDirectorySha256Hash
+                      olderLocalStatus.RootDirectoryBlake3Hash with
+                    ReferenceId = ReferenceId.Empty
+                }
+
+            Watch.recordPublishedCurrentBranchCleanRootForWatchTests olderLocalStatus
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                retiredAnonymousPayload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            Watch.recordPublishedCurrentBranchCleanRootForWatchTests newerLocalStatus
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0
+
+            let cleanStatusAfterLocalSave =
+                { liveWatchStatus newerLocalRootId with
+                    RootDirectorySha256Hash = newerLocalStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = newerLocalStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| newerLocalRootId |])
+                }
+
+            let duplicateOperations, duplicateFetchedRoots, duplicateDownloadBatches, duplicateAppliedPayloads, duplicatePublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None cleanStatusAfterLocalSave))
+                    newerLocalStatus
+                    olderLocalStatus
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests duplicateOperations true [| retiredAnonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            duplicateFetchedRoots.Count |> should equal 0
+            duplicateDownloadBatches.Count |> should equal 0
+            duplicateAppliedPayloads.Count |> should equal 0
+            duplicatePublishedStatuses.Count |> should equal 0
+
+            let unrelatedAnonymousPayload =
+                { retiredAnonymousPayload with
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "anonymous-retired-unrelated"
+                    Blake3Hash = Blake3Hash "anonymous-retired-unrelated-blake3"
+                }
+
+            let unrelatedOperations, unrelatedFetchedRoots, unrelatedDownloadBatches, unrelatedAppliedPayloads, unrelatedPublishedStatuses =
+                recordingMaterializationOperations
+                    (ref (materializationInspection None cleanStatusAfterLocalSave))
+                    newerLocalStatus
+                    { olderLocalStatus with
+                        RootDirectoryId = unrelatedAnonymousPayload.DirectoryId
+                        RootDirectorySha256Hash = unrelatedAnonymousPayload.Sha256Hash
+                        RootDirectoryBlake3Hash = unrelatedAnonymousPayload.Blake3Hash
+                    }
+                    [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests unrelatedOperations true [| unrelatedAnonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            unrelatedFetchedRoots
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    unrelatedAnonymousPayload.DirectoryId
+                |]
+
+            unrelatedDownloadBatches.Count |> should equal 1
+
+            unrelatedAppliedPayloads
+            |> Seq.map (fun payload -> payload.DirectoryId)
+            |> Seq.toArray
+            |> should
+                equal
+                [|
+                    unrelatedAnonymousPayload.DirectoryId
+                |]
+
+            unrelatedPublishedStatuses.Count |> should equal 1)
+
+    /// Verifies that a newer Reference records stale authority for an anonymous pending root it supersedes.
+    [<Test>]
+    let ``current branch materialization reference supersession records anonymous retired root`` () =
+        withTempRepo (fun root ->
+            Watch.clearPendingCurrentBranchMaterializationsForWatchTests ()
+
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let olderRootId = Guid.NewGuid()
+            let newerRootId = Guid.NewGuid()
+
+            let olderStatus =
+                { GraceStatus.Default with
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-reference-older-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-reference-older-root-blake3"
+                    RootDirectoryId = olderRootId
+                }
+
+            let newerStatus =
+                { GraceStatus.Default with
+                    RootDirectorySha256Hash = Sha256Hash "anonymous-reference-newer-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "anonymous-reference-newer-root-blake3"
+                    RootDirectoryId = newerRootId
+                }
+
+            let olderAnonymousPayload =
+                { currentBranchReferencePayload
+                      currentRepositoryId
+                      currentBranchId
+                      olderRootId
+                      olderStatus.RootDirectorySha256Hash
+                      olderStatus.RootDirectoryBlake3Hash with
+                    ReferenceId = ReferenceId.Empty
+                }
+
+            let newerReferencePayload =
+                currentBranchReferencePayload
+                    currentRepositoryId
+                    currentBranchId
+                    newerRootId
+                    newerStatus.RootDirectorySha256Hash
+                    newerStatus.RootDirectoryBlake3Hash
+
+            Watch.rememberPendingCurrentBranchMaterializationForWatchTests
+                olderAnonymousPayload
+                Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            let olderWatchStatus =
+                { liveWatchStatus olderRootId with
+                    RootDirectorySha256Hash = olderStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = olderStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| olderRootId |])
+                }
+
+            let inspection = ref (materializationInspection None olderWatchStatus)
+
+            let newerOperations, newerFetchedRoots, _, newerAppliedPayloads, newerPublishedStatuses =
+                recordingMaterializationOperations inspection olderStatus newerStatus [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests newerOperations true [| newerReferencePayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            newerFetchedRoots
+            |> Seq.toArray
+            |> should equal [| newerRootId |]
+
+            newerAppliedPayloads
+            |> Seq.map (fun payload -> payload.ReferenceId)
+            |> Seq.toArray
+            |> should equal [| newerReferencePayload.ReferenceId |]
+
+            newerPublishedStatuses.Count |> should equal 1
+
+            Watch
+                .pendingCurrentBranchMaterializationStatusForWatchTests()
+                .Count
+            |> should equal 0
+
+            let newerWatchStatus =
+                { liveWatchStatus newerRootId with
+                    RootDirectorySha256Hash = newerStatus.RootDirectorySha256Hash
+                    RootDirectoryBlake3Hash = newerStatus.RootDirectoryBlake3Hash
+                    DirectoryIds = HashSet<DirectoryVersionId>([| newerRootId |])
+                }
+
+            inspection.Value <- materializationInspection None newerWatchStatus
+
+            let duplicateOperations, duplicateFetchedRoots, duplicateDownloadBatches, duplicateAppliedPayloads, duplicatePublishedStatuses =
+                recordingMaterializationOperations inspection newerStatus olderStatus [| DirectoryVersionDto.Default |]
+
+            (Watch.processCurrentBranchReferenceMaterializationForWatchTests duplicateOperations true [| olderAnonymousPayload |])
+                .GetAwaiter()
+                .GetResult()
+            |> ignore
+
+            duplicateFetchedRoots.Count |> should equal 0
+            duplicateDownloadBatches.Count |> should equal 0
+            duplicateAppliedPayloads.Count |> should equal 0
+            duplicatePublishedStatuses.Count |> should equal 0)
 
     /// Verifies that a delayed older root is rejected even after newer materialization replaces the tree.
     [<Test>]

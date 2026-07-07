@@ -3316,7 +3316,9 @@ module Watch =
 
             if payload.ReferenceId <> ReferenceId.Empty then
                 entry.ReferenceIds.Add(payload.ReferenceId)
-                |> ignore)
+                |> ignore
+            else
+                entry.AnonymousRejectionsRemaining <- max entry.AnonymousRejectionsRemaining 1)
 
     /// Records a clean root that a successful current-branch materialization moved past when no Reference identity is available.
     let private recordSupersededCurrentBranchMaterializationRoot (authority: CurrentBranchMaterializationAuthority) (updatedStatus: GraceStatus) =

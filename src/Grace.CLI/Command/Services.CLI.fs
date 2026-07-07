@@ -3150,10 +3150,24 @@ module Services =
                             |> Seq.toArray
                             |> fun directories -> Array.append directories [| directoryInfo |]
 
-                        for fileInfo in childFiles do
+                        let targetsToVerify =
+                            [|
+                                for fileInfo in childFiles do
+                                    fileInfo.FullName, false
+
+                                for childDirectoryInfo in childDirectories do
+                                    childDirectoryInfo.FullName, true
+                            |]
+
+                        for fullPath, isDirectory in targetsToVerify do
                             if resultError.IsNone then
-                                match! verifyTarget fileInfo.FullName false true with
-                                | Ok () ->
+                                match! verifyTarget fullPath isDirectory true with
+                                | Ok () -> ()
+                                | Error _ -> ()
+
+                        if resultError.IsNone then
+                            for fileInfo in childFiles do
+                                if resultError.IsNone then
                                     try
                                         fileInfo.Delete()
                                     with
@@ -3171,12 +3185,9 @@ module Services =
                                                     $"Working directory update could not delete verified child file {fileInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
                                                     correlationId
                                             )
-                                | Error _ -> ()
 
-                        for childDirectoryInfo in childDirectories do
-                            if resultError.IsNone then
-                                match! verifyTarget childDirectoryInfo.FullName true true with
-                                | Ok () ->
+                            for childDirectoryInfo in childDirectories do
+                                if resultError.IsNone then
                                     try
                                         childDirectoryInfo.Delete(false)
                                     with
@@ -3194,7 +3205,6 @@ module Services =
                                                     $"Working directory update could not delete verified directory {childDirectoryInfo.FullName}; retry after the directory tree can be re-evaluated: {ex.Message}"
                                                     correlationId
                                             )
-                                | Error _ -> ()
                     with
                     | :? IOException as ex ->
                         resultError <-
