@@ -8,7 +8,10 @@ module Visibility =
 
     /// Carries visibility and ownership strings for public surfaces that explicitly implement those behaviors.
     type VisibilityOwnershipParameters() =
+        /// Accepted visibility input for implemented public surfaces; deferred values such as security embargoes are rejected.
         member val public Visibility = String.Empty with get, set
+
+        /// Accepted ownership input for implemented public surfaces; arbitrary contributor owner identifiers are rejected.
         member val public Ownership = String.Empty with get, set
 
         /// Attempts to parse the implemented visibility input without accepting deferred audience states.

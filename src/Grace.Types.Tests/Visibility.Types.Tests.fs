@@ -2,14 +2,10 @@ namespace Grace.Types.Tests
 
 open Grace.Shared
 open Grace.Shared.Constants
-open Grace.Shared.Utilities
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Parameters.PromotionSet
 open Grace.Shared.Parameters.Visibility
-open Grace.Types.Branch
 open Grace.Types.Common
-open Grace.Types.PromotionSet
-open Grace.Types.Reference
 open Grace.Types.Visibility
 open MessagePack
 open NUnit.Framework
@@ -19,15 +15,15 @@ open System
 [<Parallelizable(ParallelScope.All)>]
 type VisibilityContractTests() =
 
-    /// Verifies that branch, reference, and promotion-set defaults expose the implemented public repository-owned scaffold.
+    /// Verifies that branch, reference, and promotion-set DTOs defer serialized visibility and ownership fields.
     [<Test>]
-    member _.DefaultDtosUsePublicRepositoryOwnedScaffoldValues() =
-        Assert.That(BranchDto.Default.Visibility, Is.EqualTo(ResourceVisibility.Public))
-        Assert.That(BranchDto.Default.Ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
-        Assert.That(ReferenceDto.Default.Visibility, Is.EqualTo(ResourceVisibility.Public))
-        Assert.That(ReferenceDto.Default.Ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
-        Assert.That(PromotionSetDto.Default.Visibility, Is.EqualTo(ResourceVisibility.Public))
-        Assert.That(PromotionSetDto.Default.Ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
+    member _.CurrentDtosDoNotExposeDeferredVisibilityOrOwnershipFields() =
+        Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Visibility"), Is.Null)
+        Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Ownership"), Is.Null)
+        Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Visibility"), Is.Null)
+        Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Ownership"), Is.Null)
+        Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Visibility"), Is.Null)
+        Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Ownership"), Is.Null)
 
     /// Verifies that content-object contracts do not gain global visibility or ownership fields.
     [<Test>]
@@ -44,26 +40,6 @@ type VisibilityContractTests() =
         Assert.That(typeof<CreateBranchParameters>.GetProperty ("Ownership"), Is.Null)
         Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Visibility"), Is.Null)
         Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Ownership"), Is.Null)
-
-    /// Verifies that supported visibility and ownership values round-trip through JSON field serialization.
-    [<Test>]
-    member _.SupportedDtoFieldsRoundTripThroughJson() =
-        let branchDto = { BranchDto.Default with Visibility = ResourceVisibility.Private; Ownership = ResourceOwnership.ContributorOwned }
-
-        let referenceDto = { ReferenceDto.Default with Visibility = ResourceVisibility.Private; Ownership = ResourceOwnership.ContributorOwned }
-
-        let promotionSetDto = { PromotionSetDto.Default with Visibility = ResourceVisibility.Private; Ownership = ResourceOwnership.ContributorOwned }
-
-        let branchJsonRoundTrip = deserialize<BranchDto> (serialize branchDto)
-        let referenceJsonRoundTrip = deserialize<ReferenceDto> (serialize referenceDto)
-        let promotionSetJsonRoundTrip = deserialize<PromotionSetDto> (serialize promotionSetDto)
-
-        Assert.That(branchJsonRoundTrip.Visibility, Is.EqualTo(ResourceVisibility.Private))
-        Assert.That(branchJsonRoundTrip.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
-        Assert.That(referenceJsonRoundTrip.Visibility, Is.EqualTo(ResourceVisibility.Private))
-        Assert.That(referenceJsonRoundTrip.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
-        Assert.That(promotionSetJsonRoundTrip.Visibility, Is.EqualTo(ResourceVisibility.Private))
-        Assert.That(promotionSetJsonRoundTrip.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
 
     /// Verifies that shared visibility and ownership values round-trip through MessagePack.
     [<Test>]

@@ -3,7 +3,6 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
-open Grace.Types.Visibility
 open NodaTime
 open Orleans
 open System
@@ -91,8 +90,6 @@ module Reference =
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
             BranchId: BranchId
-            Visibility: ResourceVisibility
-            Ownership: ResourceOwnership
             DirectoryId: DirectoryVersionId
             Sha256Hash: Sha256Hash
             Blake3Hash: Blake3Hash
@@ -115,8 +112,6 @@ module Reference =
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
                 BranchId = BranchId.Empty
-                Visibility = ResourceVisibility.Default
-                Ownership = ResourceOwnership.Default
                 DirectoryId = DirectoryVersionId.Empty
                 Sha256Hash = Sha256Hash String.Empty
                 Blake3Hash = Blake3Hash String.Empty
