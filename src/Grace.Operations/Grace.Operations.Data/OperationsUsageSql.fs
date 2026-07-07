@@ -120,7 +120,7 @@ SELECT TOP (@BatchSize)
     ArchiveBlobName,
     ArchiveChecksumSha256Hex,
     ArchiveByteLength
-FROM ops.RawUsageFact WITH (READPAST)
+FROM ops.RawUsageFact WITH (READPAST, READCOMMITTEDLOCK)
 WHERE ObservedAtUtc < @ObservedBeforeUtc
 AND
 (
