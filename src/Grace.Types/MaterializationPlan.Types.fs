@@ -4,6 +4,7 @@ open Grace.Types.Common
 open Orleans
 open System
 open System.Collections.Generic
+open System.IO
 
 /// Contains Materialization Plan request, response, artifact, and cache-selection contracts.
 module MaterializationPlan =
@@ -321,6 +322,28 @@ module MaterializationPlan =
         /// Returns true when the supplied enum value is one of the known public artifact source kinds.
         let isSupportedArtifactSourceKind (kind: MaterializationArtifactSourceKind) = Enum.IsDefined(typeof<MaterializationArtifactSourceKind>, kind)
 
+        /// Returns true when a whole-file artifact path is normalized for repository-relative materialization.
+        let isNormalizedRepositoryRelativePath (relativePath: string) =
+            not (String.IsNullOrWhiteSpace relativePath)
+            && not (Path.IsPathRooted relativePath)
+            && not (relativePath.Contains('\\'))
+            && relativePath.Split('/', StringSplitOptions.None)
+               |> Array.forall (fun segment ->
+                   not (String.IsNullOrWhiteSpace segment)
+                   && segment <> "."
+                   && segment <> "..")
+
+        /// Rejects public cache controls that require cache use while also asking Grace to bypass cache entries.
+        let rejectCacheRequiredBypass
+            (executionMode: MaterializationExecutionMode)
+            (cacheSelection: MaterializationCacheSelection)
+            (errors: ResizeArray<string>)
+            =
+            if executionMode = MaterializationExecutionMode.CacheRequired
+               && not (isNull (box cacheSelection))
+               && cacheSelection.SelectionKind = MaterializationCacheSelectionKind.BypassCache then
+                errors.Add("CacheRequired materialization must not use BypassCache selection.")
+
         /// Validates the target selector before server-side target-root resolution.
         let validateTargetSelector (selector: MaterializationTargetSelector) =
             let errors = ResizeArray<string>()
@@ -405,6 +428,9 @@ module MaterializationPlan =
                         match source.DirectUri with
                         | Some uri when not (String.IsNullOrWhiteSpace uri) -> ()
                         | _ -> errors.Add("Artifact DirectUri is required for DirectUri sources.")
+
+                        if source.CacheKey.IsSome then
+                            errors.Add("Artifact CacheKey must be empty for DirectUri sources.")
                     | MaterializationArtifactSourceKind.CacheEntry ->
                         match source.CacheKey with
                         | Some cacheKey when not (String.IsNullOrWhiteSpace cacheKey) -> ()
@@ -415,6 +441,9 @@ module MaterializationPlan =
                     | MaterializationArtifactSourceKind.Deferred ->
                         if source.DirectUri.IsSome then
                             errors.Add("Artifact DirectUri must be empty for Deferred sources.")
+
+                        if source.CacheKey.IsSome then
+                            errors.Add("Artifact CacheKey must be empty for Deferred sources.")
                     | _ -> errors.Add($"Artifact SourceKind '{int source.SourceKind}' is not supported.")
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
@@ -432,6 +461,36 @@ module MaterializationPlan =
                 | Some storagePoolId when not (String.IsNullOrWhiteSpace storagePoolId) -> ()
                 | _ -> errors.Add("Artifact StoragePoolId is required for CAS artifact descriptors.")
 
+            let rejectRelativePath artifactKind =
+                if descriptor.RelativePath.IsSome then
+                    errors.Add($"Artifact RelativePath must be empty for {artifactKind} descriptors.")
+
+            let rejectHashes artifactKind =
+                if descriptor.Sha256Hash.IsSome then
+                    errors.Add($"Artifact Sha256Hash must be empty for {artifactKind} descriptors.")
+
+                if descriptor.Blake3Hash.IsSome then
+                    errors.Add($"Artifact Blake3Hash must be empty for {artifactKind} descriptors.")
+
+            let rejectManifestAddress artifactKind =
+                if descriptor.ManifestAddress.IsSome then
+                    errors.Add($"Artifact ManifestAddress must be empty for {artifactKind} descriptors.")
+
+            let rejectContentBlockAddress artifactKind =
+                if descriptor.ContentBlockAddress.IsSome then
+                    errors.Add($"Artifact ContentBlockAddress must be empty for {artifactKind} descriptors.")
+
+            let rejectStoragePool artifactKind =
+                if descriptor.StoragePoolId.IsSome then
+                    errors.Add($"Artifact StoragePoolId must be empty for {artifactKind} descriptors.")
+
+            let rejectNonRootDescriptorIdentity artifactKind =
+                rejectRelativePath artifactKind
+                rejectHashes artifactKind
+                rejectManifestAddress artifactKind
+                rejectContentBlockAddress artifactKind
+                rejectStoragePool artifactKind
+
             if isNull (box descriptor) then
                 errors.Add("Artifact descriptor is required.")
             else
@@ -444,18 +503,25 @@ module MaterializationPlan =
                 else
                     match descriptor.ArtifactKind with
                     | MaterializationArtifactKind.DirectoryVersionZip
-                    | MaterializationArtifactKind.RecursiveDirectoryMetadata -> requireTargetRoot ()
+                    | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                        requireTargetRoot ()
+                        rejectNonRootDescriptorIdentity (string descriptor.ArtifactKind)
                     | MaterializationArtifactKind.WholeFileContent ->
                         requireTargetRoot ()
 
                         match descriptor.RelativePath with
-                        | Some relativePath when not (String.IsNullOrWhiteSpace relativePath) -> ()
+                        | Some relativePath when isNormalizedRepositoryRelativePath relativePath -> ()
+                        | Some _ -> errors.Add("Artifact RelativePath must be a normalized repository-relative path for WholeFileContent descriptors.")
                         | _ -> errors.Add("Artifact RelativePath is required for WholeFileContent descriptors.")
 
                         match descriptor.Sha256Hash, descriptor.Blake3Hash with
                         | Some sha256Hash, _ when not (String.IsNullOrWhiteSpace sha256Hash) -> ()
                         | _, Some blake3Hash when not (String.IsNullOrWhiteSpace blake3Hash) -> ()
                         | _ -> errors.Add("Artifact Sha256Hash or Blake3Hash is required for WholeFileContent descriptors.")
+
+                        rejectManifestAddress (string descriptor.ArtifactKind)
+                        rejectContentBlockAddress (string descriptor.ArtifactKind)
+                        rejectStoragePool (string descriptor.ArtifactKind)
                     | MaterializationArtifactKind.FileManifest ->
                         requireTargetRoot ()
 
@@ -464,6 +530,9 @@ module MaterializationPlan =
                         | _ -> errors.Add("Artifact ManifestAddress is required for FileManifest descriptors.")
 
                         requireStoragePool ()
+                        rejectRelativePath (string descriptor.ArtifactKind)
+                        rejectHashes (string descriptor.ArtifactKind)
+                        rejectContentBlockAddress (string descriptor.ArtifactKind)
                     | MaterializationArtifactKind.ContentBlock ->
                         requireTargetRoot ()
 
@@ -472,6 +541,9 @@ module MaterializationPlan =
                         | _ -> errors.Add("Artifact ContentBlockAddress is required for ContentBlock descriptors.")
 
                         requireStoragePool ()
+                        rejectRelativePath (string descriptor.ArtifactKind)
+                        rejectHashes (string descriptor.ArtifactKind)
+                        rejectManifestAddress (string descriptor.ArtifactKind)
                     | _ -> errors.Add($"ArtifactKind '{int descriptor.ArtifactKind}' is not supported.")
 
                 match descriptor.Source with
@@ -504,6 +576,8 @@ module MaterializationPlan =
                 | Ok () -> ()
                 | Error cacheErrors -> errors.AddRange(cacheErrors)
 
+                rejectCacheRequiredBypass request.ExecutionMode request.CacheSelection errors
+
                 if
                     isNull (box request.RequestedArtifactKinds)
                     || request.RequestedArtifactKinds.Count = 0
@@ -535,6 +609,8 @@ module MaterializationPlan =
                 match validateCacheSelection plan.CacheSelection with
                 | Ok () -> ()
                 | Error cacheErrors -> errors.AddRange(cacheErrors)
+
+                rejectCacheRequiredBypass plan.ExecutionMode plan.CacheSelection errors
 
                 if
                     isNull (box plan.RequiredArtifacts)

@@ -288,6 +288,113 @@ type MaterializationPlanContractTests() =
 
         assertInvalid "Artifact StoragePoolId is required for CAS artifact descriptors." (Validation.validateArtifactDescriptor descriptor)
 
+    /// Verifies that target-root artifact descriptors reject identity fields owned by file and CAS artifact shapes.
+    [<TestCase(MaterializationArtifactKind.DirectoryVersionZip)>]
+    [<TestCase(MaterializationArtifactKind.RecursiveDirectoryMetadata)>]
+    member _.TargetRootArtifactDescriptorsRejectCrossKindIdentityFields(kind: MaterializationArtifactKind) =
+        let descriptor =
+            match kind with
+            | MaterializationArtifactKind.DirectoryVersionZip ->
+                MaterializationArtifactDescriptor.DirectoryVersionZip(MaterializationPlanTestData.targetRootDirectoryVersionId, None)
+            | MaterializationArtifactKind.RecursiveDirectoryMetadata ->
+                MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(MaterializationPlanTestData.targetRootDirectoryVersionId, None)
+            | _ -> failwith "Unsupported test kind."
+
+        let ambiguousDescriptor =
+            { descriptor with
+                RelativePath = Some(RelativePath "src/app.fs")
+                Sha256Hash = Some(Sha256Hash "sha256-file")
+                Blake3Hash = Some(Blake3Hash "blake3-file")
+                ManifestAddress = Some(ManifestAddress "manifest-blake3-abc123")
+                ContentBlockAddress = Some(ContentBlockAddress "block-blake3-def456")
+                StoragePoolId = Some MaterializationPlanTestData.storagePoolId
+            }
+
+        let result = Validation.validateArtifactDescriptor ambiguousDescriptor
+
+        assertInvalid $"Artifact RelativePath must be empty for {string kind} descriptors." result
+        assertInvalid $"Artifact Sha256Hash must be empty for {string kind} descriptors." result
+        assertInvalid $"Artifact Blake3Hash must be empty for {string kind} descriptors." result
+        assertInvalid $"Artifact ManifestAddress must be empty for {string kind} descriptors." result
+        assertInvalid $"Artifact ContentBlockAddress must be empty for {string kind} descriptors." result
+        assertInvalid $"Artifact StoragePoolId must be empty for {string kind} descriptors." result
+
+    /// Verifies that file and CAS artifact descriptors reject identity fields owned by other descriptor shapes.
+    [<Test>]
+    member _.FileAndCasArtifactDescriptorsRejectCrossKindIdentityFields() =
+        let wholeFile =
+            { MaterializationArtifactDescriptor.WholeFileContent(
+                  MaterializationPlanTestData.targetRootDirectoryVersionId,
+                  RelativePath "src/app.fs",
+                  Some(Sha256Hash "sha256-file"),
+                  None,
+                  None
+              ) with
+                ManifestAddress = Some(ManifestAddress "manifest-blake3-abc123")
+                ContentBlockAddress = Some(ContentBlockAddress "block-blake3-def456")
+                StoragePoolId = Some MaterializationPlanTestData.storagePoolId
+            }
+
+        let fileManifest =
+            { MaterializationArtifactDescriptor.FileManifest(
+                  MaterializationPlanTestData.targetRootDirectoryVersionId,
+                  ManifestAddress "manifest-blake3-abc123",
+                  MaterializationPlanTestData.storagePoolId,
+                  None
+              ) with
+                RelativePath = Some(RelativePath "src/app.fs")
+                Sha256Hash = Some(Sha256Hash "sha256-file")
+                Blake3Hash = Some(Blake3Hash "blake3-file")
+                ContentBlockAddress = Some(ContentBlockAddress "block-blake3-def456")
+            }
+
+        let contentBlock =
+            { MaterializationArtifactDescriptor.ContentBlock(
+                  MaterializationPlanTestData.targetRootDirectoryVersionId,
+                  ContentBlockAddress "block-blake3-def456",
+                  MaterializationPlanTestData.storagePoolId,
+                  None
+              ) with
+                RelativePath = Some(RelativePath "src/app.fs")
+                Sha256Hash = Some(Sha256Hash "sha256-file")
+                Blake3Hash = Some(Blake3Hash "blake3-file")
+                ManifestAddress = Some(ManifestAddress "manifest-blake3-abc123")
+            }
+
+        assertInvalid "Artifact ManifestAddress must be empty for WholeFileContent descriptors." (Validation.validateArtifactDescriptor wholeFile)
+        assertInvalid "Artifact ContentBlockAddress must be empty for WholeFileContent descriptors." (Validation.validateArtifactDescriptor wholeFile)
+        assertInvalid "Artifact StoragePoolId must be empty for WholeFileContent descriptors." (Validation.validateArtifactDescriptor wholeFile)
+        assertInvalid "Artifact RelativePath must be empty for FileManifest descriptors." (Validation.validateArtifactDescriptor fileManifest)
+        assertInvalid "Artifact Sha256Hash must be empty for FileManifest descriptors." (Validation.validateArtifactDescriptor fileManifest)
+        assertInvalid "Artifact Blake3Hash must be empty for FileManifest descriptors." (Validation.validateArtifactDescriptor fileManifest)
+        assertInvalid "Artifact ContentBlockAddress must be empty for FileManifest descriptors." (Validation.validateArtifactDescriptor fileManifest)
+        assertInvalid "Artifact RelativePath must be empty for ContentBlock descriptors." (Validation.validateArtifactDescriptor contentBlock)
+        assertInvalid "Artifact Sha256Hash must be empty for ContentBlock descriptors." (Validation.validateArtifactDescriptor contentBlock)
+        assertInvalid "Artifact Blake3Hash must be empty for ContentBlock descriptors." (Validation.validateArtifactDescriptor contentBlock)
+        assertInvalid "Artifact ManifestAddress must be empty for ContentBlock descriptors." (Validation.validateArtifactDescriptor contentBlock)
+
+    /// Verifies that whole-file artifact paths must be normalized repository-relative paths.
+    [<TestCase("../app.fs")>]
+    [<TestCase("src/../app.fs")>]
+    [<TestCase("/src/app.fs")>]
+    [<TestCase("C:\\src\\app.fs")>]
+    [<TestCase("src\\app.fs")>]
+    [<TestCase("src//app.fs")>]
+    [<TestCase("./src/app.fs")>]
+    member _.WholeFileContentRejectsUnsafeRelativePath(relativePath: string) =
+        let descriptor =
+            MaterializationArtifactDescriptor.WholeFileContent(
+                MaterializationPlanTestData.targetRootDirectoryVersionId,
+                RelativePath relativePath,
+                Some(Sha256Hash "sha256-file"),
+                None,
+                None
+            )
+
+        assertInvalid
+            "Artifact RelativePath must be a normalized repository-relative path for WholeFileContent descriptors."
+            (Validation.validateArtifactDescriptor descriptor)
+
     /// Verifies that invalid enum values fail validation rather than silently becoming accepted modes.
     [<Test>]
     member _.InvalidExecutionModeValueFailsValidationClearly() =
@@ -432,6 +539,17 @@ type MaterializationPlanContractTests() =
         assertInvalid "Artifact DirectUri must be empty for CacheEntry sources." (Validation.validateArtifactSource cacheEntrySource)
         assertInvalid "Artifact DirectUri must be empty for Deferred sources." (Validation.validateArtifactSource deferredSource)
 
+    /// Verifies that non-cache-entry source kinds cannot smuggle cache-entry identity.
+    [<Test>]
+    member _.NonCacheEntryArtifactSourcesRejectCacheKey() =
+        let directSource =
+            { MaterializationArtifactSource.Direct "https://cache.example.test/artifacts/root.zip" with CacheKey = Some MaterializationPlanTestData.cacheKey }
+
+        let deferredSource = { MaterializationArtifactSource.Deferred with CacheKey = Some MaterializationPlanTestData.cacheKey }
+
+        assertInvalid "Artifact CacheKey must be empty for DirectUri sources." (Validation.validateArtifactSource directSource)
+        assertInvalid "Artifact CacheKey must be empty for Deferred sources." (Validation.validateArtifactSource deferredSource)
+
     /// Verifies that direct URI sources carry a direct location and round trip through JSON.
     [<Test>]
     member _.DirectUriSourceRoundTripsThroughJson() =
@@ -468,6 +586,21 @@ type MaterializationPlanContractTests() =
 
         Assert.That(roundTrip.RequestedArtifactKinds, Is.EquivalentTo(Enum.GetValues<MaterializationArtifactKind>()))
         assertValid (Validation.validateRequest roundTrip)
+
+    /// Verifies that public request cache controls fail closed when cache-required mode tries to bypass cache.
+    [<Test>]
+    member _.CacheRequiredRequestWithBypassSelectionFailsValidationClearly() =
+        let request =
+            MaterializationPlanRequest.Create(
+                MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId,
+                MaterializationExecutionMode.CacheRequired,
+                MaterializationCacheSelection.Bypass,
+                [
+                    MaterializationArtifactKind.DirectoryVersionZip
+                ]
+            )
+
+        assertInvalid "CacheRequired materialization must not use BypassCache selection." (Validation.validateRequest request)
 
     /// Verifies that each selector kind rejects identity fields owned by other selector kinds.
     [<Test>]
