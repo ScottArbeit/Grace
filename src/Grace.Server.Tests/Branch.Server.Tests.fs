@@ -1816,9 +1816,9 @@ type BranchServer() =
     [<Test>]
     member _.AssignWithShaOnlyRootPrefixIgnoresNewerChildDirectoryMatch() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
-            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "AssignRootPrefix"
+            let! repositoryBranches = BranchServerTestHelpers.getRepositoryBranchesAsync repositoryId
+            let parentBranch = repositoryBranches |> Array.exactlyOne
             let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"AssignRootPrefix{Guid.NewGuid():N}"
 
             /// Defines child behavior for the surrounding tests used by the server integration branch scenario.
@@ -2236,9 +2236,10 @@ type BranchServer() =
     [<Test>]
     member _.GetRecursiveSizeWithChildDirectoryBlake3MatchesShaLookup() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
-            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "RecursiveSizeHash"
+            let! repositoryBranches = BranchServerTestHelpers.getRepositoryBranchesAsync repositoryId
+            let parentBranch = repositoryBranches |> Array.exactlyOne
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"RecursiveSizeHash{Guid.NewGuid():N}"
             let payload = Encoding.UTF8.GetBytes($"recursive-size-child-{Guid.NewGuid():N}")
             let childPath = RelativePath $"recursive-size/{Guid.NewGuid():N}"
             let filePath = RelativePath $"{childPath}/sample.txt"
@@ -2257,10 +2258,10 @@ type BranchServer() =
 
             do! BranchServerTestHelpers.uploadFileToObjectStorageAsync repositoryId payload fileVersion
             do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ child; root ]
-            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId parentBranch root.DirectoryVersionId root.Sha256Hash
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch root.DirectoryVersionId root.Sha256Hash
             do! BranchServerTestHelpers.assertOk saveResponse
 
-            let! shaResponse = BranchServerTestHelpers.getRecursiveSizeBySha256HashResponseAsync repositoryId parentBranch child.Sha256Hash
+            let! shaResponse = BranchServerTestHelpers.getRecursiveSizeBySha256HashResponseAsync repositoryId branch child.Sha256Hash
             let! shaBody = shaResponse.Content.ReadAsStringAsync()
             Assert.That(shaResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), shaBody)
 
@@ -2268,7 +2269,7 @@ type BranchServer() =
                 (deserialize<GraceReturnValue<int64>> shaBody)
                     .ReturnValue
 
-            let! blake3Response = BranchServerTestHelpers.getRecursiveSizeByBlake3HashResponseAsync repositoryId parentBranch child.Blake3Hash
+            let! blake3Response = BranchServerTestHelpers.getRecursiveSizeByBlake3HashResponseAsync repositoryId branch child.Blake3Hash
             let! blake3Body = blake3Response.Content.ReadAsStringAsync()
             Assert.That(blake3Response.StatusCode, Is.EqualTo(HttpStatusCode.OK), blake3Body)
 
@@ -2344,9 +2345,10 @@ type BranchServer() =
     [<Test>]
     member _.HashReadQueriesUseShaToDisambiguateSharedBlake3RootPrefix() =
         task {
-            let repositoryId = repositoryIds[0]
-            let branchId = repositoryDefaultBranchIds[0]
-            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId branchId
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "ReadPairedHash"
+            let! repositoryBranches = BranchServerTestHelpers.getRepositoryBranchesAsync repositoryId
+            let parentBranch = repositoryBranches |> Array.exactlyOne
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"ReadPairedHash{Guid.NewGuid():N}"
 
             /// Defines first child behavior for the surrounding tests used by the server integration branch scenario.
             let firstChild, firstRoot, secondChild, secondRoot, sharedPrefix =
@@ -2362,12 +2364,12 @@ type BranchServer() =
                         secondRoot
                     ]
 
-            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId parentBranch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch firstRoot.DirectoryVersionId firstRoot.Sha256Hash
 
             do! BranchServerTestHelpers.assertOk saveResponse
 
             let! listContentsResponse =
-                BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
+                BranchServerTestHelpers.listContentsByShaAndBlake3HashResponseAsync repositoryId branch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
 
             let! listContentsBody = listContentsResponse.Content.ReadAsStringAsync()
             Assert.That(listContentsResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), listContentsBody)
@@ -2383,7 +2385,7 @@ type BranchServer() =
             )
 
             let! getVersionResponse =
-                BranchServerTestHelpers.getVersionByShaAndBlake3HashResponseAsync repositoryId parentBranch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
+                BranchServerTestHelpers.getVersionByShaAndBlake3HashResponseAsync repositoryId branch firstRoot.Sha256Hash (Blake3Hash sharedPrefix)
 
             let! getVersionBody = getVersionResponse.Content.ReadAsStringAsync()
             Assert.That(getVersionResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), getVersionBody)
