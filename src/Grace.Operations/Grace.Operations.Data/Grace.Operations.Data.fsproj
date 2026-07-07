@@ -13,10 +13,12 @@
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="OperationsUsageSql.fs" />
+    <Compile Include="OperationsUsagePartitioningSql.fs" />
     <Compile Include="OperationsEntities.fs" />
     <Compile Include="OperationsDbContext.fs" />
     <Compile Include="Migrations\20260705234500_InitialOperationsSchema.fs" />
     <Compile Include="Migrations\20260707000000_AddRawUsageFactPayload.fs" />
+    <Compile Include="Migrations\20260707120000_AddOperationsMonthlyPartitioning.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>
