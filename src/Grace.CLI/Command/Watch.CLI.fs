@@ -3353,6 +3353,12 @@ module Watch =
     /// Builds a process-local root-history key for current-branch materialization freshness checks.
     let private currentBranchMaterializationRootHistoryKey repositoryId branchId rootDirectoryId = $"{repositoryId}:{branchId}:{rootDirectoryId}"
 
+    /// Reports whether a current-branch Reference notification carries usable root ordering authority.
+    let private currentBranchMaterializationPayloadHasUsableRootIdentity (payload: CurrentBranchReferenceNotification) =
+        payload.DirectoryId <> DirectoryVersionId.Empty
+        && not (String.IsNullOrWhiteSpace($"{payload.Sha256Hash}"))
+        && not (String.IsNullOrWhiteSpace($"{payload.Blake3Hash}"))
+
     /// Gets or creates bounded process-local stale Reference authority for one superseded root.
     let private supersededCurrentBranchMaterializationRootEntry repositoryId branchId rootDirectoryId =
         let key = currentBranchMaterializationRootHistoryKey repositoryId branchId rootDirectoryId
@@ -3372,14 +3378,15 @@ module Watch =
 
     /// Records a skipped or applied notification as stale without permanently banning its root value.
     let private recordSupersededCurrentBranchMaterializationPayload (payload: CurrentBranchReferenceNotification) =
-        lock pendingCurrentBranchMaterializationLock (fun () ->
-            let entry = supersededCurrentBranchMaterializationRootEntry payload.RepositoryId payload.BranchId payload.DirectoryId
+        if currentBranchMaterializationPayloadHasUsableRootIdentity payload then
+            lock pendingCurrentBranchMaterializationLock (fun () ->
+                let entry = supersededCurrentBranchMaterializationRootEntry payload.RepositoryId payload.BranchId payload.DirectoryId
 
-            if payload.ReferenceId <> ReferenceId.Empty then
-                entry.ReferenceIds.Add(payload.ReferenceId)
-                |> ignore
-            else
-                incrementAnonymousCurrentBranchMaterializationRejections entry)
+                if payload.ReferenceId <> ReferenceId.Empty then
+                    entry.ReferenceIds.Add(payload.ReferenceId)
+                    |> ignore
+                else
+                    incrementAnonymousCurrentBranchMaterializationRejections entry)
 
     /// Records a clean root that a successful current-branch materialization moved past when no Reference identity is available.
     let private recordSupersededCurrentBranchMaterializationRoot (authority: CurrentBranchMaterializationAuthority) (updatedStatus: GraceStatus) =
@@ -3495,26 +3502,29 @@ module Watch =
     /// Reports whether a remote root is known stale by Reference identity or bounded root-only authority.
     let private isSupersededCurrentBranchMaterializationRootWithAnonymousPolicy consumeAnonymousRootAuthority (payload: CurrentBranchReferenceNotification) =
         lock pendingCurrentBranchMaterializationLock (fun () ->
-            let key = currentBranchMaterializationRootHistoryKey payload.RepositoryId payload.BranchId payload.DirectoryId
-
-            let mutable entry = Unchecked.defaultof<SupersededCurrentBranchMaterializationRoot>
-
-            if supersededCurrentBranchMaterializationRoots.TryGetValue(key, &entry) then
-                if
-                    payload.ReferenceId <> ReferenceId.Empty
-                    && entry.ReferenceIds.Contains(payload.ReferenceId)
-                then
-                    true
-                elif payload.ReferenceId = ReferenceId.Empty
-                     && entry.AnonymousRejectionsRemaining > 0 then
-                    if consumeAnonymousRootAuthority then
-                        entry.AnonymousRejectionsRemaining <- entry.AnonymousRejectionsRemaining - 1
-
-                    true
-                else
-                    false
+            if not (currentBranchMaterializationPayloadHasUsableRootIdentity payload) then
+                false
             else
-                false)
+                let key = currentBranchMaterializationRootHistoryKey payload.RepositoryId payload.BranchId payload.DirectoryId
+
+                let mutable entry = Unchecked.defaultof<SupersededCurrentBranchMaterializationRoot>
+
+                if supersededCurrentBranchMaterializationRoots.TryGetValue(key, &entry) then
+                    if
+                        payload.ReferenceId <> ReferenceId.Empty
+                        && entry.ReferenceIds.Contains(payload.ReferenceId)
+                    then
+                        true
+                    elif payload.ReferenceId = ReferenceId.Empty
+                         && entry.AnonymousRejectionsRemaining > 0 then
+                        if consumeAnonymousRootAuthority then
+                            entry.AnonymousRejectionsRemaining <- entry.AnonymousRejectionsRemaining - 1
+
+                        true
+                    else
+                        false
+                else
+                    false)
 
     /// Reports and consumes whether a remote root is known stale by Reference identity or bounded root-only authority.
     let private isSupersededCurrentBranchMaterializationRoot payload = isSupersededCurrentBranchMaterializationRootWithAnonymousPolicy true payload
@@ -3524,7 +3534,8 @@ module Watch =
 
     /// Retires older deferred materializations when a newer concrete same-branch Reference supersedes their retry order.
     let private retirePendingCurrentBranchMaterializationsBeforeUnusableReference (payload: CurrentBranchReferenceNotification) =
-        if payload.ReferenceId <> ReferenceId.Empty then
+        if payload.ReferenceId <> ReferenceId.Empty
+           && currentBranchMaterializationPayloadHasUsableRootIdentity payload then
             lock pendingCurrentBranchMaterializationLock (fun () ->
                 let superseded, retained =
                     pendingCurrentBranchMaterializations
@@ -3760,6 +3771,22 @@ module Watch =
             RootDirectoryBlake3Hash = status.RootDirectoryBlake3Hash
         }
 
+    /// Resolves the durable local-state DB path owned by the captured materialization authority.
+    let private currentBranchMaterializationLocalStateDbPathForAuthority (authority: CurrentBranchMaterializationAuthority) =
+        Path.Combine(authority.RootDirectory, Constants.GraceConfigDirectory, Constants.GraceLocalStateDbFileName)
+
+    /// Reads GraceStatus from the durable local-state DB captured before remote materialization began.
+    let private readGraceStatusFileForMaterializationAuthority authority =
+        Grace.CLI.LocalStateDb.readStatusSnapshot (currentBranchMaterializationLocalStateDbPathForAuthority authority)
+
+    /// Writes GraceStatus to the durable local-state DB captured before remote materialization began.
+    let private writeGraceStatusFileForMaterializationAuthority authority graceStatus =
+        Grace.CLI.LocalStateDb.replaceStatusSnapshot (currentBranchMaterializationLocalStateDbPathForAuthority authority) graceStatus
+
+    /// Updates object-cache rows in the durable local-state DB captured before remote materialization began.
+    let private upsertObjectCacheForMaterializationAuthority authority newDirectoryVersions =
+        Grace.CLI.LocalStateDb.upsertObjectCache (currentBranchMaterializationLocalStateDbPathForAuthority authority) newDirectoryVersions
+
     /// Compares materialization root paths without allowing malformed IPC paths to escape the write-boundary check.
     let private currentBranchMaterializationRootDirectoriesMatch expectedRoot observedRoot =
         if
@@ -3799,6 +3826,37 @@ module Watch =
         && current.BranchId = authority.BranchId
         && currentBranchMaterializationRootDirectoryStillCurrent authority
         && currentBranchMaterializationRootMatchesAuthority authority currentGraceStatus
+
+    /// Commits materialized status and object-cache rows only through the captured branch authority.
+    let private writeMaterializedCurrentBranchDurableStateForAuthority
+        (payload: CurrentBranchReferenceNotification)
+        (authority: CurrentBranchMaterializationAuthority)
+        (updatedGraceStatus: GraceStatus)
+        correlationId
+        =
+        task {
+            let! durableBoundaryStatus = readGraceStatusFileForMaterializationAuthority authority
+
+            if not (currentBranchMaterializationAuthorityStillCurrent authority durableBoundaryStatus) then
+                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+
+                return
+                    Error(
+                        GraceError.Create
+                            $"Current-branch remote materialization refused because repository, branch, or root changed before durable status writes for Reference {payload.ReferenceId}; payload was retired behind local authority."
+                            correlationId
+                    )
+            else
+                do! writeGraceStatusFileForMaterializationAuthority authority updatedGraceStatus
+                consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
+                do! upsertObjectCacheForMaterializationAuthority authority updatedGraceStatus.Index.Values
+
+                return Ok()
+        }
+
+    /// Exposes captured-authority durable status writes to focused Watch tests.
+    let internal writeMaterializedCurrentBranchDurableStateForAuthorityForWatchTests payload authority updatedGraceStatus correlationId =
+        writeMaterializedCurrentBranchDurableStateForAuthority payload authority updatedGraceStatus correlationId
 
     /// Confirms status publication still belongs to the captured branch identity after remote files reached disk.
     let private currentBranchMaterializationPublicationStillCurrent
@@ -4632,11 +4690,15 @@ module Watch =
                                                         with
                                                     | Error error -> return Error error
                                                     | Ok () ->
-                                                        do! writeGraceStatusFile updatedGraceStatus
-                                                        consumeDurablyAppliedCurrentBranchMaterializationBeforeResync payload
-                                                        do! upsertObjectCache updatedGraceStatus.Index.Values
-
-                                                        return Ok updatedGraceStatus
+                                                        match!
+                                                            writeMaterializedCurrentBranchDurableStateForAuthority
+                                                                payload
+                                                                authority
+                                                                updatedGraceStatus
+                                                                correlationId
+                                                            with
+                                                        | Ok () -> return Ok updatedGraceStatus
+                                                        | Error error -> return Error error
                                 })
                             (fun _ ->
                                 task {
@@ -4695,6 +4757,7 @@ module Watch =
                                 match providedDecision.Reference, localStatus with
                                 | Some payload, Some status ->
                                     status.RootDirectoryId <> payload.DirectoryId
+                                    && currentBranchMaterializationPayloadHasUsableRootIdentity payload
                                     && peekSupersededCurrentBranchMaterializationRoot payload
                                 | _ -> false
 
@@ -4720,7 +4783,15 @@ module Watch =
                                             Array.append unsafePendingPayloads providedPayloads
 
                                 if providedPayloadTargetsKnownStaleRoot then
-                                    if pendingPayloads.Length > 0 then pendingPayloads else providedPayloads
+                                    if pendingPayloads.Length > 0 then
+                                        providedDecision.Reference
+                                        |> Option.iter (fun payload ->
+                                            isSupersededCurrentBranchMaterializationRoot payload
+                                            |> ignore)
+
+                                        pendingPayloads
+                                    else
+                                        providedPayloads
                                 else
                                     pendingPayloads
                             else
