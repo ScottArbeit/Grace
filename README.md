@@ -333,10 +333,11 @@ Grace is evolving quickly. Strap in....
 
 ### `grace cache` for CI/CD and in-office scenarios
 
-- Built-in feature of Grace CLI
-- Like a Git mirror, plus full authentication and authorization
-- Pre-fetch by listening to repository events using SignalR and downloading the branches and versions you want
-- Transparent read-through cache for CI workers and in-office users to save time and bandwidth
+- Grace-aware artifact service for CI workers and in-office users
+- Grace Server resolves repository meaning, authorization, and Materialization Plans
+- Grace Cache serves immutable artifacts named by server-resolved plans, starting with target-root zips and recursive
+  metadata for the same DirectoryVersionId
+- Path-scoped metadata and baseline-plus-delta materialization remain future design work, not current cache behavior
 
 ### Improved database backpressure handling
 
