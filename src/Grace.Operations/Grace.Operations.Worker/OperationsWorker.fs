@@ -163,7 +163,7 @@ type IOperationsUsageReadinessRecorder =
     /// Clears runtime-owned processing failures only when this success started after that failure.
     abstract MarkRuntimeProcessingSuccess: attempt: OperationsUsageReadinessAttempt -> unit
 
-    /// Clears Service Bus processor-owned settlement failures only after the same settlement path succeeds later.
+    /// Clears one Service Bus processor-owned failure after the matching processor proof succeeds later.
     abstract MarkServiceBusProcessorSuccess: attempt: OperationsUsageReadinessAttempt * recoveryKey: string -> unit
 
     /// Records the latest unsupported ingestion contract observed at the broker boundary.
@@ -291,6 +291,10 @@ module internal OperationsUsageReadinessTransitions =
     [<Literal>]
     let DeadLetterSettlementRecoveryKey = "dead-letter"
 
+    /// Identifies callback invocation failures that recover after any later explicit settlement succeeds.
+    [<Literal>]
+    let CallbackRuntimeRecoveryKey = "callback"
+
     /// Identifies lock-renewal failures that require renewal-side recovery proof instead of ordinary message completion.
     [<Literal>]
     let RenewLockRecoveryKey = "renew-lock"
@@ -310,8 +314,8 @@ module internal OperationsUsageReadinessTransitions =
     /// Maps Azure Service Bus error sources to the concrete settlement proof that may recover them later.
     let private serviceBusProcessorRecoveryKey errorSource =
         match errorSource with
-        | ServiceBusErrorSource.Complete
-        | ServiceBusErrorSource.ProcessMessageCallback -> Some CompleteSettlementRecoveryKey
+        | ServiceBusErrorSource.Complete -> Some CompleteSettlementRecoveryKey
+        | ServiceBusErrorSource.ProcessMessageCallback -> Some CallbackRuntimeRecoveryKey
         | ServiceBusErrorSource.Abandon -> Some AbandonSettlementRecoveryKey
         | ServiceBusErrorSource.RenewLock -> Some RenewLockRecoveryKey
         | _ -> None
@@ -337,6 +341,10 @@ module internal OperationsUsageReadinessTransitions =
     /// Records a later settlement-side proof that a Service Bus processor settlement fault recovered.
     let recordServiceBusProcessorSuccess (readiness: IOperationsUsageReadinessRecorder) (attempt: OperationsUsageReadinessAttempt) recoveryKey =
         readiness.MarkServiceBusProcessorSuccess(attempt, recoveryKey)
+
+    /// Records that a later callback reached explicit settlement, proving callback invocation recovered.
+    let recordServiceBusCallbackSuccess (readiness: IOperationsUsageReadinessRecorder) (attempt: OperationsUsageReadinessAttempt) =
+        readiness.MarkServiceBusProcessorSuccess(attempt, CallbackRuntimeRecoveryKey)
 
     /// Records a redacted runtime processing dependency failure that should recover after a later successful message.
     let recordRuntimeProcessingFailure (readiness: IOperationsUsageReadinessRecorder) (ex: exn) =
@@ -613,12 +621,13 @@ type OperationsUsageIngestionProcessor
     /// Builds a bounded diagnostic description without including the message body.
     let describeErrors (errors: string list) = String.Join("; ", errors)
 
-    /// Runs one explicit Service Bus settlement call and records only matching settlement recovery proof.
+    /// Runs one explicit Service Bus settlement call and records matching settlement and callback recovery proofs.
     let settleAsync readinessAttempt recoveryKey settlementName (settle: unit -> Task) (cancellationToken: CancellationToken) =
         task {
             try
                 do! settle ()
                 OperationsUsageReadinessTransitions.recordServiceBusProcessorSuccess readiness readinessAttempt recoveryKey
+                OperationsUsageReadinessTransitions.recordServiceBusCallbackSuccess readiness readinessAttempt
                 return true
             with
             | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> return false

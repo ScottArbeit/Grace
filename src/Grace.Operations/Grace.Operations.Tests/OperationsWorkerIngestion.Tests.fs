@@ -1568,6 +1568,108 @@ type OperationsWorkerIngestionTests() =
             )
         }
 
+    /// Verifies successful poison-message dead-lettering proves callback invocation recovered.
+    [<Test>]
+    member _.SuccessfulDeadLetterClearsProcessMessageCallbackFailure() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("32323232-3232-4232-8232-323232323232"))
+
+            let processor, store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                ServiceBusErrorSource.ProcessMessageCallback
+                (InvalidOperationException("callback-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun value -> { value with Subject = "FutureOperationalFact" }
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let recoveredSnapshot = readinessSnapshot readiness
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+
+                    Assert.That(
+                        failedSnapshot.DependencyFailure,
+                        Is.EqualTo(Some "Service Bus processor fault (ProcessMessageCallback, InvalidOperationException).")
+                    )
+
+                    Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                    Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None))
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:UnsupportedOperationalFactEnvelope")))
+            )
+        }
+
+    /// Verifies callback recovery from dead-lettering does not clear unrelated settlement failures.
+    [<Test>]
+    member _.SuccessfulDeadLetterKeepsUnrelatedSettlementFailureActive() =
+        task {
+            let fact = OperationsWorkerIngestionTestData.usageFact (Guid.Parse("33333333-3333-4333-8333-333333333333"))
+
+            let processor, store, actions, events, readiness = createProcessorWithReadiness (fun storedFact _ -> Task.FromResult(Ok(accepted storedFact)))
+
+            let recorder = readiness :> IOperationsUsageReadinessRecorder
+            recorder.MarkReady()
+
+            OperationsUsageReadinessTransitions.recordServiceBusProcessorFault
+                recorder
+                ServiceBusErrorSource.ProcessMessageCallback
+                (InvalidOperationException("callback-secret"))
+
+            OperationsUsageReadinessTransitions.recordServiceBusSettlementFailure
+                recorder
+                OperationsUsageReadinessTransitions.CompleteSettlementRecoveryKey
+                (InvalidOperationException("complete-secret"))
+
+            let failedSnapshot = readinessSnapshot readiness
+
+            let message =
+                fact
+                |> OperationsWorkerIngestionTestData.serializeFact
+                |> OperationsWorkerIngestionTestData.message
+                |> fun value -> { value with Subject = "FutureOperationalFact" }
+
+            do! processor.ProcessMessageAsync(message, actions, CancellationToken.None)
+
+            let recoveredSnapshot = readinessSnapshot readiness
+
+            let failedDependency =
+                failedSnapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            let recoveredDependency =
+                recoveredSnapshot.DependencyFailure
+                |> Option.defaultValue String.Empty
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(store.StoredFacts, Is.Empty)
+                    Assert.That(failedSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(failedDependency, Does.Contain("Service Bus processor fault (ProcessMessageCallback, InvalidOperationException)."))
+                    Assert.That(failedDependency, Does.Contain("Service Bus settlement failed (complete, InvalidOperationException)."))
+                    Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(recoveredDependency, Does.Not.Contain("Service Bus processor fault (ProcessMessageCallback, InvalidOperationException)."))
+                    Assert.That(recoveredDependency, Does.Contain("Service Bus settlement failed (complete, InvalidOperationException)."))
+                    Assert.That(recoveredDependency, Does.Not.Contain("callback-secret"))
+                    Assert.That(recoveredDependency, Does.Not.Contain("complete-secret"))
+                    Assert.That(eventText events, Is.EqualTo("dead-letter"))
+                    Assert.That(settlementText actions.Settlements, Is.EqualTo("dead-letter:UnsupportedOperationalFactEnvelope")))
+            )
+        }
+
     /// Verifies a successful abandon settlement clears a prior abandon-side Service Bus processor failure.
     [<Test>]
     member _.SuccessfulAbandonClearsServiceBusProcessorFailureAfterSettlement() =
