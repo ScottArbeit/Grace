@@ -1,6 +1,7 @@
 namespace Grace.Operations.Data
 
 open System
+open System.Globalization
 
 /// Provides reviewed SQL Server partitioning text for append-heavy Operations usage tables.
 [<RequireQualifiedAccess>]
@@ -61,7 +62,7 @@ module OperationsUsagePartitioningSql =
         |]
 
     /// Formats a UTC month boundary as a SQL Server `datetime2(7)` literal.
-    let private boundaryLiteral (boundary: DateTime) = boundary.ToString("yyyy-MM-ddTHH:mm:ss.fffffff")
+    let internal boundaryLiteral (boundary: DateTime) = boundary.ToString("yyyy-MM-ddTHH:mm:ss.fffffff", CultureInfo.InvariantCulture)
 
     /// Joins the reviewed UTC month boundaries for the partition function definition.
     let private boundaryList () =
@@ -119,7 +120,14 @@ INSERT INTO @ExpectedPartitionBoundaries (BoundaryValue)
 VALUES
 {boundaryValidationRows ()};
 
-IF
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.partition_functions
+    WHERE name = N'{PartitionFunctionName}'
+      AND boundary_value_on_right = 1
+)
+OR
 (
     SELECT COUNT(*)
     FROM sys.partition_range_values AS boundaryValues
@@ -163,6 +171,19 @@ BEGIN
     CREATE PARTITION SCHEME {PartitionSchemeName}
     AS PARTITION {PartitionFunctionName}
     ALL TO ([PRIMARY]);
+END;
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.partition_schemes AS schemes
+    INNER JOIN sys.partition_functions AS functions
+        ON schemes.function_id = functions.function_id
+    WHERE schemes.name = N'{PartitionSchemeName}'
+      AND functions.name = N'{PartitionFunctionName}'
+)
+BEGIN
+    THROW 57106, 'PS_ops_OperationsUsageMonthUtc must reference PF_ops_OperationsUsageMonthUtc.', 1;
 END;
 
 IF NOT EXISTS

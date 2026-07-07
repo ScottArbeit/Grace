@@ -14,6 +14,7 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Globalization
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
@@ -394,6 +395,24 @@ type OperationsUsageStorageTests() =
                 Assert.That(allBoundariesAreContiguousMonths, Is.True))
         )
 
+    /// Verifies SQL date literals stay Gregorian even when the ambient thread culture uses another calendar.
+    [<Test>]
+    member _.MonthlyPartitionBoundaryLiteralUsesInvariantCulture() =
+        let originalCulture = Thread.CurrentThread.CurrentCulture
+        let originalUiCulture = Thread.CurrentThread.CurrentUICulture
+
+        try
+            let thaiCulture = CultureInfo.GetCultureInfo("th-TH")
+            Thread.CurrentThread.CurrentCulture <- thaiCulture
+            Thread.CurrentThread.CurrentUICulture <- thaiCulture
+
+            let literal = OperationsUsagePartitioningSql.boundaryLiteral (DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc))
+
+            Assert.That(literal, Is.EqualTo("2026-07-01T00:00:00.0000000"))
+        finally
+            Thread.CurrentThread.CurrentCulture <- originalCulture
+            Thread.CurrentThread.CurrentUICulture <- originalUiCulture
+
     /// Verifies the monthly partitioning migration aligns table and index storage with UTC time columns.
     [<Test>]
     member _.MonthlyPartitioningMigrationScriptAlignsTablesAndIndexes() =
@@ -410,8 +429,13 @@ type OperationsUsageStorageTests() =
                 Assert.That(script, Does.Contain("'2029-01-01T00:00:00.0000000'"))
                 Assert.That(script, Does.Contain("THROW 57105"))
                 Assert.That(script, Does.Contain("@ExpectedPartitionBoundaries"))
+                Assert.That(script, Does.Contain("boundary_value_on_right = 1"))
                 Assert.That(script, Does.Contain("CREATE PARTITION SCHEME PS_ops_OperationsUsageMonthUtc"))
                 Assert.That(script, Does.Contain("ALL TO ([PRIMARY])"))
+                Assert.That(script, Does.Contain("schemes.function_id = functions.function_id"))
+                Assert.That(script, Does.Contain("WHERE schemes.name = N'PS_ops_OperationsUsageMonthUtc'"))
+                Assert.That(script, Does.Contain("AND functions.name = N'PF_ops_OperationsUsageMonthUtc'"))
+                Assert.That(script, Does.Contain("THROW 57106"))
                 Assert.That(rawClusteredIndex, Is.GreaterThan(partitionFunctionIndex))
                 Assert.That(script, Does.Contain("ON ops.RawUsageFact (ObservedAtUtc, UsageFactId)"))
                 Assert.That(script, Does.Contain("ON PS_ops_OperationsUsageMonthUtc(ObservedAtUtc)"))
