@@ -9,6 +9,9 @@ type RawUsageFactEntity() =
     /// Stores the durable idempotency key supplied by the UsageFact contract.
     member val UsageFactId = Guid.Empty with get, set
 
+    /// Stores the exact accepted broker payload for replay and audit of raw facts.
+    member val RawPayload: byte array = Array.empty with get, set
+
     /// Stores the request or workflow correlation identifier associated with the fact.
     member val CorrelationId = String.Empty with get, set
 

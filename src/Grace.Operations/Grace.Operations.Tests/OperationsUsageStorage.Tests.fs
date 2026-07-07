@@ -1,5 +1,6 @@
 namespace Grace.Operations.Tests
 
+open Grace.Shared
 open Grace.Operations.Data
 open Grace.Operations.Data.Migrations
 open Grace.Types.Common
@@ -13,6 +14,8 @@ open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
+open System.Globalization
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
@@ -60,6 +63,9 @@ module OperationsUsageStorageTestData =
             observedAt
         )
 
+    /// Serializes the raw usage fact payload that Operations stores for later replay and audit.
+    let payloadFor fact = JsonSerializer.SerializeToUtf8Bytes(fact, Constants.JsonSerializerOptions)
+
 /// Stores transaction state for the operations usage test double.
 type private InMemoryOperationsUsageState = { RawFacts: Dictionary<UsageFactId, RawUsageFact>; Aggregates: Dictionary<UsageAggregateMinuteKey, int64> }
 
@@ -78,6 +84,9 @@ type private InMemoryOperationsUsageTransactionScope() =
 
     /// Returns the number of committed raw facts.
     member _.RawFactCount = state.RawFacts.Count
+
+    /// Returns one committed raw fact by durable usage-fact identity.
+    member _.RawFact usageFactId = state.RawFacts[usageFactId]
 
     /// Returns the committed quantity for an aggregate row.
     member _.AggregateQuantity(key: UsageAggregateMinuteKey) =
@@ -166,6 +175,13 @@ type OperationsUsageStorageTests() =
 
         let migrator = context.GetService<IMigrator>()
         migrator.GenerateScript(options = MigrationsSqlGenerationOptions.Idempotent)
+
+    /// Generates an Operations migration script between two named migration points without opening SQL Server.
+    let migrationScriptFromTo fromMigration toMigration =
+        use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsMigrationScript;Integrated Security=true;"
+
+        let migrator = context.GetService<IMigrator>()
+        migrator.GenerateScript(fromMigration, toMigration, MigrationsSqlGenerationOptions.Idempotent)
 
     /// Reads the EF entity metadata that future migrations use for raw fact schema drift.
     let rawFactEntityType () : IEntityType =
@@ -269,6 +285,8 @@ type OperationsUsageStorageTests() =
                     Is.EqualTo(Nullable OperationsUsageSql.CorrelationIdMaxLength)
                 )
 
+                Assert.That(rawFact.FindProperty("RawPayload").GetColumnType(), Is.EqualTo("varbinary(max)"))
+
                 Assert.That(
                     rawFact
                         .FindProperty("StoragePoolId")
@@ -325,6 +343,8 @@ type OperationsUsageStorageTests() =
         let script = migrationScript ()
         let schemaPreambleIndex = script.IndexOf("IF SCHEMA_ID(N'ops') IS NULL", StringComparison.Ordinal)
         let historyTableIndex = script.IndexOf("[ops].[__EFMigrationsHistory]", StringComparison.Ordinal)
+        let rawPayloadDefaultIndex = script.IndexOf("CONSTRAINT DF_ops_RawUsageFact_RawPayload DEFAULT (0x) WITH VALUES", StringComparison.Ordinal)
+        let rawPayloadDefaultDropIndex = script.IndexOf("DROP CONSTRAINT DF_ops_RawUsageFact_RawPayload", StringComparison.Ordinal)
 
         Assert.Multiple(
             Action (fun () ->
@@ -334,12 +354,129 @@ type OperationsUsageStorageTests() =
                 Assert.That(script, Does.Contain("IF OBJECT_ID(N'ops.RawUsageFact', N'U') IS NULL"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.RawUsageFact"))
                 Assert.That(script, Does.Contain("CONSTRAINT PK_ops_RawUsageFact PRIMARY KEY CLUSTERED (UsageFactId)"))
+                Assert.That(script, Does.Contain("ALTER TABLE ops.RawUsageFact"))
+                Assert.That(script, Does.Contain("ADD RawPayload varbinary(max) NOT NULL"))
+                Assert.That(rawPayloadDefaultIndex, Is.GreaterThanOrEqualTo(0))
+                Assert.That(rawPayloadDefaultDropIndex, Is.GreaterThan(rawPayloadDefaultIndex))
                 Assert.That(script, Does.Contain("IF OBJECT_ID(N'ops.UsageAggregateMinute', N'U') IS NULL"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.UsageAggregateMinute"))
                 Assert.That(script, Does.Contain("CONSTRAINT PK_ops_UsageAggregateMinute PRIMARY KEY CLUSTERED"))
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_RawUsageFact_ScopeKindObservedAt"))
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_UsageAggregateMinute_ScopeKindBucket"))
                 Assert.That(script, Does.Contain("[ops].[__EFMigrationsHistory]")))
+        )
+
+    /// Verifies reviewed partition boundaries are exact UTC month starts for range and retention alignment.
+    [<Test>]
+    member _.MonthlyPartitionBoundariesUseUtcMonthStarts() =
+        let boundaries = OperationsUsagePartitioningSql.InitialMonthlyBoundariesUtc
+
+        let allBoundariesAreMonthStarts =
+            boundaries
+            |> Array.forall (fun boundary ->
+                boundary.Kind = DateTimeKind.Utc
+                && boundary.Day = 1
+                && boundary.Hour = 0
+                && boundary.Minute = 0
+                && boundary.Second = 0
+                && boundary.Millisecond = 0)
+
+        let allBoundariesAreContiguousMonths =
+            boundaries
+            |> Seq.pairwise
+            |> Seq.forall (fun (previous, current) -> current = previous.AddMonths(1))
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(boundaries, Has.Length.EqualTo(37))
+                Assert.That(boundaries[0], Is.EqualTo(DateTime(2026, 1, 1, 0, 0, 0, DateTimeKind.Utc)))
+                Assert.That(boundaries[boundaries.Length - 1], Is.EqualTo(DateTime(2029, 1, 1, 0, 0, 0, DateTimeKind.Utc)))
+                Assert.That(allBoundariesAreMonthStarts, Is.True)
+                Assert.That(allBoundariesAreContiguousMonths, Is.True))
+        )
+
+    /// Verifies SQL date literals stay Gregorian even when the ambient thread culture uses another calendar.
+    [<Test>]
+    member _.MonthlyPartitionBoundaryLiteralUsesInvariantCulture() =
+        let originalCulture = Thread.CurrentThread.CurrentCulture
+        let originalUiCulture = Thread.CurrentThread.CurrentUICulture
+
+        try
+            let thaiCulture = CultureInfo.GetCultureInfo("th-TH")
+            Thread.CurrentThread.CurrentCulture <- thaiCulture
+            Thread.CurrentThread.CurrentUICulture <- thaiCulture
+
+            let literal = OperationsUsagePartitioningSql.boundaryLiteral (DateTime(2026, 7, 1, 0, 0, 0, DateTimeKind.Utc))
+
+            Assert.That(literal, Is.EqualTo("2026-07-01T00:00:00.0000000"))
+        finally
+            Thread.CurrentThread.CurrentCulture <- originalCulture
+            Thread.CurrentThread.CurrentUICulture <- originalUiCulture
+
+    /// Verifies the monthly partitioning migration aligns table and index storage with UTC time columns.
+    [<Test>]
+    member _.MonthlyPartitioningMigrationScriptAlignsTablesAndIndexes() =
+        let script = migrationScript ()
+        let partitionFunctionIndex = script.IndexOf("CREATE PARTITION FUNCTION PF_ops_OperationsUsageMonthUtc", StringComparison.Ordinal)
+        let rawClusteredIndex = script.IndexOf("CREATE CLUSTERED INDEX CX_ops_RawUsageFact_ObservedAtUtc_UsageFactId", StringComparison.Ordinal)
+        let aggregatePartitionPlacement = script.IndexOf("ON PS_ops_OperationsUsageMonthUtc(BucketStartUtc)", StringComparison.Ordinal)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(partitionFunctionIndex, Is.GreaterThanOrEqualTo(0))
+                Assert.That(script, Does.Contain("AS RANGE RIGHT FOR VALUES"))
+                Assert.That(script, Does.Contain("'2026-07-01T00:00:00.0000000'"))
+                Assert.That(script, Does.Contain("'2029-01-01T00:00:00.0000000'"))
+                Assert.That(script, Does.Contain("THROW 57105"))
+                Assert.That(script, Does.Contain("@ExpectedPartitionBoundaries"))
+                Assert.That(script, Does.Contain("boundary_value_on_right = 1"))
+                Assert.That(script, Does.Contain("CREATE PARTITION SCHEME PS_ops_OperationsUsageMonthUtc"))
+                Assert.That(script, Does.Contain("ALL TO ([PRIMARY])"))
+                Assert.That(script, Does.Contain("schemes.function_id = functions.function_id"))
+                Assert.That(script, Does.Contain("WHERE schemes.name = N'PS_ops_OperationsUsageMonthUtc'"))
+                Assert.That(script, Does.Contain("AND functions.name = N'PF_ops_OperationsUsageMonthUtc'"))
+                Assert.That(script, Does.Contain("THROW 57106"))
+                Assert.That(rawClusteredIndex, Is.GreaterThan(partitionFunctionIndex))
+                Assert.That(script, Does.Contain("ON ops.RawUsageFact (ObservedAtUtc, UsageFactId)"))
+                Assert.That(script, Does.Contain("ON PS_ops_OperationsUsageMonthUtc(ObservedAtUtc)"))
+                Assert.That(script, Does.Contain("PRIMARY KEY NONCLUSTERED (UsageFactId)"))
+                Assert.That(aggregatePartitionPlacement, Is.GreaterThan(partitionFunctionIndex))
+                Assert.That(script, Does.Contain("ON ops.RawUsageFact (OwnerId, OrganizationId, RepositoryId, FactKind, ObservedAtUtc)"))
+                Assert.That(script, Does.Contain("ON ops.UsageAggregateMinute (OwnerId, OrganizationId, RepositoryId, FactKind, BucketStartUtc)")))
+        )
+
+    /// Verifies partitioning is limited to current Operations tables and keeps local SQL Server testability.
+    [<Test>]
+    member _.MonthlyPartitioningMigrationStaysInsideCurrentUsageTables() =
+        let script = migrationScript ()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(script, Does.Contain("OBJECT_ID(N'ops.RawUsageFact', N'U')"))
+                Assert.That(script, Does.Contain("OBJECT_ID(N'ops.UsageAggregateMinute', N'U')"))
+                Assert.That(script, Does.Contain("THROW 57101"))
+                Assert.That(script, Does.Contain("THROW 57102"))
+                Assert.That(script, Does.Contain("THROW 57103"))
+                Assert.That(script, Does.Contain("THROW 57104"))
+                Assert.That(script, Does.Not.Contain("ProviderLog"))
+                Assert.That(script, Does.Not.Contain("ChargeLedger"))
+                Assert.That(script, Does.Not.Contain("BillingPeriod"))
+                Assert.That(script, Does.Not.Contain("CREATE DATABASE"))
+                Assert.That(script, Does.Not.Contain("ONLINE = ON")))
+        )
+
+    /// Verifies rollback returns to the baseline unpartitioned keys and removes unused partition structures.
+    [<Test>]
+    member _.MonthlyPartitioningRollbackScriptRestoresBaselineLayout() =
+        let script = migrationScriptFromTo "20260707120000_AddOperationsMonthlyPartitioning" "20260707000000_AddRawUsageFactPayload"
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(script, Does.Contain("PRIMARY KEY CLUSTERED (UsageFactId)"))
+                Assert.That(script, Does.Contain("ON ops.RawUsageFact (OwnerId, OrganizationId, RepositoryId, FactKind, ObservedAtUtc)"))
+                Assert.That(script, Does.Contain("ON [PRIMARY]"))
+                Assert.That(script, Does.Contain("DROP PARTITION SCHEME PS_ops_OperationsUsageMonthUtc"))
+                Assert.That(script, Does.Contain("DROP PARTITION FUNCTION PF_ops_OperationsUsageMonthUtc")))
         )
 
     /// Verifies the initial migration records the target model used by future migration diffs.
@@ -413,7 +550,7 @@ type OperationsUsageStorageTests() =
                 OperationsUsageStorageTestData.storagePoolId
                 1L
                 observedAt
-            |> UsageFactPersistencePlan.tryCreate
+            |> fun fact -> UsageFactPersistencePlan.tryCreate fact (OperationsUsageStorageTestData.payloadFor fact)
             |> requirePlan
 
         let mixedPoolPlan =
@@ -422,7 +559,7 @@ type OperationsUsageStorageTests() =
                 OperationsUsageStorageTestData.storagePoolIdWithDifferentCase
                 1L
                 observedAt
-            |> UsageFactPersistencePlan.tryCreate
+            |> fun fact -> UsageFactPersistencePlan.tryCreate fact (OperationsUsageStorageTestData.payloadFor fact)
             |> requirePlan
 
         Assert.Multiple(
@@ -450,7 +587,7 @@ type OperationsUsageStorageTests() =
                 Instant.FromUtc(2026, 7, 4, 12, 37, 0)
             )
 
-        match UsageFactPersistencePlan.tryCreate fact with
+        match UsageFactPersistencePlan.tryCreate fact (OperationsUsageStorageTestData.payloadFor fact) with
         | Ok _ -> Assert.Fail("Overlong SQL-bound fact fields should be rejected before persistence.")
         | Error errors ->
             let errorText = String.Join("|", errors)
@@ -461,6 +598,15 @@ type OperationsUsageStorageTests() =
 
                     Assert.That(errorText, Does.Contain($"Resource.StoragePoolId must be {OperationsUsageSql.StoragePoolIdMaxLength} characters or fewer")))
             )
+
+    /// Verifies raw payload retention is mandatory for facts accepted into Operations storage.
+    [<Test>]
+    member _.PersistencePlanRejectsEmptyRawPayload() =
+        let fact = OperationsUsageStorageTestData.fact (Guid.Parse("67676767-6767-6767-6767-676767676767")) 1L (Instant.FromUtc(2026, 7, 4, 12, 38, 0))
+
+        match UsageFactPersistencePlan.tryCreate fact Array.empty with
+        | Ok _ -> Assert.Fail("Empty raw payloads should be rejected before persistence.")
+        | Error errors -> Assert.That(String.Join("|", errors), Does.Contain("Raw UsageFact payload is required"))
 
     /// Verifies the production SQL transaction scope satisfies the store dependency.
     [<Test>]
@@ -512,14 +658,17 @@ type OperationsUsageStorageTests() =
             let store, transactionScope = createStore ()
             let usageFactId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
             let fact = OperationsUsageStorageTestData.fact usageFactId 4096L (Instant.FromUtc(2026, 7, 4, 12, 34, 56))
+            let rawPayload = OperationsUsageStorageTestData.payloadFor fact
 
-            let! result = store.StoreUsageFactAsync(fact, CancellationToken.None)
+            let! result = store.StoreUsageFactAsync(fact, rawPayload, CancellationToken.None)
             let stored = requireStored result
+            let rawFact = transactionScope.RawFact usageFactId
 
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(stored.Status, Is.EqualTo(UsageFactPersistenceStatus.Accepted))
                     Assert.That(transactionScope.RawFactCount, Is.EqualTo(1))
+                    Assert.That(Convert.ToBase64String(rawFact.RawPayload), Is.EqualTo(Convert.ToBase64String(rawPayload)))
                     Assert.That(stored.Aggregate.IsSome, Is.True)
                     Assert.That(transactionScope.AggregateQuantity(stored.Aggregate.Value.Key), Is.EqualTo(4096L)))
             )
@@ -532,12 +681,15 @@ type OperationsUsageStorageTests() =
             let store, transactionScope = createStore ()
             let usageFactId = Guid.Parse("bbbbbbbb-bbbb-bbbb-bbbb-bbbbbbbbbbbb")
             let fact = OperationsUsageStorageTestData.fact usageFactId 2048L (Instant.FromUtc(2026, 7, 4, 12, 34, 0))
+            let rawPayload = OperationsUsageStorageTestData.payloadFor fact
+            let duplicatePayload = Array.append rawPayload [| byte 0x0A |]
 
-            let! firstResult = store.StoreUsageFactAsync(fact, CancellationToken.None)
+            let! firstResult = store.StoreUsageFactAsync(fact, rawPayload, CancellationToken.None)
             let firstStored = requireStored firstResult
 
-            let! duplicateResult = store.StoreUsageFactAsync(fact, CancellationToken.None)
+            let! duplicateResult = store.StoreUsageFactAsync(fact, duplicatePayload, CancellationToken.None)
             let duplicateStored = requireStored duplicateResult
+            let rawFact = transactionScope.RawFact usageFactId
 
             Assert.Multiple(
                 Action (fun () ->
@@ -545,6 +697,7 @@ type OperationsUsageStorageTests() =
                     Assert.That(duplicateStored.Status, Is.EqualTo(UsageFactPersistenceStatus.AlreadyProcessed))
                     Assert.That(duplicateStored.Aggregate, Is.EqualTo(None))
                     Assert.That(transactionScope.RawFactCount, Is.EqualTo(1))
+                    Assert.That(Convert.ToBase64String(rawFact.RawPayload), Is.EqualTo(Convert.ToBase64String(rawPayload)))
                     Assert.That(transactionScope.AggregateQuantity(firstStored.Aggregate.Value.Key), Is.EqualTo(2048L)))
             )
         }
@@ -556,12 +709,13 @@ type OperationsUsageStorageTests() =
             let store, transactionScope = createStore ()
             let usageFactId = Guid.Parse("cccccccc-cccc-cccc-cccc-cccccccccccc")
             let fact = OperationsUsageStorageTestData.fact usageFactId 1024L (Instant.FromUtc(2026, 7, 4, 12, 35, 0))
+            let rawPayload = OperationsUsageStorageTestData.payloadFor fact
             transactionScope.FailNextAggregateUpdate()
 
             let mutable thrownMessage = None
 
             try
-                let! _ = store.StoreUsageFactAsync(fact, CancellationToken.None)
+                let! _ = store.StoreUsageFactAsync(fact, rawPayload, CancellationToken.None)
                 Assert.Fail("Aggregate failure should propagate instead of reporting successful storage.")
             with
             | :? InvalidOperationException as ex -> thrownMessage <- Some ex.Message
@@ -569,7 +723,7 @@ type OperationsUsageStorageTests() =
             Assert.That(thrownMessage, Is.EqualTo(Some "forced aggregate failure"))
             Assert.That(transactionScope.RawFactCount, Is.EqualTo(0))
 
-            let! retryResult = store.StoreUsageFactAsync(fact, CancellationToken.None)
+            let! retryResult = store.StoreUsageFactAsync(fact, rawPayload, CancellationToken.None)
             let retryStored = requireStored retryResult
 
             Assert.Multiple(
@@ -590,15 +744,15 @@ type OperationsUsageStorageTests() =
         let third = OperationsUsageStorageTestData.fact (Guid.Parse("ffffffff-ffff-ffff-ffff-ffffffffffff")) 1L (Instant.FromUtc(2026, 7, 4, 12, 35, 0))
 
         let firstPlan =
-            UsageFactPersistencePlan.tryCreate first
+            UsageFactPersistencePlan.tryCreate first (OperationsUsageStorageTestData.payloadFor first)
             |> requirePlan
 
         let secondPlan =
-            UsageFactPersistencePlan.tryCreate second
+            UsageFactPersistencePlan.tryCreate second (OperationsUsageStorageTestData.payloadFor second)
             |> requirePlan
 
         let thirdPlan =
-            UsageFactPersistencePlan.tryCreate third
+            UsageFactPersistencePlan.tryCreate third (OperationsUsageStorageTestData.payloadFor third)
             |> requirePlan
 
         Assert.Multiple(
