@@ -34,6 +34,7 @@
     <Compile Include="NormalFileMaterialization.Server.Tests.fs" />
     <Compile Include="StoragePoolRouting.Server.Tests.fs" />
     <Compile Include="DedupeIndex.Server.Tests.fs" />
+    <Compile Include="MaterializationPlan.Server.Tests.fs" />
     <Compile Include="Eventing.Server.Tests.fs" />
     <Compile Include="OperationalFactsPublisher.Actor.Tests.fs" />
     <Compile Include="Notification.Server.Tests.fs" />

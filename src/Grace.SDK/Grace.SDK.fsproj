@@ -30,6 +30,7 @@
 		<Compile Include="Organization.SDK.fs" />
 		<Compile Include="Repository.SDK.fs" />
 		<Compile Include="DirectoryVersion.SDK.fs" />
+		<Compile Include="Materialization.SDK.fs" />
 		<Compile Include="Diff.SDK.fs" />
                 
                 <Compile Include="WorkItem.SDK.fs" />

@@ -102,6 +102,7 @@
                 <Compile Include="ReviewAnalysis.Server.fs" />
                 <Compile Include="Eventing.Server.fs" />
 		<Compile Include="DirectoryVersion.Server.fs" />
+		<Compile Include="Materialization.Server.fs" />
 		<Compile Include="Diff.Server.fs" />
 		<Compile Include="NormalFileMaterialization.Server.fs" />
 		<Compile Include="Storage.Server.fs" />

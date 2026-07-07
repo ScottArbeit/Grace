@@ -23,6 +23,7 @@ __all__ = [
     "BranchesApi",
     "DiffsApi",
     "DirectoriesApi",
+    "MaterializationApi",
     "OrganizationsApi",
     "OwnersApi",
     "RepositoriesApi",
@@ -167,6 +168,18 @@ __all__ = [
     "ListRepositoriesParameters",
     "ListWebhookDeliveriesParameters",
     "ListWebhookRulesParameters",
+    "MaterializationArtifactDescriptor",
+    "MaterializationArtifactKind",
+    "MaterializationArtifactSource",
+    "MaterializationArtifactSourceKind",
+    "MaterializationCacheSelection",
+    "MaterializationCacheSelectionKind",
+    "MaterializationExecutionMode",
+    "MaterializationPlan",
+    "MaterializationPlanRequest",
+    "MaterializationPlanReturnValue",
+    "MaterializationTargetSelector",
+    "MaterializationTargetSelectorKind",
     "ObjectStorageProvider",
     "OrganizationCommandReturnValue",
     "OrganizationDto",
@@ -179,6 +192,7 @@ __all__ = [
     "OwnerParameters",
     "OwnerReturnValue",
     "OwnerType",
+    "PlanParameters",
     "PopulateParameters",
     "ProblemDetails",
     "PromotionSetApprovalState",
@@ -266,6 +280,7 @@ from grace_generated_openapi_probe.api.approvals_api import ApprovalsApi as Appr
 from grace_generated_openapi_probe.api.branches_api import BranchesApi as BranchesApi
 from grace_generated_openapi_probe.api.diffs_api import DiffsApi as DiffsApi
 from grace_generated_openapi_probe.api.directories_api import DirectoriesApi as DirectoriesApi
+from grace_generated_openapi_probe.api.materialization_api import MaterializationApi as MaterializationApi
 from grace_generated_openapi_probe.api.organizations_api import OrganizationsApi as OrganizationsApi
 from grace_generated_openapi_probe.api.owners_api import OwnersApi as OwnersApi
 from grace_generated_openapi_probe.api.repositories_api import RepositoriesApi as RepositoriesApi
@@ -414,6 +429,18 @@ from grace_generated_openapi_probe.models.list_organizations_parameters import L
 from grace_generated_openapi_probe.models.list_repositories_parameters import ListRepositoriesParameters as ListRepositoriesParameters
 from grace_generated_openapi_probe.models.list_webhook_deliveries_parameters import ListWebhookDeliveriesParameters as ListWebhookDeliveriesParameters
 from grace_generated_openapi_probe.models.list_webhook_rules_parameters import ListWebhookRulesParameters as ListWebhookRulesParameters
+from grace_generated_openapi_probe.models.materialization_artifact_descriptor import MaterializationArtifactDescriptor as MaterializationArtifactDescriptor
+from grace_generated_openapi_probe.models.materialization_artifact_kind import MaterializationArtifactKind as MaterializationArtifactKind
+from grace_generated_openapi_probe.models.materialization_artifact_source import MaterializationArtifactSource as MaterializationArtifactSource
+from grace_generated_openapi_probe.models.materialization_artifact_source_kind import MaterializationArtifactSourceKind as MaterializationArtifactSourceKind
+from grace_generated_openapi_probe.models.materialization_cache_selection import MaterializationCacheSelection as MaterializationCacheSelection
+from grace_generated_openapi_probe.models.materialization_cache_selection_kind import MaterializationCacheSelectionKind as MaterializationCacheSelectionKind
+from grace_generated_openapi_probe.models.materialization_execution_mode import MaterializationExecutionMode as MaterializationExecutionMode
+from grace_generated_openapi_probe.models.materialization_plan import MaterializationPlan as MaterializationPlan
+from grace_generated_openapi_probe.models.materialization_plan_request import MaterializationPlanRequest as MaterializationPlanRequest
+from grace_generated_openapi_probe.models.materialization_plan_return_value import MaterializationPlanReturnValue as MaterializationPlanReturnValue
+from grace_generated_openapi_probe.models.materialization_target_selector import MaterializationTargetSelector as MaterializationTargetSelector
+from grace_generated_openapi_probe.models.materialization_target_selector_kind import MaterializationTargetSelectorKind as MaterializationTargetSelectorKind
 from grace_generated_openapi_probe.models.object_storage_provider import ObjectStorageProvider as ObjectStorageProvider
 from grace_generated_openapi_probe.models.organization_command_return_value import OrganizationCommandReturnValue as OrganizationCommandReturnValue
 from grace_generated_openapi_probe.models.organization_dto import OrganizationDto as OrganizationDto
@@ -426,6 +453,7 @@ from grace_generated_openapi_probe.models.owner_dto import OwnerDto as OwnerDto
 from grace_generated_openapi_probe.models.owner_parameters import OwnerParameters as OwnerParameters
 from grace_generated_openapi_probe.models.owner_return_value import OwnerReturnValue as OwnerReturnValue
 from grace_generated_openapi_probe.models.owner_type import OwnerType as OwnerType
+from grace_generated_openapi_probe.models.plan_parameters import PlanParameters as PlanParameters
 from grace_generated_openapi_probe.models.populate_parameters import PopulateParameters as PopulateParameters
 from grace_generated_openapi_probe.models.problem_details import ProblemDetails as ProblemDetails
 from grace_generated_openapi_probe.models.promotion_set_approval_state import PromotionSetApprovalState as PromotionSetApprovalState

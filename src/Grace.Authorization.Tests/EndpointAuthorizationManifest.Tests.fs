@@ -374,6 +374,11 @@ type EndpointAuthorizationManifestTests() =
         ]
         |> assertRoutesUseSecurity (Authorized(Operation.PathWrite, ResourceKind.Path))
 
+    /// Verifies that materialization routes use repository read permission.
+    [<Test>]
+    member _.MaterializationPlanRouteRequiresRepositoryRead() =
+        assertRouteSecurity "POST" "/materialization/plan" (Authorized(Operation.RepositoryRead, ResourceKind.Repository))
+
     /// Verifies that scope creation routes require parent write or admin operations.
     [<Test>]
     member _.ScopeCreationRoutesRequireParentWriteOrAdminOperations() =

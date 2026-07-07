@@ -1669,6 +1669,51 @@ paths:
           $ref: '#/components/responses/400'
         '500':
           $ref: '#/components/responses/500'
+  /materialization/plan:
+    post:
+      tags:
+        - Materialization
+      summary: Create a Materialization Plan.
+      description: Resolves a Materialization Plan request on the server side. This tracer slice supports Direct/Bypass planning for immutable root directory selectors and rejects cache-backed or path-scoped requests until later slices own those behaviors.
+      operationId: CreateMaterializationPlan
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/PlanParameters'
+            examples:
+              directRootPlan:
+                summary: Direct root Materialization Plan request
+                value:
+                  CorrelationId: cli-20260707T105500Z-0001
+                  Principal: user:alice
+                  OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+                  OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+                  RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+                  Request:
+                    Class: MaterializationPlanRequest
+                    TargetSelector:
+                      Class: MaterializationTargetSelector
+                      SelectorKind: 1
+                      DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+                      ReferenceId: null
+                      BranchName: null
+                    ExecutionMode: 1
+                    CacheSelection:
+                      Class: MaterializationCacheSelection
+                      SelectionKind: 1
+                      CacheScope: null
+                    RequestedArtifactKinds:
+                      - 1
+                      - 2
+      responses:
+        '200':
+          $ref: '#/components/responses/MaterializationPlanResponse'
+        '400':
+          $ref: '#/components/responses/400'
+        '500':
+          $ref: '#/components/responses/500'
   /organization/create:
     post:
       tags:
@@ -3756,6 +3801,296 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/DirectoryVersion'
+    MaterializationExecutionMode:
+      description: How Grace may satisfy a Materialization Plan request.
+      type: integer
+      enum:
+        - 1
+        - 2
+        - 3
+      x-enumNames:
+        - Direct
+        - CachePreferred
+        - CacheRequired
+      example: 1
+    MaterializationTargetSelectorKind:
+      description: Selector shape supplied before Grace resolves the immutable target root.
+      type: integer
+      enum:
+        - 1
+        - 2
+        - 3
+      x-enumNames:
+        - DirectoryVersionId
+        - ReferenceId
+        - BranchName
+      example: 1
+    MaterializationCacheSelectionKind:
+      description: Cache behavior requested for artifact source selection.
+      type: integer
+      enum:
+        - 1
+        - 2
+        - 3
+      x-enumNames:
+        - BypassCache
+        - PreferCache
+        - RequireCache
+      example: 1
+    MaterializationArtifactKind:
+      description: Artifact contract vocabulary that a Materialization Plan may require.
+      type: integer
+      enum:
+        - 1
+        - 2
+        - 3
+        - 4
+        - 5
+      x-enumNames:
+        - DirectoryVersionZip
+        - RecursiveDirectoryMetadata
+        - WholeFileContent
+        - FileManifest
+        - ContentBlock
+      example: 1
+    MaterializationArtifactSourceKind:
+      description: Where a planned artifact can be fetched or resolved from.
+      type: integer
+      enum:
+        - 1
+        - 2
+        - 3
+      x-enumNames:
+        - DirectUri
+        - CacheEntry
+        - Deferred
+      example: 1
+    MaterializationTargetSelector:
+      description: Public selector that the server resolves to one immutable root DirectoryVersionId.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationTargetSelector
+        SelectorKind:
+          $ref: '#/components/schemas/MaterializationTargetSelectorKind'
+        DirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+          nullable: true
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+          nullable: true
+        BranchName:
+          $ref: '#/components/schemas/BranchName'
+          nullable: true
+      required:
+        - Class
+        - SelectorKind
+    MaterializationCacheSelection:
+      description: Cache-selection intent separate from artifact source details.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationCacheSelection
+        SelectionKind:
+          $ref: '#/components/schemas/MaterializationCacheSelectionKind'
+        CacheScope:
+          type: string
+          nullable: true
+      required:
+        - Class
+        - SelectionKind
+    MaterializationPlanRequest:
+      description: Request contract for server-side Materialization Plan creation.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationPlanRequest
+        TargetSelector:
+          $ref: '#/components/schemas/MaterializationTargetSelector'
+        ExecutionMode:
+          $ref: '#/components/schemas/MaterializationExecutionMode'
+        CacheSelection:
+          $ref: '#/components/schemas/MaterializationCacheSelection'
+        RequestedArtifactKinds:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaterializationArtifactKind'
+      required:
+        - Class
+        - TargetSelector
+        - ExecutionMode
+        - CacheSelection
+        - RequestedArtifactKinds
+      example:
+        Class: MaterializationPlanRequest
+        TargetSelector:
+          Class: MaterializationTargetSelector
+          SelectorKind: 1
+          DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+          ReferenceId: null
+          BranchName: null
+        ExecutionMode: 1
+        CacheSelection:
+          Class: MaterializationCacheSelection
+          SelectionKind: 1
+          CacheScope: null
+        RequestedArtifactKinds:
+          - 1
+          - 2
+    PlanParameters:
+      description: Parameters for the /materialization/plan endpoint.
+      type: object
+      allOf:
+        - $ref: '#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: '#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: '#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: '#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: '#/components/schemas/OrganizationName'
+        RepositoryId:
+          $ref: '#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: '#/components/schemas/RepositoryName'
+        Request:
+          $ref: '#/components/schemas/MaterializationPlanRequest'
+      required:
+        - Request
+      example:
+        CorrelationId: cli-20260707T105500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        Request:
+          Class: MaterializationPlanRequest
+          TargetSelector:
+            Class: MaterializationTargetSelector
+            SelectorKind: 1
+            DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+            ReferenceId: null
+            BranchName: null
+          ExecutionMode: 1
+          CacheSelection:
+            Class: MaterializationCacheSelection
+            SelectionKind: 1
+            CacheScope: null
+          RequestedArtifactKinds:
+            - 1
+            - 2
+    MaterializationArtifactSource:
+      description: Fetchable or deferred source for one planned artifact.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationArtifactSource
+        SourceKind:
+          $ref: '#/components/schemas/MaterializationArtifactSourceKind'
+        DirectUri:
+          type: string
+          format: uri
+          nullable: true
+        CacheKey:
+          type: string
+          nullable: true
+      required:
+        - Class
+        - SourceKind
+    MaterializationArtifactDescriptor:
+      description: Stable artifact identity required to materialize a resolved target root.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationArtifactDescriptor
+        ArtifactKind:
+          $ref: '#/components/schemas/MaterializationArtifactKind'
+        CanonicalArtifactIdentity:
+          type: string
+          nullable: true
+        RepresentedRootDirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+          nullable: true
+        TargetRootDirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+        SizeInBytes:
+          type: integer
+          format: int64
+          nullable: true
+        RelativePath:
+          $ref: '#/components/schemas/RelativePath'
+          nullable: true
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+          nullable: true
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+          nullable: true
+        ManifestAddress:
+          $ref: '#/components/schemas/ManifestAddress'
+          nullable: true
+        ContentBlockAddress:
+          $ref: '#/components/schemas/ContentBlockAddress'
+          nullable: true
+        StoragePoolId:
+          $ref: '#/components/schemas/StoragePoolId'
+          nullable: true
+        Source:
+          $ref: '#/components/schemas/MaterializationArtifactSource'
+          nullable: true
+      required:
+        - Class
+        - ArtifactKind
+        - TargetRootDirectoryVersionId
+    MaterializationPlan:
+      description: Resolved immutable target root and artifacts required to materialize it.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationPlan
+        TargetRootDirectoryVersionId:
+          $ref: '#/components/schemas/DirectoryVersionId'
+        ExecutionMode:
+          $ref: '#/components/schemas/MaterializationExecutionMode'
+        CacheSelection:
+          $ref: '#/components/schemas/MaterializationCacheSelection'
+        RequiredArtifacts:
+          type: array
+          items:
+            $ref: '#/components/schemas/MaterializationArtifactDescriptor'
+      required:
+        - Class
+        - TargetRootDirectoryVersionId
+        - ExecutionMode
+        - CacheSelection
+        - RequiredArtifacts
+    MaterializationPlanReturnValue:
+      description: Grace response envelope whose ReturnValue contains a Materialization Plan.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/components/schemas/MaterializationPlan'
+        EventTime:
+          $ref: '#/components/schemas/Instant'
+        CorrelationId:
+          $ref: '#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required:
+        - ReturnValue
+        - EventTime
+        - CorrelationId
+        - Properties
     BranchDto:
       description: (automatically generated)
       type: object
@@ -7261,6 +7596,12 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/DirectoryVersionHashLookupReturnValue'
+    MaterializationPlanResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/MaterializationPlanReturnValue'
     OrganizationCommandResponse:
       description: OK
       content:
