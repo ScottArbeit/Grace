@@ -118,6 +118,22 @@ docs-only classification with current evidence for the behavior they own.
 - Residual risk or rationale: CacheRequired is a high-risk trust contract because a silent Direct
   fallback would violate the mode name and caller expectations.
 
+### Server-Side Plan Resolution And Recursive Metadata Authority
+
+- Implementation seam: Grace Server materialization plan resolution for Reference and
+  DirectoryVersion targets, including the resolved DirectoryVersionId that owns target-root
+  artifacts and RecursiveDirectoryVersions metadata.
+- Proof seam: server-surface tests or static proof showing Grace Server resolves every Reference or
+  DirectoryVersion target before cache interaction, emits recursive metadata for the same resolved
+  DirectoryVersionId, and rejects cache or client code as a resolution authority.
+- Status classification: `not applicable` to this docs-only scaffold.
+- Issue or PR evidence: #609 creates the audit slot; the owning server-resolution issue or PR must
+  cite implementation and proof before claiming server-resolved content scope or
+  RecursiveDirectoryVersions authority.
+- Residual risk or rationale: later cache, SDK, or CLI rows cannot satisfy this authority seam by
+  resolving Reference or DirectoryVersion inputs locally. Grace Server must remain the source of the
+  plan, resolved DirectoryVersionId, and recursive metadata used by cache artifacts.
+
 ### ContentAccessGrant Issuance And Validation
 
 - Implementation seam: Grace Server grant issuance, grant binding, grant expiry, resolved content
@@ -247,5 +263,6 @@ git diff --check
 ```
 
 Manual review must also confirm that the scaffold covers Direct, CachePreferred, CacheRequired,
-grants, registration, read-through, prefetch, cleanup, Watch, Operations, docs, and generated
-contracts.
+server-side Reference/DirectoryVersion resolution, RecursiveDirectoryVersions metadata authority for
+the same DirectoryVersionId, grants, registration, read-through, prefetch, cleanup, Watch,
+Operations, docs, generated contracts, validation evidence, and residual risks.
