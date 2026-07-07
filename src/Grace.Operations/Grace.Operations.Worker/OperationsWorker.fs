@@ -1,8 +1,10 @@
 namespace Grace.Operations.Worker
 
+open Azure
 open Azure.Core
 open Azure.Identity
 open Azure.Messaging.ServiceBus
+open Azure.Storage.Blobs
 open Grace.Operations.Data
 open Grace.Shared
 open Grace.Shared.Utilities
@@ -15,7 +17,11 @@ open Microsoft.Extensions.Logging
 open NodaTime
 open System
 open System.Collections.Generic
+open System.Globalization
 open System.IO
+open System.IO.Compression
+open System.Security.Cryptography
+open System.Text
 open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
@@ -82,6 +88,349 @@ type OperationsUsageFactStoreAdapter(store: OperationsUsageStore) =
     interface IOperationsUsageFactStore with
 
         member _.StoreUsageFactAsync(fact, rawPayload, cancellationToken) = store.StoreUsageFactAsync(fact, rawPayload, cancellationToken)
+
+/// Carries deterministic compressed JSONL bytes and the Blob authority they must verify against.
+type OperationsUsageArchiveBlob = { Pointer: RawUsageFactArchivePointer; Content: byte array }
+
+/// Writes and verifies archive Blob content before SQL clears hot payload bytes.
+type IOperationsUsageArchiveBlobStore =
+
+    /// Writes archive content if absent, then verifies checksum and byte length from Blob storage.
+    abstract WriteAndVerifyAsync: archiveBlob: OperationsUsageArchiveBlob * cancellationToken: CancellationToken -> Task
+
+    /// Verifies an already-recorded Blob pointer before SQL cleanup resumes.
+    abstract VerifyAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task
+
+/// Builds deterministic archive names, JSONL payloads, compression, and checksums for raw usage facts.
+[<RequireQualifiedAccess>]
+module OperationsUsageArchiveFormat =
+
+    /// Identifies the archive record schema written into compressed JSONL blobs.
+    [<Literal>]
+    let ArchiveSchemaVersion = 1
+
+    /// Converts binary data into lowercase hexadecimal for persisted SHA-256 checksums.
+    let private toLowerHex (bytes: byte array) =
+        let builder = StringBuilder(bytes.Length * 2)
+        let mutable index = 0
+
+        while index < bytes.Length do
+            builder.Append(
+                bytes[index]
+                    .ToString("x2", CultureInfo.InvariantCulture)
+            )
+            |> ignore
+
+            index <- index + 1
+
+        builder.ToString()
+
+    /// Computes the lowercase SHA-256 checksum used by SQL archive authority.
+    let checksumSha256Hex (content: byte array) = SHA256.HashData content |> toLowerHex
+
+    /// Builds the deterministic Blob name for one archived usage fact.
+    let blobName (candidate: RawUsageFactArchiveCandidate) =
+        let observedUtc = candidate.ObservedAt.ToDateTimeUtc()
+        let observedYear = observedUtc.Year.ToString("0000", CultureInfo.InvariantCulture)
+        let observedMonth = observedUtc.Month.ToString("00", CultureInfo.InvariantCulture)
+
+        String.Join(
+            "/",
+            [|
+                "usage-facts"
+                "v1"
+                $"observedYear={observedYear}"
+                $"observedMonth={observedMonth}"
+                $"ownerId={candidate.OwnerId:D}"
+                $"organizationId={candidate.OrganizationId:D}"
+                $"repositoryId={candidate.RepositoryId:D}"
+                $"usageFactId={candidate.UsageFactId:D}.jsonl.gz"
+            |]
+        )
+
+    /// Writes one JSONL record with a stable property order and the exact accepted raw payload bytes.
+    let jsonLineBytes (candidate: RawUsageFactArchiveCandidate) (rawPayload: byte array) =
+        use stream = new MemoryStream()
+        use writer = new Utf8JsonWriter(stream, JsonWriterOptions(Indented = false))
+
+        writer.WriteStartObject()
+        writer.WriteNumber("archiveSchemaVersion", ArchiveSchemaVersion)
+        writer.WriteString("usageFactId", string candidate.UsageFactId)
+        writer.WriteString("correlationId", string candidate.CorrelationId)
+        writer.WriteString("factKind", candidate.FactKind.ToString())
+        writer.WriteString("ownerId", string candidate.OwnerId)
+        writer.WriteString("organizationId", string candidate.OrganizationId)
+        writer.WriteString("repositoryId", string candidate.RepositoryId)
+        writer.WriteString("storagePoolId", string candidate.StoragePoolId)
+        writer.WriteNumber("quantity", candidate.Quantity)
+
+        writer.WriteString(
+            "observedAtUtc",
+            candidate
+                .ObservedAt
+                .ToDateTimeUtc()
+                .ToString("O", CultureInfo.InvariantCulture)
+        )
+
+        writer.WriteBase64String("rawPayloadBase64", ReadOnlySpan<byte>(rawPayload))
+        writer.WriteEndObject()
+        writer.Flush()
+        stream.WriteByte(byte '\n')
+        stream.ToArray()
+
+    /// Compresses JSONL bytes with gzip so archive content remains compact and byte-for-byte repeatable.
+    let gzip (jsonl: byte array) =
+        use output = new MemoryStream()
+
+        use gzipStream = new GZipStream(output, CompressionLevel.SmallestSize, leaveOpen = true)
+
+        gzipStream.Write(jsonl, 0, jsonl.Length)
+        gzipStream.Dispose()
+        output.ToArray()
+
+    /// Builds the compressed archive blob and SQL pointer for one hot raw usage fact.
+    let createArchiveBlob (candidate: RawUsageFactArchiveCandidate) (rawPayload: byte array) =
+        let content = rawPayload |> jsonLineBytes candidate |> gzip
+
+        let pointer =
+            {
+                UsageFactId = candidate.UsageFactId
+                BlobName = blobName candidate
+                ChecksumSha256Hex = checksumSha256Hex content
+                ByteLength = int64 content.Length
+            }
+
+        { Pointer = pointer; Content = content }
+
+/// Stores archive blobs in Azure Blob Storage and reads them back for authority verification.
+type AzureOperationsUsageArchiveBlobStore(containerClient: BlobContainerClient) =
+
+    /// Downloads Blob content so checksum and byte length are verified from durable storage, not local memory.
+    let downloadContentAsync blobName cancellationToken =
+        task {
+            let blobClient = containerClient.GetBlobClient blobName
+            let! response = blobClient.DownloadContentAsync cancellationToken
+            return response.Value.Content.ToArray()
+        }
+
+    /// Throws when durable Blob bytes do not match the SQL archive authority.
+    let verifyContent (pointer: RawUsageFactArchivePointer) (content: byte array) =
+        let actualByteLength = int64 content.Length
+
+        if actualByteLength <> pointer.ByteLength then
+            invalidOp
+                $"Archive Blob '{pointer.BlobName}' length mismatch for UsageFactId '{pointer.UsageFactId}'. Expected {pointer.ByteLength}; actual {actualByteLength}."
+
+        let actualChecksum = OperationsUsageArchiveFormat.checksumSha256Hex content
+
+        if not (String.Equals(actualChecksum, pointer.ChecksumSha256Hex, StringComparison.Ordinal)) then
+            invalidOp $"Archive Blob '{pointer.BlobName}' checksum mismatch for UsageFactId '{pointer.UsageFactId}'."
+
+    /// Uploads content only when the deterministic Blob does not already exist.
+    let uploadIfMissingAsync (archiveBlob: OperationsUsageArchiveBlob) cancellationToken =
+        task {
+            let blobClient = containerClient.GetBlobClient archiveBlob.Pointer.BlobName
+
+            try
+                use stream = new MemoryStream(archiveBlob.Content, writable = false)
+                let! _ = blobClient.UploadAsync(stream, overwrite = false, cancellationToken = cancellationToken)
+                return ()
+            with
+            | :? RequestFailedException as ex when String.Equals(ex.ErrorCode, "BlobAlreadyExists", StringComparison.OrdinalIgnoreCase) -> return ()
+        }
+
+    interface IOperationsUsageArchiveBlobStore with
+
+        member _.WriteAndVerifyAsync(archiveBlob, cancellationToken) =
+            task {
+                let! _ = containerClient.CreateIfNotExistsAsync(cancellationToken = cancellationToken)
+                do! uploadIfMissingAsync archiveBlob cancellationToken
+                let! storedContent = downloadContentAsync archiveBlob.Pointer.BlobName cancellationToken
+                verifyContent archiveBlob.Pointer storedContent
+            }
+
+        member _.VerifyAsync(pointer, cancellationToken) =
+            task {
+                let! storedContent = downloadContentAsync pointer.BlobName cancellationToken
+                verifyContent pointer storedContent
+            }
+
+/// Archives old hot raw payloads after Blob authority is verified and persisted in SQL.
+type OperationsUsageArchiveProcessor
+    (
+        archiveStore: IOperationsUsageArchiveStore,
+        blobStore: IOperationsUsageArchiveBlobStore,
+        logger: ILogger<OperationsUsageArchiveProcessor>
+    ) =
+
+    /// Rebuilds a verified SQL pointer from a partially archived row before retrying hot-payload cleanup.
+    let pointerFromVerifiedCandidate (candidate: RawUsageFactArchiveCandidate) =
+        match candidate.ArchiveBlobName, candidate.ArchiveChecksumSha256Hex, candidate.ArchiveByteLength with
+        | Some blobName, Some checksum, Some byteLength ->
+            { UsageFactId = candidate.UsageFactId; BlobName = blobName; ChecksumSha256Hex = checksum; ByteLength = byteLength }
+        | _ -> invalidOp $"UsageFactId '{candidate.UsageFactId}' is marked archive-verified without a complete Blob pointer."
+
+    /// Archives one hot candidate or resumes cleanup for an already verified candidate.
+    let archiveCandidateAsync (candidate: RawUsageFactArchiveCandidate) cancellationToken =
+        task {
+            let! pointer =
+                task {
+                    match candidate.ArchiveState with
+                    | RawUsageFactArchiveState.Hot ->
+                        match candidate.RawPayload with
+                        | Some rawPayload ->
+                            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob candidate rawPayload
+                            do! blobStore.WriteAndVerifyAsync(archiveBlob, cancellationToken)
+                            let! _ = archiveStore.MarkArchiveVerifiedAsync(archiveBlob.Pointer, cancellationToken)
+                            return archiveBlob.Pointer
+                        | None -> return invalidOp $"Hot UsageFactId '{candidate.UsageFactId}' has no raw payload to archive."
+                    | RawUsageFactArchiveState.ArchiveVerified -> return pointerFromVerifiedCandidate candidate
+                    | RawUsageFactArchiveState.Archived -> return pointerFromVerifiedCandidate candidate
+                    | state -> return invalidOp $"UsageFactId '{candidate.UsageFactId}' has unsupported archive state '{state}'."
+                }
+
+            do! blobStore.VerifyAsync(pointer, cancellationToken)
+            let! completed = archiveStore.CompleteArchiveAsync(pointer, cancellationToken)
+
+            logger.LogInformation(
+                "Archived operational UsageFact hot payload. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ByteLength: {ByteLength}; CompletedStateChange: {CompletedStateChange}.",
+                pointer.UsageFactId,
+                pointer.BlobName,
+                pointer.ByteLength,
+                completed
+            )
+        }
+
+    /// Archives at most one batch of candidates older than the supplied hot-retention cutoff.
+    member _.ArchiveBatchAsync(observedBefore: Instant, batchSize: int, cancellationToken: CancellationToken) =
+        task {
+            let! candidates = archiveStore.ListArchiveCandidatesAsync(observedBefore, batchSize, cancellationToken)
+            let mutable index = 0
+            let mutable archived = 0
+            let candidateArray = candidates |> List.toArray
+
+            while index < candidateArray.Length do
+                cancellationToken.ThrowIfCancellationRequested()
+                do! archiveCandidateAsync candidateArray[index] cancellationToken
+                archived <- archived + 1
+                index <- index + 1
+
+            return archived
+        }
+
+/// Reads Blob archive settings required by the hot/cold usage fact archive worker.
+type OperationsUsageArchiveSettings =
+    {
+        BlobConnectionString: string option
+        BlobServiceUri: string option
+        BlobContainerName: string
+        HotRetentionDays: int
+        BatchSize: int
+        PollInterval: TimeSpan
+    }
+
+/// Resolves hot/cold archive settings from host configuration and environment variables.
+[<RequireQualifiedAccess>]
+module OperationsUsageArchiveSettings =
+
+    /// The environment variable that contains an Azure Storage connection string for archive Blob writes.
+    [<Literal>]
+    let BlobConnectionStringEnvironmentVariable = "grace__operations__archive__blob_connectionstring"
+
+    /// The environment variable that contains a Blob service URI for managed-identity archive writes.
+    [<Literal>]
+    let BlobServiceUriEnvironmentVariable = "grace__operations__archive__blob_service_uri"
+
+    /// The environment variable that names the container used for compressed usage fact archives.
+    [<Literal>]
+    let BlobContainerNameEnvironmentVariable = "grace__operations__archive__blob_container"
+
+    /// The environment variable that controls how long raw payloads remain hot in SQL.
+    [<Literal>]
+    let HotRetentionDaysEnvironmentVariable = "grace__operations__archive__hot_retention_days"
+
+    /// The environment variable that controls the maximum number of raw facts archived per batch.
+    [<Literal>]
+    let BatchSizeEnvironmentVariable = "grace__operations__archive__batch_size"
+
+    /// The environment variable that controls the delay between archive worker batches.
+    [<Literal>]
+    let PollIntervalSecondsEnvironmentVariable = "grace__operations__archive__poll_interval_seconds"
+
+    /// Returns a trimmed setting value when configuration contains a non-empty entry.
+    let private optionalSetting (configuration: IConfiguration) name =
+        [
+            configuration[getConfigKey name]
+            configuration[name]
+            Environment.GetEnvironmentVariable name
+        ]
+        |> List.tryPick (fun value -> if String.IsNullOrWhiteSpace value then None else Some(value.Trim()))
+
+    /// Reads a positive integer setting or returns the supplied default.
+    let private positiveIntSetting configuration name defaultValue =
+        match optionalSetting configuration name with
+        | Some value ->
+            match Int32.TryParse value with
+            | true, parsed when parsed > 0 -> parsed
+            | _ -> defaultValue
+        | None -> defaultValue
+
+    /// Builds validated archive settings from configuration.
+    let fromConfiguration (configuration: IConfiguration) =
+        let blobConnectionString = optionalSetting configuration BlobConnectionStringEnvironmentVariable
+        let blobServiceUri = optionalSetting configuration BlobServiceUriEnvironmentVariable
+        let blobContainerName = optionalSetting configuration BlobContainerNameEnvironmentVariable
+        let hotRetentionDays = positiveIntSetting configuration HotRetentionDaysEnvironmentVariable 90
+        let batchSize = positiveIntSetting configuration BatchSizeEnvironmentVariable 100
+        let pollIntervalSeconds = positiveIntSetting configuration PollIntervalSecondsEnvironmentVariable 300
+        let errors = ResizeArray<string>()
+
+        if blobConnectionString.IsNone
+           && blobServiceUri.IsNone then
+            errors.Add($"{BlobConnectionStringEnvironmentVariable} or {BlobServiceUriEnvironmentVariable} is required.")
+
+        if blobContainerName.IsNone then
+            errors.Add($"{BlobContainerNameEnvironmentVariable} is required.")
+
+        match blobServiceUri with
+        | Some uri ->
+            match Uri.TryCreate(uri, UriKind.Absolute) with
+            | true, parsed when parsed.Scheme = Uri.UriSchemeHttps -> ()
+            | _ -> errors.Add($"{BlobServiceUriEnvironmentVariable} must be an absolute HTTPS URI.")
+        | None -> ()
+
+        if errors.Count > 0 then
+            Error(List.ofSeq errors)
+        else
+            Ok
+                {
+                    BlobConnectionString = blobConnectionString
+                    BlobServiceUri = blobServiceUri
+                    BlobContainerName = blobContainerName.Value
+                    HotRetentionDays = hotRetentionDays
+                    BatchSize = batchSize
+                    PollInterval = TimeSpan.FromSeconds(float pollIntervalSeconds)
+                }
+
+    /// Enables the archive worker only when archive storage settings are present, while rejecting partial configuration.
+    let tryFromConfiguration (configuration: IConfiguration) =
+        let hasArchiveSetting =
+            [
+                BlobConnectionStringEnvironmentVariable
+                BlobServiceUriEnvironmentVariable
+                BlobContainerNameEnvironmentVariable
+                HotRetentionDaysEnvironmentVariable
+                BatchSizeEnvironmentVariable
+                PollIntervalSecondsEnvironmentVariable
+            ]
+            |> List.exists (fun name ->
+                optionalSetting configuration name
+                |> Option.isSome)
+
+        if hasArchiveSetting then
+            fromConfiguration configuration |> Result.map Some
+        else
+            Ok None
 
 /// Reports whether the operations usage worker is ready to consume durable ingestion messages.
 type OperationsUsageReadinessStatus =
@@ -924,6 +1273,61 @@ module internal OperationsUsageServiceBusMessage =
             OperationsUsageReadinessTransitions.recordServiceBusReceiveSuccess readiness receiveAttempt
 
         processor.ProcessMessageAsync(fromReceivedMessage message, actions, cancellationToken)
+
+/// Runs hot/cold archive batches for raw usage fact payload retention.
+type OperationsUsageArchiveWorkerService
+    (
+        settings: OperationsUsageArchiveSettings,
+        processor: OperationsUsageArchiveProcessor,
+        logger: ILogger<OperationsUsageArchiveWorkerService>
+    ) =
+    inherit BackgroundService()
+
+    /// Computes the exclusive hot-retention cutoff for the next archive batch.
+    let observedBefore () =
+        SystemClock.Instance.GetCurrentInstant()
+        - Duration.FromDays(settings.HotRetentionDays)
+
+    /// Runs one archive pass and records redacted operational evidence.
+    let runBatchAsync cancellationToken =
+        task {
+            let cutoff = observedBefore ()
+            let! archived = processor.ArchiveBatchAsync(cutoff, settings.BatchSize, cancellationToken)
+
+            logger.LogInformation(
+                "Completed operations usage archive batch. ArchivedFacts: {ArchivedFacts}; HotRetentionDays: {HotRetentionDays}; CutoffUtc: {CutoffUtc}.",
+                archived,
+                settings.HotRetentionDays,
+                cutoff
+            )
+        }
+
+    /// Delays between archive passes while allowing prompt host shutdown.
+    let delayUntilNextBatchAsync (cancellationToken: CancellationToken) = Task.Delay(settings.PollInterval, cancellationToken)
+
+    /// Runs archive batches until the worker host shuts down.
+    override _.ExecuteAsync(stoppingToken: CancellationToken) =
+        task {
+            logger.LogInformation(
+                "Started operations usage archive worker for container {ContainerName}; HotRetentionDays: {HotRetentionDays}; BatchSize: {BatchSize}.",
+                settings.BlobContainerName,
+                settings.HotRetentionDays,
+                settings.BatchSize
+            )
+
+            let mutable running = true
+
+            while running
+                  && not stoppingToken.IsCancellationRequested do
+                try
+                    do! runBatchAsync stoppingToken
+                    do! delayUntilNextBatchAsync stoppingToken
+                with
+                | :? OperationCanceledException when stoppingToken.IsCancellationRequested -> running <- false
+                | ex ->
+                    logger.LogError(ex, "Operations usage archive batch failed; retrying after the configured poll interval.")
+                    do! delayUntilNextBatchAsync stoppingToken
+        }
 
 /// Runs the operational fact Service Bus processor for the Grace operations worker process.
 type OperationsUsageWorkerService

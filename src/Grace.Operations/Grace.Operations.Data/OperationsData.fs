@@ -56,6 +56,47 @@ type UsageFactPersistenceStatus =
 /// Reports the outcome of transactionally storing a usage fact.
 type UsageFactPersistenceResult = { Status: UsageFactPersistenceStatus; UsageFactId: UsageFactId; Aggregate: UsageAggregateMinute option }
 
+/// Tracks whether a raw usage fact payload is still hot in SQL, verified in Blob, or fully archived.
+type RawUsageFactArchiveState =
+    | Hot = 0
+    | ArchiveVerified = 1
+    | Archived = 2
+
+/// Describes one raw usage fact that is ready for Blob archive processing or verified cleanup.
+type RawUsageFactArchiveCandidate =
+    {
+        UsageFactId: UsageFactId
+        RawPayload: byte array option
+        CorrelationId: CorrelationId
+        FactKind: UsageFactKind
+        OwnerId: OwnerId
+        OrganizationId: OrganizationId
+        RepositoryId: RepositoryId
+        StoragePoolId: StoragePoolId
+        Quantity: int64
+        ObservedAt: Instant
+        ArchiveState: RawUsageFactArchiveState
+        ArchiveBlobName: string option
+        ArchiveChecksumSha256Hex: string option
+        ArchiveByteLength: int64 option
+    }
+
+/// Carries the Blob authority that must match before Operations clears a hot SQL payload.
+type RawUsageFactArchivePointer = { UsageFactId: UsageFactId; BlobName: string; ChecksumSha256Hex: string; ByteLength: int64 }
+
+/// Lists and transitions raw usage facts through the hot/cold archive boundary.
+type IOperationsUsageArchiveStore =
+
+    /// Returns deterministic archive candidates older than the hot-retention cutoff.
+    abstract ListArchiveCandidatesAsync:
+        observedBefore: Instant * batchSize: int * cancellationToken: CancellationToken -> Task<RawUsageFactArchiveCandidate list>
+
+    /// Records verified Blob authority while the hot SQL payload is still present.
+    abstract MarkArchiveVerifiedAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
+
+    /// Clears the hot SQL payload only when the verified SQL pointer still matches the supplied Blob authority.
+    abstract CompleteArchiveAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
+
 /// Chooses whether schema initialization may connect to `master` to create the operations database.
 type OperationsUsageSchemaBootstrapMode =
 
@@ -282,6 +323,161 @@ type SqlOperationsUsageTransactionScope(connectionString: string) =
                     do! rollbackIgnoringFailuresAsync transaction
                     return raise ex
             }
+
+/// Lists and updates archive state through reviewed SQL commands that preserve Blob authority ordering.
+type SqlOperationsUsageArchiveStore(connectionString: string) =
+
+    /// Opens a SQL connection for archive queries and state transitions.
+    let openConnectionAsync cancellationToken =
+        task {
+            let connection = new SqlConnection(connectionString)
+            do! connection.OpenAsync cancellationToken
+            return connection
+        }
+
+    /// Converts a NodaTime instant to the UTC SQL timestamp shape used by operations usage tables.
+    let toUtcDateTime (instant: Instant) = instant.ToDateTimeUtc()
+
+    /// Converts a UTC SQL timestamp into the instant used by archive layout decisions.
+    let toInstant (dateTime: DateTime) =
+        let utc =
+            if dateTime.Kind = DateTimeKind.Utc then
+                dateTime
+            else
+                DateTime.SpecifyKind(dateTime, DateTimeKind.Utc)
+
+        Instant.FromDateTimeUtc utc
+
+    /// Adds a SQL parameter and assigns either the supplied value or database null.
+    let addParameter (command: SqlCommand) name sqlDbType value =
+        let parameter = command.Parameters.Add(name, sqlDbType)
+        parameter.Value <- value
+
+    /// Adds a string SQL parameter with a fixed column length.
+    let addStringParameter (command: SqlCommand) name length (value: string) =
+        let parameter = command.Parameters.Add(name, SqlDbType.NVarChar, length)
+        parameter.Value <- value
+
+    /// Adds archive-state parameters shared by archive SQL commands.
+    let addArchiveStateParameters (command: SqlCommand) =
+        addParameter command "@ArchiveStateHot" SqlDbType.Int (int RawUsageFactArchiveState.Hot)
+        addParameter command "@ArchiveStateVerified" SqlDbType.Int (int RawUsageFactArchiveState.ArchiveVerified)
+        addParameter command "@ArchiveStateArchived" SqlDbType.Int (int RawUsageFactArchiveState.Archived)
+
+    /// Adds Blob pointer parameters that guard archive idempotency and hot-payload cleanup.
+    let addArchivePointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =
+        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier pointer.UsageFactId
+        addStringParameter command "@ArchiveBlobName" OperationsUsageSql.ArchiveBlobNameMaxLength pointer.BlobName
+
+        let checksumParameter = command.Parameters.Add("@ArchiveChecksumSha256Hex", SqlDbType.Char, OperationsUsageSql.ArchiveChecksumSha256HexLength)
+
+        checksumParameter.Value <- pointer.ChecksumSha256Hex
+        addParameter command "@ArchiveByteLength" SqlDbType.BigInt pointer.ByteLength
+
+    /// Executes an archive transition command and returns whether this call changed SQL state.
+    let executeArchiveTransitionAsync commandText pointer cancellationToken =
+        task {
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- commandText
+            addArchiveStateParameters command
+            addArchivePointerParameters command pointer
+
+            let! scalar = command.ExecuteScalarAsync cancellationToken
+
+            return
+                match scalar with
+                | :? int as value -> value = 1
+                | :? int64 as value -> value = 1L
+                | :? decimal as value -> value = 1M
+                | _ -> false
+        }
+
+    interface IOperationsUsageArchiveStore with
+
+        member _.ListArchiveCandidatesAsync(observedBefore, batchSize, cancellationToken) =
+            task {
+                if batchSize <= 0 then
+                    invalidArg (nameof batchSize) "Archive batch size must be greater than zero."
+
+                use! connection = openConnectionAsync cancellationToken
+                use command = connection.CreateCommand()
+                command.CommandType <- CommandType.Text
+                command.CommandText <- OperationsUsageSql.SelectRawUsageFactsForArchive
+                addParameter command "@BatchSize" SqlDbType.Int batchSize
+                addParameter command "@ObservedBeforeUtc" SqlDbType.DateTime2 (toUtcDateTime observedBefore)
+                addArchiveStateParameters command
+
+                use! reader = command.ExecuteReaderAsync cancellationToken
+                let candidates = ResizeArray<RawUsageFactArchiveCandidate>()
+
+                let usageFactIdOrdinal = reader.GetOrdinal("UsageFactId")
+                let rawPayloadOrdinal = reader.GetOrdinal("RawPayload")
+                let correlationIdOrdinal = reader.GetOrdinal("CorrelationId")
+                let factKindOrdinal = reader.GetOrdinal("FactKind")
+                let ownerIdOrdinal = reader.GetOrdinal("OwnerId")
+                let organizationIdOrdinal = reader.GetOrdinal("OrganizationId")
+                let repositoryIdOrdinal = reader.GetOrdinal("RepositoryId")
+                let storagePoolIdOrdinal = reader.GetOrdinal("StoragePoolId")
+                let quantityOrdinal = reader.GetOrdinal("Quantity")
+                let observedAtOrdinal = reader.GetOrdinal("ObservedAtUtc")
+                let archiveStateOrdinal = reader.GetOrdinal("ArchiveState")
+                let archiveBlobNameOrdinal = reader.GetOrdinal("ArchiveBlobName")
+                let archiveChecksumOrdinal = reader.GetOrdinal("ArchiveChecksumSha256Hex")
+                let archiveByteLengthOrdinal = reader.GetOrdinal("ArchiveByteLength")
+
+                let mutable reading = true
+
+                while reading do
+                    let! hasRow = reader.ReadAsync cancellationToken
+
+                    if hasRow then
+                        let rawPayload =
+                            if reader.IsDBNull rawPayloadOrdinal then
+                                None
+                            else
+                                Some(
+                                    reader.GetFieldValue<byte array>(rawPayloadOrdinal)
+                                    |> Array.copy
+                                )
+
+                        let readOptionalString ordinal = if reader.IsDBNull ordinal then None else Some(reader.GetString ordinal)
+
+                        let archiveByteLength =
+                            if reader.IsDBNull archiveByteLengthOrdinal then
+                                None
+                            else
+                                Some(reader.GetInt64 archiveByteLengthOrdinal)
+
+                        candidates.Add
+                            {
+                                UsageFactId = reader.GetGuid usageFactIdOrdinal
+                                RawPayload = rawPayload
+                                CorrelationId = CorrelationId(reader.GetString correlationIdOrdinal)
+                                FactKind = enum<UsageFactKind> (reader.GetInt32 factKindOrdinal)
+                                OwnerId = reader.GetGuid ownerIdOrdinal
+                                OrganizationId = reader.GetGuid organizationIdOrdinal
+                                RepositoryId = reader.GetGuid repositoryIdOrdinal
+                                StoragePoolId = StoragePoolId(reader.GetString storagePoolIdOrdinal)
+                                Quantity = reader.GetInt64 quantityOrdinal
+                                ObservedAt = toInstant (reader.GetDateTime observedAtOrdinal)
+                                ArchiveState = enum<RawUsageFactArchiveState> (reader.GetInt32 archiveStateOrdinal)
+                                ArchiveBlobName = readOptionalString archiveBlobNameOrdinal
+                                ArchiveChecksumSha256Hex = readOptionalString archiveChecksumOrdinal
+                                ArchiveByteLength = archiveByteLength
+                            }
+                    else
+                        reading <- false
+
+                return candidates |> Seq.toList
+            }
+
+        member _.MarkArchiveVerifiedAsync(pointer, cancellationToken) =
+            executeArchiveTransitionAsync OperationsUsageSql.MarkRawUsageFactArchiveVerified pointer cancellationToken
+
+        member _.CompleteArchiveAsync(pointer, cancellationToken) =
+            executeArchiveTransitionAsync OperationsUsageSql.CompleteRawUsageFactArchive pointer cancellationToken
 
 /// Ensures the operations usage SQL schema exists before ingestion starts consuming durable messages.
 type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsUsageSchemaBootstrapMode) =
