@@ -4,6 +4,7 @@ open Azure.Storage.Blobs.Models
 open Azure.Storage.Blobs.Specialized
 open Grace.Server.Tests.Services
 open Grace.Shared
+open Grace.Shared.Constants
 open Grace.Shared.Client.Configuration
 open Grace.Shared.Services
 open Grace.Shared.Utilities
@@ -13,7 +14,9 @@ open Grace.Types
 open Grace.Types.Annotation
 open Grace.Types.Common
 open Grace.Types.PersonalAccessToken
+open Grace.Types.Reference
 open Grace.Types.Visibility
+open NodaTime
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -727,6 +730,20 @@ module BranchServerTestHelpers =
             parameters.RepositoryId <- repositoryId
             parameters.BranchId <- $"{branch.BranchId}"
             parameters.Sha256Hash <- sha256Hash
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            return! client.PostAsync("/branch/listContents", createJsonContent parameters)
+        }
+
+    /// Lists contents by BLAKE3 hash through the supplied authenticated client.
+    let listContentsByBlake3HashWithClientResponseAsync (client: HttpClient) repositoryId (branch: Branch.BranchDto) blake3Hash =
+        task {
+            let parameters = Parameters.Branch.ListContentsParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branch.BranchId}"
+            parameters.Blake3Hash <- blake3Hash
             parameters.CorrelationId <- generateCorrelationId ()
 
             return! client.PostAsync("/branch/listContents", createJsonContent parameters)
@@ -1604,6 +1621,149 @@ type BranchServer() =
 
             Assert.That(branchAdminDirectoryIds, Does.Contain(privateRoot.DirectoryVersionId))
         }
+
+    /// Verifies public hash reads resolve after visibility filtering when a hidden root shares the requested prefix.
+    [<Test>]
+    member _.PublicBranchHashLookupIgnoresHiddenSamePrefixRoot() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "VisibilityHashPrefix"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+
+            let! observerBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBranches |> Array.exactlyOne
+
+            let! visibleBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync
+                    creatorClient
+                    repositoryId
+                    parentBranch
+                    $"VisibleHashPrefix{Guid.NewGuid():N}"
+                    "Public"
+                    "RepositoryOwned"
+
+            let! hiddenBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync
+                    creatorClient
+                    repositoryId
+                    parentBranch
+                    $"HiddenHashPrefix{Guid.NewGuid():N}"
+                    "Private"
+                    "ContributorOwned"
+
+            let! visibleBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId visibleBranchId
+            do! BranchServerTestHelpers.assertOk visibleBranchResponse
+            let! visibleBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> visibleBranchResponse
+            let visibleBranch = visibleBranchReturnValue.ReturnValue
+
+            let! hiddenBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId hiddenBranchId
+            do! BranchServerTestHelpers.assertOk hiddenBranchResponse
+            let! hiddenBranchReturnValue = deserializeContent<GraceReturnValue<Branch.BranchDto>> hiddenBranchResponse
+            let hiddenBranch = hiddenBranchReturnValue.ReturnValue
+
+            let visibleChild, visibleRoot, hiddenChild, hiddenRoot, sharedPrefix =
+                BranchServerTestHelpers.createSameBlake3PrefixRootPair repositoryId $"visibility-filtered-prefix/{Guid.NewGuid():N}"
+
+            do!
+                BranchServerTestHelpers.saveDirectoryVersionsAsync
+                    repositoryId
+                    [
+                        visibleChild
+                        visibleRoot
+                        hiddenChild
+                        hiddenRoot
+                    ]
+
+            let! visibleSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    visibleBranch
+                    visibleRoot.DirectoryVersionId
+                    visibleRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk visibleSaveResponse
+
+            let! hiddenSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    hiddenBranch
+                    hiddenRoot.DirectoryVersionId
+                    hiddenRoot.Sha256Hash
+
+            do! BranchServerTestHelpers.assertOk hiddenSaveResponse
+
+            let! listContentsResponse =
+                BranchServerTestHelpers.listContentsByBlake3HashWithClientResponseAsync observerClient repositoryId visibleBranch (Blake3Hash sharedPrefix)
+
+            let! listContentsBody = listContentsResponse.Content.ReadAsStringAsync()
+            Assert.That(listContentsResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), listContentsBody)
+
+            let listContents =
+                (deserialize<GraceReturnValue<DirectoryVersion.DirectoryVersionDto array>> listContentsBody)
+                    .ReturnValue
+
+            Assert.That(
+                listContents
+                |> Array.exists (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = visibleRoot.DirectoryVersionId),
+                Is.True
+            )
+
+            Assert.That(
+                listContents
+                |> Array.exists (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.DirectoryVersionId = hiddenRoot.DirectoryVersionId),
+                Is.False
+            )
+        }
+
+    /// Verifies branch reference windows discard deleted newest rows before applying visible latest/list limits.
+    [<Test>]
+    member _.BranchReferenceWindowOrdersActiveRowsPastDeletedNewestRows() =
+        let baseInstant = getCurrentInstant ()
+
+        let olderVisibleReference = { Reference.ReferenceDto.Default with ReferenceId = ReferenceId.NewGuid(); CreatedAt = baseInstant }
+
+        let deletedNewestReferences =
+            [|
+                for index in 1..35 ->
+                    { Reference.ReferenceDto.Default with
+                        ReferenceId = ReferenceId.NewGuid()
+                        CreatedAt = baseInstant.Plus(Duration.FromSeconds(float index))
+                        DeletedAt = Some(baseInstant.Plus(Duration.FromSeconds(float (index + 100))))
+                    }
+            |]
+
+        let activeReferences =
+            Array.append [| olderVisibleReference |] deletedNewestReferences
+            |> Grace.Server.Branch.activeReferencesLatestFirst
+
+        Assert.That(activeReferences, Has.Length.EqualTo(1))
+        Assert.That(activeReferences[0].ReferenceId, Is.EqualTo(olderVisibleReference.ReferenceId))
+
+    /// Verifies public reference-window scan math does not cap legitimate MaxCount values below the caller request.
+    [<Test>]
+    member _.BranchReferenceScanLimitsHonorMaxCountAboveRefillCap() =
+        let requestedMaxCount = 1500
+
+        Assert.That(Grace.Server.Branch.visibleReferenceScanLimitCap requestedMaxCount, Is.EqualTo(requestedMaxCount))
+        Assert.That(Grace.Server.Branch.initialVisibleReferenceScanLimit requestedMaxCount, Is.EqualTo(requestedMaxCount))
+        Assert.That(Grace.Server.Branch.nextVisibleReferenceScanLimit requestedMaxCount 1024, Is.EqualTo(requestedMaxCount))
+
+    /// Verifies the branch reference-list helper accepts branch authority once instead of owning a per-row branch load seam.
+    [<Test>]
+    member _.BranchReferenceFilteringUsesSingleBranchAuthorityShape() =
+        let filter: Microsoft.AspNetCore.Http.HttpContext -> Branch.BranchDto -> int -> Reference.ReferenceDto seq -> Task<Reference.ReferenceDto array> =
+            Grace.Server.Branch.filterVisibleReferenceWindowForBranch
+
+        Assert.That(box filter, Is.Not.Null)
 
     /// Verifies that regular branches in public repositories default to public repository-owned visibility.
     [<Test>]
