@@ -38,6 +38,8 @@ module Branch =
         member val public ParentBranchId = String.Empty with get, set
         member val public ParentBranchName: BranchName = String.Empty with get, set
         member val public InitialPermissions: ReferenceType seq = [ Commit; Checkpoint; Save; Tag ] with get, set
+        member val public Visibility = String.Empty with get, set
+        member val public Ownership = String.Empty with get, set
 
     /// Parameters for the /branch/assign endpoint.
     type AssignParameters() =

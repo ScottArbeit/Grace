@@ -13,12 +13,15 @@ open Grace.Shared
 open Grace.Shared.AnnotationLineCore
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Branch
+open Grace.Shared.Parameters.Visibility
 open Grace.Types
 open Grace.Types.Annotation
 open Grace.Types.Authorization
 open Grace.Types.Branch
 open Grace.Types.Diff
 open Grace.Types.Common
+open Grace.Types.Repository
+open Grace.Types.Visibility
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
@@ -148,6 +151,57 @@ module Branch =
             | Denied _ -> return false
         }
 
+    /// Checks whether the already-authorized caller can observe the stored branch visibility boundary.
+    let internal canObserveBranch (context: HttpContext) (branchDto: BranchDto) =
+        match branchDto.Visibility, branchDto.Ownership with
+        | ResourceVisibility.Public, _ -> true
+        | _, ResourceOwnership.RepositoryOwned -> true
+        | _, ResourceOwnership.ContributorOwned ->
+            PrincipalMapper.tryGetUserId context.User
+            |> Option.map UserId
+            |> Option.exists ((=) branchDto.UserId)
+
+    /// Creates the hidden-as-missing response used when a private contributor branch exists but is not observable.
+    let internal hiddenBranchError context branchId =
+        (GraceError.Create (BranchError.getErrorMessage BranchError.BranchIdDoesNotExist) (getCorrelationId context))
+            .enhance(nameof BranchId, branchId)
+            .enhance ("Path", context.Request.Path.Value)
+
+    /// Validates an optional visibility input without accepting deferred values.
+    let private visibilityInputIsImplemented (visibility: string) =
+        ValueTask<Result<unit, BranchError>>(
+            if String.IsNullOrWhiteSpace visibility
+               || (tryParseVisibilityInput visibility).IsSome then
+                Ok()
+            else
+                Error BranchError.InvalidReferenceType
+        )
+
+    /// Validates an optional ownership input without accepting arbitrary contributor owner identifiers.
+    let private ownershipInputIsImplemented (ownership: string) =
+        ValueTask<Result<unit, BranchError>>(
+            if String.IsNullOrWhiteSpace ownership
+               || (tryParseOwnershipInput ownership).IsSome then
+                Ok()
+            else
+                Error BranchError.InvalidReferenceType
+        )
+
+    /// Resolves the branch visibility default from repository policy and explicit route input.
+    let private resolveBranchVisibility (repositoryType: RepositoryType) (ownership: ResourceOwnership) (visibilityInput: string) =
+        match tryParseVisibilityInput visibilityInput with
+        | Some visibility -> visibility
+        | None ->
+            match ownership, repositoryType with
+            | ResourceOwnership.ContributorOwned, _ -> ResourceVisibility.Private
+            | _, RepositoryType.Public -> ResourceVisibility.Public
+            | _, RepositoryType.Private -> ResourceVisibility.Private
+
+    /// Resolves the branch ownership default from explicit route input.
+    let private resolveBranchOwnership ownershipInput =
+        tryParseOwnershipInput ownershipInput
+        |> Option.defaultValue ResourceOwnership.RepositoryOwned
+
     /// Gets try get based on reference id data needed by the server flow.
     let tryGetBasedOnReferenceId (referenceDto: Reference.ReferenceDto) =
         referenceDto.Links
@@ -167,7 +221,7 @@ module Branch =
     /// Implements materialize annotation document for the server request pipeline.
     let private materializeAnnotationDocument
         (context: HttpContext)
-        (repositoryDto: Repository.RepositoryDto)
+        (repositoryDto: Grace.Types.Repository.RepositoryDto)
         (path: RelativePath)
         (referenceDto: Reference.ReferenceDto)
         =
@@ -223,7 +277,7 @@ module Branch =
     /// Materializes annotation history across references while preserving unreadable ancestor boundaries for the caller.
     let internal buildEffectiveHistory
         (context: HttpContext)
-        (repositoryDto: Repository.RepositoryDto)
+        (repositoryDto: Grace.Types.Repository.RepositoryDto)
         (path: RelativePath)
         (targetReferenceId: ReferenceId)
         (references: Reference.ReferenceDto array)
@@ -446,7 +500,10 @@ module Branch =
                 return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.InvalidReferenceId))
             | Ok () ->
                 let normalizedPath = normalizeAnnotationPath parameters.Path
-                let repositoryActorProxy = Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+
+                let repositoryActorProxy =
+                    Grace.Actors.Extensions.ActorProxy.Repository.CreateActorProxy graceIds.OrganizationId graceIds.RepositoryId correlationId
+
                 let! repositoryDto = repositoryActorProxy.Get correlationId
 
                 let referenceActorProxy = Reference.CreateActorProxy parameters.TargetReferenceId graceIds.RepositoryId correlationId
@@ -845,6 +902,8 @@ module Branch =
                             parameters.BranchName
                             parameters.CorrelationId
                             BranchError.BranchNameAlreadyExists
+                        visibilityInputIsImplemented parameters.Visibility
+                        ownershipInputIsImplemented parameters.Ownership
                     |]
 
                 /// Implements command for the server request pipeline.
@@ -860,12 +919,28 @@ module Branch =
                             with
                         | Some parentBranchId ->
                             let repositoryId = Guid.Parse(parameters.RepositoryId)
+
+                            let repositoryActorProxy =
+                                Grace.Actors.Extensions.ActorProxy.Repository.CreateActorProxy
+                                    graceIds.OrganizationId
+                                    graceIds.RepositoryId
+                                    parameters.CorrelationId
+
+                            let! repositoryDto = repositoryActorProxy.Get parameters.CorrelationId
+                            let ownership = resolveBranchOwnership parameters.Ownership
+                            let visibility = resolveBranchVisibility repositoryDto.RepositoryType ownership parameters.Visibility
+
+                            let creatorUserId =
+                                PrincipalMapper.tryGetUserId context.User
+                                |> Option.map UserId
+                                |> Option.defaultValue (UserId String.Empty)
+
                             let parentBranchActorProxy = Branch.CreateActorProxy parentBranchId repositoryId parameters.CorrelationId
 
                             let! parentBranch = parentBranchActorProxy.Get parameters.CorrelationId
 
                             return
-                                Create(
+                                BranchCommand.Create(
                                     graceIds.BranchId,
                                     (BranchName parameters.BranchName),
                                     parentBranchId,
@@ -873,11 +948,14 @@ module Branch =
                                     graceIds.OwnerId,
                                     graceIds.OrganizationId,
                                     graceIds.RepositoryId,
-                                    parameters.InitialPermissions
+                                    parameters.InitialPermissions,
+                                    visibility,
+                                    ownership,
+                                    creatorUserId
                                 )
                         | None ->
                             return
-                                Create(
+                                BranchCommand.Create(
                                     graceIds.BranchId,
                                     (BranchName parameters.BranchName),
                                     Constants.DefaultParentBranchId,
@@ -885,7 +963,10 @@ module Branch =
                                     graceIds.OwnerId,
                                     graceIds.OrganizationId,
                                     graceIds.RepositoryId,
-                                    parameters.InitialPermissions
+                                    parameters.InitialPermissions,
+                                    ResourceVisibility.Private,
+                                    ResourceOwnership.RepositoryOwned,
+                                    UserId String.Empty
                                 )
                     }
                     |> ValueTask<BranchCommand>
@@ -1462,7 +1543,7 @@ module Branch =
                                     return None
                             }
 
-                        return DeleteLogical(parameters.Force, parameters.DeleteReason, parameters.ReassignChildBranches, newParentBranchIdOption)
+                        return BranchCommand.DeleteLogical(parameters.Force, parameters.DeleteReason, parameters.ReassignChildBranches, newParentBranchIdOption)
                     }
                     |> ValueTask<BranchCommand>
 
@@ -1541,14 +1622,25 @@ module Branch =
                 let graceIds = getGraceIds context
 
                 try
-                    /// Implements validations for the server request pipeline.
-                    let validations (parameters: GetBranchParameters) = [||]
-
-                    /// Implements query for the server request pipeline.
-                    let query (context: HttpContext) maxCount (actorProxy: IBranchActor) = actorProxy.Get(getCorrelationId context)
-
                     let! parameters = context |> parse<GetBranchParameters>
-                    let! result = processQuery context parameters validations 1 query
+                    let actorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId (getCorrelationId context)
+                    let! branchDto = actorProxy.Get(getCorrelationId context)
+
+                    let! result =
+                        if canObserveBranch context branchDto then
+                            let graceReturnValue =
+                                (GraceReturnValue.Create branchDto (getCorrelationId context))
+                                    .enhance(getParametersAsDictionary parameters)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof BranchId, graceIds.BranchId)
+                                    .enhance ("Path", context.Request.Path.Value)
+
+                            context |> result200Ok graceReturnValue
+                        else
+                            context
+                            |> result400BadRequest (hiddenBranchError context graceIds.BranchId)
 
                     let duration_ms = getDurationRightAligned_ms startTime
 

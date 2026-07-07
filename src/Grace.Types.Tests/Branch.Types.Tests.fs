@@ -1,9 +1,11 @@
 namespace Grace.Types.Tests
 
 open Grace.Shared
+open Grace.Shared.Utilities
 open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.Reference
+open Grace.Types.Visibility
 open NodaTime
 open NUnit.Framework
 open System
@@ -20,6 +22,9 @@ type BranchDtoHashTests() =
     let sha256Hash = Sha256Hash "root-sha256"
     let blake3Hash = Blake3Hash "root-blake3"
     let referenceText = ReferenceText "root reference"
+    let ownerId = Guid.Parse("44444444-aaaa-4444-8888-444444444444")
+    let organizationId = Guid.Parse("55555555-aaaa-4444-8888-555555555555")
+    let repositoryId = Guid.Parse("66666666-aaaa-4444-8888-666666666666")
 
     let metadata =
         {
@@ -44,7 +49,31 @@ type BranchDtoHashTests() =
         }
 
     /// Exercises branch event coverage for the types branch contract.
-    let branchEvent (eventType: BranchEventType) : BranchEvent = { Event = eventType; Metadata = metadata }
+    let branchEvent (eventType: Grace.Types.Branch.BranchEventType) : Grace.Types.Branch.BranchEvent = { Event = eventType; Metadata = metadata }
+
+    /// Exercises created branch event coverage with based-on reference projection metadata.
+    let createdBranchEvent visibility ownership creatorUserId : Grace.Types.Branch.BranchEvent =
+        let createdMetadata = { metadata with Properties = Dictionary<string, string>() }
+
+        createdMetadata.Properties[ "basedOnReferenceDto" ] <- serialize ReferenceDto.Default
+
+        {
+            Event =
+                BranchEventType.Created(
+                    branchId,
+                    BranchName "private-contributor",
+                    Guid.Parse("77777777-aaaa-4444-8888-777777777777"),
+                    ReferenceId.Empty,
+                    ownerId,
+                    organizationId,
+                    repositoryId,
+                    [ ReferenceType.Commit ],
+                    visibility,
+                    ownership,
+                    creatorUserId
+                )
+            Metadata = createdMetadata
+        }
 
     /// Verifies that reference producing commands carry both root hashes.
     [<Test>]
@@ -131,3 +160,20 @@ type BranchDtoHashTests() =
         Assert.That(saved.LatestSave.Sha256Hash, Is.EqualTo(sha256Hash))
         Assert.That(saved.LatestSave.Blake3Hash, Is.EqualTo(blake3Hash))
         Assert.That(saved.LatestCommit.Blake3Hash, Is.EqualTo(blake3Hash))
+
+    /// Verifies that branch creation replay reconstructs visibility ownership and creator state.
+    [<Test>]
+    member _.ReplayProjectionKeepsVisibilityOwnershipAndCreatorState() =
+        let creatorUserId = UserId "creator-user"
+
+        let branch = BranchDto.UpdateDto (createdBranchEvent ResourceVisibility.Private ResourceOwnership.ContributorOwned creatorUserId) BranchDto.Default
+
+        Assert.That(branch.Visibility, Is.EqualTo(ResourceVisibility.Private))
+        Assert.That(branch.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
+        Assert.That(branch.UserId, Is.EqualTo(creatorUserId))
+
+    /// Verifies that the branch DTO default fails closed before repository policy is applied.
+    [<Test>]
+    member _.BranchDtoDefaultVisibilityFailsClosed() =
+        Assert.That(BranchDto.Default.Visibility, Is.EqualTo(ResourceVisibility.Private))
+        Assert.That(BranchDto.Default.Ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))

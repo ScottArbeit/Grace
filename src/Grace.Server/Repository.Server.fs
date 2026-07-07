@@ -13,8 +13,10 @@ open Grace.Server.Validations
 open Grace.Shared
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.Repository
+open Grace.Types.Branch
 open Grace.Types.Repository
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
@@ -43,6 +45,16 @@ module Repository =
     let activitySource = new ActivitySource("Repository")
 
     let log = ApplicationContext.loggerFactory.CreateLogger("Repository.Server")
+
+    /// Determines whether the caller may observe a branch in repository branch list materialization.
+    let internal canObserveBranch (context: HttpContext) (branchDto: BranchDto) =
+        match branchDto.Visibility, branchDto.Ownership with
+        | ResourceVisibility.Public, _ -> true
+        | _, ResourceOwnership.RepositoryOwned -> true
+        | _, ResourceOwnership.ContributorOwned ->
+            PrincipalMapper.tryGetUserId context.User
+            |> Option.map UserId
+            |> Option.exists ((=) branchDto.UserId)
 
     /// Coordinates process command with post success processing for Grace Server.
     let processCommandWithPostSuccess<'T when 'T :> RepositoryParameters>
@@ -821,8 +833,12 @@ module Repository =
                             let graceIds = context.Items[nameof GraceIds] :?> GraceIds
                             let includeDeleted = context.Items["IncludeDeleted"] :?> bool
 
-                            return!
+                            let! branches =
                                 getBranches graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId maxCount includeDeleted (getCorrelationId context)
+
+                            return
+                                branches
+                                |> Array.filter (canObserveBranch context)
                         }
 
                     let! parameters = context |> parse<GetBranchesParameters>
