@@ -3,6 +3,7 @@ namespace Grace.Types.Tests
 open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.MaterializationPlan
+open Grace.Types.Reference
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -22,6 +23,9 @@ module MaterializationPlanTestData =
 
     /// Provides a deterministic branch name for selector serialization coverage.
     let branchName = BranchName "feature-cache-plan"
+
+    /// Provides a deterministic reference type for selector serialization coverage.
+    let referenceType = ReferenceType.Promotion
 
     /// Provides a deterministic storage pool id for CAS descriptor coverage.
     let storagePoolId = StoragePoolId "storage-pool-main"
@@ -176,6 +180,7 @@ type MaterializationPlanContractTests() =
                 MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId
                 MaterializationTargetSelector.ForReference MaterializationPlanTestData.referenceId
                 MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName
+                MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchName, MaterializationPlanTestData.referenceType)
             ]
 
         for selector in selectors do
@@ -1599,9 +1604,15 @@ type MaterializationPlanContractTests() =
                 DirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
             }
 
+        let referenceTypeSelector =
+            { MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchName, MaterializationPlanTestData.referenceType) with
+                ReferenceId = Some MaterializationPlanTestData.referenceId
+            }
+
         assertInvalid "TargetSelector.ReferenceId must be empty for DirectoryVersionId selectors." (Validation.validateTargetSelector directorySelector)
         assertInvalid "TargetSelector.BranchName must be empty for ReferenceId selectors." (Validation.validateTargetSelector referenceSelector)
         assertInvalid "TargetSelector.DirectoryVersionId must be empty for BranchName selectors." (Validation.validateTargetSelector branchSelector)
+        assertInvalid "TargetSelector.ReferenceId must be empty for ReferenceType selectors." (Validation.validateTargetSelector referenceTypeSelector)
 
     /// Verifies that every selector kind rejects each identity field owned by the other selector kinds.
     [<Test>]
@@ -1632,6 +1643,18 @@ type MaterializationPlanContractTests() =
                     ReferenceId = Some MaterializationPlanTestData.referenceId
                 },
                 "TargetSelector.ReferenceId must be empty for BranchName selectors."
+                { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with
+                    ReferenceType = Some MaterializationPlanTestData.referenceType
+                },
+                "TargetSelector.ReferenceType must be empty for BranchName selectors."
+                { MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchName, MaterializationPlanTestData.referenceType) with
+                    DirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
+                },
+                "TargetSelector.DirectoryVersionId must be empty for ReferenceType selectors."
+                { MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchName, MaterializationPlanTestData.referenceType) with
+                    ReferenceId = Some MaterializationPlanTestData.referenceId
+                },
+                "TargetSelector.ReferenceId must be empty for ReferenceType selectors."
             ]
 
         for selector, expected in cases do

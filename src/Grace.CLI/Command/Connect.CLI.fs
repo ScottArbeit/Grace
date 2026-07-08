@@ -680,12 +680,12 @@ module Connect =
         }
 
     /// Builds the Materialization Plan target selector while preserving implicit default connect promotion semantics.
-    let internal createDirectPlanTargetSelector selection (_branchDto: BranchDto) resolvedDirectoryVersionId =
+    let internal createDirectPlanTargetSelector selection (branchDto: BranchDto) resolvedDirectoryVersionId =
         match selection with
         | UseDirectoryVersionId directoryVersionId -> MaterializationTargetSelector.ForDirectoryVersion(directoryVersionId)
         | UseReferenceId referenceId -> MaterializationTargetSelector.ForReference(referenceId)
         | UseDefault -> MaterializationTargetSelector.ForDirectoryVersion(resolvedDirectoryVersionId)
-        | UseReferenceType _ -> MaterializationTargetSelector.ForDirectoryVersion(resolvedDirectoryVersionId)
+        | UseReferenceType referenceType -> MaterializationTargetSelector.ForReferenceType(branchDto.BranchName, referenceType)
 
     /// Builds the Direct Materialization Plan request for the target selected by connect.
     let internal createDirectPlanRequest targetSelector =
@@ -808,14 +808,12 @@ module Connect =
         match prepareDirectPlanArtifactSources correlationId plan with
         | Error error -> Error error
         | Ok sources ->
-            let recursiveMetadataRootMatches =
+            let recursiveMetadataTargetMatches =
                 directoryVersionDtos
-                |> Seq.exists (fun dto ->
-                    dto.DirectoryVersion.DirectoryVersionId = plan.TargetRootDirectoryVersionId
-                    && dto.DirectoryVersion.RelativePath = Constants.RootDirectoryPath)
+                |> Seq.exists (fun dto -> dto.DirectoryVersion.DirectoryVersionId = plan.TargetRootDirectoryVersionId)
 
-            if not recursiveMetadataRootMatches then
-                Error(GraceError.Create "Recursive DirectoryVersion metadata did not include the Materialization Plan target root." correlationId)
+            if not recursiveMetadataTargetMatches then
+                Error(GraceError.Create "Recursive DirectoryVersion metadata did not include the Materialization Plan target directory version." correlationId)
             else
                 let fileVersions =
                     directoryVersionDtos
@@ -953,8 +951,98 @@ module Connect =
         use stream = new MemoryStream(bytes, false)
         decodeRecursiveMetadataArtifactStream correlationId stream
 
+    /// Copies DirectUri artifact bytes into a temporary stream while enforcing the planned delivered-byte limit.
+    let internal copyDirectUriArtifactToTempStream correlationId artifactName expectedSize contentLength (openContentStream: unit -> Task<Stream>) =
+        task {
+            match expectedSize, contentLength with
+            | Some expectedSize, Some contentLength when contentLength > expectedSize ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"Materialization Plan {artifactName} artifact Content-Length exceeds planned size. Expected at most {expectedSize} bytes, response declared {contentLength} bytes."
+                            correlationId
+                    )
+            | _ ->
+                let tempFilePath = Path.Combine(Path.GetTempPath(), $"grace-direct-artifact-{Guid.NewGuid():N}.tmp")
+
+                let tempFile =
+                    new FileStream(
+                        tempFilePath,
+                        FileMode.CreateNew,
+                        FileAccess.ReadWrite,
+                        FileShare.None,
+                        64 * 1024,
+                        FileOptions.Asynchronous
+                        ||| FileOptions.DeleteOnClose
+                    )
+
+                try
+                    use! sourceStream = openContentStream ()
+                    let buffer = Array.zeroCreate<byte> (64 * 1024)
+                    let mutable copiedBytes = 0L
+                    let mutable completed = false
+                    let mutable sizeError = None
+
+                    while not completed && sizeError.IsNone do
+                        let maxRead =
+                            match expectedSize with
+                            | Some expectedSize ->
+                                let remainingBeforeOversize = expectedSize - copiedBytes + 1L
+
+                                if remainingBeforeOversize <= 0L then
+                                    1
+                                else
+                                    min buffer.Length (int (min remainingBeforeOversize (int64 buffer.Length)))
+                            | None -> buffer.Length
+
+                        let! read =
+                            sourceStream
+                                .ReadAsync(buffer.AsMemory(0, maxRead))
+                                .AsTask()
+
+                        if read = 0 then
+                            completed <- true
+                        else
+                            let nextCopiedBytes = copiedBytes + int64 read
+
+                            match expectedSize with
+                            | Some expectedSize when nextCopiedBytes > expectedSize ->
+                                sizeError <-
+                                    Some(
+                                        GraceError.Create
+                                            $"Materialization Plan {artifactName} artifact size mismatch. Expected {expectedSize} bytes, received more than {expectedSize} bytes."
+                                            correlationId
+                                    )
+                            | _ ->
+                                do!
+                                    tempFile
+                                        .WriteAsync(buffer.AsMemory(0, read))
+                                        .AsTask()
+
+                                copiedBytes <- nextCopiedBytes
+
+                    match sizeError with
+                    | Some error ->
+                        tempFile.Dispose()
+                        return Error error
+                    | None ->
+                        tempFile.Position <- 0L
+                        return Ok(tempFile :> Stream)
+                with
+                | ex ->
+                    tempFile.Dispose()
+
+                    return
+                        Error(
+                            GraceError.CreateWithException
+                                ex
+                                $"Materialization Plan {artifactName} artifact download failed while writing the temporary artifact stream."
+                                correlationId
+                        )
+        }
+
     /// Fetches DirectUri artifact bytes to a temporary stream without assuming a backing blob provider.
-    let private fetchDirectUriArtifactStream correlationId artifactName uri =
+    let private fetchDirectUriArtifactStream correlationId artifactName uri (artifact: MaterializationArtifactDescriptor) =
         task {
             let mutable artifactUri = Unchecked.defaultof<Uri>
 
@@ -977,34 +1065,13 @@ module Connect =
                                     correlationId
                             )
                     else
-                        let tempFilePath = Path.Combine(Path.GetTempPath(), $"grace-direct-artifact-{Guid.NewGuid():N}.tmp")
+                        let contentLength =
+                            response.Content.Headers.ContentLength
+                            |> Option.ofNullable
 
-                        let tempFile =
-                            new FileStream(
-                                tempFilePath,
-                                FileMode.CreateNew,
-                                FileAccess.ReadWrite,
-                                FileShare.None,
-                                64 * 1024,
-                                FileOptions.Asynchronous
-                                ||| FileOptions.DeleteOnClose
-                            )
-
-                        try
-                            do! response.Content.CopyToAsync(tempFile)
-                            tempFile.Position <- 0L
-                            return Ok(tempFile :> Stream)
-                        with
-                        | ex ->
-                            tempFile.Dispose()
-
-                            return
-                                Error(
-                                    GraceError.CreateWithException
-                                        ex
-                                        $"Materialization Plan {artifactName} artifact download failed while writing the temporary artifact stream."
-                                        correlationId
-                                )
+                        return!
+                            copyDirectUriArtifactToTempStream correlationId artifactName artifact.SizeInBytes contentLength (fun () ->
+                                response.Content.ReadAsStreamAsync())
                 with
                 | ex -> return Error(GraceError.CreateWithException ex $"Materialization Plan {artifactName} artifact download failed." correlationId)
         }
@@ -1012,7 +1079,7 @@ module Connect =
     /// Downloads and verifies a planned DirectUri artifact before connect extracts or writes local state.
     let private downloadPlannedDirectUriArtifact correlationId artifactName uri artifact =
         task {
-            match! fetchDirectUriArtifactStream correlationId artifactName uri with
+            match! fetchDirectUriArtifactStream correlationId artifactName uri artifact with
             | Error error -> return Error error
             | Ok stream ->
                 match! validatePlannedArtifactStream correlationId artifactName artifact stream with
@@ -1022,15 +1089,67 @@ module Connect =
                 | Ok () -> return Ok stream
         }
 
+    /// Verifies materialized working-tree bytes against recursive metadata before local state records success.
+    let internal validateMaterializedFiles correlationId (fileVersions: FileVersion seq) =
+        task {
+            let fileVersionArray = fileVersions |> Seq.toArray
+            let mutable index = 0
+            let mutable validationError = None
+
+            while index < fileVersionArray.Length
+                  && validationError.IsNone do
+                let fileVersion = fileVersionArray[index]
+                let filePath = Path.Combine(Current().RootDirectory, fileVersion.RelativePath)
+                let fileInfo = FileInfo(filePath)
+
+                if not fileInfo.Exists then
+                    validationError <-
+                        Some(GraceError.Create $"Materialized file '{fileVersion.RelativePath}' is missing after Direct connect extraction." correlationId)
+                elif fileInfo.Length <> fileVersion.Size then
+                    validationError <-
+                        Some(
+                            GraceError.Create
+                                $"Materialized file '{fileVersion.RelativePath}' size mismatch. Expected {fileVersion.Size} bytes, received {fileInfo.Length} bytes."
+                                correlationId
+                        )
+                else
+                    use stream = new FileStream(fileInfo.FullName, FileMode.Open, FileAccess.Read, FileShare.Read)
+                    let! localSha256Hash = Grace.Shared.Services.computeSha256ForFile stream fileVersion.RelativePath
+
+                    let! localBlake3Hash =
+                        if not (String.IsNullOrWhiteSpace(string fileVersion.Blake3Hash)) then
+                            stream.Position <- 0L
+
+                            task {
+                                let! localFileContentHash = Grace.Shared.Services.computeBlake3ForFile stream
+                                return Blake3Hash $"{localFileContentHash}"
+                            }
+                        else
+                            Task.FromResult(Blake3Hash String.Empty)
+
+                    if not (existingFileMatchesRemoteVersion localSha256Hash localBlake3Hash fileVersion) then
+                        validationError <-
+                            Some(
+                                GraceError.Create $"Materialized file '{fileVersion.RelativePath}' hash mismatch after Direct connect extraction." correlationId
+                            )
+
+                index <- index + 1
+
+            match validationError with
+            | Some error -> return Error error
+            | None -> return Ok()
+        }
+
     /// Coordinates extract zip entries behavior for this CLI command path.
     let private extractZipEntries
         (parseResult: ParseResult)
         (fileVersionsByRelativePath: Dictionary<RelativePath, FileVersion>)
         (filesToSkip: HashSet<RelativePath>)
+        writeWorkingFiles
+        writeObjectFiles
         (zipFile: Stream)
         =
-        use zipFile = zipFile
-        use zipArchive = new ZipArchive(zipFile, ZipArchiveMode.Read)
+        use zipArchive = new ZipArchive(zipFile, ZipArchiveMode.Read, leaveOpen = true)
 
         writeHumanLine parseResult $"[{Colors.Important}]Streaming contents from .zip file.[/]"
         writeHumanLine parseResult $"[{Colors.Important}]Starting to write files to disk.[/]"
@@ -1057,10 +1176,11 @@ module Connect =
                     |> ignore
 
                     let writeWorkingFile =
-                        not
-                        <| filesToSkip.Contains(fileVersion.RelativePath)
+                        writeWorkingFiles
+                        && not
+                           <| filesToSkip.Contains(fileVersion.RelativePath)
 
-                    let writeObjectFile = not objectFileInfo.Exists
+                    let writeObjectFile = writeObjectFiles && not objectFileInfo.Exists
 
                     if fileVersion.IsBinary then
                         if writeWorkingFile then entry.ExtractToFile(fileInfo.FullName, true)
@@ -1097,12 +1217,22 @@ module Connect =
         =
         task {
             let directoryVersionSelection = getDirectoryVersionSelection parseResult
-            let! directoryVersionResult = resolveTargetDirectoryVersionId parseResult graceIds ownerDto organizationDto repositoryDto branchDto
 
-            match directoryVersionResult with
+            let! targetSelectorResult =
+                task {
+                    match directoryVersionSelection with
+                    | UseDefault ->
+                        match! resolveTargetDirectoryVersionId parseResult graceIds ownerDto organizationDto repositoryDto branchDto with
+                        | Ok directoryVersionId -> return Ok(createDirectPlanTargetSelector directoryVersionSelection branchDto directoryVersionId)
+                        | Error error -> return Error error
+                    | UseDirectoryVersionId _
+                    | UseReferenceId _
+                    | UseReferenceType _ -> return Ok(createDirectPlanTargetSelector directoryVersionSelection branchDto DirectoryVersionId.Empty)
+                }
+
+            match targetSelectorResult with
             | Error error -> return (Error error |> renderOutput parseResult)
-            | Ok directoryVersionId ->
-                let targetSelector = createDirectPlanTargetSelector directoryVersionSelection branchDto directoryVersionId
+            | Ok targetSelector ->
                 writeHumanLine parseResult $"[{Colors.Important}]Requesting Direct Materialization Plan.[/]"
                 let! materializationPlanResult = requestDirectMaterializationPlan graceIds ownerDto organizationDto repositoryDto targetSelector
                 writeHumanLine parseResult $"[{Colors.Important}]Finished requesting Direct Materialization Plan.[/]"
@@ -1163,16 +1293,22 @@ module Connect =
                                         | Error error -> return (Error error |> renderOutput parseResult)
                                         | Ok zipFile ->
                                             use zipFile = zipFile
-                                            extractZipEntries parseResult fileVersionsByRelativePath filesToSkip zipFile
+                                            extractZipEntries parseResult fileVersionsByRelativePath filesToSkip true false zipFile
 
-                                            writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
-                                            let! previousGraceStatus = readGraceStatusFile ()
-                                            let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-                                            do! writeGraceStatusFile graceStatus
+                                            match! validateMaterializedFiles graceIds.CorrelationId executionArtifacts.FileVersions with
+                                            | Error error -> return (Error error |> renderOutput parseResult)
+                                            | Ok () ->
+                                                zipFile.Position <- 0L
+                                                extractZipEntries parseResult fileVersionsByRelativePath filesToSkip false true zipFile
 
-                                            writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
-                                            do! upsertObjectCache graceStatus.Index.Values
-                                            return 0
+                                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
+                                                let! previousGraceStatus = readGraceStatusFile ()
+                                                let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                                                do! writeGraceStatusFile graceStatus
+
+                                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
+                                                do! upsertObjectCache graceStatus.Index.Values
+                                                return 0
         }
 
     /// Routes the connect command from parsed options through validation, the SDK call, and result rendering.

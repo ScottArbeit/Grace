@@ -44,6 +44,9 @@ module Materialization =
     /// Public-safe selector error used when a branch resolves but has no immutable target root.
     let branchTipSelectorNotFoundMessage = "BranchName selector did not match an authorized branch tip."
 
+    /// Public-safe selector error used when a ReferenceType selector cannot resolve to an authorized branch reference.
+    let referenceTypeSelectorNotFoundMessage = "ReferenceType selector did not match an authorized branch reference."
+
     /// Classifies Direct/Bypass plan creation failures after the route has parsed repository authority and target selector intent.
     type internal DirectPlanFailure =
         /// The request shape is invalid for the Direct root-only tracer contract and must remain a client error.
@@ -172,16 +175,12 @@ module Materialization =
             | Error (ServerProjectionFailure error) -> return Error error
         }
 
-    /// Validates that a resolved DirectoryVersion belongs to the authorized repository root without leaking cross-scope state.
+    /// Validates that a resolved DirectoryVersion belongs to the authorized repository without leaking cross-scope state.
     let validateDirectoryVersionSelectorScope repositoryId (directoryVersion: DirectoryVersion) correlationId =
         if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
             Error(planError correlationId directoryVersionSelectorNotFoundMessage)
         elif directoryVersion.RepositoryId <> repositoryId then
             Error(planError correlationId directoryVersionSelectorNotFoundMessage)
-        elif directoryVersion.RelativePath
-             <> Constants.RootDirectoryPath
-             && directoryVersion.RelativePath <> "/" then
-            Error(planError correlationId "Path-scoped Materialization Plan selectors are not supported by /materialization/plan yet.")
         else
             Ok()
 
@@ -427,6 +426,79 @@ module Materialization =
                     correlationId
         }
 
+    /// Selects the newest reference after authoritative ReferenceType lookup revalidates branch scope.
+    let private selectLatestReference (references: ReferenceDto seq) =
+        references
+        |> Seq.sortByDescending (fun reference ->
+            reference.UpdatedAt
+            |> Option.defaultValue reference.CreatedAt)
+        |> Seq.tryHead
+
+    /// Resolves a ReferenceType selector to the latest matching reference for the selected branch at plan time.
+    let internal resolveReferenceTypeSelectorWith
+        repositoryId
+        (branchName: BranchName)
+        (referenceType: ReferenceType)
+        (resolveBranchIdByName: unit -> Task<BranchId option>)
+        (getBranch: BranchId -> Task<BranchDto>)
+        (getReferences: BranchId -> Task<ReferenceDto array>)
+        (getDirectoryVersion: DirectoryVersionId -> Task<DirectoryVersionDto>)
+        correlationId
+        : Task<Result<DirectoryVersionId, GraceError>>
+        =
+        task {
+            if String.IsNullOrWhiteSpace branchName then
+                return Error(planError correlationId "BranchName selector is required for ReferenceType selectors.")
+            else
+                try
+                    let! branchId = resolveBranchIdByName ()
+
+                    match branchId with
+                    | None -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
+                    | Some branchId when branchId = BranchId.Empty -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
+                    | Some branchId ->
+                        let! branchDto = getBranch branchId
+
+                        match validateBranchNameSelectorScope repositoryId branchId branchName branchDto correlationId with
+                        | Error _ -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
+                        | Ok () ->
+                            let! references = getReferences branchId
+
+                            match selectLatestReference references with
+                            | None -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
+                            | Some referenceDto ->
+                                match validateBranchTipReference repositoryId branchDto.BranchId referenceDto.ReferenceId referenceDto correlationId with
+                                | Error _ -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
+                                | Ok () ->
+                                    return!
+                                        resolveDirectoryVersionSelectorWith
+                                            repositoryId
+                                            referenceDto.DirectoryId
+                                            (fun () -> getDirectoryVersion referenceDto.DirectoryId)
+                                            correlationId
+                with
+                | :? KeyNotFoundException -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
+        }
+
+    /// Resolves a ReferenceType selector to one target root from current branch reference state.
+    let private resolveReferenceTypeSelector ownerId organizationId repositoryId branchName referenceType correlationId =
+        task {
+            return!
+                resolveReferenceTypeSelectorWith
+                    repositoryId
+                    branchName
+                    referenceType
+                    (fun () -> resolveBranchId ownerId organizationId repositoryId String.Empty branchName correlationId)
+                    (fun branchId ->
+                        let branchActorProxy = ActorProxy.Branch.CreateActorProxy branchId repositoryId correlationId
+                        branchActorProxy.Get correlationId)
+                    (fun branchId -> getReferencesByType referenceType repositoryId branchId 50 correlationId)
+                    (fun directoryVersionId ->
+                        let directoryActorProxy = ActorProxy.DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
+                        directoryActorProxy.Get correlationId)
+                    correlationId
+        }
+
     /// Resolves supported target selectors before artifact planning starts.
     let private resolveTargetRoot ownerId organizationId repositoryId (selector: MaterializationTargetSelector) correlationId =
         task {
@@ -453,6 +525,12 @@ module Materialization =
 
                         return! resolveBranchNameSelector ownerId organizationId repositoryId resolvedBranchName correlationId
                     | None -> return Error(planError correlationId "BranchName selector is required.")
+                | MaterializationTargetSelectorKind.ReferenceType ->
+                    match selector.BranchName, selector.ReferenceType with
+                    | Some branchName, Some referenceType ->
+                        return! resolveReferenceTypeSelector ownerId organizationId repositoryId branchName referenceType correlationId
+                    | None, _ -> return Error(planError correlationId "BranchName selector is required for ReferenceType selectors.")
+                    | _, None -> return Error(planError correlationId "ReferenceType selector is required.")
                 | _ -> return Error(planError correlationId $"Target selector kind '{int selector.SelectorKind}' is not supported.")
         }
 

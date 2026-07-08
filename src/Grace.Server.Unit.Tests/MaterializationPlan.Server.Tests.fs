@@ -302,14 +302,16 @@ type MaterializationPlanRouteTests() =
         | Error missingError, Error hiddenError -> Assert.That(hiddenError.Error, Is.EqualTo(missingError.Error))
         | _ -> Assert.Fail("Expected missing and hidden DirectoryVersion selectors to fail.")
 
-    /// Verifies authorized non-root DirectoryVersion selectors keep the path-scoped validation error.
+    /// Verifies authorized non-root DirectoryVersion selectors remain supported for scoped Direct plans.
     [<Test>]
-    member _.DirectoryVersionSelectorRejectsPathScopedVersionAfterRepositoryScope() =
+    member _.DirectoryVersionSelectorAcceptsPathScopedVersionAfterRepositoryScope() =
         let pathScopedDirectoryVersion = directoryVersion targetRootDirectoryVersionId repositoryId "src"
 
         let result = Materialization.validateDirectoryVersionSelectorScope repositoryId pathScopedDirectoryVersion correlationId
 
-        assertErrorContains "Path-scoped Materialization Plan selectors are not supported" result
+        match result with
+        | Error error -> Assert.Fail(error.Error)
+        | Ok () -> ()
 
     /// Verifies missing selector actor results keep the public-safe 400 message.
     [<Test>]
@@ -387,6 +389,61 @@ type MaterializationPlanRouteTests() =
                     correlationId
 
             assertErrorContains Materialization.referenceSelectorNotFoundMessage result
+        }
+
+    /// Verifies ReferenceType selectors resolve the latest matching branch reference at plan time.
+    [<Test>]
+    member _.ReferenceTypeSelectorResolvesLatestMatchingReferenceRoot() =
+        task {
+            let olderReference =
+                { reference
+                      (ReferenceId.Parse "88888888-8888-8888-8888-888888888888")
+                      explicitBranchId
+                      (DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999") with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 1, 12, 0)
+                }
+
+            let latestReference =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    ReferenceType.Promotion
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
+                    (fun _ ->
+                        Task.FromResult [| olderReference
+                                           latestReference |])
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+        }
+
+    /// Verifies ReferenceType selectors fail before planning when the branch has no matching reference.
+    [<Test>]
+    member _.ReferenceTypeSelectorRejectsMissingMatchingReference() =
+        task {
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    ReferenceType.Promotion
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
+                    (fun _ -> Task.FromResult Array.empty<ReferenceDto>)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.referenceTypeSelectorNotFoundMessage result
         }
 
     /// Verifies explicit branch selectors resolve the current branch tip to one immutable root.

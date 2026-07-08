@@ -16,7 +16,10 @@ open Spectre.Console
 open System
 open System.Collections.Generic
 open System.IO
+open System.IO.Compression
 open System.Security.Cryptography
+open System.Text
+open System.Threading.Tasks
 
 /// Groups connect coverage for the CLI test project.
 [<NonParallelizable>]
@@ -52,6 +55,7 @@ module ConnectTests =
             action tempDir
         finally
             Environment.CurrentDirectory <- originalDir
+            Grace.Shared.Client.Configuration.resetConfiguration ()
 
             if Directory.Exists(tempDir) then
                 try
@@ -135,6 +139,23 @@ module ConnectTests =
                     1L
         }
 
+    /// Builds a DirectoryVersionDto for Direct plan execution tests.
+    let private directoryDto directoryVersionId (relativePath: string) (files: FileVersion array) =
+        { DirectoryVersionDto.Default with
+            DirectoryVersion =
+                Grace.Types.Common.DirectoryVersion.CreateWithHashes
+                    directoryVersionId
+                    ownerId
+                    organizationId
+                    repositoryId
+                    (RelativePath relativePath)
+                    sha256Hash
+                    blake3Hash
+                    (List<DirectoryVersionId>())
+                    (List<FileVersion>(files :> seq<FileVersion>))
+                    1L
+        }
+
     /// Builds a Direct plan descriptor for the target-root zip artifact.
     let private zipArtifact source = MaterializationArtifactDescriptor.DirectoryVersionZip(rootId, 128L, Some sha256Hash, Some blake3Hash, source)
 
@@ -168,6 +189,22 @@ module ConnectTests =
     /// Builds a Direct Materialization Plan for connect execution tests.
     let private directPlan artifacts = MaterializationPlan.Create(rootId, MaterializationExecutionMode.Direct, MaterializationCacheSelection.Bypass, artifacts)
 
+    /// Compresses test payload bytes with gzip for descriptor-versus-file integrity tests.
+    let private gzipBytes (bytes: byte array) =
+        use output = new MemoryStream()
+
+        do
+            use gzip = new GZipStream(output, CompressionLevel.SmallestSize, leaveOpen = true)
+            gzip.Write(bytes, 0, bytes.Length)
+
+        output.ToArray()
+
+    /// Keeps test streams inspectable after production code disposes the response stream wrapper.
+    type private NonDisposingMemoryStream(bytes: byte array) =
+        inherit MemoryStream(bytes)
+
+        override _.Dispose(disposing: bool) = ()
+
     /// Verifies that Direct plan requests preserve a moving reference selector for final server resolution.
     [<Test>]
     let ``connect direct plan request preserves reference selector intent`` () =
@@ -181,6 +218,26 @@ module ConnectTests =
 
         request.TargetSelector.ReferenceId
         |> should equal (Some referenceId)
+
+        request.TargetSelector.DirectoryVersionId
+        |> should equal None
+
+    /// Verifies that Direct plan requests preserve reference type selector intent for server-side latest-reference resolution.
+    [<Test>]
+    let ``connect direct plan request preserves reference type selector intent`` () =
+        let branchDto = { BranchDto.Default with BranchName = BranchName "main" }
+
+        let request =
+            Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector (Connect.UseReferenceType ReferenceType.Promotion) branchDto rootId)
+
+        request.TargetSelector.SelectorKind
+        |> should equal MaterializationTargetSelectorKind.ReferenceType
+
+        request.TargetSelector.BranchName
+        |> should equal (Some(BranchName "main"))
+
+        request.TargetSelector.ReferenceType
+        |> should equal (Some ReferenceType.Promotion)
 
         request.TargetSelector.DirectoryVersionId
         |> should equal None
@@ -230,6 +287,21 @@ module ConnectTests =
         request.TargetSelector.BranchName
         |> should equal None
 
+    /// Verifies that explicit DirectoryVersionId connects remain immutable selectors and can represent scoped directories.
+    [<Test>]
+    let ``connect direct plan request preserves explicit directory version selector`` () =
+        let scopedDirectoryVersionId = Guid.Parse("99999999-9999-9999-9999-999999999999")
+        let branchDto = { BranchDto.Default with BranchName = BranchName "trunk" }
+
+        let request =
+            Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector (Connect.UseDirectoryVersionId scopedDirectoryVersionId) branchDto rootId)
+
+        request.TargetSelector.SelectorKind
+        |> should equal MaterializationTargetSelectorKind.DirectoryVersionId
+
+        request.TargetSelector.DirectoryVersionId
+        |> should equal (Some scopedDirectoryVersionId)
+
     /// Verifies that Direct plan execution preparation preserves recursive metadata file versions and planned zip source.
     [<Test>]
     let ``connect direct plan preparation returns metadata file versions and zip source`` () =
@@ -262,6 +334,29 @@ module ConnectTests =
             artifacts.FileVersions[0].RelativePath
             |> should equal (RelativePath "src/app.fs")
         | Error error -> Assert.Fail($"Unexpected Direct plan preparation error: {error.Error}")
+
+    /// Verifies that Direct plan execution preparation accepts non-root target directory versions.
+    [<Test>]
+    let ``connect direct plan preparation accepts non-root target directory metadata`` () =
+        let source = Some(MaterializationArtifactSource.Direct("https://example.test/src.zip"))
+        let fileVersion = FileVersion.CreateWithHashes (RelativePath "src/app.fs") sha256Hash blake3Hash String.Empty false 12L
+
+        let plan =
+            directPlan [ zipArtifact source
+                         metadataArtifact source ]
+
+        let directoryVersions =
+            [|
+                directoryDto rootId "src" [| fileVersion |]
+            |]
+
+        match Connect.prepareDirectPlanExecutionArtifacts "correlation-id" plan directoryVersions with
+        | Ok artifacts ->
+            artifacts.TargetRootDirectoryVersionId
+            |> should equal rootId
+
+            artifacts.FileVersions |> should haveLength 1
+        | Error error -> Assert.Fail($"Unexpected non-root Direct plan preparation error: {error.Error}")
 
     /// Verifies that Direct plan execution rejects mismatched root artifact descriptors before local writes.
     [<Test>]
@@ -414,6 +509,83 @@ module ConnectTests =
         | Error error ->
             error.Error
             |> should contain "SHA-256 or BLAKE3 integrity evidence"
+
+    /// Verifies that DirectUri transfer rejects oversized Content-Length without opening the response body.
+    [<Test>]
+    let ``connect direct uri copy rejects oversized content length before transfer`` () =
+        let mutable opened = false
+
+        let result =
+            Connect.copyDirectUriArtifactToTempStream "correlation-id" "DirectoryVersionZip" (Some 3L) (Some 4L) (fun () ->
+                opened <- true
+                Task.FromResult<Stream>(new MemoryStream([| 1uy; 2uy; 3uy; 4uy |])))
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match result with
+        | Ok stream ->
+            stream.Dispose()
+            Assert.Fail("Expected oversized Content-Length to fail before transfer.")
+        | Error error ->
+            opened |> should equal false
+
+            error.Error
+            |> should contain "Content-Length exceeds planned size"
+
+    /// Verifies that DirectUri transfer stops after observing one byte beyond the planned delivered artifact size.
+    [<Test>]
+    let ``connect direct uri copy stops at planned size plus one when length is absent`` () =
+        let payload = [| 0uy .. 9uy |]
+        let source = new NonDisposingMemoryStream(payload)
+
+        let result =
+            Connect.copyDirectUriArtifactToTempStream "correlation-id" "DirectoryVersionZip" (Some 3L) None (fun () -> Task.FromResult<Stream>(source))
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match result with
+        | Ok stream ->
+            stream.Dispose()
+            Assert.Fail("Expected over-limit DirectUri body to fail during transfer.")
+        | Error error ->
+            source.Position |> should equal 4L
+            error.Error |> should contain "size mismatch"
+
+    /// Verifies that descriptor integrity is evaluated against delivered compressed artifact bytes.
+    [<Test>]
+    let ``connect direct plan artifact validation hashes delivered compressed bytes`` () =
+        let uncompressedBytes = Encoding.UTF8.GetBytes("uncompressed file content")
+        let compressedBytes = gzipBytes uncompressedBytes
+        let artifact = zipArtifactForBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))) compressedBytes
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact compressedBytes with
+        | Error error -> Assert.Fail($"Unexpected compressed artifact validation error: {error.Error}")
+        | Ok () -> ()
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact uncompressedBytes with
+        | Ok () -> Assert.Fail("Expected descriptor validation to reject uncompressed bytes when descriptor hashes compressed delivery bytes.")
+        | Error error -> error.Error |> should contain "size mismatch"
+
+    /// Verifies that final materialized file validation uses uncompressed working-tree file bytes.
+    [<Test>]
+    let ``connect materialized file validation hashes uncompressed file bytes`` () =
+        withTempDir (fun root ->
+            Grace.Shared.Client.Configuration.resetConfiguration ()
+            let payload = Encoding.UTF8.GetBytes("materialized text")
+            let relativePath = RelativePath "src/app.fs"
+            let filePath = Path.Combine(root, string relativePath)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(filePath))
+            |> ignore
+
+            File.WriteAllBytes(filePath, payload)
+
+            let fileVersion =
+                FileVersion.CreateWithHashes relativePath (computeSha256Hash payload) (computeBlake3Hash payload) String.Empty false (int64 payload.Length)
+
+            match Connect.validateMaterializedFiles "correlation-id" [| fileVersion |]
+                  |> fun task -> task.GetAwaiter().GetResult()
+                with
+            | Error error -> Assert.Fail($"Unexpected materialized file validation error: {error.Error}")
+            | Ok () -> ())
 
     /// Verifies that connect executes recursive metadata from the planned artifact payload.
     [<Test>]
