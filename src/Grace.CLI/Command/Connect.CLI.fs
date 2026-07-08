@@ -181,6 +181,11 @@ module Connect =
         | UseReferenceType of ReferenceType
         | UseDefault
 
+    /// Identifies how Direct connect should preserve branch identity when it asks the server to resolve a moving selector.
+    type DirectPlanBranchIdentity =
+        | UsePlanBranchId of BranchId
+        | UsePlanBranchName of BranchName
+
     /// Carries the verified plan artifacts that Direct connect can execute without reusing legacy zip selection.
     type internal DirectPlanExecutionArtifacts =
         {
@@ -403,6 +408,16 @@ module Connect =
                         return Error(GraceError.Create $"No {referenceType} references were found for branch {branchDto.BranchName}." graceIds.CorrelationId)
                 | Error error -> return Error error
         }
+
+    /// Reads the branch identity shape the user selected so Direct ReferenceType planning preserves ID-or-name intent.
+    let internal getDirectPlanBranchIdentity (parseResult: ParseResult) (branchDto: BranchDto) =
+        let branchId =
+            tryGetExplicitValue parseResult Options.branchId
+            |> Option.filter (fun value -> value <> Guid.Empty)
+
+        match branchId with
+        | Some _ -> UsePlanBranchId branchDto.BranchId
+        | None -> UsePlanBranchName branchDto.BranchName
 
     /// Resolves target directory version id from command options, configuration, or local state.
     let private resolveTargetDirectoryVersionId
@@ -680,12 +695,15 @@ module Connect =
         }
 
     /// Builds the Materialization Plan target selector while preserving implicit default connect promotion semantics.
-    let internal createDirectPlanTargetSelector selection (branchDto: BranchDto) resolvedDirectoryVersionId =
+    let internal createDirectPlanTargetSelector selection branchIdentity resolvedDirectoryVersionId =
         match selection with
         | UseDirectoryVersionId directoryVersionId -> MaterializationTargetSelector.ForDirectoryVersion(directoryVersionId)
         | UseReferenceId referenceId -> MaterializationTargetSelector.ForReference(referenceId)
         | UseDefault -> MaterializationTargetSelector.ForDirectoryVersion(resolvedDirectoryVersionId)
-        | UseReferenceType referenceType -> MaterializationTargetSelector.ForReferenceType(branchDto.BranchName, referenceType)
+        | UseReferenceType referenceType ->
+            match branchIdentity with
+            | UsePlanBranchId branchId -> MaterializationTargetSelector.ForReferenceType(branchId, referenceType)
+            | UsePlanBranchName branchName -> MaterializationTargetSelector.ForReferenceType(branchName, referenceType)
 
     /// Builds the Direct Materialization Plan request for the target selected by connect.
     let internal createDirectPlanRequest targetSelector =
@@ -1217,17 +1235,18 @@ module Connect =
         =
         task {
             let directoryVersionSelection = getDirectoryVersionSelection parseResult
+            let branchIdentity = getDirectPlanBranchIdentity parseResult branchDto
 
             let! targetSelectorResult =
                 task {
                     match directoryVersionSelection with
                     | UseDefault ->
                         match! resolveTargetDirectoryVersionId parseResult graceIds ownerDto organizationDto repositoryDto branchDto with
-                        | Ok directoryVersionId -> return Ok(createDirectPlanTargetSelector directoryVersionSelection branchDto directoryVersionId)
+                        | Ok directoryVersionId -> return Ok(createDirectPlanTargetSelector directoryVersionSelection branchIdentity directoryVersionId)
                         | Error error -> return Error error
                     | UseDirectoryVersionId _
                     | UseReferenceId _
-                    | UseReferenceType _ -> return Ok(createDirectPlanTargetSelector directoryVersionSelection branchDto DirectoryVersionId.Empty)
+                    | UseReferenceType _ -> return Ok(createDirectPlanTargetSelector directoryVersionSelection branchIdentity DirectoryVersionId.Empty)
                 }
 
             match targetSelectorResult with

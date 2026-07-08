@@ -24,6 +24,9 @@ module MaterializationPlanTestData =
     /// Provides a deterministic branch name for selector serialization coverage.
     let branchName = BranchName "feature-cache-plan"
 
+    /// Provides a deterministic branch id for selector serialization coverage.
+    let branchId = BranchId.Parse("44444444-4444-4444-4444-444444444444")
+
     /// Provides a deterministic reference type for selector serialization coverage.
     let referenceType = ReferenceType.Promotion
 
@@ -181,6 +184,7 @@ type MaterializationPlanContractTests() =
                 MaterializationTargetSelector.ForReference MaterializationPlanTestData.referenceId
                 MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName
                 MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchName, MaterializationPlanTestData.referenceType)
+                MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchId, MaterializationPlanTestData.referenceType)
             ]
 
         for selector in selectors do
@@ -1627,6 +1631,10 @@ type MaterializationPlanContractTests() =
                     BranchName = Some MaterializationPlanTestData.branchName
                 },
                 "TargetSelector.BranchName must be empty for DirectoryVersionId selectors."
+                { MaterializationTargetSelector.ForDirectoryVersion MaterializationPlanTestData.targetRootDirectoryVersionId with
+                    BranchId = Some MaterializationPlanTestData.branchId
+                },
+                "TargetSelector.BranchId must be empty for DirectoryVersionId selectors."
                 { MaterializationTargetSelector.ForReference MaterializationPlanTestData.referenceId with
                     DirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
                 },
@@ -1635,6 +1643,8 @@ type MaterializationPlanContractTests() =
                     BranchName = Some MaterializationPlanTestData.branchName
                 },
                 "TargetSelector.BranchName must be empty for ReferenceId selectors."
+                { MaterializationTargetSelector.ForReference MaterializationPlanTestData.referenceId with BranchId = Some MaterializationPlanTestData.branchId },
+                "TargetSelector.BranchId must be empty for ReferenceId selectors."
                 { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with
                     DirectoryVersionId = Some MaterializationPlanTestData.targetRootDirectoryVersionId
                 },
@@ -1643,6 +1653,8 @@ type MaterializationPlanContractTests() =
                     ReferenceId = Some MaterializationPlanTestData.referenceId
                 },
                 "TargetSelector.ReferenceId must be empty for BranchName selectors."
+                { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with BranchId = Some MaterializationPlanTestData.branchId },
+                "TargetSelector.BranchId must be empty for BranchName selectors."
                 { MaterializationTargetSelector.ForBranch MaterializationPlanTestData.branchName with
                     ReferenceType = Some MaterializationPlanTestData.referenceType
                 },
@@ -1659,3 +1671,29 @@ type MaterializationPlanContractTests() =
 
         for selector, expected in cases do
             assertInvalid expected (Validation.validateTargetSelector selector)
+
+    /// Verifies ReferenceType selectors reject missing or ambiguous branch identity.
+    [<Test>]
+    member _.ReferenceTypeSelectorsRequireExactlyOneBranchIdentity() =
+        let missingIdentity =
+            { MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchName, MaterializationPlanTestData.referenceType) with
+                BranchName = None
+            }
+
+        let ambiguousIdentity =
+            { MaterializationTargetSelector.ForReferenceType(MaterializationPlanTestData.branchName, MaterializationPlanTestData.referenceType) with
+                BranchId = Some MaterializationPlanTestData.branchId
+            }
+
+        let emptyBranchId =
+            { MaterializationTargetSelector.ForReferenceType(BranchId.Empty, MaterializationPlanTestData.referenceType) with BranchId = Some BranchId.Empty }
+
+        assertInvalid
+            "TargetSelector must include exactly one of BranchId or BranchName for ReferenceType selectors."
+            (Validation.validateTargetSelector missingIdentity)
+
+        assertInvalid
+            "TargetSelector must include exactly one of BranchId or BranchName for ReferenceType selectors."
+            (Validation.validateTargetSelector ambiguousIdentity)
+
+        assertInvalid "TargetSelector.BranchId is required when supplied for ReferenceType selectors." (Validation.validateTargetSelector emptyBranchId)

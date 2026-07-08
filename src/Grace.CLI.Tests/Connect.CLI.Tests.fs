@@ -2,7 +2,9 @@ namespace Grace.CLI.Tests
 
 open FsUnit
 open Grace.CLI
+open Grace.CLI.Common
 open Grace.CLI.Command
+open Grace.CLI.Text
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Branch
@@ -211,7 +213,10 @@ module ConnectTests =
         let referenceId = Guid.Parse("66666666-6666-6666-6666-666666666666")
         let branchDto = { BranchDto.Default with BranchName = BranchName "main" }
 
-        let request = Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector (Connect.UseReferenceId referenceId) branchDto rootId)
+        let request =
+            Connect.createDirectPlanRequest (
+                Connect.createDirectPlanTargetSelector (Connect.UseReferenceId referenceId) (Connect.UsePlanBranchName branchDto.BranchName) rootId
+            )
 
         request.TargetSelector.SelectorKind
         |> should equal MaterializationTargetSelectorKind.ReferenceId
@@ -228,7 +233,12 @@ module ConnectTests =
         let branchDto = { BranchDto.Default with BranchName = BranchName "main" }
 
         let request =
-            Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector (Connect.UseReferenceType ReferenceType.Promotion) branchDto rootId)
+            Connect.createDirectPlanRequest (
+                Connect.createDirectPlanTargetSelector
+                    (Connect.UseReferenceType ReferenceType.Promotion)
+                    (Connect.UsePlanBranchName branchDto.BranchName)
+                    rootId
+            )
 
         request.TargetSelector.SelectorKind
         |> should equal MaterializationTargetSelectorKind.ReferenceType
@@ -236,11 +246,110 @@ module ConnectTests =
         request.TargetSelector.BranchName
         |> should equal (Some(BranchName "main"))
 
+        request.TargetSelector.BranchId
+        |> should equal None
+
         request.TargetSelector.ReferenceType
         |> should equal (Some ReferenceType.Promotion)
 
         request.TargetSelector.DirectoryVersionId
         |> should equal None
+
+    /// Verifies that Direct plan requests preserve explicit branch id selector intent for server-side resolution.
+    [<Test>]
+    let ``connect direct plan request preserves branch id reference type selector intent`` () =
+        let branchId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        let branchDto = { BranchDto.Default with BranchId = branchId; BranchName = BranchName "renamed" }
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "connect"
+                    OptionName.BranchId
+                    $"{branchId}"
+                    OptionName.ReferenceType
+                    $"{ReferenceType.Promotion}"
+                |]
+            )
+
+        let request =
+            Connect.createDirectPlanRequest (
+                Connect.createDirectPlanTargetSelector
+                    (Connect.UseReferenceType ReferenceType.Promotion)
+                    (Connect.getDirectPlanBranchIdentity parseResult branchDto)
+                    rootId
+            )
+
+        request.TargetSelector.SelectorKind
+        |> should equal MaterializationTargetSelectorKind.ReferenceType
+
+        request.TargetSelector.BranchId
+        |> should equal (Some branchId)
+
+        request.TargetSelector.BranchName
+        |> should equal None
+
+        request.TargetSelector.ReferenceType
+        |> should equal (Some ReferenceType.Promotion)
+
+    /// Verifies that Direct plan requests still use branch-name identity when the user selected a branch name.
+    [<Test>]
+    let ``connect direct plan request preserves branch name reference type selector intent`` () =
+        let branchId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa")
+        let branchDto = { BranchDto.Default with BranchId = branchId; BranchName = BranchName "feature" }
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "connect"
+                    OptionName.BranchName
+                    "feature"
+                    OptionName.ReferenceType
+                    $"{ReferenceType.Promotion}"
+                |]
+            )
+
+        let request =
+            Connect.createDirectPlanRequest (
+                Connect.createDirectPlanTargetSelector
+                    (Connect.UseReferenceType ReferenceType.Promotion)
+                    (Connect.getDirectPlanBranchIdentity parseResult branchDto)
+                    rootId
+            )
+
+        request.TargetSelector.BranchId
+        |> should equal None
+
+        request.TargetSelector.BranchName
+        |> should equal (Some(BranchName "feature"))
+
+    /// Verifies that Direct plan requests still use default branch-name identity when no branch id is explicit.
+    [<Test>]
+    let ``connect direct plan request preserves default branch name reference type selector intent`` () =
+        let branchDto = { BranchDto.Default with BranchId = Guid.Parse("aaaaaaaa-aaaa-aaaa-aaaa-aaaaaaaaaaaa"); BranchName = BranchName "main" }
+
+        let parseResult =
+            GraceCommand.rootCommand.Parse(
+                [|
+                    "connect"
+                    OptionName.ReferenceType
+                    $"{ReferenceType.Promotion}"
+                |]
+            )
+
+        let request =
+            Connect.createDirectPlanRequest (
+                Connect.createDirectPlanTargetSelector
+                    (Connect.UseReferenceType ReferenceType.Promotion)
+                    (Connect.getDirectPlanBranchIdentity parseResult branchDto)
+                    rootId
+            )
+
+        request.TargetSelector.BranchId
+        |> should equal None
+
+        request.TargetSelector.BranchName
+        |> should equal (Some(BranchName "main"))
 
     /// Verifies that implicit default connect keeps promoted target semantics even when the branch tip has moved.
     [<Test>]
@@ -276,7 +385,8 @@ module ConnectTests =
     let ``connect direct plan request sends resolved default target as directory version selector`` () =
         let branchDto = { BranchDto.Default with BranchName = BranchName "trunk" }
 
-        let request = Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector Connect.UseDefault branchDto rootId)
+        let request =
+            Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector Connect.UseDefault (Connect.UsePlanBranchName branchDto.BranchName) rootId)
 
         request.TargetSelector.SelectorKind
         |> should equal MaterializationTargetSelectorKind.DirectoryVersionId
@@ -294,7 +404,12 @@ module ConnectTests =
         let branchDto = { BranchDto.Default with BranchName = BranchName "trunk" }
 
         let request =
-            Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector (Connect.UseDirectoryVersionId scopedDirectoryVersionId) branchDto rootId)
+            Connect.createDirectPlanRequest (
+                Connect.createDirectPlanTargetSelector
+                    (Connect.UseDirectoryVersionId scopedDirectoryVersionId)
+                    (Connect.UsePlanBranchName branchDto.BranchName)
+                    rootId
+            )
 
         request.TargetSelector.SelectorKind
         |> should equal MaterializationTargetSelectorKind.DirectoryVersionId

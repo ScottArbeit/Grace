@@ -413,9 +413,10 @@ type MaterializationPlanRouteTests() =
             let! result =
                 Materialization.resolveReferenceTypeSelectorWith
                     repositoryId
-                    explicitBranchName
+                    None
+                    (Some explicitBranchName)
                     ReferenceType.Promotion
-                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
                     (fun _ ->
                         Task.FromResult [| olderReference
@@ -435,15 +436,128 @@ type MaterializationPlanRouteTests() =
             let! result =
                 Materialization.resolveReferenceTypeSelectorWith
                     repositoryId
-                    explicitBranchName
+                    None
+                    (Some explicitBranchName)
                     ReferenceType.Promotion
-                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
                     (fun _ -> Task.FromResult Array.empty<ReferenceDto>)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
             assertErrorContains Materialization.referenceTypeSelectorNotFoundMessage result
+        }
+
+    /// Verifies ReferenceType selectors carrying BranchId do not resolve through a stale or reused branch name.
+    [<Test>]
+    member _.ReferenceTypeSelectorPreservesBranchIdIdentityWithoutNameLookup() =
+        task {
+            let selectedReference =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let mutable nameLookupWasUsed = false
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    (Some explicitBranchId)
+                    None
+                    ReferenceType.Promotion
+                    (fun _ ->
+                        nameLookupWasUsed <- true
+                        Task.FromResult(Some defaultBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId (BranchName "renamed-after-cli-lookup") selectedReference))
+                    (fun _ -> Task.FromResult [| selectedReference |])
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+                        Assert.That(nameLookupWasUsed, Is.False))
+                )
+        }
+
+    /// Verifies ReferenceType selectors skip deleted candidates before returning the newest live reference.
+    [<Test>]
+    member _.ReferenceTypeSelectorSkipsDeletedNewestReference() =
+        task {
+            let liveRoot = DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999"
+
+            let deletedNewest =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 3, 12, 0)
+                    DeletedAt = Some(NodaTime.Instant.FromUtc(2026, 7, 4, 12, 0))
+                }
+
+            let liveOlder =
+                { reference (ReferenceId.Parse "88888888-8888-8888-8888-888888888888") explicitBranchId liveRoot with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName liveOlder))
+                    (fun _ ->
+                        Task.FromResult [| deletedNewest
+                                           liveOlder |])
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(liveRoot))
+        }
+
+    /// Verifies ReferenceType selectors choose by creation order instead of mutable UpdatedAt churn.
+    [<Test>]
+    member _.ReferenceTypeSelectorUsesCreatedAtInsteadOfUpdatedAt() =
+        task {
+            let olderRoot = DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999"
+
+            let updatedOlder =
+                { reference (ReferenceId.Parse "88888888-8888-8888-8888-888888888888") explicitBranchId olderRoot with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 1, 12, 0)
+                    UpdatedAt = Some(NodaTime.Instant.FromUtc(2026, 7, 4, 12, 0))
+                }
+
+            let createdNewer =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName createdNewer))
+                    (fun _ ->
+                        Task.FromResult [| updatedOlder
+                                           createdNewer |])
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
         }
 
     /// Verifies explicit branch selectors resolve the current branch tip to one immutable root.
