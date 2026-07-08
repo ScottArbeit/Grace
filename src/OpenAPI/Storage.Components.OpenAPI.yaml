@@ -59,6 +59,13 @@ GetDownloadUriParameters:
   allOf:
     - $ref: '#/StorageParameters'
   type: object
+  if:
+    not:
+      required:
+        - Sha256Hash
+  then:
+    required:
+      - Blake3Hash
   x-grace-required-one-of:
     - Sha256Hash
     - Blake3Hash

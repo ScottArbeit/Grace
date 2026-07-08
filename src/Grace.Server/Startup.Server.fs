@@ -215,27 +215,16 @@ module Application =
         /// Implements download path resource from context for the server request pipeline.
         let downloadPathResourceFromContext (context: HttpContext) =
             task {
-                context.Request.EnableBuffering()
-                use! document = JsonDocument.ParseAsync(context.Request.Body, cancellationToken = context.RequestAborted)
-
-                context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
-                |> ignore
-
                 let graceIds = Services.getGraceIds context
-                let mutable relativePath = String.Empty
 
-                if document.RootElement.ValueKind = JsonValueKind.Object then
-                    let mutable property = Unchecked.defaultof<JsonElement>
-
-                    if
-                        document.RootElement.TryGetProperty("RelativePath", &property)
-                        && property.ValueKind = JsonValueKind.String
-                    then
-                        relativePath <- property.GetString()
-
-                let parameters = Storage.GetDownloadUriParameters(RelativePath = relativePath)
-
-                return StorageAuthorizationResources.downloadUriResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
+                match! StorageDownloadRequestBinding.bindGetDownloadUriParameters context (Services.getCorrelationId context) with
+                | Error error -> return Error error
+                | Ok parameters ->
+                    return
+                        Ok(
+                            Operation.PathRead,
+                            StorageAuthorizationResources.downloadUriResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
+                        )
             }
 
         /// Implements annotate path resource from context for the server request pipeline.
@@ -558,7 +547,7 @@ module Application =
         let requirePathWriteForUploadUri: HttpHandler = AuthorizationMiddleware.requiresPermissions Operation.PathWrite uploadUriResourcesFromContext
 
         /// Handles the Grace Server require path read request.
-        let requirePathRead: HttpHandler = AuthorizationMiddleware.requiresPermission Operation.PathRead downloadPathResourceFromContext
+        let requirePathRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved downloadPathResourceFromContext
 
         /// Handles the Grace Server require annotate path read request.
         let requireAnnotatePathRead: HttpHandler = AuthorizationMiddleware.requiresPermissionResolved annotatePathResourceFromContext
