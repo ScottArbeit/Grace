@@ -3371,23 +3371,31 @@ module Watch =
                                 setGraceWatchPendingWorkStatusFlag true
                                 publishPendingWatchWorkTransitionIfNeeded ()
 
-                                try
-                                    do! clients.ApplyReference payload status
-
-                                    setGraceWatchPendingWorkStatusFlag false
-                                    publishPendingWatchWorkTransitionIfNeeded ()
-
+                                if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                     terminalOutcome <-
                                         {
                                             ReferenceId = payload.ReferenceId
-                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
                                             Decision = Some decision
                                         }
-                                with
-                                | ex ->
-                                    setGraceWatchPendingWorkStatusFlag true
-                                    publishPendingWatchWorkTransitionIfNeeded ()
-                                    raise ex
+                                else
+                                    try
+                                        do! clients.ApplyReference payload status
+
+                                        setGraceWatchPendingWorkStatusFlag false
+                                        publishPendingWatchWorkTransitionIfNeeded ()
+
+                                        terminalOutcome <-
+                                            {
+                                                ReferenceId = payload.ReferenceId
+                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                Decision = Some decision
+                                            }
+                                    with
+                                    | ex ->
+                                        setGraceWatchPendingWorkStatusFlag true
+                                        publishPendingWatchWorkTransitionIfNeeded ()
+                                        raise ex
 
                             terminal <- true
                         | Blocked reason as gate ->

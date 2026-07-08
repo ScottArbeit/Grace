@@ -14396,6 +14396,66 @@ module WatchTests =
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied)
 
+    /// Verifies that a branch switch during dirty IPC publication is rechecked before the apply seam.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("CurrentBranchMaterializationApplyBoundary")>]
+    let ``current branch materialization coordinator drops branch switch after dirty ipc before apply`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
+            let branchBId = Guid.NewGuid()
+            let status = liveWatchStatus (Guid.NewGuid())
+            let graceStatus = graceStatusTracking Array.empty<string> Array.empty<string>
+
+            writeWatchStatusJsonWithRuntimeSurface status
+            |> ignore
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-ipc-target-race-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+            let appliedReferences = ResizeArray<ReferenceId>()
+
+            let applyReference payload _ =
+                task {
+                    appliedReferences.Add(payload.ReferenceId)
+                    raise (InvalidOperationException("old-branch Reference must not apply after dirty IPC target race"))
+                }
+
+            Watch.setReadGraceStatusFileForPendingWorkTransitionForWatchTests (fun () ->
+                let current = Current()
+                current.BranchId <- branchBId
+                current.BranchName <- "branch-b"
+
+                Task.FromResult(graceStatus))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+
+            appliedReferences.ToArray()
+            |> should equal Array.empty<ReferenceId>)
+
     /// Verifies that a failed apply cannot republish clean IPC from pre-apply status evidence.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator keeps ipc dirty when apply fails`` () =
