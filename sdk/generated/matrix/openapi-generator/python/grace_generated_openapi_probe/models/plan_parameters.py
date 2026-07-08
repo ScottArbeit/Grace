@@ -32,11 +32,11 @@ class PlanParameters(BaseModel):
     """ # noqa: E501
     correlation_id: Optional[StrictStr] = Field(default=None, description="Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.", alias="CorrelationId")
     principal: Optional[StrictStr] = Field(default=None, description="The entity on whose behalf the action is being performed.", alias="Principal")
-    owner_id: UUID = Field(alias="OwnerId")
+    owner_id: Optional[UUID] = Field(default=None, alias="OwnerId")
     owner_name: Optional[StrictStr] = Field(default=None, alias="OwnerName")
-    organization_id: UUID = Field(alias="OrganizationId")
+    organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
     organization_name: Optional[StrictStr] = Field(default=None, alias="OrganizationName")
-    repository_id: UUID = Field(alias="RepositoryId")
+    repository_id: Optional[UUID] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     request: MaterializationPlanRequest = Field(alias="Request")
     __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "Request"]

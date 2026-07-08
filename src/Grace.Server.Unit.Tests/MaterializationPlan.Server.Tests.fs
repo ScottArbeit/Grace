@@ -8,7 +8,9 @@ open Grace.Types.Common
 open Grace.Types.MaterializationPlan
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.Reflection
+open System.Text.Json
 open System.Threading.Tasks
 
 /// Covers Materialization Plan route helpers and SDK contract behavior without booting Aspire.
@@ -59,6 +61,19 @@ type MaterializationPlanRouteTests() =
             Blake3Hash = Some(Blake3Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb")
             Source = source
         }
+
+    /// Builds a DirectoryVersion contract value for selector-scope validation.
+    let directoryVersion directoryVersionId directoryRepositoryId (relativePath: string) =
+        Grace.Types.Common.DirectoryVersion.Create
+            directoryVersionId
+            (OwnerId.Parse "44444444-4444-4444-4444-444444444444")
+            (OrganizationId.Parse "55555555-5555-5555-5555-555555555555")
+            directoryRepositoryId
+            (RelativePath relativePath)
+            (Sha256Hash "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
+            (List<DirectoryVersionId>())
+            (List<FileVersion>())
+            0L
 
     /// Ensures projection evidence becomes the same descriptors consumed by the route planner.
     let ensureProjectionArtifacts zipSource metadataSource =
@@ -198,6 +213,53 @@ type MaterializationPlanRouteTests() =
         let result = Materialization.validatePlanParameters RepositoryId.Empty parameters correlationId
 
         assertErrorContains "RepositoryId is required" result
+
+    /// Verifies null JSON bodies stay on the route validation path instead of escaping as server errors.
+    [<Test>]
+    member _.NullPlanBodyBindingReturnsBadRequestValidationError() =
+        task {
+            let! result = Materialization.bindPlanParametersWith (fun () -> Task.FromResult(Unchecked.defaultof<PlanParameters>)) correlationId
+
+            assertErrorContains "Materialization Plan parameters are required." result
+        }
+
+    /// Verifies JSON binding failures such as unknown string enums are reported as malformed client bodies.
+    [<Test>]
+    member _.InvalidPlanBodyBindingReturnsBadRequestValidationError() =
+        task {
+            let! result =
+                Materialization.bindPlanParametersWith
+                    (fun () -> raise (JsonException("The JSON value could not be converted to MaterializationExecutionMode.")))
+                    correlationId
+
+            assertErrorContains "Materialization Plan request body is invalid." result
+        }
+
+    /// Verifies hidden and missing DirectoryVersion selectors share the same public error.
+    [<Test>]
+    member _.DirectoryVersionSelectorDoesNotDistinguishMissingFromCrossRepository() =
+        let hiddenDirectoryVersion =
+            directoryVersion targetRootDirectoryVersionId (RepositoryId.Parse "66666666-6666-6666-6666-666666666666") Constants.RootDirectoryPath
+
+        let missingResult = Materialization.validateDirectoryVersionSelectorScope repositoryId Grace.Types.Common.DirectoryVersion.Default correlationId
+
+        let hiddenResult = Materialization.validateDirectoryVersionSelectorScope repositoryId hiddenDirectoryVersion correlationId
+
+        assertErrorContains Materialization.directoryVersionSelectorNotFoundMessage missingResult
+        assertErrorContains Materialization.directoryVersionSelectorNotFoundMessage hiddenResult
+
+        match missingResult, hiddenResult with
+        | Error missingError, Error hiddenError -> Assert.That(hiddenError.Error, Is.EqualTo(missingError.Error))
+        | _ -> Assert.Fail("Expected missing and hidden DirectoryVersion selectors to fail.")
+
+    /// Verifies authorized non-root DirectoryVersion selectors keep the path-scoped validation error.
+    [<Test>]
+    member _.DirectoryVersionSelectorRejectsPathScopedVersionAfterRepositoryScope() =
+        let pathScopedDirectoryVersion = directoryVersion targetRootDirectoryVersionId repositoryId "src"
+
+        let result = Materialization.validateDirectoryVersionSelectorScope repositoryId pathScopedDirectoryVersion correlationId
+
+        assertErrorContains "Path-scoped Materialization Plan selectors are not supported" result
 
     /// Verifies path-scoped artifact requests stay unsupported until a later materialization slice owns them.
     [<Test>]

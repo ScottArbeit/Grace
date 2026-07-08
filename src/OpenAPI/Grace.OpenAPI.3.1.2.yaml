@@ -3941,7 +3941,7 @@ components:
           - directoryVersionZip
           - recursiveDirectoryMetadata
     PlanParameters:
-      description: Parameters for the /materialization/plan endpoint.
+      description: Parameters for the /materialization/plan endpoint. Repository authority accepts the same ID-or-name pairs resolved by ValidateIdsMiddleware; provide either OwnerId or OwnerName, either OrganizationId or OrganizationName, and either RepositoryId or RepositoryName.
       type: object
       allOf:
         - $ref: '#/components/schemas/CommonParameters'
@@ -3961,16 +3961,16 @@ components:
         Request:
           $ref: '#/components/schemas/MaterializationPlanRequest'
       required:
-        - OwnerId
-        - OrganizationId
-        - RepositoryId
         - Request
       example:
         CorrelationId: cli-20260707T105500Z-0001
         Principal: user:alice
         OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OwnerName: null
         OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        OrganizationName: null
         RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        RepositoryName: null
         Request:
           Class: MaterializationPlanRequest
           TargetSelector:

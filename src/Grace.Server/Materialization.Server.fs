@@ -12,6 +12,7 @@ open Grace.Types.MaterializationPlan
 open Microsoft.AspNetCore.Http
 open System
 open System.Collections.Generic
+open System.Text.Json
 open System.Threading.Tasks
 
 /// Contains Grace Server Materialization Plan route behavior and supporting helpers.
@@ -23,6 +24,28 @@ module Materialization =
 
     /// Builds a GraceError for Materialization Plan route validation failures.
     let private planError correlationId message = GraceError.Create message correlationId
+
+    /// Public-safe selector error used when a DirectoryVersionId is missing or outside the authorized repository.
+    let directoryVersionSelectorNotFoundMessage = "DirectoryVersionId selector did not match an authorized directory version."
+
+    /// Converts Materialization Plan JSON binding outcomes into route validation results instead of server faults.
+    let bindPlanParametersWith (bindParameters: unit -> Task<PlanParameters>) correlationId =
+        task {
+            try
+                let! parameters = bindParameters ()
+
+                if isNull (box parameters) then
+                    return Error(planError correlationId "Materialization Plan parameters are required.")
+                else
+                    return Ok parameters
+            with
+            | :? JsonException -> return Error(planError correlationId "Materialization Plan request body is invalid.")
+            | :? BadHttpRequestException -> return Error(planError correlationId "Materialization Plan request body is invalid.")
+            | :? NullReferenceException -> return Error(planError correlationId "Materialization Plan parameters are required.")
+        }
+
+    /// Binds POST /materialization/plan parameters while keeping malformed client bodies in the 400 path.
+    let bindPlanParameters (context: HttpContext) correlationId = bindPlanParametersWith (fun () -> context |> parse<PlanParameters>) correlationId
 
     /// Resolves the repository authority supplied by route middleware or request parameters.
     let resolveRepositoryAuthority (graceIds: GraceIds) (parameters: PlanParameters) =
@@ -103,6 +126,19 @@ module Materialization =
                     | Error errors -> return Error(planError correlationId (String.concat " " errors))
         }
 
+    /// Validates that a resolved DirectoryVersion belongs to the authorized repository root without leaking cross-scope state.
+    let validateDirectoryVersionSelectorScope repositoryId (directoryVersion: DirectoryVersion) correlationId =
+        if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
+            Error(planError correlationId directoryVersionSelectorNotFoundMessage)
+        elif directoryVersion.RepositoryId <> repositoryId then
+            Error(planError correlationId directoryVersionSelectorNotFoundMessage)
+        elif directoryVersion.RelativePath
+             <> Constants.RootDirectoryPath
+             && directoryVersion.RelativePath <> "/" then
+            Error(planError correlationId "Path-scoped Materialization Plan selectors are not supported by /materialization/plan yet.")
+        else
+            Ok()
+
     /// Resolves a DirectoryVersionId selector to an immutable repository root.
     let private resolveDirectoryVersionSelector repositoryId (directoryVersionId: DirectoryVersionId) correlationId =
         task {
@@ -110,19 +146,17 @@ module Materialization =
                 return Error(planError correlationId "DirectoryVersionId selector is required.")
             else
                 let actorProxy = ActorProxy.DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
-                let! directoryVersionDto = actorProxy.Get correlationId
-                let directoryVersion = directoryVersionDto.DirectoryVersion
 
-                if directoryVersion.DirectoryVersionId = DirectoryVersionId.Empty then
-                    return Error(planError correlationId "DirectoryVersionId selector did not match a directory version.")
-                elif directoryVersion.RepositoryId <> repositoryId then
-                    return Error(planError correlationId "DirectoryVersionId selector did not resolve inside the authorized repository.")
-                elif directoryVersion.RelativePath
-                     <> Constants.RootDirectoryPath
-                     && directoryVersion.RelativePath <> "/" then
-                    return Error(planError correlationId "Path-scoped Materialization Plan selectors are not supported by /materialization/plan yet.")
-                else
-                    return Ok(directoryVersion.DirectoryVersionId, actorProxy)
+                try
+                    let! directoryVersionDto = actorProxy.Get correlationId
+                    let directoryVersion = directoryVersionDto.DirectoryVersion
+
+                    match validateDirectoryVersionSelectorScope repositoryId directoryVersion correlationId with
+                    | Error error -> return Error error
+                    | Ok () -> return Ok(directoryVersion.DirectoryVersionId, actorProxy)
+                with
+                | :? KeyNotFoundException
+                | :? InvalidOperationException -> return Error(planError correlationId directoryVersionSelectorNotFoundMessage)
         }
 
     /// Resolves supported target selectors before artifact planning starts.
@@ -147,42 +181,44 @@ module Materialization =
                 let correlationId = getCorrelationId context
 
                 try
-                    let! parameters = context |> parse<PlanParameters>
-                    let graceIds = getGraceIds context
-                    let repositoryId = resolveRepositoryAuthority graceIds parameters
-
-                    match validatePlanParameters repositoryId parameters correlationId with
+                    match! bindPlanParameters context correlationId with
                     | Error error -> return! context |> result400BadRequest error
-                    | Ok request ->
-                        match! resolveTargetRoot repositoryId request.TargetSelector correlationId with
+                    | Ok parameters ->
+                        let graceIds = getGraceIds context
+                        let repositoryId = resolveRepositoryAuthority graceIds parameters
+
+                        match validatePlanParameters repositoryId parameters correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok (targetRootDirectoryVersionId, actorProxy) ->
-                            let! planResult =
-                                createDirectPlanForResolvedRoot
-                                    request
-                                    targetRootDirectoryVersionId
-                                    (fun artifactCorrelationId ->
-                                        task {
-                                            match! Grace.Server.DirectoryVersion.ensureTargetRootProjectionArtifacts actorProxy artifactCorrelationId with
-                                            | Ok graceReturnValue -> return Ok graceReturnValue.ReturnValue
-                                            | Error error -> return Error error
-                                        })
-                                    correlationId
-
-                            match planResult with
+                        | Ok request ->
+                            match! resolveTargetRoot repositoryId request.TargetSelector correlationId with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok plan ->
-                                let graceReturnValue = GraceReturnValue.Create plan correlationId
+                            | Ok (targetRootDirectoryVersionId, actorProxy) ->
+                                let! planResult =
+                                    createDirectPlanForResolvedRoot
+                                        request
+                                        targetRootDirectoryVersionId
+                                        (fun artifactCorrelationId ->
+                                            task {
+                                                match! Grace.Server.DirectoryVersion.ensureTargetRootProjectionArtifacts actorProxy artifactCorrelationId with
+                                                | Ok graceReturnValue -> return Ok graceReturnValue.ReturnValue
+                                                | Error error -> return Error error
+                                            })
+                                        correlationId
 
-                                if graceIds.OwnerId <> OwnerId.Empty then
-                                    graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
+                                match planResult with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok plan ->
+                                    let graceReturnValue = GraceReturnValue.Create plan correlationId
 
-                                if graceIds.OrganizationId <> OrganizationId.Empty then
-                                    graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
+                                    if graceIds.OwnerId <> OwnerId.Empty then
+                                        graceReturnValue.Properties[ nameof OwnerId ] <- graceIds.OwnerId
 
-                                graceReturnValue.Properties[ nameof RepositoryId ] <- repositoryId
+                                    if graceIds.OrganizationId <> OrganizationId.Empty then
+                                        graceReturnValue.Properties[ nameof OrganizationId ] <- graceIds.OrganizationId
 
-                                return! context |> result200Ok graceReturnValue
+                                    graceReturnValue.Properties[ nameof RepositoryId ] <- repositoryId
+
+                                    return! context |> result200Ok graceReturnValue
                 with
                 | ex ->
                     return!

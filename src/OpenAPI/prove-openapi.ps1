@@ -1315,8 +1315,13 @@ function Test-OpenApiMaterializationContractDetails {
     Assert-OpenApiSchemaRequiresProperties `
         $materializationText `
         'PlanParameters' `
-        @('OwnerId', 'OrganizationId', 'RepositoryId', 'Request') `
-        'PlanParameters must encode repository authority required by ValidateIdsMiddleware and the route planner'
+        @('Request') `
+        'PlanParameters must require the materialization request while allowing ValidateIdsMiddleware ID-or-name repository authority'
+
+    Assert-TextContains `
+        $materializationText `
+        'Repository authority accepts the same ID-or-name pairs resolved by ValidateIdsMiddleware' `
+        'PlanParameters must document the ID-or-name repository authority contract accepted by the server.'
 
     foreach ($requiredExampleValue in @(
             'SelectorKind: directoryVersionId',
@@ -1715,8 +1720,18 @@ function Test-GeneratedClientMatrixProof {
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/PlanParameters.ts'
-            required = @('ownerId: string;', 'organizationId: string;', 'repositoryId: string;', "if (!('ownerId' in value)")
-            forbidden = @('ownerId?: string;', 'organizationId?: string;', 'repositoryId?: string;')
+            required = @('ownerId?: string;', 'ownerName?: string;', 'organizationId?: string;', 'organizationName?: string;', 'repositoryId?: string;', 'repositoryName?: string;', "if (!('request' in value)")
+            forbidden = @('ownerId: string;', 'organizationId: string;', 'repositoryId: string;', "if (!('ownerId' in value)", "if (!('organizationId' in value)", "if (!('repositoryId' in value)")
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/plan_parameters.py'
+            required = @('owner_id: Optional[UUID]', 'owner_name: Optional[StrictStr]', 'organization_id: Optional[UUID]', 'organization_name: Optional[StrictStr]', 'repository_id: Optional[UUID]', 'repository_name: Optional[StrictStr]', 'request: MaterializationPlanRequest')
+            forbidden = @('owner_id: UUID', 'organization_id: UUID', 'repository_id: UUID')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/plan_parameters.rs'
+            required = @('pub owner_id: Option<uuid::Uuid>', 'pub owner_name: Option<String>', 'pub organization_id: Option<uuid::Uuid>', 'pub organization_name: Option<String>', 'pub repository_id: Option<uuid::Uuid>', 'pub repository_name: Option<String>', 'pub request: Box<models::MaterializationPlanRequest>', 'pub fn new(request: models::MaterializationPlanRequest)')
+            forbidden = @('pub owner_id: uuid::Uuid', 'pub organization_id: uuid::Uuid', 'pub repository_id: uuid::Uuid', 'pub fn new(owner_id: uuid::Uuid')
         }
     )
 

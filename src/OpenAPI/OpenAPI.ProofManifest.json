@@ -45,7 +45,7 @@
     },
     {
       "path": "Materialization.Components.OpenAPI.yaml",
-      "sha256": "b13a4c5050aa93b04ca3fdf978bc4c7aba09037f87c8e575c1d3dd5d242bc08f"
+      "sha256": "4dd539441d64d29d968db9fb6e030902c9c8708fb33e89b599100660f0d75eb9"
     },
     {
       "path": "Materialization.Paths.OpenAPI.yaml",
@@ -116,26 +116,26 @@
     {
       "path": "Grace.OpenAPI.yaml",
       "kind": "canonical-bundle",
-      "sourceDigest": "669cd44a073f146af778b20afd746c67c49eddb317f1bf4d7acfd0768788eeb4",
+      "sourceDigest": "de7b77279ff8f935fc7a048b81b3ec5a170a051dd2291797639c0059e894b44c",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
-      "sha256": "c82f10f25d2515f258b89969b67976b6afc0222816f2750fce7523256236f3fe"
+      "sha256": "67b70f7924f32c33141b17d96ac28e201771448136a79851e7cc55b2665acd22"
     },
     {
       "path": "Grace.OpenAPI.3.1.2.yaml",
       "kind": "generator-projection",
-      "sourceDigest": "669cd44a073f146af778b20afd746c67c49eddb317f1bf4d7acfd0768788eeb4",
+      "sourceDigest": "de7b77279ff8f935fc7a048b81b3ec5a170a051dd2291797639c0059e894b44c",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",
       "lossReport": "Grace.OpenAPI.3.1.2.loss-report.json",
-      "sha256": "697a8c0a7f6a543e3877bf401498b8e6357009b357602185ffecc7659418d988"
+      "sha256": "5e1f6ee5eafe2ba086028035bd1989c2dc4d6b058935cf026c38c678818dd9d2"
     },
     {
       "path": "Grace.OpenAPI.3.1.2.loss-report.json",
       "kind": "projection-loss-report",
-      "sourceDigest": "669cd44a073f146af778b20afd746c67c49eddb317f1bf4d7acfd0768788eeb4",
+      "sourceDigest": "de7b77279ff8f935fc7a048b81b3ec5a170a051dd2291797639c0059e894b44c",
       "generator": "@redocly/cli",
       "generatorVersion": "2.31.6",
       "command": "pwsh ./src/OpenAPI/generate-openapi-projections.ps1",

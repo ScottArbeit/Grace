@@ -48,9 +48,6 @@ class TestPlanParameters(unittest.TestCase):
             )
         else:
             return PlanParameters(
-                owner_id = '9dd5f81f-dc43-4839-9173-85d09394f30f',
-                organization_id = 'e35d64a9-b990-44f5-bf02-32ad7d15630c',
-                repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
                 request = {Class=MaterializationPlanRequest, TargetSelector={Class=MaterializationTargetSelector, SelectorKind=directoryVersionId, DirectoryVersionId=33a4e36b-828f-4fae-9343-50b6560dc842}, ExecutionMode=direct, CacheSelection={Class=MaterializationCacheSelection, SelectionKind=bypassCache}, RequestedArtifactKinds=[directoryVersionZip, recursiveDirectoryMetadata]},
         )
         """

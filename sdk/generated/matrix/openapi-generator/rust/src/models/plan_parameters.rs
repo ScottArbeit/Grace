@@ -19,16 +19,16 @@ pub struct PlanParameters {
     /// The entity on whose behalf the action is being performed.
     #[serde(rename = "Principal", skip_serializing_if = "Option::is_none")]
     pub principal: Option<String>,
-    #[serde(rename = "OwnerId")]
-    pub owner_id: uuid::Uuid,
+    #[serde(rename = "OwnerId", skip_serializing_if = "Option::is_none")]
+    pub owner_id: Option<uuid::Uuid>,
     #[serde(rename = "OwnerName", skip_serializing_if = "Option::is_none")]
     pub owner_name: Option<String>,
-    #[serde(rename = "OrganizationId")]
-    pub organization_id: uuid::Uuid,
+    #[serde(rename = "OrganizationId", skip_serializing_if = "Option::is_none")]
+    pub organization_id: Option<uuid::Uuid>,
     #[serde(rename = "OrganizationName", skip_serializing_if = "Option::is_none")]
     pub organization_name: Option<String>,
-    #[serde(rename = "RepositoryId")]
-    pub repository_id: uuid::Uuid,
+    #[serde(rename = "RepositoryId", skip_serializing_if = "Option::is_none")]
+    pub repository_id: Option<uuid::Uuid>,
     #[serde(rename = "RepositoryName", skip_serializing_if = "Option::is_none")]
     pub repository_name: Option<String>,
     #[serde(rename = "Request")]
@@ -36,15 +36,15 @@ pub struct PlanParameters {
 }
 
 impl PlanParameters {
-    pub fn new(owner_id: uuid::Uuid, organization_id: uuid::Uuid, repository_id: uuid::Uuid, request: models::MaterializationPlanRequest) -> PlanParameters {
+    pub fn new(request: models::MaterializationPlanRequest) -> PlanParameters {
         PlanParameters {
             correlation_id: None,
             principal: None,
-            owner_id,
+            owner_id: None,
             owner_name: None,
-            organization_id,
+            organization_id: None,
             organization_name: None,
-            repository_id,
+            repository_id: None,
             repository_name: None,
             request: Box::new(request),
         }
