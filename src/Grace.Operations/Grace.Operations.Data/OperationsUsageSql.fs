@@ -246,7 +246,13 @@ DECLARE @RehydrationRows table
 UPDATE target
 SET
     RawPayload = source.RawPayload,
-    RehydrationExpiresAtUtc = @RehydrationExpiresAtUtc
+    RehydrationExpiresAtUtc =
+        CASE
+            WHEN target.RehydrationExpiresAtUtc IS NOT NULL
+                AND target.RehydrationExpiresAtUtc > @RehydrationExpiresAtUtc
+                THEN target.RehydrationExpiresAtUtc
+            ELSE @RehydrationExpiresAtUtc
+        END
 OUTPUT inserted.UsageFactId
 FROM ops.RawUsageFact AS target
 INNER JOIN @RehydrationRows AS source
@@ -343,7 +349,7 @@ ELSE IF EXISTS
     FROM ops.RawUsageFact
     WHERE UsageFactId = @UsageFactId
     AND ArchiveState = @ArchiveStateArchived
-    AND RawPayload IS NULL
+    AND (RawPayload IS NULL OR RehydrationExpiresAtUtc IS NOT NULL)
     AND ArchiveBlobName = @ArchiveBlobName
     AND ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex
     AND ArchiveByteLength = @ArchiveByteLength

@@ -90,7 +90,8 @@ type private RecordingArchiveStore
         events: List<string>,
         ?rehydrateResults: Result<UsageFactId list, exn> list,
         ?afterRehydrate: RawUsageFactRehydrationItem -> bool -> unit,
-        ?expiredCleanupResults: int list
+        ?expiredCleanupResults: int list,
+        ?completeResults: bool list
     ) =
     let markedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let completedPointers = ResizeArray<RawUsageFactArchivePointer>()
@@ -99,6 +100,7 @@ type private RecordingArchiveStore
     let rehydrateCancellationCanBeCanceled = ResizeArray<bool>()
     let rehydrateResults = Queue<Result<UsageFactId list, exn>>(defaultArg rehydrateResults [])
     let expiredCleanupResults = Queue<int>(defaultArg expiredCleanupResults [])
+    let completeResults = Queue<bool>(defaultArg completeResults [])
     let expiredCleanupBatchSizes = ResizeArray<int>()
     let afterRehydrate = defaultArg afterRehydrate (fun _ _ -> ())
     let mutable expiredCleanupCount = 0
@@ -138,7 +140,8 @@ type private RecordingArchiveStore
         member _.CompleteArchiveAsync(pointer, _cancellationToken) =
             events.Add("complete-archive")
             completedPointers.Add pointer
-            Task.FromResult true
+            let changed = if completeResults.Count > 0 then completeResults.Dequeue() else true
+            Task.FromResult changed
 
         member _.ListArchivedUsageFactsAsync(scope, after, batchSize, _cancellationToken) =
             events.Add("list-archived")
@@ -587,6 +590,34 @@ type OperationsUsageArchiveTests() =
             )
         }
 
+    /// Verifies a temporary-hot archived row is treated as a harmless completed archive race.
+    [<Test>]
+    member _.ArchiveBatchAcceptsAlreadyCompletedArchivedPointerWithoutThrowing() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("62626262-6262-6262-8626-626262626262")
+            let rawPayload = OperationsUsageArchiveTestData.payload usageFactId
+            let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+
+            let archivedCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Archived None (Some archiveBlob.Pointer)
+
+            let archiveStore = RecordingArchiveStore([ archivedCandidate ], events, completeResults = [ false ])
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
+            let processor = createProcessor archiveStore blobStore
+
+            let! archived = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(archived, Is.EqualTo(1))
+                    Assert.That(String.Join("|", events), Is.EqualTo("list-candidates|verify-blob|complete-archive"))
+                    Assert.That(archiveStore.MarkedPointers, Is.Empty)
+                    Assert.That(archiveStore.CompletedPointers[0], Is.EqualTo(archiveBlob.Pointer)))
+            )
+        }
+
     /// Verifies missing or corrupt verified blobs fail before SQL cleanup can clear hot payload authority.
     [<Test>]
     member _.ArchiveBatchFailsBeforeCleanupWhenVerifiedBlobIsMissingOrCorrupt() =
@@ -802,14 +833,23 @@ type OperationsUsageArchiveTests() =
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(OperationsUsageSql.DeclareRehydratedRawUsageFactBatch, Does.Contain("@RehydrationRows table"))
-                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("RehydrationExpiresAtUtc = @RehydrationExpiresAtUtc"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("RehydrationExpiresAtUtc ="))
+
+                Assert.That(
+                    OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch,
+                    Does.Contain("target.RehydrationExpiresAtUtc > @RehydrationExpiresAtUtc")
+                )
+
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("THEN target.RehydrationExpiresAtUtc"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("ELSE @RehydrationExpiresAtUtc"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("OUTPUT inserted.UsageFactId"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("INNER JOIN @RehydrationRows AS source"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Not.Contain("RehydrationLeaseId"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Not.Contain("RehydrationRequestedBy"))
                 Assert.That(OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads, Does.Contain("UPDATE TOP (@BatchSize)"))
                 Assert.That(OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads, Does.Contain("RehydrationExpiresAtUtc = NULL"))
-                Assert.That(OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads, Does.Contain("RehydrationExpiresAtUtc <= @ExpiresBeforeUtc")))
+                Assert.That(OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads, Does.Contain("RehydrationExpiresAtUtc <= @ExpiresBeforeUtc"))
+                Assert.That(OperationsUsageSql.CompleteRawUsageFactArchive, Does.Contain("RawPayload IS NULL OR RehydrationExpiresAtUtc IS NOT NULL")))
         )
 
     /// Verifies support rehydration requires scope, quota, local audit proof, and durable expiry persistence.
