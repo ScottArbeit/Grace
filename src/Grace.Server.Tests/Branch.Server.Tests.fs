@@ -2715,7 +2715,7 @@ type BranchServer() =
                 Grace.SDK.Auth.clearTokenProvider ()
         }
 
-    /// Verifies annotate treats hidden target references as missing before materializing private source content.
+    /// Verifies annotate treats hidden-branch target references as missing before materializing private source content.
     [<Test>]
     member _.AnnotateWithHiddenTargetReferenceDoesNotExposePrivateHistory() =
         task {
@@ -2768,6 +2768,31 @@ type BranchServer() =
             Assert.That(error.Error, Is.EqualTo(BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
             Assert.That(responseBody, Does.Not.Contain(privateBranchId))
             Assert.That(responseBody, Does.Not.Contain(hiddenMarker))
+
+            let revealParameters = Parameters.Branch.RevealReferenceParameters()
+            revealParameters.OwnerId <- ownerId
+            revealParameters.OrganizationId <- organizationId
+            revealParameters.RepositoryId <- repositoryId
+            revealParameters.BranchId <- privateBranchId
+            revealParameters.ReferenceId <- hiddenReferenceId
+            revealParameters.OperationId <- $"reveal-{Guid.NewGuid():N}"
+            revealParameters.Reason <- "Reveal reference for annotate hidden-branch oracle regression."
+            revealParameters.CorrelationId <- generateCorrelationId ()
+
+            let! revealResponse = creatorClient.PostAsync("/branch/revealReference", createJsonContent revealParameters)
+            do! BranchServerTestHelpers.assertOk revealResponse
+
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! revealedResponse = observerClient.PostAsync("/branch/annotate", createJsonContent parameters)
+            let! revealedResponseBody = revealedResponse.Content.ReadAsStringAsync()
+            Assert.That(revealedResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), revealedResponseBody)
+
+            let revealedError = deserialize<GraceError> revealedResponseBody
+            Assert.That(revealedError.Error, Is.EqualTo(BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
+            Assert.That(revealedResponseBody, Does.Not.Contain("Annotation target Reference must belong to the requested repository and branch."))
+            Assert.That(revealedResponseBody, Does.Not.Contain(privateBranchId))
+            Assert.That(revealedResponseBody, Does.Not.Contain(hiddenMarker))
         }
 
     /// Verifies the annotate route returns grace error for bad parameters scenario.

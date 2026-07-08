@@ -736,65 +736,73 @@ module Branch =
                 else
                     let referenceActorProxy = Reference.CreateActorProxy parameters.TargetReferenceId graceIds.RepositoryId correlationId
                     let! targetReference = referenceActorProxy.Get correlationId
-                    let! targetReference = getObservableReferenceInBranchOrDefault context branchDto targetReference
 
-                    if targetReference.ReferenceId = ReferenceId.Empty then
+                    if targetReference.ReferenceId <> ReferenceId.Empty
+                       && (targetReference.RepositoryId
+                           <> graceIds.RepositoryId
+                           || targetReference.BranchId <> graceIds.BranchId) then
                         return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
-                    elif targetReference.DeletedAt.IsSome then
-                        return Error(annotationError correlationId "Annotation target Reference has been deleted.")
-                    elif targetReference.RepositoryId
-                         <> graceIds.RepositoryId
-                         || targetReference.BranchId <> graceIds.BranchId then
-                        return Error(annotationError correlationId "Annotation target Reference must belong to the requested repository and branch.")
                     else
-                        let! targetContents = getReferenceContents repositoryDto.RepositoryId correlationId targetReference
+                        let! targetReference = getObservableReferenceInBranchOrDefault context branchDto targetReference
 
-                        match tryFindFileVersion normalizedPath targetContents with
-                        | None ->
-                            return Error(annotationError correlationId $"Annotation target path '{normalizedPath}' was not found in the target Reference.")
-                        | Some _ ->
-                            let! branchReferences = getReferences targetReference.RepositoryId targetReference.BranchId Int32.MaxValue correlationId
-                            let! visibleBranchReferences = filterVisibleReferenceWindowForBranch context branchDto -1 branchReferences
+                        if targetReference.ReferenceId = ReferenceId.Empty then
+                            return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
+                        elif targetReference.DeletedAt.IsSome then
+                            return Error(annotationError correlationId "Annotation target Reference has been deleted.")
+                        elif targetReference.RepositoryId
+                             <> graceIds.RepositoryId
+                             || targetReference.BranchId <> graceIds.BranchId then
+                            return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
+                        else
+                            let! targetContents = getReferenceContents repositoryDto.RepositoryId correlationId targetReference
 
-                            let localHistoryWindow =
-                                if visibleBranchReferences
-                                   |> Array.exists (fun referenceDto -> referenceDto.ReferenceId = targetReference.ReferenceId) then
-                                    visibleBranchReferences
-                                else
-                                    Array.append visibleBranchReferences [| targetReference |]
-                                |> orderedHistoryWindowWithSyntheticBoundaries targetReference.ReferenceId parameters.MaxReferences
+                            match tryFindFileVersion normalizedPath targetContents with
+                            | None ->
+                                return Error(annotationError correlationId $"Annotation target path '{normalizedPath}' was not found in the target Reference.")
+                            | Some _ ->
+                                let! branchReferences = getReferences targetReference.RepositoryId targetReference.BranchId Int32.MaxValue correlationId
+                                let! visibleBranchReferences = filterVisibleReferenceWindowForBranch context branchDto -1 branchReferences
 
-                            let! references =
-                                includeStoredBasedOnReferences
-                                    context
-                                    targetReference.RepositoryId
-                                    correlationId
-                                    parameters.MaxReferences
-                                    localHistoryWindow.SyntheticBasedOnByReferenceId
-                                    localHistoryWindow.References
+                                let localHistoryWindow =
+                                    if visibleBranchReferences
+                                       |> Array.exists (fun referenceDto -> referenceDto.ReferenceId = targetReference.ReferenceId) then
+                                        visibleBranchReferences
+                                    else
+                                        Array.append visibleBranchReferences [| targetReference |]
+                                    |> orderedHistoryWindowWithSyntheticBoundaries targetReference.ReferenceId parameters.MaxReferences
 
-                            match! buildEffectiveHistory context repositoryDto normalizedPath targetReference.ReferenceId references with
-                            | Error error -> return Error error
-                            | Ok history ->
-                                let traversal = AnnotationLineCore.traverseEffectiveBranchHistory targetReference.ReferenceId parameters.MaxReferences history
+                                let! references =
+                                    includeStoredBasedOnReferences
+                                        context
+                                        targetReference.RepositoryId
+                                        correlationId
+                                        parameters.MaxReferences
+                                        localHistoryWindow.SyntheticBasedOnByReferenceId
+                                        localHistoryWindow.References
 
-                                match
-                                    AnnotationLineCore.buildAnnotationFromEffectiveHistoryTraversal
-                                        (
-                                            parameters.LineRange,
-                                            targetReference.ReferenceId,
-                                            normalizedPath,
-                                            parameters.ReferenceTypes,
-                                            parameters.MaxReferences,
-                                            parameters.IncludeLineText,
-                                            traversal
-                                        )
-                                    with
-                                | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
-                                | Ok annotation ->
-                                    match Annotation.validate annotation with
-                                    | Ok () -> return Ok annotation
+                                match! buildEffectiveHistory context repositoryDto normalizedPath targetReference.ReferenceId references with
+                                | Error error -> return Error error
+                                | Ok history ->
+                                    let traversal =
+                                        AnnotationLineCore.traverseEffectiveBranchHistory targetReference.ReferenceId parameters.MaxReferences history
+
+                                    match
+                                        AnnotationLineCore.buildAnnotationFromEffectiveHistoryTraversal
+                                            (
+                                                parameters.LineRange,
+                                                targetReference.ReferenceId,
+                                                normalizedPath,
+                                                parameters.ReferenceTypes,
+                                                parameters.MaxReferences,
+                                                parameters.IncludeLineText,
+                                                traversal
+                                            )
+                                        with
                                     | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
+                                    | Ok annotation ->
+                                        match Annotation.validate annotation with
+                                        | Ok () -> return Ok annotation
+                                        | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
         }
 
     /// Coordinates process command with post success processing for Grace Server.
