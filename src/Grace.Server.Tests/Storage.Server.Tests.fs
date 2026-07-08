@@ -605,6 +605,10 @@ type StorageContentBlockSasRoutes() =
     let createContentBlockDownloadParameters repositoryId =
         let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
         setContentBlockParameters parameters repositoryId
+        parameters.ReferenceId <- Guid.NewGuid()
+        parameters.Sha256Hash <- ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes $"sha-proof-{Guid.NewGuid():N}")
+        parameters.Blake3Hash <- ContentAddress.computeBlake3Hex (Encoding.UTF8.GetBytes $"blake-proof-{Guid.NewGuid():N}")
+        parameters.StoragePoolId <- $"pool-{Guid.NewGuid():N}"
         parameters.ContentBlockAddress <- ContentAddress.computeBlake3Hex (Guid.NewGuid().ToByteArray())
         parameters
 
@@ -1618,6 +1622,29 @@ type StorageManifestUploadSessionRoutes() =
         fileVersion.ContentReference <- FileContentReference.FileManifest manifest
         fileVersion
 
+    /// Saves a visible reference that reaches the manifest-backed FileVersion used for ContentBlock read-through.
+    let createReachableReferenceForManifestFile repositoryId (fileVersion: FileVersion) =
+        task {
+            let root = BranchServerTestHelpers.createRootDirectoryVersion repositoryId fileVersion
+
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root ]
+
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId repositoryDefaultBranchIds[0]
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"StorageManifestDownload{Guid.NewGuid():N}"
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch root.DirectoryVersionId root.Sha256Hash
+            let! saveBody = saveResponse.Content.ReadAsStringAsync()
+            Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
+            let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            return savedBranch.LatestSave.ReferenceId
+        }
+
+    /// Applies the visible-reference proof tuple required before ContentBlock read-through can use finalized cache metadata.
+    let applyContentBlockDownloadProof (parameters: Parameters.Storage.GetContentBlockDownloadUriParameters) referenceId (fileVersion: FileVersion) =
+        parameters.ReferenceId <- referenceId
+        parameters.AuthorizedScope <- fileVersion.RelativePath
+        parameters.Sha256Hash <- fileVersion.Sha256Hash
+        parameters.Blake3Hash <- fileVersion.Blake3Hash
+
     /// Saves directory versions response through the branch test routes.
     let saveDirectoryVersionsResponse repositoryId (directoryVersions: Grace.Types.Common.DirectoryVersion seq) =
         task {
@@ -1779,9 +1806,12 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
             Assert.That(finalizeResult.ReturnValue.Session.LifecycleState, Is.EqualTo(UploadSessionLifecycleState.RetentionPending))
 
+            let fileVersion = manifestBackedFileVersion (exactUploadScope sessionId) payload manifest
+            let! referenceId = createReachableReferenceForManifestFile repositoryId fileVersion
+
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters downloadUriParameters repositoryId correlationId
-            downloadUriParameters.AuthorizedScope <- exactUploadScope sessionId
+            applyContentBlockDownloadProof downloadUriParameters referenceId fileVersion
             downloadUriParameters.ContentBlockAddress <- block.Address
             downloadUriParameters.StoragePoolId <- manifest.StoragePoolId
             downloadUriParameters.ManifestAddress <- manifest.ManifestAddress
@@ -1858,9 +1888,12 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(finalizeResult.ReturnValue.Session.StoragePoolId, Is.EqualTo(recordedPoolId))
             Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
 
+            let fileVersion = manifestBackedFileVersion authorizedScope payload manifest
+            let! referenceId = createReachableReferenceForManifestFile repositoryId fileVersion
+
             let wrongPoolDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters wrongPoolDownload repositoryId correlationId
-            wrongPoolDownload.AuthorizedScope <- authorizedScope
+            applyContentBlockDownloadProof wrongPoolDownload referenceId fileVersion
             wrongPoolDownload.ContentBlockAddress <- block.Address
             wrongPoolDownload.StoragePoolId <- StoragePoolRouting.repositoryDedupeStoragePoolId (Guid.Parse repositoryId)
             wrongPoolDownload.ManifestAddress <- manifest.ManifestAddress
@@ -1868,11 +1901,11 @@ type StorageManifestUploadSessionRoutes() =
             let! wrongPoolDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent wrongPoolDownload)
             let! wrongPoolDownloadBody = wrongPoolDownloadResponse.Content.ReadAsStringAsync()
             Assert.That(wrongPoolDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), wrongPoolDownloadBody)
-            Assert.That(wrongPoolDownloadBody, Does.Contain("storage pool"))
+            Assert.That(wrongPoolDownloadBody, Does.Contain("observable reference-root manifest plan"))
 
             let crossRepositoryDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters crossRepositoryDownload otherRepositoryId correlationId
-            crossRepositoryDownload.AuthorizedScope <- authorizedScope
+            applyContentBlockDownloadProof crossRepositoryDownload referenceId fileVersion
             crossRepositoryDownload.ContentBlockAddress <- block.Address
             crossRepositoryDownload.StoragePoolId <- recordedPoolId
             crossRepositoryDownload.ManifestAddress <- manifest.ManifestAddress
@@ -1880,11 +1913,11 @@ type StorageManifestUploadSessionRoutes() =
             let! crossRepositoryDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent crossRepositoryDownload)
             let! crossRepositoryDownloadBody = crossRepositoryDownloadResponse.Content.ReadAsStringAsync()
             Assert.That(crossRepositoryDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), crossRepositoryDownloadBody)
-            Assert.That(crossRepositoryDownloadBody, Does.Contain("repository, storage pool, and authorized scope"))
+            Assert.That(crossRepositoryDownloadBody, Does.Contain("not found in an observable reference"))
 
             let correctDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters correctDownload repositoryId correlationId
-            correctDownload.AuthorizedScope <- authorizedScope
+            applyContentBlockDownloadProof correctDownload referenceId fileVersion
             correctDownload.ContentBlockAddress <- block.Address
             correctDownload.StoragePoolId <- recordedPoolId
             correctDownload.ManifestAddress <- manifest.ManifestAddress
@@ -1967,6 +2000,9 @@ type StorageManifestUploadSessionRoutes() =
 
             Assert.That(firstFinalize.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some firstManifest.ManifestAddress))
             Assert.That(firstFinalize.ReturnValue.Session.StoragePoolId, Is.EqualTo(sharedStoragePoolId))
+
+            let firstFileVersion = manifestBackedFileVersion firstScope payload firstManifest
+            let! firstReferenceId = createReachableReferenceForManifestFile firstRepositoryId firstFileVersion
 
             let! discovery = discoverContentBlocks secondRepositoryId block
             let candidates = discovery.ReturnValue.CandidateContentBlocks
@@ -2072,12 +2108,15 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(secondFinalize.ReturnValue.Session.ConfirmedBlockUploads, Is.Empty)
             Assert.That(secondFinalize.ReturnValue.Session.ClaimedReuseRanges, Has.Length.EqualTo(1))
 
+            let secondFileVersion = manifestBackedFileVersion secondScope payload secondManifest
+            let! secondReferenceId = createReachableReferenceForManifestFile secondRepositoryId secondFileVersion
+
             /// Downloads block through storage test infrastructure.
-            let downloadBlock repositoryId correlationId authorizedScope manifest =
+            let downloadBlock repositoryId correlationId referenceId fileVersion manifest =
                 task {
                     let parameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
                     setStorageParameters parameters repositoryId correlationId
-                    parameters.AuthorizedScope <- authorizedScope
+                    applyContentBlockDownloadProof parameters referenceId fileVersion
                     parameters.ContentBlockAddress <- block.Address
                     parameters.StoragePoolId <- manifest.StoragePoolId
                     parameters.ManifestAddress <- manifest.ManifestAddress
@@ -2092,8 +2131,11 @@ type StorageManifestUploadSessionRoutes() =
                     return uri, downloaded
                 }
 
-            let! firstDownloadUri, firstDownloadedBlock = downloadBlock firstRepositoryId firstCorrelationId firstScope firstManifest
-            let! secondDownloadUri, secondDownloadedBlock = downloadBlock secondRepositoryId secondCorrelationId secondScope secondManifest
+            let! firstDownloadUri, firstDownloadedBlock = downloadBlock firstRepositoryId firstCorrelationId firstReferenceId firstFileVersion firstManifest
+
+            let! secondDownloadUri, secondDownloadedBlock =
+                downloadBlock secondRepositoryId secondCorrelationId secondReferenceId secondFileVersion secondManifest
+
             let firstDownloadPlacement = StoragePlacementTestHelpers.contentBlockPlacementFromUri firstDownloadUri None
             let secondDownloadPlacement = StoragePlacementTestHelpers.contentBlockPlacementFromUri secondDownloadUri None
 
@@ -2111,7 +2153,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let wrongPoolDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters wrongPoolDownload secondRepositoryId secondCorrelationId
-            wrongPoolDownload.AuthorizedScope <- secondScope
+            applyContentBlockDownloadProof wrongPoolDownload secondReferenceId secondFileVersion
             wrongPoolDownload.ContentBlockAddress <- block.Address
             wrongPoolDownload.StoragePoolId <- oldRepositoryScopedPool
             wrongPoolDownload.ManifestAddress <- secondManifest.ManifestAddress
@@ -2120,7 +2162,7 @@ type StorageManifestUploadSessionRoutes() =
             let! wrongPoolBody = wrongPoolResponse.Content.ReadAsStringAsync()
 
             Assert.That(wrongPoolResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), wrongPoolBody)
-            Assert.That(wrongPoolBody, Does.Contain("storage pool"))
+            Assert.That(wrongPoolBody, Does.Contain("observable reference-root manifest plan"))
             Assert.That(wrongPoolBody, Does.Not.Contain(firstPlacement.ObjectKey))
         }
 
@@ -2254,7 +2296,7 @@ type StorageManifestUploadSessionRoutes() =
 
             let wrongPoolDownload = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters wrongPoolDownload repositoryId correlationId
-            wrongPoolDownload.AuthorizedScope <- authorizedScope
+            applyContentBlockDownloadProof wrongPoolDownload savedBranch.LatestSave.ReferenceId manifestFileVersion
             wrongPoolDownload.ContentBlockAddress <- firstBlock.Address
             wrongPoolDownload.StoragePoolId <- StoragePoolRouting.repositoryDedupeStoragePoolId (Guid.Parse repositoryId)
             wrongPoolDownload.ManifestAddress <- manifest.ManifestAddress
@@ -2262,7 +2304,7 @@ type StorageManifestUploadSessionRoutes() =
             let! wrongPoolDownloadResponse = Client.PostAsync("/storage/getContentBlockDownloadUri", createJsonContent wrongPoolDownload)
             let! wrongPoolDownloadBody = wrongPoolDownloadResponse.Content.ReadAsStringAsync()
             Assert.That(wrongPoolDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), wrongPoolDownloadBody)
-            Assert.That(wrongPoolDownloadBody, Does.Contain("storage pool"))
+            Assert.That(wrongPoolDownloadBody, Does.Contain("observable reference-root manifest plan"))
 
             let! downloadUri = getManifestFileDownloadUri repositoryId correlationId savedBranch.LatestSave.ReferenceId manifestFileVersion
             let! downloadedPayload = downloadFileWithSas downloadUri
@@ -3042,8 +3084,12 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(finalizeResult.ReturnValue.Session.FinalizedManifestAddress, Is.EqualTo(Some manifest.ManifestAddress))
             Assert.That(finalizeResult.ReturnValue.Session.AuthorizedScope, Is.EqualTo(pathB))
 
+            let visibleFileVersion = manifestBackedFileVersion pathB payload manifest
+            let! visibleReferenceId = createReachableReferenceForManifestFile repositoryId visibleFileVersion
+
             let downloadUriParameters = Parameters.Storage.GetContentBlockDownloadUriParameters()
             setStorageParameters downloadUriParameters repositoryId correlationId
+            applyContentBlockDownloadProof downloadUriParameters visibleReferenceId visibleFileVersion
             downloadUriParameters.AuthorizedScope <- pathA
             downloadUriParameters.ContentBlockAddress <- block.Address
             downloadUriParameters.StoragePoolId <- manifest.StoragePoolId
@@ -3054,7 +3100,7 @@ type StorageManifestUploadSessionRoutes() =
             let! downloadUriBody = downloadUriResponse.Content.ReadAsStringAsync()
             Assert.That(downloadUriResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), downloadUriBody)
             assertJsonContent downloadUriResponse
-            Assert.That(downloadUriBody, Does.Contain("authorized scope"))
+            Assert.That(downloadUriBody, Does.Contain("observable reference"))
             Assert.That(downloadUriBody, Does.Not.Contain("cas/content/"))
         }
 

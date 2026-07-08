@@ -1491,39 +1491,46 @@ module Storage =
     let internal tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state =
         DedupeIndex.tryFindFinalizedScopedContentBlockMetadata storagePoolId repositoryId authorizedScope manifestAddress contentBlockAddress state
 
-    /// Validates validate manifest for content block download inputs before server processing continues.
-    let private validateManifestForContentBlockDownload repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
-        task {
-            if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
-                return Error(GraceError.Create "AuthorizedScope is required for ContentBlock manifest download authorization." correlationId)
-            else
-                match validateManifestAddress correlationId parameters.ManifestAddress with
-                | Error error -> return Error error
-                | Ok () ->
-                    if String.IsNullOrWhiteSpace parameters.StoragePoolId then
-                        return Error(GraceError.Create "StoragePoolId is required for ContentBlock manifest download authorization." correlationId)
-                    else
-                        let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+    /// Validates the public ContentBlock download proof tuple before reachability lookup or cache read-through.
+    let private validateContentBlockDownloadRequestShape (parameters: GetContentBlockDownloadUriParameters) correlationId =
+        if String.IsNullOrWhiteSpace parameters.AuthorizedScope then
+            Error(GraceError.Create "AuthorizedScope is required for ContentBlock manifest download authorization." correlationId)
+        elif parameters.ReferenceId = ReferenceId.Empty then
+            Error(GraceError.Create "ReferenceId is required for ContentBlock manifest download authorization." correlationId)
+        elif
+            String.IsNullOrWhiteSpace(string parameters.Sha256Hash)
+            && String.IsNullOrWhiteSpace(string parameters.Blake3Hash)
+        then
+            Error(GraceError.Create "Sha256Hash or Blake3Hash is required for ContentBlock manifest download authorization." correlationId)
+        elif String.IsNullOrWhiteSpace parameters.StoragePoolId then
+            Error(GraceError.Create "StoragePoolId is required for ContentBlock manifest download authorization." correlationId)
+        else
+            validateManifestAddress correlationId parameters.ManifestAddress
 
-                        match!
-                            dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
-                                (
-                                    parameters.StoragePoolId,
-                                    repositoryId,
-                                    parameters.AuthorizedScope,
-                                    parameters.ManifestAddress,
-                                    parameters.ContentBlockAddress,
-                                    correlationId
-                                )
-                            with
-                        | Some metadata -> return Ok metadata.StoragePlacement
-                        | None ->
-                            return
-                                Error(
-                                    GraceError.Create
-                                        $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository, storage pool, and authorized scope."
-                                        correlationId
-                                )
+    /// Resolves finalized ContentBlock placement only after request shape and visible-root proof have passed.
+    let private tryResolveContentBlockDownloadStoragePlacement repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
+        task {
+            let dedupeIndexActor = DedupeIndexActor.CreateActorProxy correlationId
+
+            match!
+                dedupeIndexActor.TryGetFinalizedScopedContentBlockMetadata
+                    (
+                        parameters.StoragePoolId,
+                        repositoryId,
+                        parameters.AuthorizedScope,
+                        parameters.ManifestAddress,
+                        parameters.ContentBlockAddress,
+                        correlationId
+                    )
+                with
+            | Some metadata -> return Ok metadata.StoragePlacement
+            | None ->
+                return
+                    Error(
+                        GraceError.Create
+                            $"ContentBlockAddress {parameters.ContentBlockAddress} is not referenced by finalized metadata reachable from this repository, storage pool, and authorized scope."
+                            correlationId
+                    )
         }
 
     /// Identifies a rejected whole-file download request before reachability lookup.
@@ -1572,7 +1579,46 @@ module Storage =
             String.IsNullOrWhiteSpace requestedBlake3Hash
             || String.Equals(string fileVersion.Blake3Hash, requestedBlake3Hash, StringComparison.Ordinal)
 
-        pathMatches && shaMatches && blake3Matches
+        not (String.IsNullOrWhiteSpace requestedPath)
+        && pathMatches
+        && shaMatches
+        && blake3Matches
+
+    /// Checks whether a manifest-backed FileVersion carries the requested manifest and block membership.
+    let private fileVersionIncludesRequestedContentBlock (parameters: GetContentBlockDownloadUriParameters) (fileVersion: FileVersion) =
+        if
+            isNull (box fileVersion.ContentReference)
+            || fileVersion.ContentReference.ReferenceType
+               <> FileContentReferenceType.FileManifest
+        then
+            false
+        else
+            match fileVersion.ContentReference.Manifest with
+            | None -> false
+            | Some manifest ->
+                manifest.StoragePoolId = parameters.StoragePoolId
+                && manifest.ManifestAddress = parameters.ManifestAddress
+                && not (isNull manifest.Blocks)
+                && manifest.Blocks
+                   |> Seq.exists (fun block ->
+                       not (isNull (box block))
+                       && block.Address = parameters.ContentBlockAddress)
+
+    /// Resolves the FileVersion proof tuple used by ContentBlock read-through routes.
+    let private contentBlockDownloadProof (parameters: GetContentBlockDownloadUriParameters) =
+        let proof = GetDownloadUriParameters()
+        proof.OwnerId <- parameters.OwnerId
+        proof.OwnerName <- parameters.OwnerName
+        proof.OrganizationId <- parameters.OrganizationId
+        proof.OrganizationName <- parameters.OrganizationName
+        proof.RepositoryId <- parameters.RepositoryId
+        proof.RepositoryName <- parameters.RepositoryName
+        proof.ReferenceId <- parameters.ReferenceId
+        proof.RelativePath <- parameters.AuthorizedScope
+        proof.Sha256Hash <- parameters.Sha256Hash
+        proof.Blake3Hash <- parameters.Blake3Hash
+        proof.CorrelationId <- parameters.CorrelationId
+        proof
 
     /// Resolves a FileVersion only when the requested reference is observable and its root tree reaches the file proof.
     let private tryResolveReachableFileVersionForDownload (context: HttpContext) repositoryId (parameters: GetDownloadUriParameters) correlationId =
@@ -1600,6 +1646,28 @@ module Storage =
                         recursiveDirectoryVersions
                         |> Seq.collect (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.Files)
                         |> Seq.tryFind (fileVersionMatchesDownloadProof parameters)
+        }
+
+    /// Revalidates the visible reference root before ContentBlock read-through can mint a SAS URI.
+    let private validateReachableContentBlockDownloadPlan context repositoryId (parameters: GetContentBlockDownloadUriParameters) correlationId =
+        task {
+            let proof = contentBlockDownloadProof parameters
+
+            match validateWholeFileDownloadRequest proof correlationId with
+            | Invalid error -> return Error error
+            | Valid ->
+                let! reachableFileVersion = tryResolveReachableFileVersionForDownload context repositoryId proof correlationId
+
+                match reachableFileVersion with
+                | None -> return Error(GraceError.Create "ContentBlock manifest download target was not found in an observable reference." correlationId)
+                | Some fileVersion when fileVersionIncludesRequestedContentBlock parameters fileVersion -> return Ok()
+                | Some _ ->
+                    return
+                        Error(
+                            GraceError.Create
+                                "ContentBlock manifest download target is not a member of the observable reference-root manifest plan."
+                                correlationId
+                        )
         }
 
     /// Gets a download URI for a reachable file proof that can be used by a Grace client.
@@ -1725,14 +1793,20 @@ module Storage =
                         parameters.ContentBlockAddress <- normalizedContentBlockAddress
                         let _, repositoryId = resolveStorageIds graceIds parameters
 
-                        match! validateManifestForContentBlockDownload repositoryId parameters correlationId with
+                        match validateContentBlockDownloadRequestShape parameters correlationId with
                         | Error error -> return! context |> result400BadRequest error
-                        | Ok storagePlacement ->
-                            match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId with
+                        | Ok () ->
+                            match! validateReachableContentBlockDownloadPlan context repositoryId parameters correlationId with
                             | Error error -> return! context |> result400BadRequest error
-                            | Ok downloadUri ->
-                                context.SetStatusCode StatusCodes.Status200OK
-                                return! context.WriteStringAsync downloadUri.AbsoluteUri
+                            | Ok () ->
+                                match! tryResolveContentBlockDownloadStoragePlacement repositoryId parameters correlationId with
+                                | Error error -> return! context |> result400BadRequest error
+                                | Ok storagePlacement ->
+                                    match! createAzureContentBlockSasUriForPlacement storagePlacement azureBlobReadPermissions correlationId with
+                                    | Error error -> return! context |> result400BadRequest error
+                                    | Ok downloadUri ->
+                                        context.SetStatusCode StatusCodes.Status200OK
+                                        return! context.WriteStringAsync downloadUri.AbsoluteUri
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError

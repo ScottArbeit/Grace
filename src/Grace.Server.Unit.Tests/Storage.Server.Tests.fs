@@ -1072,8 +1072,18 @@ type StorageContentBlockSdkContract() =
 
         Assert.That(storageServerSource, Does.Contain("StoragePoolId = storagePoolId"))
         Assert.That(storageServerSource, Does.Contain("parameters.StoragePoolId"))
-        Assert.That(storageServerSource, Does.Contain("validateManifestForContentBlockDownload repositoryId parameters"))
+        Assert.That(storageServerSource, Does.Contain("validateReachableContentBlockDownloadPlan context repositoryId parameters correlationId"))
+        Assert.That(storageServerSource, Does.Contain("tryResolveContentBlockDownloadStoragePlacement repositoryId parameters correlationId"))
         Assert.That(storageServerSource, Does.Contain("DedupeIndex.discover storagePoolId"))
+
+        let planValidation =
+            compactedSource.IndexOf("validateReachableContentBlockDownloadPlan context repositoryId parameters correlationId", StringComparison.Ordinal)
+
+        let placementLookup =
+            compactedSource.IndexOf("tryResolveContentBlockDownloadStoragePlacement repositoryId parameters correlationId", StringComparison.Ordinal)
+
+        Assert.That(planValidation, Is.GreaterThanOrEqualTo(0))
+        Assert.That(placementLookup, Is.GreaterThan(planValidation))
 
     /// Verifies that discover Content Blocks Validates Repository Before Resolving Shared Dedupe Pool.
     [<Test>]

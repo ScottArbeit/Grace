@@ -21,6 +21,7 @@ module ManifestDownload =
             OrganizationName: OrganizationName
             RepositoryId: string
             RepositoryName: RepositoryName
+            ReferenceId: ReferenceId
             FileVersion: FileVersion
             OutputStream: Stream option
             CorrelationId: CorrelationId
@@ -66,7 +67,10 @@ module ManifestDownload =
     let private buildDownloadUriParameters request contentBlockAddress =
         let parameters = GetContentBlockDownloadUriParameters()
         setStorageParameters request parameters |> ignore
+        parameters.ReferenceId <- request.ReferenceId
         parameters.AuthorizedScope <- request.FileVersion.RelativePath
+        parameters.Sha256Hash <- request.FileVersion.Sha256Hash
+        parameters.Blake3Hash <- request.FileVersion.Blake3Hash
         parameters.ContentBlockAddress <- contentBlockAddress
 
         match request.FileVersion.ContentReference.Manifest with
