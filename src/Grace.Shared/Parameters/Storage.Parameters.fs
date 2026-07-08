@@ -57,10 +57,13 @@ module Storage =
         inherit StorageParameters()
         member val public FileVersions = Array.empty<FileVersion> with get, set
 
-    /// Represents get download uri parameters.
+    /// Represents server-proven reachability inputs for a whole-file download URI.
     type GetDownloadUriParameters() =
         inherit StorageParameters()
-        member val public FileVersion = FileVersion.Default with get, set
+        member val public ReferenceId: ReferenceId = ReferenceId.Empty with get, set
+        member val public RelativePath: RelativePath = String.Empty with get, set
+        member val public Sha256Hash: Sha256Hash = String.Empty with get, set
+        member val public Blake3Hash: Blake3Hash = String.Empty with get, set
 
     /// Represents get content block upload uri parameters.
     type GetContentBlockUploadUriParameters() =

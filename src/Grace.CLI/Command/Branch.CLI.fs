@@ -2876,6 +2876,17 @@ module Branch =
         /// Stores a parsed command value for handler execution.
         member val ReferenceId: string = String.Empty with get, set
 
+    /// Selects an observable reference whose root contributed to the directory-version closure selected for branch switch.
+    let internal trySelectSwitchDownloadReference (directoryIds: IEnumerable<DirectoryVersionId>) (references: ReferenceDto array) =
+        match directoryIds |> Seq.tryHead with
+        | None -> None
+        | Some selectedRootDirectoryId ->
+            references
+            |> Array.tryFindBack (fun referenceDto ->
+                referenceDto.ReferenceId <> ReferenceId.Empty
+                && referenceDto.DirectoryId = selectedRootDirectoryId)
+            |> Option.map (fun referenceDto -> referenceDto.ReferenceId)
+
     /// Executes the switch command by binding ParseResult values to the SDK request and CLI output contract.
     type Switch() =
         inherit AsynchronousCommandLineAction()
@@ -3135,6 +3146,36 @@ module Branch =
                                 return Ok(showOutput, parseResult, parameters, branchDto)
                         }
 
+                    /// Resolves the caller-observable reference that owns the selected switch root before downloads request SAS URIs.
+                    let resolveDownloadReferenceForDirectoryIds (branch: BranchDto) (directoryIds: IEnumerable<DirectoryVersionId>) (parseResult: ParseResult) =
+                        task {
+                            let getReferencesParameters =
+                                GetReferencesParameters(
+                                    OwnerId = graceIds.OwnerIdString,
+                                    OwnerName = graceIds.OwnerName,
+                                    OrganizationId = graceIds.OrganizationIdString,
+                                    OrganizationName = graceIds.OrganizationName,
+                                    RepositoryId = graceIds.RepositoryIdString,
+                                    RepositoryName = graceIds.RepositoryName,
+                                    BranchId = $"{branch.BranchId}",
+                                    MaxCount = Int32.MaxValue,
+                                    CorrelationId = graceIds.CorrelationId
+                                )
+
+                            match! Branch.GetReferences getReferencesParameters with
+                            | Error error -> return Error error
+                            | Ok referencesReturnValue ->
+                                match trySelectSwitchDownloadReference directoryIds referencesReturnValue.ReturnValue with
+                                | Some referenceId -> return Ok referenceId
+                                | None ->
+                                    return
+                                        Error(
+                                            GraceError.Create
+                                                "Branch switch could not resolve a visible reference for file downloads from the selected directory version."
+                                                (getCorrelationId parseResult)
+                                        )
+                        }
+
                     /// 7. Get the branch and directory versions for the requested version we're switching to from the server.
                     let getVersionToSwitchToFromBranch
                         (t: ProgressTask)
@@ -3201,7 +3242,43 @@ module Branch =
                                             $"Retrieved {directoryIds.Count()} directory version(s) for branch {newBranch.BranchName}."
 
                                     t |> setProgressTaskValue showOutput 100.0
-                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
+
+                                    let! downloadReferenceResult =
+                                        if not (String.IsNullOrWhiteSpace switchParameters.ReferenceId) then
+                                            let getReferenceParameters =
+                                                GetReferenceParameters(
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
+                                                    BranchId = $"{newBranch.BranchId}",
+                                                    ReferenceId = switchParameters.ReferenceId,
+                                                    CorrelationId = graceIds.CorrelationId
+                                                )
+
+                                            task {
+                                                match! Branch.GetReference getReferenceParameters with
+                                                | Error error -> return Error error
+                                                | Ok referenceReturnValue ->
+                                                    if referenceReturnValue.ReturnValue.ReferenceId = ReferenceId.Empty then
+                                                        return
+                                                            Error(
+                                                                GraceError.Create
+                                                                    "Branch switch could not resolve the requested reference for file downloads."
+                                                                    graceIds.CorrelationId
+                                                            )
+                                                    else
+                                                        return Ok referenceReturnValue.ReturnValue.ReferenceId
+                                            }
+                                        else
+                                            resolveDownloadReferenceForDirectoryIds newBranch directoryIds parseResult
+
+                                    match downloadReferenceResult with
+                                    | Error error -> return Error error
+                                    | Ok downloadReferenceId ->
+                                        return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds, downloadReferenceId)
                         }
 
                     let getVersionToSwitchToFromReference
@@ -3265,7 +3342,7 @@ module Branch =
                                     let newBranch = branchReturnValue.ReturnValue
                                     let directoryIds = versionReturnValue.ReturnValue
                                     t |> setProgressTaskValue showOutput 100.0
-                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
+                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds, reference.ReferenceId)
                                 | Error error, _ -> return Error error
                                 | _, Error error -> return Error error
                         }
@@ -3297,7 +3374,11 @@ module Branch =
                             | Ok returnValue ->
                                 let directoryIds = returnValue.ReturnValue
                                 t |> setProgressTaskValue showOutput 100.0
-                                return Ok(showOutput, parseResult, parameters, currentBranch, currentBranch, directoryIds)
+
+                                match! resolveDownloadReferenceForDirectoryIds currentBranch directoryIds parseResult with
+                                | Error error -> return Error error
+                                | Ok downloadReferenceId ->
+                                    return Ok(showOutput, parseResult, parameters, currentBranch, currentBranch, directoryIds, downloadReferenceId)
                             | Error error -> return Error error
                         }
 
@@ -3434,7 +3515,8 @@ module Branch =
                          parameters: SwitchParameters,
                          currentBranch: BranchDto,
                          newBranch: BranchDto,
-                         directoryIds: IEnumerable<DirectoryVersionId>)
+                         directoryIds: IEnumerable<DirectoryVersionId>,
+                         downloadReferenceId: ReferenceId)
                         =
                         task {
                             t |> startProgressTask showOutput
@@ -3469,6 +3551,7 @@ module Branch =
                                         OrganizationName = graceIds.OrganizationName,
                                         RepositoryId = graceIds.RepositoryIdString,
                                         RepositoryName = graceIds.RepositoryName,
+                                        ReferenceId = downloadReferenceId,
                                         CorrelationId = graceIds.CorrelationId
                                     )
 
@@ -3502,6 +3585,7 @@ module Branch =
                                                 newGraceStatus
                                                 graceStatusWithNewDirectoryVersionsFromServer
                                                 newDirectoryVersionDtos
+                                                getDownloadUriParameters.ReferenceId
                                                 (getCorrelationId parseResult)
                                         //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
@@ -3903,6 +3987,7 @@ module Branch =
                                             OwnerId = graceIds.OwnerIdString,
                                             OrganizationId = graceIds.OrganizationIdString,
                                             RepositoryId = graceIds.RepositoryIdString,
+                                            ReferenceId = parentLatestPromotion.ReferenceId,
                                             CorrelationId = graceIds.CorrelationId
                                         )
 

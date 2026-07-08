@@ -44,10 +44,15 @@ class TestGetDownloadUriParameters(unittest.TestCase):
                 organization_name = '',
                 repository_id = '',
                 repository_name = '',
-                file_version = {Class=FileVersion, RelativePath=src/App.fs, Sha256Hash=805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243, Blake3Hash=9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d, IsBinary=false, Size=128, CreatedAt=2026-06-04T18:15:00Z, BlobUri=, ContentReference={Class=FileContentReference, ReferenceType=WholeFileContent}}
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
+                relative_path = '',
+                sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243',
+                blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d'
             )
         else:
             return GetDownloadUriParameters(
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
+                relative_path = '',
         )
         """
 

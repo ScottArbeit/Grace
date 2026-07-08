@@ -3395,10 +3395,15 @@ module Branch =
 
                 let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
 
-                let directoryIds =
+                let rootDirectoryId = rootDirectoryVersion.DirectoryVersionId
+                let directoryIds = List<DirectoryVersionId>()
+                directoryIds.Add(rootDirectoryId)
+
+                directoryIds.AddRange(
                     directoryVersionDtos
                         .Select(fun dv -> dv.DirectoryVersion.DirectoryVersionId)
-                        .ToList()
+                        .Where(fun directoryVersionId -> directoryVersionId <> rootDirectoryId)
+                )
 
                 return directoryIds
             | None -> return List<DirectoryVersionId>()

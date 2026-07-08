@@ -1387,11 +1387,15 @@ type EndpointAuthorizationTests() =
 
     /// Builds create download parameters for route calls.
     let createDownloadParameters (repositoryId: string) =
+        let fileVersion = AccessStorageTestData.createFileVersion "images/test.txt"
         let parameters = Parameters.Storage.GetDownloadUriParameters()
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
-        parameters.FileVersion <- AccessStorageTestData.createFileVersion "images/test.txt"
+        parameters.ReferenceId <- Guid.NewGuid()
+        parameters.RelativePath <- fileVersion.RelativePath
+        parameters.Sha256Hash <- fileVersion.Sha256Hash
+        parameters.Blake3Hash <- fileVersion.Blake3Hash
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
@@ -1696,7 +1700,7 @@ type EndpointAuthorizationTests() =
 
             let! allowedDownload = readerClient.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId))
 
-            Assert.That(allowedDownload.StatusCode, Is.EqualTo(HttpStatusCode.OK))
+            Assert.That(allowedDownload.StatusCode, Is.EqualTo(HttpStatusCode.NotFound))
 
             let! unauthUpload = unauthClient.PostAsync("/storage/getUploadUri", createJsonContent (createUploadParameters repositoryId))
 

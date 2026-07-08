@@ -535,7 +535,7 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Compatibility endpoint for downloading repository-scoped WholeFileContent.
+     * Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape. 
      * Gets a download URI for whole-file content.
      */
     async getDownloadUriRaw(requestParameters: GetDownloadUriRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<string>> {
@@ -550,7 +550,7 @@ export class DefaultApi extends runtime.BaseAPI {
     }
 
     /**
-     * Compatibility endpoint for downloading repository-scoped WholeFileContent.
+     * Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape. 
      * Gets a download URI for whole-file content.
      */
     async getDownloadUri(requestParameters: GetDownloadUriRequest, initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<string> {

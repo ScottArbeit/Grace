@@ -768,9 +768,7 @@ module Services =
         let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
         createAzureContentBlockSasUriForObjectKey route objectKey permission correlationId
 
-    let azureBlobReadPermissions =
-        (BlobSasPermissions.Read
-         ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
+    let azureBlobReadPermissions = BlobSasPermissions.Read
 
     /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
     let getUriWithReadSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =

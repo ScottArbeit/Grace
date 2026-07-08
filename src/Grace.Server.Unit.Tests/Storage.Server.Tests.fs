@@ -1,6 +1,7 @@
 namespace Grace.Server.Tests
 
 open Grace.Server
+open Grace.Server.Security
 open Grace.Actors.Interfaces
 open Grace.Shared
 open Grace.Types.Common
@@ -10,6 +11,7 @@ open Grace.Types.UploadSession
 open NUnit.Framework
 open System
 open System.IO
+open Microsoft.AspNetCore.Http
 open System.Reflection
 open System.Text
 open System.Threading.Tasks
@@ -58,6 +60,14 @@ type StorageContentBlockSdkContract() =
         let manifest = FileManifest.Create(ManifestAddress String.Empty, chunkingSuiteId, fileContentHash, int64 payloadBytes.Length, blocks)
 
         { manifest with ManifestAddress = ContentAddress.computeManifestAddressForManifest manifest }
+
+    /// Binds getDownloadUri JSON through the same canonical server path used by authorization and handler processing.
+    let bindGetDownloadUriJson json =
+        task {
+            let context = DefaultHttpContext()
+            context.Request.Body <- new MemoryStream(bytes json)
+            return! StorageDownloadRequestBinding.bindGetDownloadUriParameters context "unit-test-correlation"
+        }
 
     /// Asserts the content Block Parameter Shape condition so failures identify the violated server unit storage invariant.
     let assertContentBlockParameterShape typeName =
@@ -139,6 +149,69 @@ type StorageContentBlockSdkContract() =
         Assert.That(parameterType.GetProperty("KeyChunkAddresses"), Is.Not.Null)
         Assert.That(parameterType.GetProperty("ContentBlockAddress"), Is.Null)
         assertSdkMethod "DiscoverContentBlocks" "DiscoverContentBlocksParameters"
+
+    /// Verifies that get Download Uri Binding Rejects Duplicate Semantic Path Properties.
+    [<Test>]
+    member _.GetDownloadUriBindingRejectsDuplicateSemanticPathProperties() =
+        task {
+            let! result =
+                bindGetDownloadUriJson
+                    """
+                    {
+                      "ReferenceId": "11111111-1111-1111-1111-111111111111",
+                      "RelativePath": "authorized/file.txt",
+                      "relativePath": "other/file.txt",
+                      "Sha256Hash": "805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243"
+                    }
+                    """
+
+            match result with
+            | Error error ->
+                Assert.That(error.Error, Does.Contain("Duplicate getDownloadUri request property"))
+                Assert.That(error.Error, Does.Contain("RelativePath"))
+            | Ok parameters -> Assert.Fail($"Expected duplicate semantic path properties to reject, but bound {parameters.RelativePath}.")
+        }
+
+    /// Verifies that get Download Uri Binding Uses Canonical Case Insensitive Request View.
+    [<Test>]
+    member _.GetDownloadUriBindingUsesCanonicalCaseInsensitiveRequestView() =
+        task {
+            let! result =
+                bindGetDownloadUriJson
+                    """
+                    {
+                      "referenceId": "11111111-1111-1111-1111-111111111111",
+                      "relativePath": "src/download.fs",
+                      "blake3Hash": "9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d"
+                    }
+                    """
+
+            match result with
+            | Error error -> Assert.Fail($"Expected canonical case-insensitive binding to succeed, got {error.Error}.")
+            | Ok parameters ->
+                Assert.That(parameters.ReferenceId, Is.EqualTo(Guid.Parse("11111111-1111-1111-1111-111111111111")))
+                Assert.That(parameters.RelativePath, Is.EqualTo("src/download.fs"))
+                Assert.That(parameters.Blake3Hash, Is.EqualTo("9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d"))
+        }
+
+    /// Verifies that get Download Uri Binding Keeps Malformed Reference Id As Bad Request Shape.
+    [<Test>]
+    member _.GetDownloadUriBindingKeepsMalformedReferenceIdAsBadRequestShape() =
+        task {
+            let! result =
+                bindGetDownloadUriJson
+                    """
+                    {
+                      "ReferenceId": "not-a-guid",
+                      "RelativePath": "src/download.fs",
+                      "Sha256Hash": "805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243"
+                    }
+                    """
+
+            match result with
+            | Error error -> Assert.That(error.Error, Does.Contain("Malformed getDownloadUri request body"))
+            | Ok parameters -> Assert.Fail($"Expected malformed ReferenceId to reject, but bound {parameters.ReferenceId}.")
+        }
 
     /// Verifies that download Placement Resolution Uses Finalized Scoped Metadata Placement.
     [<Test>]
