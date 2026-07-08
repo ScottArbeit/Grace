@@ -4,8 +4,12 @@ open Grace.Actors.DirectoryVersion
 open Grace.Server
 open Grace.Shared
 open Grace.Shared.Parameters.Materialization
+open Grace.Types.Branch
 open Grace.Types.Common
+open Grace.Types.DirectoryVersion
 open Grace.Types.MaterializationPlan
+open Grace.Types.Reference
+open Grace.Types.Repository
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -19,6 +23,13 @@ type MaterializationPlanRouteTests() =
 
     let targetRootDirectoryVersionId = DirectoryVersionId.Parse "11111111-1111-1111-1111-111111111111"
     let repositoryId = RepositoryId.Parse "22222222-2222-2222-2222-222222222222"
+    let explicitBranchId = BranchId.Parse "33333333-3333-3333-3333-333333333333"
+    let defaultBranchId = BranchId.Parse "44444444-4444-4444-4444-444444444444"
+    let referenceId = ReferenceId.Parse "55555555-5555-5555-5555-555555555555"
+    let ownerId = OwnerId.Parse "66666666-6666-6666-6666-666666666666"
+    let organizationId = OrganizationId.Parse "77777777-7777-7777-7777-777777777777"
+    let defaultBranchName = BranchName Constants.InitialBranchName
+    let explicitBranchName = BranchName "feature"
     let correlationId = "corr-materialization-plan"
 
     /// Builds a Direct/Bypass request for a resolved immutable root.
@@ -66,14 +77,45 @@ type MaterializationPlanRouteTests() =
     let directoryVersion directoryVersionId directoryRepositoryId (relativePath: string) =
         Grace.Types.Common.DirectoryVersion.Create
             directoryVersionId
-            (OwnerId.Parse "44444444-4444-4444-4444-444444444444")
-            (OrganizationId.Parse "55555555-5555-5555-5555-555555555555")
+            ownerId
+            organizationId
             directoryRepositoryId
             (RelativePath relativePath)
             (Sha256Hash "eeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeeee")
             (List<DirectoryVersionId>())
             (List<FileVersion>())
             0L
+
+    /// Builds a DirectoryVersionDto around the supplied root directory contract.
+    let directoryVersionDto directoryVersionId directoryRepositoryId relativePath =
+        { DirectoryVersionDto.Default with DirectoryVersion = directoryVersion directoryVersionId directoryRepositoryId relativePath }
+
+    /// Builds a repository DTO with a current default branch name.
+    let repository defaultBranchName =
+        { RepositoryDto.Default with RepositoryId = repositoryId; OwnerId = ownerId; OrganizationId = organizationId; DefaultBranchName = defaultBranchName }
+
+    /// Builds a reference DTO that points at one root directory version.
+    let reference referenceId branchId directoryVersionId =
+        { ReferenceDto.Default with
+            ReferenceId = referenceId
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryId = repositoryId
+            BranchId = branchId
+            DirectoryId = directoryVersionId
+        }
+
+    /// Builds a branch DTO with its latest reference already recomputed by the actor.
+    let branch branchId branchName latestReference =
+        { BranchDto.Default with
+            BranchId = branchId
+            BranchName = branchName
+            OwnerId = ownerId
+            OrganizationId = organizationId
+            RepositoryId = repositoryId
+            LatestReference = latestReference
+            ShouldRecomputeLatestReferences = false
+        }
 
     /// Ensures projection evidence becomes the same descriptors consumed by the route planner.
     let ensureProjectionArtifacts zipSource metadataSource =
@@ -283,6 +325,158 @@ type MaterializationPlanRouteTests() =
             assertErrorContains Materialization.directoryVersionSelectorNotFoundMessage result
         }
 
+    /// Verifies missing repository state is rejected before selector resolution.
+    [<Test>]
+    member _.RepositorySelectorRejectsMissingRepositoryBeforeMovingSelectors() =
+        task {
+            let! result = Materialization.resolveRepositorySelectorWith repositoryId (fun () -> Task.FromResult RepositoryDto.Default) correlationId
+
+            assertErrorContains Materialization.repositorySelectorNotFoundMessage result
+        }
+
+    /// Verifies explicit ReferenceId selectors resolve server-side to one immutable root DirectoryVersionId.
+    [<Test>]
+    member _.ReferenceSelectorResolvesToImmutableDirectoryVersionRoot() =
+        task {
+            let! result =
+                Materialization.resolveReferenceSelectorWith
+                    repositoryId
+                    referenceId
+                    (fun () -> Task.FromResult(reference referenceId explicitBranchId targetRootDirectoryVersionId))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+        }
+
+    /// Verifies missing ReferenceId selectors use an intentional public selector error.
+    [<Test>]
+    member _.ReferenceSelectorRejectsMissingReference() =
+        task {
+            let! result =
+                Materialization.resolveReferenceSelectorWith
+                    repositoryId
+                    referenceId
+                    (fun () -> Task.FromResult ReferenceDto.Default)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.referenceSelectorNotFoundMessage result
+        }
+
+    /// Verifies explicit branch selectors resolve the current branch tip to one immutable root.
+    [<Test>]
+    member _.BranchNameSelectorResolvesLatestReferenceRoot() =
+        task {
+            let latestReference = reference referenceId explicitBranchId targetRootDirectoryVersionId
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+        }
+
+    /// Verifies default branch selectors use the repository's current default branch name and resolve its latest root.
+    [<Test>]
+    member _.DefaultBranchSelectorResolvesRepositoryDefaultBranchRoot() =
+        task {
+            let repositoryDto = repository defaultBranchName
+            let latestReference = reference referenceId defaultBranchId targetRootDirectoryVersionId
+
+            match Materialization.validateRepositorySelectorScope repositoryId repositoryDto correlationId with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok () -> ()
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    repositoryDto.DefaultBranchName
+                    (fun () -> Task.FromResult(Some defaultBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId repositoryDto.DefaultBranchName latestReference))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+        }
+
+    /// Verifies branch-name misses return an intentional selector error instead of falling back to cache or client resolution.
+    [<Test>]
+    member _.BranchNameSelectorRejectsMissingBranch() =
+        task {
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(None))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.branchNameSelectorNotFoundMessage result
+        }
+
+    /// Verifies stale branch-name index entries use the same public selector error as missing branch names.
+    [<Test>]
+    member _.BranchNameSelectorRejectsStaleBranchNameIndex() =
+        task {
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun _ -> raise (KeyNotFoundException("branch actor was not found")))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.branchNameSelectorNotFoundMessage result
+        }
+
+    /// Verifies branch-name index drift cannot materialize an unintended branch root.
+    [<Test>]
+    member _.BranchNameSelectorRejectsMismatchedBranchName() =
+        task {
+            let latestReference = reference referenceId explicitBranchId targetRootDirectoryVersionId
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId (BranchName "other") latestReference))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.branchNameSelectorNotFoundMessage result
+        }
+
+    /// Verifies a branch with no latest reference never produces a partial or cache-backed plan.
+    [<Test>]
+    member _.BranchNameSelectorRejectsMissingTipReference() =
+        task {
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.branchTipSelectorNotFoundMessage result
+        }
+
     /// Verifies actor, proxy, storage, or runtime selector failures are not collapsed into public 400s.
     [<Test>]
     member _.DirectoryVersionSelectorRuntimeFailureEscapesForRetryableServerStatus() =
@@ -372,6 +566,40 @@ type MaterializationPlanRouteTests() =
                     correlationId
 
             assertErrorContains "projection failed" result
+        }
+
+    /// Verifies a projection descriptor for another root is rejected before a Direct plan is returned.
+    [<Test>]
+    member _.ProjectionRootMismatchRejectsPlanBeforeResponse() =
+        task {
+            let otherRootDirectoryVersionId = DirectoryVersionId.Parse "88888888-8888-8888-8888-888888888888"
+
+            let mismatchedArtifacts =
+                [|
+                    MaterializationArtifactDescriptor.DirectoryVersionZip(
+                        otherRootDirectoryVersionId,
+                        123L,
+                        Some(Sha256Hash "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"),
+                        Some(Blake3Hash "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"),
+                        Some(MaterializationArtifactSource.Direct "https://example.invalid/other.zip")
+                    )
+                    MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+                        targetRootDirectoryVersionId,
+                        456L,
+                        Some(Sha256Hash "cccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccccc"),
+                        Some(Blake3Hash "dddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddddd"),
+                        Some(MaterializationArtifactSource.Direct "https://example.invalid/root.msgpack")
+                    )
+                |]
+
+            let! result =
+                Materialization.createDirectPlanForResolvedRoot
+                    (directRootRequest ())
+                    targetRootDirectoryVersionId
+                    (fun _ -> Task.FromResult(Ok mismatchedArtifacts))
+                    correlationId
+
+            assertErrorContains "Artifact TargetRootDirectoryVersionId must match the plan TargetRootDirectoryVersionId." result
         }
 
     /// Verifies valid Direct/Bypass requests with failed server-side projection map to the route's retryable 5xx path.
