@@ -1,12 +1,15 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Server
+open Grace.Shared
 open Grace.Shared.Parameters.PromotionSet
 open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Common
 open Grace.Types.Visibility
 open Grace.Types.Webhooks
+open Microsoft.AspNetCore.Http
 open NodaTime
 open NUnit.Framework
 open System
@@ -411,3 +414,23 @@ type PromotionSetCommandValidationTests() =
         match Grace.Server.PromotionSet.resolvePromotionSetVisibility parameters with
         | Error errorMessage -> Assert.That(errorMessage, Is.EqualTo("Private PromotionSet visibility requires ContributorOwned ownership."))
         | Ok _ -> Assert.Fail("Expected private RepositoryOwned conflict to be rejected.")
+
+    /// Verifies that hidden duplicate creates use the same success body type as unused caller-supplied create ids.
+    [<Test>]
+    member _.HiddenDuplicateCreateReturnValueMatchesCreateSuccessEnvelopeShape() =
+        let promotionSetId: PromotionSetId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+        let context = DefaultHttpContext()
+        context.Items[ Constants.CorrelationId ] <- "corr-hidden-duplicate-create"
+        context.Request.Path <- PathString("/promotionSet/create")
+
+        let parameters = CreatePromotionSetParameters()
+        parameters.PromotionSetId <- $"{promotionSetId}"
+        parameters.TargetBranchId <- "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        parameters.Visibility <- "Private"
+
+        let returnValue = Grace.Server.PromotionSet.hiddenPromotionSetCreateReturnValue context parameters promotionSetId
+
+        Assert.That(returnValue.ReturnValue, Is.EqualTo("Promotion set command succeeded."))
+        Assert.That(returnValue.CorrelationId, Is.EqualTo("corr-hidden-duplicate-create"))
+        Assert.That(returnValue.Properties[nameof PromotionSetId], Is.EqualTo(box promotionSetId))
+        Assert.That(returnValue.Properties["Path"], Is.EqualTo("/promotionSet/create"))

@@ -396,7 +396,7 @@ module PromotionSet =
         /// Returns current terminal promotion data from the PromotionSet actor state or related storage.
         member private this.GetCurrentTerminalPromotion() =
             task {
-                let! latestPromotion = getLatestPromotion promotionSetDto.RepositoryId promotionSetDto.TargetBranchId
+                let! latestPromotion = getLatestPromotionForPromotionSet promotionSetDto
 
                 match latestPromotion with
                 | Option.Some promotion -> return promotion.ReferenceId, promotion.DirectoryId
@@ -2239,8 +2239,12 @@ module PromotionSet =
 
                             match applyError with
                             | Option.None ->
-                                let branchActorProxy = Branch.CreateActorProxy promotionSetDto.TargetBranchId promotionSetDto.RepositoryId this.correlationId
-                                do! branchActorProxy.MarkForRecompute metadata.CorrelationId
+                                if promotionSetDto.Visibility = ResourceVisibility.Public then
+                                    let branchActorProxy =
+                                        Branch.CreateActorProxy promotionSetDto.TargetBranchId promotionSetDto.RepositoryId this.correlationId
+
+                                    do! branchActorProxy.MarkForRecompute metadata.CorrelationId
+
                                 let terminalReferenceId = createdReferenceIds[createdReferenceIds.Count - 1]
 
                                 match! this.ApplyEvent { Event = PromotionSetEventType.Applied terminalReferenceId; Metadata = metadata } with

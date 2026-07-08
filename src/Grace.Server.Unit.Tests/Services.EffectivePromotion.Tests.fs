@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Visibility
 open NodaTime
 open NUnit.Framework
 open System
@@ -35,6 +36,21 @@ type ServicesEffectivePromotionTests() =
             CreatedAt = createdAt
             Links = links
             DeletedAt = if isDeleted then Some(createdAt + Duration.FromMinutes(1.0)) else Option.None
+        }
+
+    /// Constructs terminal promotion Reference fixtures with durable visibility facts for actor authority assertions.
+    let createVisiblePromotionReference createdAt visibility ownership creatorUserId =
+        { createPromotionReference createdAt false true with Visibility = visibility; Ownership = ownership; CreatorUserId = creatorUserId }
+
+    /// Constructs PromotionSet fixtures with durable visibility facts for actor authority assertions.
+    let promotionSet visibility ownership creatorUserId =
+        { Grace.Types.PromotionSet.PromotionSetDto.Default with
+            PromotionSetId = Guid.NewGuid()
+            RepositoryId = Guid.NewGuid()
+            TargetBranchId = Guid.NewGuid()
+            Visibility = visibility
+            Ownership = ownership
+            CreatorUserId = creatorUserId
         }
 
     let ownerId = Guid.Parse("11111111-cccc-4444-8888-111111111111")
@@ -132,6 +148,51 @@ type ServicesEffectivePromotionTests() =
         let selected = Services.tryGetLatestEffectivePromotionReference ([ nonTerminal ])
 
         Assert.That(selected, Is.EqualTo(None))
+
+    /// Verifies that public PromotionSet base selection skips hidden private terminal references.
+    [<Test>]
+    member _.LatestPromotionForPublicPromotionSetSkipsPrivateTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 0)
+        let publicWorkflow = promotionSet ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
+
+        let privateTerminal =
+            createVisiblePromotionReference
+                (createdAt + Duration.FromMinutes(2.0))
+                ResourceVisibility.Private
+                ResourceOwnership.ContributorOwned
+                (Some(UserId "creator-a"))
+
+        let publicTerminal =
+            createVisiblePromotionReference (createdAt + Duration.FromMinutes(1.0)) ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
+
+        let selected = Services.tryGetLatestEffectivePromotionReferenceForPromotionSet publicWorkflow [ privateTerminal; publicTerminal ]
+
+        Assert.That(selected, Is.EqualTo(Some publicTerminal))
+
+    /// Verifies that private PromotionSet base selection can share private terminal authority inside the same contributor audience.
+    [<Test>]
+    member _.LatestPromotionForPrivatePromotionSetAllowsSameContributorPrivateTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 30)
+        let creator = Some(UserId "creator-a")
+        let privateWorkflow = promotionSet ResourceVisibility.Private ResourceOwnership.ContributorOwned creator
+        let privateTerminal = createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.ContributorOwned creator
+
+        let selected = Services.tryGetLatestEffectivePromotionReferenceForPromotionSet privateWorkflow [ privateTerminal ]
+
+        Assert.That(selected, Is.EqualTo(Some privateTerminal))
+
+    /// Verifies that private PromotionSet base selection rejects hidden terminal authority from a different contributor audience.
+    [<Test>]
+    member _.LatestPromotionForPrivatePromotionSetRejectsDifferentContributorPrivateTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 10, 0)
+        let privateWorkflow = promotionSet ResourceVisibility.Private ResourceOwnership.ContributorOwned (Some(UserId "creator-a"))
+
+        let otherPrivateTerminal =
+            createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.ContributorOwned (Some(UserId "creator-b"))
+
+        let selected = Services.tryGetLatestEffectivePromotionReferenceForPromotionSet privateWorkflow [ otherPrivateTerminal ]
+
+        Assert.That(selected, Is.EqualTo(Option.None))
 
     /// Verifies that latest Reference Selection Ignores Deleted References.
     [<Test>]

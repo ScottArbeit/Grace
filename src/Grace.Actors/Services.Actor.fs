@@ -30,6 +30,7 @@ open Grace.Types.Owner
 open Grace.Types.Common
 open Grace.Types.Validation
 open Grace.Types.UploadSession
+open Grace.Types.Visibility
 open Grace.Shared.Utilities
 open Microsoft.Azure.Cosmos
 open Microsoft.Azure.Cosmos.Linq
@@ -1696,6 +1697,27 @@ module Services =
             isNotDeletedReference referenceDto
             && hasPromotionSetTerminalLink referenceDto)
 
+    /// Checks whether a terminal promotion reference can publish public branch/base authority for the supplied workflow.
+    let internal terminalPromotionVisibleToPromotionSet (promotionSetDto: Grace.Types.PromotionSet.PromotionSetDto) (referenceDto: ReferenceDto) =
+        match referenceDto.Visibility, referenceDto.Ownership, promotionSetDto.Visibility, promotionSetDto.Ownership with
+        | ResourceVisibility.Public, _, _, _ -> true
+        | ResourceVisibility.Private, ResourceOwnership.ContributorOwned, ResourceVisibility.Private, ResourceOwnership.ContributorOwned ->
+            match referenceDto.CreatorUserId, promotionSetDto.CreatorUserId with
+            | Some referenceCreator, Some promotionSetCreator -> referenceCreator = promotionSetCreator
+            | _ -> false
+        | _ -> false
+
+    /// Attempts to load latest effective promotion reference visible to the supplied PromotionSet workflow.
+    let internal tryGetLatestEffectivePromotionReferenceForPromotionSet
+        (promotionSetDto: Grace.Types.PromotionSet.PromotionSetDto)
+        (references: seq<ReferenceDto>)
+        =
+        references
+        |> Seq.tryFind (fun referenceDto ->
+            isNotDeletedReference referenceDto
+            && hasPromotionSetTerminalLink referenceDto
+            && terminalPromotionVisibleToPromotionSet promotionSetDto referenceDto)
+
     /// Returns root directory version by directory version id data from Services storage or actor state.
     let internal getRootDirectoryVersionByDirectoryVersionId (repositoryId: RepositoryId) (directoryVersionId: DirectoryVersionId) correlationId =
         task {
@@ -2412,8 +2434,8 @@ module Services =
             | MongoDB -> return None
         }
 
-    /// Gets the latest promotion from a branch.
-    let getLatestPromotion (repositoryId: RepositoryId) (branchId: BranchId) =
+    /// Gets the latest promotion from a branch using a caller-supplied authority predicate.
+    let getLatestPromotionByPredicate (repositoryId: RepositoryId) (branchId: BranchId) referenceIsVisible =
         task {
             match actorStateStorageProvider with
             | Unknown -> return None
@@ -2465,7 +2487,8 @@ module Services =
                                     eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto
-                               && hasPromotionSetTerminalLink referenceDto then
+                               && hasPromotionSetTerminalLink referenceDto
+                               && referenceIsVisible referenceDto then
                                 latestPromotion <- Some referenceDto
 
                             index <- index + 1
@@ -2485,6 +2508,14 @@ module Services =
                     stringBuilderPool.Return(requestCharge)
             | MongoDB -> return None
         }
+
+    /// Gets the latest public terminal promotion from a branch.
+    let getLatestPromotion (repositoryId: RepositoryId) (branchId: BranchId) =
+        getLatestPromotionByPredicate repositoryId branchId (fun referenceDto -> referenceDto.Visibility = ResourceVisibility.Public)
+
+    /// Gets the latest terminal promotion visible to the supplied PromotionSet workflow.
+    let getLatestPromotionForPromotionSet (promotionSetDto: Grace.Types.PromotionSet.PromotionSetDto) =
+        getLatestPromotionByPredicate promotionSetDto.RepositoryId promotionSetDto.TargetBranchId (terminalPromotionVisibleToPromotionSet promotionSetDto)
 
     /// Gets the latest commit from a branch.
     let getLatestCommit = getLatestReferenceByType ReferenceType.Commit

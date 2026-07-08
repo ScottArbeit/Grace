@@ -49,6 +49,23 @@ module Queue =
                 if canObserve then return Some promotionSet else return None
         }
 
+    /// Projects queue status from the caller-visible PromotionSet set so hidden private work cannot affect public shape.
+    let internal projectObservableQueueStatus
+        (queue: PromotionQueue)
+        (observablePromotionSetIds: PromotionSetId list)
+        (observableRunningPromotionSetId: PromotionSetId option)
+        =
+        if observablePromotionSetIds.IsEmpty
+           && observableRunningPromotionSetId.IsNone then
+            { queue with PromotionSetIds = []; RunningPromotionSetId = None; State = QueueState.Idle; UpdatedAt = None }
+        else
+            { queue with
+                PromotionSetIds = observablePromotionSetIds
+                RunningPromotionSetId = observableRunningPromotionSetId
+                State = if isNull (box queue.State) then QueueState.Idle else queue.State
+                UpdatedAt = if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
+            }
+
     /// Copies private PromotionSet visibility facts onto queue automation metadata.
     let private inheritPromotionSetVisibilityMetadata (metadata: EventMetadata) (promotionSet: Grace.Types.PromotionSet.PromotionSetDto) =
         metadata.Properties[ "InheritedVisibility" ] <- $"{promotionSet.Visibility}"
@@ -353,13 +370,7 @@ module Queue =
                                     }
                                 | None -> Task.FromResult None
 
-                        return
-                            { queue with
-                                PromotionSetIds = observablePromotionSetIds |> Seq.toList
-                                RunningPromotionSetId = observableRunningPromotionSetId
-                                State = if isNull (box queue.State) then QueueState.Idle else queue.State
-                                UpdatedAt = if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
-                            }
+                        return projectObservableQueueStatus queue (observablePromotionSetIds |> Seq.toList) observableRunningPromotionSetId
                     }
 
                 context.Items[ "Command" ] <- "Status"

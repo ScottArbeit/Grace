@@ -112,6 +112,24 @@ module PromotionSet =
     let private hiddenPromotionSetReturnValue promotionSetId correlationId =
         GraceReturnValue.Create { PromotionSetDto.Default with PromotionSetId = promotionSetId } correlationId
 
+    /// Builds the same successful create envelope for hidden duplicate PromotionSet ids as an unused caller-supplied id.
+    let internal hiddenPromotionSetCreateReturnValue (context: HttpContext) (parameters: CreatePromotionSetParameters) promotionSetId =
+        let graceIds = getGraceIds context
+        let correlationId = getCorrelationId context
+
+        let graceReturnValue = GraceReturnValue.Create "Promotion set command succeeded." correlationId
+
+        graceReturnValue
+            .enhance(getParametersAsDictionary parameters)
+            .enhance(nameof OwnerId, graceIds.OwnerId)
+            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+            .enhance(nameof PromotionSetId, promotionSetId)
+            .enhance ("Path", context.Request.Path.Value)
+        |> ignore
+
+        graceReturnValue
+
     /// Resolves create-time visibility into implemented public/private PromotionSet semantics.
     let internal resolvePromotionSetVisibility (parameters: CreatePromotionSetParameters) =
         let visibility =
@@ -543,7 +561,7 @@ module PromotionSet =
                             else
                                 return!
                                     context
-                                    |> result200Ok (hiddenPromotionSetReturnValue promotionSetId correlationId)
+                                    |> result200Ok (hiddenPromotionSetCreateReturnValue context parameters promotionSetId)
             }
 
     /// Gets a promotion set.
