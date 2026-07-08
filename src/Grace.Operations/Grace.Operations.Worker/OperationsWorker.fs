@@ -553,16 +553,17 @@ type OperationsUsageRehydrationProcessor
         if errors.Count > 0 then Error(List.ofSeq errors) else Ok()
 
     /// Rehydrates one archived payload after replay-equivalent archive validation.
-    let rehydrateItemAsync request rehydratedAt (item: RawUsageFactArchiveReplayItem) cancellationToken =
+    let rehydrateItemAsync request rehydrationLeaseId rehydratedAt (item: RawUsageFactArchiveReplayItem) cancellationToken =
         task {
             let! content = blobStore.DownloadVerifiedAsync(item.Pointer, cancellationToken)
             let _, rawPayload = OperationsUsageArchiveFormat.readValidatedUsageFact item content
-            let! changed = archiveStore.RehydrateArchivedPayloadAsync(item.Pointer, rawPayload, CancellationToken.None)
+            let! changed = archiveStore.RehydrateArchivedPayloadAsync(item.Pointer, rawPayload, rehydrationLeaseId, CancellationToken.None)
 
             logger.LogInformation(
-                "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ChangedSqlState: {ChangedSqlState}; RequestedBy: {RequestedBy}.",
+                "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; RehydrationLeaseId: {RehydrationLeaseId}; ChangedSqlState: {ChangedSqlState}; RequestedBy: {RequestedBy}.",
                 item.UsageFactId,
                 item.Pointer.BlobName,
+                rehydrationLeaseId,
                 changed,
                 request.RequestedBy
             )
@@ -572,6 +573,7 @@ type OperationsUsageRehydrationProcessor
                     UsageFactId = item.UsageFactId
                     Scope = request.Scope
                     Pointer = item.Pointer
+                    RehydrationLeaseId = rehydrationLeaseId
                     RequestedBy = request.RequestedBy
                     Reason = request.Reason
                     RehydratedAt = rehydratedAt
@@ -590,13 +592,14 @@ type OperationsUsageRehydrationProcessor
                 let! items = archiveStore.ListArchivedUsageFactsAsync(Some request.Scope, None, request.MaxFacts, cancellationToken)
                 let itemArray = items |> List.toArray
                 let entries = ResizeArray<RawUsageFactRehydrationAuditEntry>()
+                let rehydrationLeaseId = Guid.NewGuid()
                 let rehydratedAt = clock.GetCurrentInstant()
                 let mutable index = 0
 
                 try
                     while index < itemArray.Length do
                         cancellationToken.ThrowIfCancellationRequested()
-                        let! entry = rehydrateItemAsync request rehydratedAt itemArray[index] cancellationToken
+                        let! entry = rehydrateItemAsync request rehydrationLeaseId rehydratedAt itemArray[index] cancellationToken
                         entries.Add entry
                         index <- index + 1
                 with
@@ -607,10 +610,34 @@ type OperationsUsageRehydrationProcessor
                         |> Seq.toArray
 
                     let mutable cleanupIndex = 0
+                    let cleanupFailures = ResizeArray<exn>()
 
                     while cleanupIndex < changedEntries.Length do
-                        let! _ = archiveStore.CleanupRehydratedPayloadAsync(changedEntries[cleanupIndex].Pointer, CancellationToken.None)
+                        let entry = changedEntries[cleanupIndex]
+
+                        try
+                            let! _ = archiveStore.CleanupRehydratedPayloadAsync(entry.Pointer, entry.RehydrationLeaseId, CancellationToken.None)
+                            ()
+                        with
+                        | cleanupEx ->
+                            cleanupFailures.Add cleanupEx
+
+                            logger.LogError(
+                                cleanupEx,
+                                "Temporary operations UsageFact rehydration rollback cleanup failed. UsageFactId: {UsageFactId}; BlobName: {BlobName}; RehydrationLeaseId: {RehydrationLeaseId}.",
+                                entry.UsageFactId,
+                                entry.Pointer.BlobName,
+                                entry.RehydrationLeaseId
+                            )
+
                         cleanupIndex <- cleanupIndex + 1
+
+                    if cleanupFailures.Count > 0 then
+                        logger.LogError(
+                            ex,
+                            "Temporary operations UsageFact rehydration failed after {CleanupFailureCount} rollback cleanup failure(s); rethrowing the original rehydration error.",
+                            cleanupFailures.Count
+                        )
 
                     ExceptionDispatchInfo.Capture(ex).Throw()
 
@@ -630,7 +657,7 @@ type OperationsUsageRehydrationProcessor
 
             while index < entryArray.Length do
                 cancellationToken.ThrowIfCancellationRequested()
-                let! changed = archiveStore.CleanupRehydratedPayloadAsync(entryArray[index].Pointer, cancellationToken)
+                let! changed = archiveStore.CleanupRehydratedPayloadAsync(entryArray[index].Pointer, entryArray[index].RehydrationLeaseId, cancellationToken)
 
                 if changed then cleaned <- cleaned + 1
 
@@ -836,6 +863,9 @@ type internal OperationsUsageReadinessFailureSource =
     /// Service Bus processor callback, settlement, or lock failures remain visible until their owner proves recovery.
     | ServiceBusProcessorRuntime = 4
 
+    /// Archive retention failures remain visible until a later configured archive batch succeeds.
+    | ArchiveRetentionRuntime = 5
+
 /// Tracks one active readiness failure and the ordering point needed for source-owned recovery.
 type internal OperationsUsageReadinessFailure =
     {
@@ -886,6 +916,12 @@ type IOperationsUsageReadinessRecorder =
 
     /// Clears one Service Bus processor-owned failure after the matching processor proof succeeds later.
     abstract MarkServiceBusProcessorSuccess: attempt: OperationsUsageReadinessAttempt * recoveryKey: string -> unit
+
+    /// Records a redacted archive retention failure that prevents configured retention from being ready.
+    abstract MarkArchiveProcessingFailure: description: string -> unit
+
+    /// Clears archive-owned retention failures after a later archive batch succeeds.
+    abstract MarkArchiveProcessingSuccess: unit -> unit
 
     /// Records the latest unsupported ingestion contract observed at the broker boundary.
     abstract MarkUnsupportedContract: description: string -> unit
@@ -986,6 +1022,9 @@ type OperationsUsageReadinessState() =
         member _.MarkServiceBusProcessorFailure(description, recoveryKey) =
             lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ServiceBusProcessorRuntime description recoveryKey)
 
+        member _.MarkArchiveProcessingFailure(description) =
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ArchiveRetentionRuntime description None)
+
         member _.MarkServiceBusReceiveSuccess(attempt) =
             lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.ServiceBusReceiveLink attempt)
 
@@ -993,6 +1032,8 @@ type OperationsUsageReadinessState() =
             lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.RuntimeProcessingDependency attempt)
 
         member _.MarkServiceBusProcessorSuccess(attempt, recoveryKey) = lock gate (fun () -> clearServiceBusProcessorFailureWhenFresh attempt recoveryKey)
+
+        member _.MarkArchiveProcessingSuccess() = lock gate (fun () -> clearFailure OperationsUsageReadinessFailureSource.ArchiveRetentionRuntime None)
 
         member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
 
@@ -1650,6 +1691,7 @@ type OperationsUsageArchiveWorkerService
     (
         settings: OperationsUsageArchiveSettings,
         processor: OperationsUsageArchiveProcessor,
+        readiness: IOperationsUsageReadinessRecorder,
         logger: ILogger<OperationsUsageArchiveWorkerService>
     ) =
     inherit BackgroundService()
@@ -1664,6 +1706,7 @@ type OperationsUsageArchiveWorkerService
         task {
             let cutoff = observedBefore ()
             let! archived = processor.ArchiveBatchAsync(cutoff, settings.BatchSize, cancellationToken)
+            readiness.MarkArchiveProcessingSuccess()
 
             logger.LogInformation(
                 "Completed operations usage archive batch. ArchivedFacts: {ArchivedFacts}; HotRetentionDays: {HotRetentionDays}; CutoffUtc: {CutoffUtc}.",
@@ -1696,6 +1739,7 @@ type OperationsUsageArchiveWorkerService
                 with
                 | :? OperationCanceledException when stoppingToken.IsCancellationRequested -> running <- false
                 | ex ->
+                    readiness.MarkArchiveProcessingFailure($"Archive retention failed ({ex.GetType().Name}).")
                     logger.LogError(ex, "Operations usage archive batch failed; retrying after the configured poll interval.")
                     do! delayUntilNextBatchAsync stoppingToken
         }
@@ -1712,6 +1756,8 @@ type OperationsUsageWorkerService
     let credential = lazy (DefaultAzureCredential() :> TokenCredential)
     let mutable serviceBusClient: ServiceBusClient option = None
     let mutable serviceBusProcessor: ServiceBusProcessor option = None
+    let mutable processingCancellation: CancellationTokenSource option = None
+    let mutable processingTask: Task option = None
 
     /// Creates a Service Bus client from connection string or managed identity settings.
     let createClient () =
@@ -1849,10 +1895,58 @@ type OperationsUsageWorkerService
             | None -> ()
         }
 
+    /// Starts ingestion dependency retries in the background so later hosted services can start independently.
+    let startProcessingInBackground (cancellationToken: CancellationToken) =
+        if cancellationToken.IsCancellationRequested then
+            Task.FromCanceled cancellationToken
+        else
+            let hasActiveStartup =
+                processingTask
+                |> Option.exists (fun task -> not task.IsCompleted)
+
+            if serviceBusProcessor.IsSome || hasActiveStartup then
+                logger.LogDebug("Operations usage worker startup is already active; skipping duplicate hosted-service start.")
+            else
+                match processingCancellation with
+                | Some cancellation -> cancellation.Dispose()
+                | None -> ()
+
+                let cancellation = new CancellationTokenSource()
+                processingCancellation <- Some cancellation
+                processingTask <- Some(Task.Run(Func<Task>(fun () -> startProcessingAsync cancellation.Token)))
+
+            Task.CompletedTask
+
+    /// Cancels the background startup loop before stopping any active Service Bus processor.
+    let stopBackgroundProcessingAsync (cancellationToken: CancellationToken) =
+        task {
+            match processingCancellation with
+            | Some cancellation -> cancellation.Cancel()
+            | None -> ()
+
+            match processingTask with
+            | Some task ->
+                try
+                    do! task.WaitAsync(cancellationToken)
+                with
+                | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> ()
+                | :? OperationCanceledException -> ()
+                | ex -> logger.LogWarning(ex, "Operations usage startup retry loop failed while the host was stopping.")
+            | None -> ()
+
+            match processingCancellation with
+            | Some cancellation -> cancellation.Dispose()
+            | None -> ()
+
+            processingCancellation <- None
+            processingTask <- None
+            do! stopProcessingAsync cancellationToken
+        }
+
     interface IHostedService with
 
         /// Starts operational usage ingestion.
-        member _.StartAsync(cancellationToken: CancellationToken) = startProcessingAsync cancellationToken
+        member _.StartAsync(cancellationToken: CancellationToken) = startProcessingInBackground cancellationToken
 
         /// Stops operational usage ingestion.
-        member _.StopAsync(cancellationToken: CancellationToken) = stopProcessingAsync cancellationToken
+        member _.StopAsync(cancellationToken: CancellationToken) = stopBackgroundProcessingAsync cancellationToken

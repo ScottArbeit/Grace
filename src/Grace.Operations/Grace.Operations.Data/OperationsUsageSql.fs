@@ -222,10 +222,13 @@ WHERE NOT EXISTS
     let RehydrateArchivedRawUsageFactPayload =
         """
 UPDATE ops.RawUsageFact
-SET RawPayload = @RawPayload
+SET
+    RawPayload = @RawPayload,
+    RehydrationLeaseId = @RehydrationLeaseId
 WHERE UsageFactId = @UsageFactId
 AND ArchiveState = @ArchiveStateArchived
 AND RawPayload IS NULL
+AND RehydrationLeaseId IS NULL
 AND ArchiveBlobName = @ArchiveBlobName
 AND ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex
 AND ArchiveByteLength = @ArchiveByteLength;
@@ -238,10 +241,13 @@ SELECT @@ROWCOUNT;
     let CleanupRehydratedRawUsageFactPayload =
         """
 UPDATE ops.RawUsageFact
-SET RawPayload = NULL
+SET
+    RawPayload = NULL,
+    RehydrationLeaseId = NULL
 WHERE UsageFactId = @UsageFactId
 AND ArchiveState = @ArchiveStateArchived
 AND RawPayload IS NOT NULL
+AND RehydrationLeaseId = @RehydrationLeaseId
 AND ArchiveBlobName = @ArchiveBlobName
 AND ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex
 AND ArchiveByteLength = @ArchiveByteLength;

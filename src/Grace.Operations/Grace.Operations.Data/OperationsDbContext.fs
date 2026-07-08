@@ -111,6 +111,11 @@ module OperationsModel =
         |> ignore
 
         rawFact
+            .Property<Nullable<System.Guid>>("RehydrationLeaseId")
+            .HasColumnType("uniqueidentifier")
+        |> ignore
+
+        rawFact
             .Property<System.DateTime>("CreatedAtUtc")
             .HasColumnType("datetime2(7)")
             .HasDefaultValueSql("SYSUTCDATETIME()")

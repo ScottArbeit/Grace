@@ -111,6 +111,7 @@ type RawUsageFactRehydrationAuditEntry =
         UsageFactId: UsageFactId
         Scope: RawUsageFactArchiveScope
         Pointer: RawUsageFactArchivePointer
+        RehydrationLeaseId: Guid
         RequestedBy: string
         Reason: string
         RehydratedAt: Instant
@@ -138,10 +139,11 @@ type IOperationsUsageArchiveStore =
             Task<RawUsageFactArchiveReplayItem list>
 
     /// Temporarily restores archived payload bytes only when the SQL pointer still matches Blob authority.
-    abstract RehydrateArchivedPayloadAsync: pointer: RawUsageFactArchivePointer * rawPayload: byte array * cancellationToken: CancellationToken -> Task<bool>
+    abstract RehydrateArchivedPayloadAsync:
+        pointer: RawUsageFactArchivePointer * rawPayload: byte array * rehydrationLeaseId: Guid * cancellationToken: CancellationToken -> Task<bool>
 
-    /// Clears a temporary support rehydration only when the SQL pointer still matches Blob authority.
-    abstract CleanupRehydratedPayloadAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
+    /// Clears a temporary support rehydration only when the SQL pointer and request lease still match.
+    abstract CleanupRehydratedPayloadAsync: pointer: RawUsageFactArchivePointer * rehydrationLeaseId: Guid * cancellationToken: CancellationToken -> Task<bool>
 
 /// Chooses whether schema initialization may connect to `master` to create the operations database.
 type OperationsUsageSchemaBootstrapMode =
@@ -499,8 +501,8 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                 | _ -> false
         }
 
-    /// Executes a single-row archive payload update guarded by the exact Blob pointer.
-    let executeArchivePayloadTransitionAsync commandText pointer rawPayload cancellationToken =
+    /// Executes a single-row archive payload update guarded by the exact Blob pointer and request lease.
+    let executeArchivePayloadTransitionAsync commandText pointer rawPayload rehydrationLeaseId cancellationToken =
         task {
             use! connection = openConnectionAsync cancellationToken
             use command = connection.CreateCommand()
@@ -508,6 +510,7 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
             command.CommandText <- commandText
             addArchiveStateParameters command
             addArchivePointerParameters command pointer
+            addParameter command "@RehydrationLeaseId" SqlDbType.UniqueIdentifier rehydrationLeaseId
 
             match rawPayload with
             | Some payload ->
@@ -681,14 +684,19 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                 return items |> Seq.toList
             }
 
-        member _.RehydrateArchivedPayloadAsync(pointer, rawPayload, cancellationToken) =
+        member _.RehydrateArchivedPayloadAsync(pointer, rawPayload, rehydrationLeaseId, cancellationToken) =
             if isNull rawPayload || rawPayload.Length = 0 then
                 invalidArg (nameof rawPayload) "Rehydrated raw payload bytes are required."
 
-            executeArchivePayloadTransitionAsync OperationsUsageSql.RehydrateArchivedRawUsageFactPayload pointer (Some rawPayload) cancellationToken
+            executeArchivePayloadTransitionAsync
+                OperationsUsageSql.RehydrateArchivedRawUsageFactPayload
+                pointer
+                (Some rawPayload)
+                rehydrationLeaseId
+                cancellationToken
 
-        member _.CleanupRehydratedPayloadAsync(pointer, cancellationToken) =
-            executeArchivePayloadTransitionAsync OperationsUsageSql.CleanupRehydratedRawUsageFactPayload pointer None cancellationToken
+        member _.CleanupRehydratedPayloadAsync(pointer, rehydrationLeaseId, cancellationToken) =
+            executeArchivePayloadTransitionAsync OperationsUsageSql.CleanupRehydratedRawUsageFactPayload pointer None rehydrationLeaseId cancellationToken
 
 /// Ensures the operations usage SQL schema exists before ingestion starts consuming durable messages.
 type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsUsageSchemaBootstrapMode) =
