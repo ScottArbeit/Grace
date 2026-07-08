@@ -70,6 +70,7 @@ type ManifestDownloadSdkTests() =
             OrganizationName = "org"
             RepositoryId = "11111111-1111-1111-1111-111111111111"
             RepositoryName = "repo"
+            ReferenceId = Guid.Parse("44444444-4444-4444-4444-444444444444")
             FileVersion = fileVersion
             OutputStream = None
             CorrelationId = correlationId
@@ -156,7 +157,10 @@ type ManifestDownloadSdkTests() =
                     GetContentBlockDownloadUri =
                         fun parameters ->
                             requestedBlocks.Add(parameters.ContentBlockAddress)
+                            Assert.That(parameters.ReferenceId, Is.EqualTo(Guid.Parse("44444444-4444-4444-4444-444444444444")))
                             Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
+                            Assert.That(parameters.Sha256Hash, Is.EqualTo(fileVersion.Sha256Hash))
+                            Assert.That(parameters.Blake3Hash, Is.EqualTo(fileVersion.Blake3Hash))
                             Assert.That(parameters.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
                             Task.FromResult(Ok(GraceReturnValue.Create $"https://example.test/{parameters.ContentBlockAddress}" correlationId))
                     DownloadContentBlock =
@@ -213,6 +217,7 @@ type ManifestDownloadSdkTests() =
                             Assert.That(parameters.ManifestAddress, Is.EqualTo(manifest.ManifestAddress))
                             Assert.That(parameters.StoragePoolId, Is.EqualTo(manifest.StoragePoolId))
                             Assert.That(parameters.ContentBlockAddress, Is.Not.EqualTo(String.Empty))
+                            Assert.That(parameters.ReferenceId, Is.EqualTo(Guid.Parse("44444444-4444-4444-4444-444444444444")))
                             Assert.That(parameters.AuthorizedScope, Is.EqualTo(fileVersion.RelativePath))
                             let manifestProperty = parameters.GetType().GetProperty("Manifest")
                             Assert.That(manifestProperty, Is.Null)

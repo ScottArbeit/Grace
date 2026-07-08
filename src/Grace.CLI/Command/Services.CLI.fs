@@ -1066,6 +1066,7 @@ module Services =
                                             OrganizationName = getDownloadUriParameters.OrganizationName
                                             RepositoryId = getDownloadUriParameters.RepositoryId
                                             RepositoryName = getDownloadUriParameters.RepositoryName
+                                            ReferenceId = getDownloadUriParameters.ReferenceId
                                             FileVersion = fileVersion
                                             OutputStream = Some outputStream
                                             CorrelationId = getDownloadUriParameters.CorrelationId
