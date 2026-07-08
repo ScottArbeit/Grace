@@ -22,6 +22,8 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 from grace_generated_openapi_probe.models.reference_type import ReferenceType
+from grace_generated_openapi_probe.models.resource_ownership import ResourceOwnership
+from grace_generated_openapi_probe.models.resource_visibility import ResourceVisibility
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -43,7 +45,9 @@ class CreateBranchParameters(BaseModel):
     parent_branch_id: Optional[UUID] = Field(default=None, alias="ParentBranchId")
     parent_branch_name: Optional[StrictStr] = Field(default=None, alias="ParentBranchName")
     initial_permissions: Optional[List[ReferenceType]] = Field(default=None, alias="InitialPermissions")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ParentBranchId", "ParentBranchName", "InitialPermissions"]
+    visibility: Optional[ResourceVisibility] = Field(default=None, alias="Visibility")
+    ownership: Optional[ResourceOwnership] = Field(default=None, alias="Ownership")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "BranchId", "BranchName", "ParentBranchId", "ParentBranchName", "InitialPermissions", "Visibility", "Ownership"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -108,7 +112,9 @@ class CreateBranchParameters(BaseModel):
             "BranchName": obj.get("BranchName"),
             "ParentBranchId": obj.get("ParentBranchId"),
             "ParentBranchName": obj.get("ParentBranchName"),
-            "InitialPermissions": obj.get("InitialPermissions")
+            "InitialPermissions": obj.get("InitialPermissions"),
+            "Visibility": obj.get("Visibility"),
+            "Ownership": obj.get("Ownership")
         })
         return _obj
 

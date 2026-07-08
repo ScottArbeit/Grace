@@ -273,8 +273,11 @@ test("Tier 2 download requests a raw text URI and writes bytes to an existing ou
       if (url.toString() === "http://localhost:5000/storage/getDownloadUri") {
         const body = JSON.parse(init.body);
         assert.equal(init.headers.get("Accept"), "text/plain");
-        assert.equal(body.FileVersion.RelativePath, "docs/hello.txt");
-        assert.equal(body.FileVersion.Sha256Hash, "abc123");
+        assert.equal(body.FileVersion, undefined);
+        assert.equal(body.ReferenceId, "11111111-1111-4111-8111-111111111111");
+        assert.equal(body.RelativePath, "docs/hello.txt");
+        assert.equal(body.Sha256Hash, "abc123");
+        assert.equal(body.Blake3Hash, "def456");
         return textResponse("https://storage.example.test/download?sig=hidden", {
           "X-Correlation-Id": "corr-download-response",
           "X-Grace-Client-Recommended-Version": "0.0.0-s12",
@@ -292,9 +295,11 @@ test("Tier 2 download requests a raw text URI and writes bytes to an existing ou
 
   try {
     const result = await client.downloadFile({
+      referenceId: "11111111-1111-4111-8111-111111111111",
       fileVersion: {
         RelativePath: "docs/hello.txt",
         Sha256Hash: "abc123",
+        Blake3Hash: "def456",
         IsBinary: true,
         Size: 16,
       },
@@ -332,6 +337,7 @@ test("Tier 4 local progress for download reports sanitized milestones only", asy
 
   try {
     await client.downloadFile({
+      referenceId: "11111111-1111-4111-8111-111111111111",
       fileVersion: {
         RelativePath: "docs/hello.txt",
         Sha256Hash: "abc123",
@@ -434,6 +440,7 @@ test("Tier 2 transfer rejects local path problems before contacting Grace", asyn
 
   await assert.rejects(
     client.downloadFile({
+      referenceId: "11111111-1111-4111-8111-111111111111",
       fileVersion: { RelativePath: "docs/hello.txt", Sha256Hash: "abc123" },
       outputPath: join(tmpdir(), "missing-parent", "hello.txt"),
       repositoryName: "repo",
@@ -502,6 +509,7 @@ test("Tier 4 download progress callback exceptions stop before credential-bearin
   try {
     await assert.rejects(
       client.downloadFile({
+        referenceId: "11111111-1111-4111-8111-111111111111",
         fileVersion: {
           RelativePath: "docs/hello.txt",
           Sha256Hash: "abc123",
@@ -523,6 +531,40 @@ test("Tier 4 download progress callback exceptions stop before credential-bearin
 
     assert.deepEqual(progressStages, ["api-requested", "transfer-started"]);
     assert.deepEqual(calls, ["http://localhost:5000/storage/getDownloadUri"]);
+  } finally {
+    await rm(temp, { recursive: true, force: true });
+  }
+});
+
+test("Tier 2 download rejects unsupported manifest-backed FileVersions before contacting Grace", async () => {
+  const temp = await mkdtemp(join(tmpdir(), "grace-manifest-download-"));
+  const outputPath = join(temp, "hello.txt");
+  const calls = [];
+  const client = new GraceClient({
+    fetch: async (...args) => {
+      calls.push(args);
+      return textResponse("https://storage.example.test/download?sig=must-not-be-used");
+    },
+  });
+
+  try {
+    await assert.rejects(
+      client.downloadFile({
+        referenceId: "11111111-1111-4111-8111-111111111111",
+        fileVersion: {
+          ContentReference: {
+            ReferenceType: "FileManifest",
+          },
+          RelativePath: "docs/hello.txt",
+          Sha256Hash: "abc123",
+        },
+        outputPath,
+        repositoryName: "repo",
+      }),
+      /Manifest-backed downloads require ContentBlock request fields/,
+    );
+
+    assert.equal(calls.length, 0);
   } finally {
     await rm(temp, { recursive: true, force: true });
   }

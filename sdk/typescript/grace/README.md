@@ -40,8 +40,8 @@ The TypeScript Node facade includes Tier 2 whole-file compatibility helpers:
 
 - `uploadFile` reads one local file, computes its SHA-256 hash, asks Grace for a server-issued whole-file upload URI,
   and uploads the bytes to that URI.
-- `downloadFile` asks Grace for a raw text whole-file download URI and writes the downloaded bytes to an existing output
-  directory.
+- `downloadFile` asks Grace for a raw text whole-file download URI using the reference, path, and hash proof for the
+  requested file, then writes the downloaded bytes to an existing output directory.
 
 These helpers are intentionally simple. They do not perform manifest upload, ContentBlock transfer, or deduplication.
 
@@ -53,6 +53,7 @@ const upload = await grace.uploadFile({
 });
 
 const download = await grace.downloadFile({
+  referenceId: "11111111-1111-4111-8111-111111111111",
   fileVersion: upload.fileVersion,
   outputPath: "C:/work/downloaded-hello.txt",
   repositoryName: "repo",

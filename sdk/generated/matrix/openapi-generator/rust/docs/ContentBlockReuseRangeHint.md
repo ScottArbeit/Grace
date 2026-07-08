@@ -4,7 +4,7 @@
 
 Name | Type | Description | Notes
 ------------ | ------------- | ------------- | -------------
-**storage_pool_id** | Option<**String**> | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly. | [optional]
+**storage_pool_id** | Option<**String**> | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly. | [optional]
 **manifest_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived FileManifest address. | [optional]
 **content_block_address** | Option<**String**> | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional]
 **ordinal_start** | Option<**i32**> |  | [optional]

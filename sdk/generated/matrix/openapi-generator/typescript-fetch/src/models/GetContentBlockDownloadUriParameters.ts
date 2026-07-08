@@ -72,31 +72,54 @@ export interface GetContentBlockDownloadUriParameters {
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
-    authorizedScope?: string;
+    referenceId: string;
     /**
-     * StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+     * 
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
-    storagePoolId?: string;
+    authorizedScope: string;
+    /**
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    sha256Hash?: string;
+    /**
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    blake3Hash?: string;
+    /**
+     * StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.
+     * @type {string}
+     * @memberof GetContentBlockDownloadUriParameters
+     */
+    storagePoolId: string;
     /**
      * Lowercase 64-character BLAKE3-derived ContentBlock address.
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
-    contentBlockAddress?: string;
+    contentBlockAddress: string;
     /**
      * Lowercase 64-character BLAKE3-derived FileManifest address.
      * @type {string}
      * @memberof GetContentBlockDownloadUriParameters
      */
-    manifestAddress?: string;
+    manifestAddress: string;
 }
 
 /**
  * Check if a given object implements the GetContentBlockDownloadUriParameters interface.
  */
 export function instanceOfGetContentBlockDownloadUriParameters(value: object): value is GetContentBlockDownloadUriParameters {
+    if (!('referenceId' in value) || value['referenceId'] === undefined) return false;
+    if (!('authorizedScope' in value) || value['authorizedScope'] === undefined) return false;
+    if (!('storagePoolId' in value) || value['storagePoolId'] === undefined) return false;
+    if (!('contentBlockAddress' in value) || value['contentBlockAddress'] === undefined) return false;
+    if (!('manifestAddress' in value) || value['manifestAddress'] === undefined) return false;
     return true;
 }
 
@@ -118,10 +141,13 @@ export function GetContentBlockDownloadUriParametersFromJSONTyped(json: any, ign
         'organizationName': json['OrganizationName'] == null ? undefined : json['OrganizationName'],
         'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
-        'authorizedScope': json['AuthorizedScope'] == null ? undefined : json['AuthorizedScope'],
-        'storagePoolId': json['StoragePoolId'] == null ? undefined : json['StoragePoolId'],
-        'contentBlockAddress': json['ContentBlockAddress'] == null ? undefined : json['ContentBlockAddress'],
-        'manifestAddress': json['ManifestAddress'] == null ? undefined : json['ManifestAddress'],
+        'referenceId': json['ReferenceId'],
+        'authorizedScope': json['AuthorizedScope'],
+        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
+        'storagePoolId': json['StoragePoolId'],
+        'contentBlockAddress': json['ContentBlockAddress'],
+        'manifestAddress': json['ManifestAddress'],
     };
 }
 
@@ -144,7 +170,10 @@ export function GetContentBlockDownloadUriParametersToJSONTyped(value?: GetConte
         'OrganizationName': value['organizationName'],
         'RepositoryId': value['repositoryId'],
         'RepositoryName': value['repositoryName'],
+        'ReferenceId': value['referenceId'],
         'AuthorizedScope': value['authorizedScope'],
+        'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
         'StoragePoolId': value['storagePoolId'],
         'ContentBlockAddress': value['contentBlockAddress'],
         'ManifestAddress': value['manifestAddress'],

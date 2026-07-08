@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// ContentBlockDiscoveryCandidate : A bounded, response-protected candidate window for possible ContentBlock reuse.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ContentBlockDiscoveryCandidate {
-    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.
     #[serde(rename = "StoragePoolId", skip_serializing_if = "Option::is_none")]
     pub storage_pool_id: Option<String>,
     /// Lowercase 64-character BLAKE3-derived FileManifest address.

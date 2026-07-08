@@ -201,6 +201,8 @@ __all__ = [
     "RepositoryReturnValue",
     "RepositoryStatus",
     "RepositoryVisibility",
+    "ResourceOwnership",
+    "ResourceVisibility",
     "SaveDirectoryVersionsParameters",
     "ScopedOutboundUrl",
     "SearchVisibility",
@@ -448,6 +450,8 @@ from grace_generated_openapi_probe.models.repository_references_return_value imp
 from grace_generated_openapi_probe.models.repository_return_value import RepositoryReturnValue as RepositoryReturnValue
 from grace_generated_openapi_probe.models.repository_status import RepositoryStatus as RepositoryStatus
 from grace_generated_openapi_probe.models.repository_visibility import RepositoryVisibility as RepositoryVisibility
+from grace_generated_openapi_probe.models.resource_ownership import ResourceOwnership as ResourceOwnership
+from grace_generated_openapi_probe.models.resource_visibility import ResourceVisibility as ResourceVisibility
 from grace_generated_openapi_probe.models.save_directory_versions_parameters import SaveDirectoryVersionsParameters as SaveDirectoryVersionsParameters
 from grace_generated_openapi_probe.models.scoped_outbound_url import ScopedOutboundUrl as ScopedOutboundUrl
 from grace_generated_openapi_probe.models.search_visibility import SearchVisibility as SearchVisibility

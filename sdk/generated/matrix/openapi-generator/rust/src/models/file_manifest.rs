@@ -11,7 +11,7 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// FileManifest : Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
+/// FileManifest : Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not a publication right for a client to choose physical storage shards.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct FileManifest {
     #[serde(rename = "Class")]
@@ -25,7 +25,7 @@ pub struct FileManifest {
     /// Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes.
     #[serde(rename = "FileContentHash")]
     pub file_content_hash: String,
-    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.
     #[serde(rename = "StoragePoolId")]
     pub storage_pool_id: String,
     #[serde(rename = "Size")]
@@ -35,7 +35,7 @@ pub struct FileManifest {
 }
 
 impl FileManifest {
-    /// Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
+    /// Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not a publication right for a client to choose physical storage shards.
     pub fn new(class: Class, manifest_address: String, chunking_suite_id: String, file_content_hash: String, storage_pool_id: String, size: i64, blocks: Vec<models::ContentBlock>) -> FileManifest {
         FileManifest {
             class,

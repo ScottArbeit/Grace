@@ -44,13 +44,21 @@ class TestGetContentBlockDownloadUriParameters(unittest.TestCase):
                 organization_name = '',
                 repository_id = '',
                 repository_name = '',
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
                 authorized_scope = '',
+                sha256_hash = '805331a98813206270e35564769e8bb59eea02aeb7b27c7d6c63e625e1857243',
+                blake3_hash = '9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d',
                 storage_pool_id = '',
                 content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
                 manifest_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b'
             )
         else:
             return GetContentBlockDownloadUriParameters(
+                reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
+                authorized_scope = '',
+                storage_pool_id = '',
+                content_block_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
+                manifest_address = 'bf325375e030fccba00917317c574773100bf03b5fc61486286e564b23e9566b',
         )
         """
 

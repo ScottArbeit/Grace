@@ -17,6 +17,8 @@ Name | Type | Description | Notes
 **parent_branch_id** | Option<**uuid::Uuid**> |  | [optional]
 **parent_branch_name** | Option<**String**> |  | [optional]
 **initial_permissions** | Option<[**Vec<models::ReferenceType>**](ReferenceType.md)> |  | [optional]
+**visibility** | Option<[**models::ResourceVisibility**](ResourceVisibility.md)> |  | [optional]
+**ownership** | Option<[**models::ResourceOwnership**](ResourceOwnership.md)> |  | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 
