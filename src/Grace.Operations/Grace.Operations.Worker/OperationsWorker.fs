@@ -20,6 +20,7 @@ open System.Collections.Generic
 open System.Globalization
 open System.IO
 open System.IO.Compression
+open System.Runtime.ExceptionServices
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -473,27 +474,40 @@ type OperationsUsageArchiveReplayProcessor
                 return result.Status
         }
 
-    /// Replays at most one SQL-index batch, using UsageFactId idempotency to avoid duplicate aggregate projection.
+    /// Advances the archive replay cursor from the last row processed in SQL's stable archive ordering.
+    let nextReplayCursor (item: RawUsageFactArchiveReplayItem) = { ObservedAt = item.ObservedAt; UsageFactId = item.UsageFactId }
+
+    /// Replays archived rows in SQL-index pages, using UsageFactId idempotency to avoid duplicate aggregate projection.
     member _.ReplayBatchAsync(scope: RawUsageFactArchiveScope option, batchSize: int, cancellationToken: CancellationToken) =
         task {
-            let! items = archiveStore.ListArchivedUsageFactsAsync(scope, batchSize, cancellationToken)
-            let itemArray = items |> List.toArray
-            let mutable index = 0
+            let mutable cursor = None
+            let mutable keepReading = true
+            let mutable examined = 0
             let mutable accepted = 0
             let mutable alreadyProcessed = 0
 
-            while index < itemArray.Length do
-                cancellationToken.ThrowIfCancellationRequested()
-                let! status = replayItemAsync itemArray[index] cancellationToken
+            while keepReading do
+                let! items = archiveStore.ListArchivedUsageFactsAsync(scope, cursor, batchSize, cancellationToken)
+                let itemArray = items |> List.toArray
+                let mutable index = 0
 
-                match status with
-                | UsageFactPersistenceStatus.Accepted -> accepted <- accepted + 1
-                | UsageFactPersistenceStatus.AlreadyProcessed -> alreadyProcessed <- alreadyProcessed + 1
-                | _ -> invalidOp $"Archive replay returned unsupported persistence status '{status}'."
+                while index < itemArray.Length do
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let item = itemArray[index]
+                    let! status = replayItemAsync item cancellationToken
 
-                index <- index + 1
+                    match status with
+                    | UsageFactPersistenceStatus.Accepted -> accepted <- accepted + 1
+                    | UsageFactPersistenceStatus.AlreadyProcessed -> alreadyProcessed <- alreadyProcessed + 1
+                    | _ -> invalidOp $"Archive replay returned unsupported persistence status '{status}'."
 
-            return { Examined = itemArray.Length; Accepted = accepted; AlreadyProcessed = alreadyProcessed }
+                    examined <- examined + 1
+                    cursor <- Some(nextReplayCursor item)
+                    index <- index + 1
+
+                keepReading <- itemArray.Length = batchSize
+
+            return { Examined = examined; Accepted = accepted; AlreadyProcessed = alreadyProcessed }
         }
 
 /// Requests temporary support access to archived payloads for one Grace repository scope.
@@ -573,25 +587,44 @@ type OperationsUsageRehydrationProcessor
             match validateRequest request with
             | Error errors -> return Error errors
             | Ok () ->
-                let! items = archiveStore.ListArchivedUsageFactsAsync(Some request.Scope, request.MaxFacts, cancellationToken)
+                let! items = archiveStore.ListArchivedUsageFactsAsync(Some request.Scope, None, request.MaxFacts, cancellationToken)
                 let itemArray = items |> List.toArray
                 let entries = ResizeArray<RawUsageFactRehydrationAuditEntry>()
                 let rehydratedAt = clock.GetCurrentInstant()
                 let mutable index = 0
 
-                while index < itemArray.Length do
-                    cancellationToken.ThrowIfCancellationRequested()
-                    let! entry = rehydrateItemAsync request rehydratedAt itemArray[index] cancellationToken
-                    entries.Add entry
-                    index <- index + 1
+                try
+                    while index < itemArray.Length do
+                        cancellationToken.ThrowIfCancellationRequested()
+                        let! entry = rehydrateItemAsync request rehydratedAt itemArray[index] cancellationToken
+                        entries.Add entry
+                        index <- index + 1
+                with
+                | ex ->
+                    let changedEntries =
+                        entries
+                        |> Seq.filter (fun entry -> entry.ChangedSqlState)
+                        |> Seq.toArray
+
+                    let mutable cleanupIndex = 0
+
+                    while cleanupIndex < changedEntries.Length do
+                        let! _ = archiveStore.CleanupRehydratedPayloadAsync(changedEntries[cleanupIndex].Pointer, CancellationToken.None)
+                        cleanupIndex <- cleanupIndex + 1
+
+                    ExceptionDispatchInfo.Capture(ex).Throw()
 
                 return Ok { AuditEntries = entries |> Seq.toList }
         }
 
-    /// Clears every payload represented by the supplied support-audit entries.
+    /// Clears only payloads this support request actually restored.
     member _.CleanupAsync(entries: RawUsageFactRehydrationAuditEntry list, cancellationToken: CancellationToken) =
         task {
-            let entryArray = entries |> List.toArray
+            let entryArray =
+                entries
+                |> List.filter (fun entry -> entry.ChangedSqlState)
+                |> List.toArray
+
             let mutable index = 0
             let mutable cleaned = 0
 

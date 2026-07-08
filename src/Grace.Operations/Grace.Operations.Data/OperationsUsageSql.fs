@@ -160,6 +160,12 @@ AND ArchiveByteLength IS NOT NULL
 AND (@OwnerId IS NULL OR OwnerId = @OwnerId)
 AND (@OrganizationId IS NULL OR OrganizationId = @OrganizationId)
 AND (@RepositoryId IS NULL OR RepositoryId = @RepositoryId)
+AND
+(
+    @AfterObservedAtUtc IS NULL
+    OR ObservedAtUtc > @AfterObservedAtUtc
+    OR (ObservedAtUtc = @AfterObservedAtUtc AND UsageFactId > @AfterUsageFactId)
+)
 ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
 """
 

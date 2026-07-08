@@ -87,6 +87,9 @@ type RawUsageFactArchivePointer = { UsageFactId: UsageFactId; BlobName: string; 
 /// Limits archive replay or support rehydration to an explicit Grace repository scope.
 type RawUsageFactArchiveScope = { OwnerId: OwnerId option; OrganizationId: OrganizationId option; RepositoryId: RepositoryId option }
 
+/// Carries the last archived row seen so replay pages advance through stable SQL ordering.
+type RawUsageFactArchiveReplayCursor = { ObservedAt: Instant; UsageFactId: UsageFactId }
+
 /// Describes an archived raw usage fact whose compact SQL index can authorize Blob replay.
 type RawUsageFactArchiveReplayItem =
     {
@@ -131,7 +134,8 @@ type IOperationsUsageArchiveStore =
 
     /// Returns archived rows whose compact SQL pointer is the authority for replay or support rehydration.
     abstract ListArchivedUsageFactsAsync:
-        scope: RawUsageFactArchiveScope option * batchSize: int * cancellationToken: CancellationToken -> Task<RawUsageFactArchiveReplayItem list>
+        scope: RawUsageFactArchiveScope option * after: RawUsageFactArchiveReplayCursor option * batchSize: int * cancellationToken: CancellationToken ->
+            Task<RawUsageFactArchiveReplayItem list>
 
     /// Temporarily restores archived payload bytes only when the SQL pointer still matches Blob authority.
     abstract RehydrateArchivedPayloadAsync: pointer: RawUsageFactArchivePointer * rawPayload: byte array * cancellationToken: CancellationToken -> Task<bool>
@@ -303,6 +307,18 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
         addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
 
+    /// Adds raw fact parameters for archive replay inserts that intentionally omit hot payload bytes.
+    let addReplayedRawUsageFactParameters (command: SqlCommand) (rawFact: RawUsageFact) =
+        addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier rawFact.UsageFactId
+        addStringParameter command "@CorrelationId" OperationsUsageSql.CorrelationIdMaxLength rawFact.CorrelationId
+        addParameter command "@FactKind" SqlDbType.Int (int rawFact.FactKind)
+        addParameter command "@OwnerId" SqlDbType.UniqueIdentifier rawFact.OwnerId
+        addParameter command "@OrganizationId" SqlDbType.UniqueIdentifier rawFact.OrganizationId
+        addParameter command "@RepositoryId" SqlDbType.UniqueIdentifier rawFact.RepositoryId
+        addStringParameter command "@StoragePoolId" OperationsUsageSql.StoragePoolIdMaxLength rawFact.StoragePoolId
+        addParameter command "@Quantity" SqlDbType.BigInt rawFact.Quantity
+        addParameter command "@ObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime rawFact.ObservedAt)
+
     /// Adds archive pointer parameters for replay inserts that keep hot payload bytes out of SQL.
     let addReplayedArchivePointerParameters (command: SqlCommand) (pointer: RawUsageFactArchivePointer) =
         addStringParameter command "@ArchiveBlobName" OperationsUsageSql.ArchiveBlobNameMaxLength pointer.BlobName
@@ -336,7 +352,7 @@ type private SqlOperationsUsageTransaction(connection: SqlConnection, transactio
         member _.TryInsertReplayedArchivedUsageFactAsync(rawFact, pointer, cancellationToken) =
             task {
                 use command = createCommand OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact
-                addRawUsageFactParameters command rawFact
+                addReplayedRawUsageFactParameters command rawFact
                 addReplayedArchivePointerParameters command pointer
                 let! rowsAffected = command.ExecuteNonQueryAsync cancellationToken
                 return rowsAffected = 1
@@ -594,7 +610,7 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
         member _.CompleteArchiveAsync(pointer, cancellationToken) =
             executeArchiveTransitionAsync OperationsUsageSql.CompleteRawUsageFactArchive pointer cancellationToken
 
-        member _.ListArchivedUsageFactsAsync(scope, batchSize, cancellationToken) =
+        member _.ListArchivedUsageFactsAsync(scope, after, batchSize, cancellationToken) =
             task {
                 if batchSize <= 0 then
                     invalidArg (nameof batchSize) "Archive replay batch size must be greater than zero."
@@ -606,6 +622,14 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                 addParameter command "@BatchSize" SqlDbType.Int batchSize
                 addArchiveStateParameters command
                 addArchiveScopeParameters command scope
+
+                match after with
+                | Some cursor ->
+                    addParameter command "@AfterObservedAtUtc" SqlDbType.DateTime2 (toUtcDateTime cursor.ObservedAt)
+                    addParameter command "@AfterUsageFactId" SqlDbType.UniqueIdentifier cursor.UsageFactId
+                | None ->
+                    addParameter command "@AfterObservedAtUtc" SqlDbType.DateTime2 DBNull.Value
+                    addParameter command "@AfterUsageFactId" SqlDbType.UniqueIdentifier DBNull.Value
 
                 use! reader = command.ExecuteReaderAsync cancellationToken
                 let items = ResizeArray<RawUsageFactArchiveReplayItem>()
