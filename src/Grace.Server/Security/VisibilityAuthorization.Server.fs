@@ -105,6 +105,13 @@ module VisibilityAuthorization =
         | _, ResourceOwnership.RepositoryOwned -> true
         | _, ResourceOwnership.ContributorOwned -> hasContributorAudience false caller resolveResourceAudience reference
 
+    /// Determines whether branch-scoped read surfaces may expose a reference owned by an observable branch.
+    let canObserveBranchReference (caller: VisibilityCallerAudience) resolveResourceAudience reference =
+        match reference.Visibility, reference.Ownership with
+        | ResourceVisibility.Public, _ -> true
+        | _, ResourceOwnership.RepositoryOwned -> true
+        | _, ResourceOwnership.ContributorOwned -> hasContributorAudience true caller resolveResourceAudience reference
+
     /// Determines whether a caller may observe a promotion set after the route has loaded its authoritative visibility facts.
     let canObservePromotionSet (caller: VisibilityCallerAudience) resolveResourceAudience promotionSet =
         match promotionSet.Visibility, promotionSet.Ownership with

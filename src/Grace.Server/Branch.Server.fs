@@ -219,14 +219,17 @@ module Branch =
     /// Checks branch and reference visibility before a reference can reach public read, list, hash, or traversal surfaces.
     let private canObserveReferenceInBranch (context: HttpContext) (branchDto: BranchDto) (referenceDto: Reference.ReferenceDto) =
         task {
-            let! branchObservable = canObserveBranch context branchDto
+            let! caller = getVisibilityCallerAudience context branchDto
+            let! branchAudience = getBranchResourceAudience context branchDto
+            let branchResource = branchVisibilityResource branchDto
+
+            let branchObservable = VisibilityAuthorization.canObserveBranch caller (fun _ -> branchAudience) branchResource
 
             if not branchObservable then
                 return false
             else
-                let! caller = getVisibilityCallerAudience context branchDto
                 let resource = referenceVisibilityResource referenceDto
-                return VisibilityAuthorization.canObserveReference caller (fun _ -> VisibilityResourceAudience.None) resource
+                return VisibilityAuthorization.canObserveBranchReference caller (fun _ -> branchAudience) resource
         }
 
     /// Validates that a reveal will not disclose hidden reference or promotion-review links.
