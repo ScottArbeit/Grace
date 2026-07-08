@@ -180,21 +180,20 @@ module DirectoryVersionServerTestHelpers =
             do! BranchServerTestHelpers.assertOk referenceResponse
         }
 
-    /// Marks a saved reference as logically deleted through the actor state used by repository reference queries.
-    let deleteReferenceAsync (repositoryId: string) (referenceId: ReferenceId) =
+    /// Deletes the published branch through the hosted route so its references are marked deleted by the test server.
+    let deleteBranchReferencesAsync (repositoryId: string) (branchId: BranchId) =
         task {
-            let correlationId = generateCorrelationId ()
+            let parameters = Parameters.Branch.DeleteBranchParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.BranchId <- $"{branchId}"
+            parameters.Force <- true
+            parameters.DeleteReason <- "Directory version reachability regression."
+            parameters.CorrelationId <- generateCorrelationId ()
 
-            let actorProxy = Grace.Actors.Extensions.ActorProxy.Reference.CreateActorProxy referenceId (Guid.Parse repositoryId) correlationId
-
-            let! result =
-                actorProxy.Handle
-                    (Grace.Types.Reference.ReferenceCommand.DeleteLogical(false, "Directory version reachability regression."))
-                    (EventMetadata.New correlationId "directory-version-server-tests")
-
-            match result with
-            | Ok returnValue -> Assert.That(returnValue.ReturnValue.DeletedAt.IsSome, Is.True)
-            | Error graceError -> Assert.Fail($"{graceError}")
+            let! response = Client.PostAsync("/branch/delete", createJsonContent parameters)
+            do! BranchServerTestHelpers.assertOk response
         }
 
     /// Posts a directory get route through the supplied authenticated client.
@@ -574,7 +573,8 @@ type DirectoryVersionServer() =
             do! DirectoryVersionServerTestHelpers.assertOk activeHashResponse
 
             let! branchAfterSave = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
-            do! DirectoryVersionServerTestHelpers.deleteReferenceAsync repositoryId branchAfterSave.LatestSave.ReferenceId
+            Assert.That(branchAfterSave.LatestSave.ReferenceId, Is.Not.EqualTo(ReferenceId.Empty))
+            do! DirectoryVersionServerTestHelpers.deleteBranchReferencesAsync repositoryId branchAfterSave.BranchId
 
             let expectedMissing = DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectoryDoesNotExist
 
