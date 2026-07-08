@@ -329,7 +329,30 @@ type MaterializationPlanRouteTests() =
     [<Test>]
     member _.RepositorySelectorRejectsMissingRepositoryBeforeMovingSelectors() =
         task {
-            let! result = Materialization.resolveRepositorySelectorWith repositoryId (fun () -> Task.FromResult RepositoryDto.Default) correlationId
+            let! result =
+                Materialization.resolveRepositorySelectorWith
+                    ownerId
+                    organizationId
+                    repositoryId
+                    (fun () -> Task.FromResult RepositoryDto.Default)
+                    correlationId
+
+            assertErrorContains Materialization.repositorySelectorNotFoundMessage result
+        }
+
+    /// Verifies repository selectors must match the authorized owner and organization, not only the requested repository id.
+    [<Test>]
+    member _.RepositorySelectorRejectsCrossOwnerRepositoryBeforeMovingSelectors() =
+        task {
+            let foreignOwnerRepository = { repository defaultBranchName with OwnerId = OwnerId.Parse "88888888-8888-8888-8888-888888888888" }
+
+            let! result =
+                Materialization.resolveRepositorySelectorWith
+                    ownerId
+                    organizationId
+                    repositoryId
+                    (fun () -> Task.FromResult foreignOwnerRepository)
+                    correlationId
 
             assertErrorContains Materialization.repositorySelectorNotFoundMessage result
         }
@@ -378,6 +401,7 @@ type MaterializationPlanRouteTests() =
                     explicitBranchName
                     (fun () -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
+                    (fun _ -> Task.FromResult latestReference)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
@@ -393,7 +417,7 @@ type MaterializationPlanRouteTests() =
             let repositoryDto = repository defaultBranchName
             let latestReference = reference referenceId defaultBranchId targetRootDirectoryVersionId
 
-            match Materialization.validateRepositorySelectorScope repositoryId repositoryDto correlationId with
+            match Materialization.validateRepositorySelectorScope ownerId organizationId repositoryId repositoryDto correlationId with
             | Error error -> Assert.Fail(error.Error)
             | Ok () -> ()
 
@@ -403,6 +427,7 @@ type MaterializationPlanRouteTests() =
                     repositoryDto.DefaultBranchName
                     (fun () -> Task.FromResult(Some defaultBranchId))
                     (fun branchId -> Task.FromResult(branch branchId repositoryDto.DefaultBranchName latestReference))
+                    (fun _ -> Task.FromResult latestReference)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
@@ -421,10 +446,37 @@ type MaterializationPlanRouteTests() =
                     explicitBranchName
                     (fun () -> Task.FromResult(None))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
+                    (fun _ -> Task.FromResult ReferenceDto.Default)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
             assertErrorContains Materialization.branchNameSelectorNotFoundMessage result
+        }
+
+    /// Verifies branch-name selectors use the durable resolver seam before loading branch state.
+    [<Test>]
+    member _.BranchNameSelectorUsesResolverCallbackOnColdBranchNameCache() =
+        task {
+            let latestReference = reference referenceId explicitBranchId targetRootDirectoryVersionId
+            let mutable resolverCalled = false
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () ->
+                        resolverCalled <- true
+                        Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
+                    (fun _ -> Task.FromResult latestReference)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+
+            Assert.That(resolverCalled, Is.True)
         }
 
     /// Verifies stale branch-name index entries use the same public selector error as missing branch names.
@@ -437,6 +489,7 @@ type MaterializationPlanRouteTests() =
                     explicitBranchName
                     (fun () -> Task.FromResult(Some explicitBranchId))
                     (fun _ -> raise (KeyNotFoundException("branch actor was not found")))
+                    (fun _ -> Task.FromResult ReferenceDto.Default)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
@@ -455,6 +508,7 @@ type MaterializationPlanRouteTests() =
                     explicitBranchName
                     (fun () -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId (BranchName "other") latestReference))
+                    (fun _ -> Task.FromResult latestReference)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
@@ -471,6 +525,28 @@ type MaterializationPlanRouteTests() =
                     explicitBranchName
                     (fun () -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
+                    (fun _ -> Task.FromResult ReferenceDto.Default)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.branchTipSelectorNotFoundMessage result
+        }
+
+    /// Verifies branch-name selectors re-read the live reference before trusting a branch snapshot's root directory.
+    [<Test>]
+    member _.BranchNameSelectorRejectsDeletedLiveTipReference() =
+        task {
+            let snapshotReference = reference referenceId explicitBranchId targetRootDirectoryVersionId
+
+            let deletedLiveReference = { snapshotReference with DeletedAt = Some(NodaTime.Instant.FromUnixTimeSeconds 1L) }
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName snapshotReference))
+                    (fun _ -> Task.FromResult deletedLiveReference)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
