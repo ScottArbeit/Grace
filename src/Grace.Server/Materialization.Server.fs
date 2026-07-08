@@ -426,13 +426,6 @@ module Materialization =
                     correlationId
         }
 
-    /// Selects the newest live reference after authoritative ReferenceType lookup revalidates branch scope.
-    let private selectLatestReference (references: ReferenceDto seq) =
-        references
-        |> Seq.filter (fun reference -> reference.DeletedAt.IsNone)
-        |> Seq.sortByDescending (fun reference -> reference.CreatedAt)
-        |> Seq.tryHead
-
     /// Resolves a ReferenceType selector to the latest matching reference for the selected branch at plan time.
     let internal resolveReferenceTypeSelectorWith
         repositoryId
@@ -441,7 +434,7 @@ module Materialization =
         (referenceType: ReferenceType)
         (resolveBranchIdByName: BranchName -> Task<BranchId option>)
         (getBranch: BranchId -> Task<BranchDto>)
-        (getReferences: BranchId -> Task<ReferenceDto array>)
+        (getLatestReference: BranchId -> Task<ReferenceDto option>)
         (getDirectoryVersion: DirectoryVersionId -> Task<DirectoryVersionDto>)
         correlationId
         : Task<Result<DirectoryVersionId, GraceError>>
@@ -491,9 +484,9 @@ module Materialization =
                         match branchScopeResult with
                         | Error _ -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
                         | Ok () ->
-                            let! references = getReferences resolvedBranchId
+                            let! latestReference = getLatestReference resolvedBranchId
 
-                            match selectLatestReference references with
+                            match latestReference with
                             | None -> return Error(planError correlationId referenceTypeSelectorNotFoundMessage)
                             | Some referenceDto ->
                                 match validateBranchTipReference repositoryId branchDto.BranchId referenceDto.ReferenceId referenceDto correlationId with
@@ -522,7 +515,7 @@ module Materialization =
                     (fun branchId ->
                         let branchActorProxy = ActorProxy.Branch.CreateActorProxy branchId repositoryId correlationId
                         branchActorProxy.Get correlationId)
-                    (fun branchId -> getReferencesByType referenceType repositoryId branchId 50 correlationId)
+                    (fun branchId -> getLatestReferenceByType referenceType repositoryId branchId)
                     (fun directoryVersionId ->
                         let directoryActorProxy = ActorProxy.DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
                         directoryActorProxy.Get correlationId)

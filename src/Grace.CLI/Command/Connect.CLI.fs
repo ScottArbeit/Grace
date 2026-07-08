@@ -1107,8 +1107,8 @@ module Connect =
                 | Ok () -> return Ok stream
         }
 
-    /// Verifies materialized working-tree bytes against recursive metadata before local state records success.
-    let internal validateMaterializedFiles correlationId (fileVersions: FileVersion seq) =
+    /// Verifies materialized bytes under a root directory against recursive metadata before local state records success.
+    let internal validateMaterializedFilesInRoot correlationId rootDirectory (fileVersions: FileVersion seq) =
         task {
             let fileVersionArray = fileVersions |> Seq.toArray
             let mutable index = 0
@@ -1117,7 +1117,7 @@ module Connect =
             while index < fileVersionArray.Length
                   && validationError.IsNone do
                 let fileVersion = fileVersionArray[index]
-                let filePath = Path.Combine(Current().RootDirectory, fileVersion.RelativePath)
+                let filePath = Path.Combine(rootDirectory, fileVersion.RelativePath)
                 let fileInfo = FileInfo(filePath)
 
                 if not fileInfo.Exists then
@@ -1158,9 +1158,15 @@ module Connect =
             | None -> return Ok()
         }
 
+    /// Verifies materialized working-tree bytes against recursive metadata before local state records success.
+    let internal validateMaterializedFiles correlationId (fileVersions: FileVersion seq) =
+        validateMaterializedFilesInRoot correlationId (Current().RootDirectory) fileVersions
+
     /// Coordinates extract zip entries behavior for this CLI command path.
     let private extractZipEntries
         (parseResult: ParseResult)
+        workingRootDirectory
+        objectRootDirectory
         (fileVersionsByRelativePath: Dictionary<RelativePath, FileVersion>)
         (filesToSkip: HashSet<RelativePath>)
         writeWorkingFiles
@@ -1183,9 +1189,9 @@ module Connect =
                 | true, fileVersion ->
                     let objectFileName = getLocalObjectCacheFileName fileVersion.RelativePath fileVersion.Sha256Hash fileVersion.Blake3Hash
 
-                    let fileInfo = FileInfo(Path.Combine(Current().RootDirectory, fileVersion.RelativePath))
+                    let fileInfo = FileInfo(Path.Combine(workingRootDirectory, fileVersion.RelativePath))
 
-                    let objectFileInfo = FileInfo(Path.Combine(Current().ObjectDirectory, fileVersion.RelativePath, objectFileName))
+                    let objectFileInfo = FileInfo(Path.Combine(objectRootDirectory, fileVersion.RelativePath, objectFileName))
 
                     Directory.CreateDirectory(fileInfo.DirectoryName)
                     |> ignore
@@ -1223,6 +1229,60 @@ module Connect =
             writeHumanLine parseResult $"[{Colors.Deemphasized}]Zip contained {additionalEntries.Count} additional entry(ies). Ignored.[/]"
 
         writeHumanLine parseResult $"[{Colors.Important}]Finished writing files to disk.[/]"
+
+    /// Stages Direct zip extraction, validates decompressed bytes, then writes final files and object-cache bytes.
+    let internal extractValidatedZipEntries
+        (parseResult: ParseResult)
+        correlationId
+        (fileVersionsByRelativePath: Dictionary<RelativePath, FileVersion>)
+        (filesToSkip: HashSet<RelativePath>)
+        (fileVersions: FileVersion seq)
+        (zipFile: Stream)
+        =
+        task {
+            let stageRootDirectory = Path.Combine(Path.GetTempPath(), $"grace-direct-materialization-{Guid.NewGuid():N}")
+            let stageObjectDirectory = Path.Combine(stageRootDirectory, Constants.GraceConfigDirectory, Constants.GraceObjectsDirectory)
+
+            /// Removes staged Direct materialization files after validation has either passed or failed.
+            let deleteStageRoot () =
+                if Directory.Exists(stageRootDirectory) then
+                    try
+                        Directory.Delete(stageRootDirectory, true)
+                    with
+                    | _ -> ()
+
+            try
+                let! stagingResult =
+                    task {
+                        try
+                            Directory.CreateDirectory(stageRootDirectory)
+                            |> ignore
+
+                            extractZipEntries parseResult stageRootDirectory stageObjectDirectory fileVersionsByRelativePath filesToSkip true false zipFile
+
+                            return! validateMaterializedFilesInRoot correlationId stageRootDirectory fileVersions
+                        with
+                        | ex ->
+                            return
+                                Error(
+                                    GraceError.CreateWithException
+                                        ex
+                                        "Direct Materialization Plan zip validation failed before local state could be recorded."
+                                        correlationId
+                                )
+                    }
+
+                match stagingResult with
+                | Error error -> return Error error
+                | Ok () ->
+                    zipFile.Position <- 0L
+
+                    extractZipEntries parseResult (Current().RootDirectory) (Current().ObjectDirectory) fileVersionsByRelativePath filesToSkip true true zipFile
+
+                    return Ok()
+            finally
+                deleteStageRoot ()
+        }
 
     /// Coordinates retrieve default branch and write behavior for this CLI command path.
     let private retrieveDefaultBranchAndWrite
@@ -1312,14 +1372,18 @@ module Connect =
                                         | Error error -> return (Error error |> renderOutput parseResult)
                                         | Ok zipFile ->
                                             use zipFile = zipFile
-                                            extractZipEntries parseResult fileVersionsByRelativePath filesToSkip true false zipFile
 
-                                            match! validateMaterializedFiles graceIds.CorrelationId executionArtifacts.FileVersions with
+                                            match!
+                                                extractValidatedZipEntries
+                                                    parseResult
+                                                    graceIds.CorrelationId
+                                                    fileVersionsByRelativePath
+                                                    filesToSkip
+                                                    executionArtifacts.FileVersions
+                                                    zipFile
+                                                with
                                             | Error error -> return (Error error |> renderOutput parseResult)
                                             | Ok () ->
-                                                zipFile.Position <- 0L
-                                                extractZipEntries parseResult fileVersionsByRelativePath filesToSkip false true zipFile
-
                                                 writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
                                                 let! previousGraceStatus = readGraceStatusFile ()
                                                 let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult

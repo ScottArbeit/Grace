@@ -201,6 +201,29 @@ module ConnectTests =
 
         output.ToArray()
 
+    /// Builds a zip payload with one Grace text entry stored as gzip-compressed bytes.
+    let private zipBytesForTextEntry relativePath (payload: byte array) =
+        use output = new MemoryStream()
+
+        do
+            use zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen = true)
+            let entry = zip.CreateEntry(relativePath)
+
+            use entryStream = entry.Open()
+            let compressedPayload = gzipBytes payload
+            entryStream.Write(compressedPayload, 0, compressedPayload.Length)
+
+        output.ToArray()
+
+    /// Builds the relative-path lookup required by Direct zip extraction.
+    let private fileVersionLookup (fileVersions: FileVersion seq) =
+        let lookup = Dictionary<RelativePath, FileVersion>()
+
+        fileVersions
+        |> Seq.iter (fun fileVersion -> lookup.Add(fileVersion.RelativePath, fileVersion))
+
+        lookup
+
     /// Keeps test streams inspectable after production code disposes the response stream wrapper.
     type private NonDisposingMemoryStream(bytes: byte array) =
         inherit MemoryStream(bytes)
@@ -701,6 +724,102 @@ module ConnectTests =
                 with
             | Error error -> Assert.Fail($"Unexpected materialized file validation error: {error.Error}")
             | Ok () -> ())
+
+    /// Verifies that staged Direct zip validation fails before replacing an existing working-tree file.
+    [<Test>]
+    let ``connect staged direct zip validation preserves existing worktree file on mismatch`` () =
+        withTempDir (fun root ->
+            Grace.Shared.Client.Configuration.resetConfiguration ()
+
+            Grace.Shared.Client.Configuration.Current()
+            |> ignore
+
+            let expectedPayload = Encoding.UTF8.GetBytes("expected materialized text")
+            let stalePayload = Encoding.UTF8.GetBytes("stale materialized text")
+            let sentinel = "existing local sentinel"
+            let relativePath = RelativePath "src/app.fs"
+            let filePath = Path.Combine(root, string relativePath)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(filePath))
+            |> ignore
+
+            File.WriteAllText(filePath, sentinel)
+
+            let fileVersion =
+                FileVersion.CreateWithHashes
+                    relativePath
+                    (computeSha256Hash expectedPayload)
+                    (computeBlake3Hash expectedPayload)
+                    String.Empty
+                    false
+                    (int64 expectedPayload.Length)
+
+            use zipStream = new MemoryStream(zipBytesForTextEntry (string relativePath) stalePayload)
+            let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+
+            let result =
+                Connect.extractValidatedZipEntries
+                    parseResult
+                    "correlation-id"
+                    (fileVersionLookup [| fileVersion |])
+                    (HashSet<RelativePath>())
+                    [| fileVersion |]
+                    zipStream
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match result with
+            | Ok () -> Assert.Fail("Expected staged Direct zip validation to reject stale decompressed file bytes.")
+            | Error error ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        error.Error |> should contain "mismatch"
+
+                        File.ReadAllText(filePath)
+                        |> should equal sentinel)
+                ))
+
+    /// Verifies that staged Direct zip validation still writes final files and object-cache bytes on success.
+    [<Test>]
+    let ``connect staged direct zip validation writes final worktree and object cache on success`` () =
+        withTempDir (fun root ->
+            Grace.Shared.Client.Configuration.resetConfiguration ()
+            let configuration = Grace.Shared.Client.Configuration.Current()
+
+            let payload = Encoding.UTF8.GetBytes("expected materialized text")
+            let relativePath = RelativePath "src/app.fs"
+            let filePath = Path.Combine(root, string relativePath)
+
+            let fileVersion =
+                FileVersion.CreateWithHashes relativePath (computeSha256Hash payload) (computeBlake3Hash payload) String.Empty false (int64 payload.Length)
+
+            use zipStream = new MemoryStream(zipBytesForTextEntry (string relativePath) payload)
+            let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+
+            let result =
+                Connect.extractValidatedZipEntries
+                    parseResult
+                    "correlation-id"
+                    (fileVersionLookup [| fileVersion |])
+                    (HashSet<RelativePath>())
+                    [| fileVersion |]
+                    zipStream
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match result with
+            | Error error -> Assert.Fail($"Unexpected staged Direct zip validation error: {error.Error}")
+            | Ok () ->
+                let objectFiles = Directory.GetFiles(string configuration.ObjectDirectory, "*", SearchOption.AllDirectories)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        File.ReadAllBytes(filePath)
+                        |> should equal payload
+
+                        objectFiles |> should haveLength 1
+
+                        File.ReadAllBytes(objectFiles[0])
+                        |> should equal payload)
+                ))
 
     /// Verifies that connect executes recursive metadata from the planned artifact payload.
     [<Test>]

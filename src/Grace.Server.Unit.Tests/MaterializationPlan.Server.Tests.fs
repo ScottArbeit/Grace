@@ -418,9 +418,7 @@ type MaterializationPlanRouteTests() =
                     ReferenceType.Promotion
                     (fun _ -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
-                    (fun _ ->
-                        Task.FromResult [| olderReference
-                                           latestReference |])
+                    (fun _ -> Task.FromResult(Some latestReference))
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
@@ -441,7 +439,7 @@ type MaterializationPlanRouteTests() =
                     ReferenceType.Promotion
                     (fun _ -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
-                    (fun _ -> Task.FromResult Array.empty<ReferenceDto>)
+                    (fun _ -> Task.FromResult None)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
@@ -470,7 +468,7 @@ type MaterializationPlanRouteTests() =
                         nameLookupWasUsed <- true
                         Task.FromResult(Some defaultBranchId))
                     (fun branchId -> Task.FromResult(branch branchId (BranchName "renamed-after-cli-lookup") selectedReference))
-                    (fun _ -> Task.FromResult [| selectedReference |])
+                    (fun _ -> Task.FromResult(Some selectedReference))
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
@@ -511,15 +509,77 @@ type MaterializationPlanRouteTests() =
                     ReferenceType.Promotion
                     (fun _ -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName liveOlder))
-                    (fun _ ->
-                        Task.FromResult [| deletedNewest
-                                           liveOlder |])
+                    (fun _ -> Task.FromResult(Some liveOlder))
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
             match result with
             | Error error -> Assert.Fail(error.Error)
             | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(liveRoot))
+        }
+
+    /// Verifies ReferenceType selectors rely on storage paging to skip more deleted references than one list window.
+    [<Test>]
+    member _.ReferenceTypeSelectorSkipsBeyondDeletedCandidateWindow() =
+        task {
+            let liveRoot = DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999"
+
+            let deletedCandidateCount = 51
+
+            let deletedCandidates =
+                Array.init deletedCandidateCount (fun index ->
+                    let referenceOrdinal = index + 1
+
+                    { reference
+                          (ReferenceId.Parse($"aaaaaaaa-aaaa-aaaa-aaaa-{referenceOrdinal.ToString().PadLeft(12, '0')}"))
+                          explicitBranchId
+                          targetRootDirectoryVersionId with
+                        ReferenceType = ReferenceType.Promotion
+                        CreatedAt =
+                            NodaTime
+                                .Instant
+                                .FromUtc(2026, 7, 3, 12, 0)
+                                .Minus(NodaTime.Duration.FromMinutes(int64 referenceOrdinal))
+                        DeletedAt = Some(NodaTime.Instant.FromUtc(2026, 7, 4, 12, 0))
+                    })
+
+            let liveOlder =
+                { reference (ReferenceId.Parse "88888888-8888-8888-8888-888888888888") explicitBranchId liveRoot with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 1, 12, 0)
+                }
+
+            let storageOrderedCandidates = Array.append deletedCandidates [| liveOlder |]
+            let mutable latestLiveLookupSawDeletedWindow = false
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName liveOlder))
+                    (fun _ ->
+                        latestLiveLookupSawDeletedWindow <-
+                            storageOrderedCandidates
+                            |> Array.take 50
+                            |> Array.forall (fun reference -> reference.DeletedAt.IsSome)
+
+                        storageOrderedCandidates
+                        |> Array.tryFind (fun reference -> reference.DeletedAt.IsNone)
+                        |> Task.FromResult)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(resolvedRoot, Is.EqualTo(liveRoot))
+                        Assert.That(latestLiveLookupSawDeletedWindow, Is.True))
+                )
         }
 
     /// Verifies ReferenceType selectors choose by creation order instead of mutable UpdatedAt churn.
@@ -549,9 +609,7 @@ type MaterializationPlanRouteTests() =
                     ReferenceType.Promotion
                     (fun _ -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName createdNewer))
-                    (fun _ ->
-                        Task.FromResult [| updatedOlder
-                                           createdNewer |])
+                    (fun _ -> Task.FromResult(Some createdNewer))
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
