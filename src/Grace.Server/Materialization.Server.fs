@@ -169,24 +169,36 @@ module Materialization =
         else
             Ok()
 
-    /// Resolves a DirectoryVersionId selector to an immutable repository root.
-    let private resolveDirectoryVersionSelector repositoryId (directoryVersionId: DirectoryVersionId) correlationId =
+    /// Resolves a DirectoryVersion actor result to the immutable root selector accepted by the Materialization Plan route.
+    let internal resolveDirectoryVersionSelectorWith
+        repositoryId
+        (directoryVersionId: DirectoryVersionId)
+        (getDirectoryVersion: unit -> Task<DirectoryVersionDto>)
+        correlationId
+        =
         task {
             if directoryVersionId = DirectoryVersionId.Empty then
                 return Error(planError correlationId "DirectoryVersionId selector is required.")
             else
-                let actorProxy = ActorProxy.DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
-
                 try
-                    let! directoryVersionDto = actorProxy.Get correlationId
+                    let! directoryVersionDto = getDirectoryVersion ()
                     let directoryVersion = directoryVersionDto.DirectoryVersion
 
                     match validateDirectoryVersionSelectorScope repositoryId directoryVersion correlationId with
                     | Error error -> return Error error
-                    | Ok () -> return Ok(directoryVersion.DirectoryVersionId, actorProxy)
+                    | Ok () -> return Ok directoryVersion.DirectoryVersionId
                 with
-                | :? KeyNotFoundException
-                | :? InvalidOperationException -> return Error(planError correlationId directoryVersionSelectorNotFoundMessage)
+                | :? KeyNotFoundException -> return Error(planError correlationId directoryVersionSelectorNotFoundMessage)
+        }
+
+    /// Resolves a DirectoryVersionId selector to an immutable repository root.
+    let private resolveDirectoryVersionSelector repositoryId (directoryVersionId: DirectoryVersionId) correlationId =
+        task {
+            let actorProxy = ActorProxy.DirectoryVersion.CreateActorProxy directoryVersionId repositoryId correlationId
+
+            match! resolveDirectoryVersionSelectorWith repositoryId directoryVersionId (fun () -> actorProxy.Get correlationId) correlationId with
+            | Error error -> return Error error
+            | Ok resolvedDirectoryVersionId -> return Ok(resolvedDirectoryVersionId, actorProxy)
         }
 
     /// Resolves supported target selectors before artifact planning starts.

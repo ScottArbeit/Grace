@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "5e1f6ee5eafe2ba086028035bd1989c2dc4d6b058935cf026c38c678818dd9d2",
+  "sourceProjectionSha256": "0fc4d435781218c7b0fa88fb1f0aeb25b70d6c2829b1db56293b6b302b990a94",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.3",
@@ -48,7 +48,7 @@
         "OpenAPI warning: #/components/schemas/ScopedOutboundUrl/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UploadMetadata/properties/BlobUriWithSasToken - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UriString - The format uri is not supported by Kiota and the string type will be used.",
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved) (The schema reference is not resolved))"
       ],
       "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
       "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
@@ -62,7 +62,7 @@
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
       "evidence": [
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
       ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
@@ -76,7 +76,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 154991."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 155066."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -180,11 +180,11 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "efcfa9c5dc524281c87414a4c5afce1fe01e7f7d996c7bae56058e637fbe6099"
+      "manifestSha256": "bfcaed56fe449e17eb490a871d98ec98605efa7799d79185bc19ba9668e4f1bd"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "fdb905e8ee8d610c5bb02f35cd885cc1635a3c66869274cb60b659cb6a1bc94e"
+      "manifestSha256": "6944e27b7a3eddd01e8a9b76ac62c90e9673085548f64133bfa1b1f226d37108"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",

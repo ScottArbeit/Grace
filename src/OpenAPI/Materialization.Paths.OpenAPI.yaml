@@ -27,16 +27,16 @@
                     Class: MaterializationPlanRequest
                     TargetSelector:
                       Class: MaterializationTargetSelector
-                      SelectorKind: 1
+                      SelectorKind: directoryVersionId
                       DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
                       ReferenceId: null
                       BranchName: null
-                    ExecutionMode: 1
+                    ExecutionMode: direct
                     CacheSelection:
                       Class: MaterializationCacheSelection
-                      SelectionKind: 1
+                      SelectionKind: bypassCache
                       CacheScope: null
-                    RequestedArtifactKinds: [1, 2]
+                    RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]
       responses:
         '200':
           $ref: './Materialization.Components.OpenAPI.yaml#/MaterializationPlanResponse'

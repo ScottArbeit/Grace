@@ -221,15 +221,26 @@ function Get-DirectoryManifestHash {
 function Get-KiotaPath {
     param([string] $RepoRoot)
 
-    $toolPath = Join-Path $env:TEMP 'grace-tools-221\kiota'
-    $kiotaPath = Join-Path $toolPath 'kiota.exe'
+    $toolRoot = Join-Path $env:TEMP 'grace-tools-221'
+    $toolPath = Join-Path $toolRoot 'kiota'
+    $kiotaCandidates = @(
+        (Join-Path $toolPath 'kiota.exe'),
+        (Join-Path $toolPath 'kiota')
+    )
+    $hasStaleKiotaCandidate = $false
 
-    if (Test-Path -LiteralPath $kiotaPath -PathType Leaf) {
-        $versionResult = Invoke-CapturedNative $kiotaPath @('--version') $RepoRoot
-        if ($versionResult.exitCode -eq 0 -and @($versionResult.output).Count -gt 0) {
-            return $kiotaPath
+    foreach ($kiotaCandidate in $kiotaCandidates) {
+        if (Test-Path -LiteralPath $kiotaCandidate -PathType Leaf) {
+            $versionResult = Invoke-CapturedNative $kiotaCandidate @('--version') $RepoRoot
+            if ($versionResult.exitCode -eq 0 -and @($versionResult.output).Count -gt 0) {
+                return $kiotaCandidate
+            }
+
+            $hasStaleKiotaCandidate = $true
         }
+    }
 
+    if ($hasStaleKiotaCandidate) {
         Remove-TempToolDirectory $toolPath
     }
 
@@ -246,6 +257,15 @@ function Get-KiotaPath {
 
     if ($installResult.exitCode -ne 0) {
         throw "Kiota tool installation failed with exit code $($installResult.exitCode): $($installResult.output -join ' ')"
+    }
+
+    $kiotaPath =
+        $kiotaCandidates
+        | Where-Object { Test-Path -LiteralPath $_ -PathType Leaf }
+        | Select-Object -First 1
+
+    if ([String]::IsNullOrWhiteSpace($kiotaPath)) {
+        throw "Kiota tool installation did not produce a Kiota executable under '$toolPath'."
     }
 
     $installedVersionResult = Invoke-CapturedNative $kiotaPath @('--version') $RepoRoot

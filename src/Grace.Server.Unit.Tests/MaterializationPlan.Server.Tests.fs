@@ -269,6 +269,36 @@ type MaterializationPlanRouteTests() =
 
         assertErrorContains "Path-scoped Materialization Plan selectors are not supported" result
 
+    /// Verifies missing selector actor results keep the public-safe 400 message.
+    [<Test>]
+    member _.DirectoryVersionSelectorActorNotFoundUsesPublicSelectorError() =
+        task {
+            let! result =
+                Materialization.resolveDirectoryVersionSelectorWith
+                    repositoryId
+                    targetRootDirectoryVersionId
+                    (fun () -> raise (KeyNotFoundException("directory version was not found")))
+                    correlationId
+
+            assertErrorContains Materialization.directoryVersionSelectorNotFoundMessage result
+        }
+
+    /// Verifies actor, proxy, storage, or runtime selector failures are not collapsed into public 400s.
+    [<Test>]
+    member _.DirectoryVersionSelectorRuntimeFailureEscapesForRetryableServerStatus() =
+        let ex =
+            Assert.ThrowsAsync<InvalidOperationException>(
+                Func<Task> (fun () ->
+                    Materialization.resolveDirectoryVersionSelectorWith
+                        repositoryId
+                        targetRootDirectoryVersionId
+                        (fun () -> raise (InvalidOperationException("directory actor proxy unavailable")))
+                        correlationId
+                    :> Task)
+            )
+
+        Assert.That(ex.Message, Does.Contain("directory actor proxy unavailable"))
+
     /// Verifies path-scoped artifact requests stay unsupported until a later materialization slice owns them.
     [<Test>]
     member _.PathScopedArtifactRequestIsRejectedBeforeProjectionArtifactsRun() =
