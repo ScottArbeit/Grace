@@ -11776,6 +11776,51 @@ module WatchTests =
             Services.getGraceWatchStatus().Result
             |> should equal None)
 
+    /// Verifies that clean startup catch-up publication clears the manual pending marker.
+    [<Test; Category("StartupCatchUpPendingStatus")>]
+    let ``watch startup catch-up clean completion clears manual pending marker`` () =
+        withTempRepo (fun _ ->
+            let status = graceStatusTracking Array.empty<string> Array.empty<string>
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            (LocalStateDb.ensureDbInitialized (Current().GraceStatusFile))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.StartingUp
+
+            (Watch.publishStartupCatchUpPendingStatusForWatchTests status directoryIds Services.updateGraceWatchInterprocessFile)
+                .GetAwaiter()
+                .GetResult()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            let readStatus () = Task.FromResult(status)
+            let processChangedFiles () = Task.FromResult(())
+
+            (Watch.completeStartupRecoveryIfPendingWorkDrainedForWatchTests readStatus Services.updateGraceWatchInterprocessFile processChangedFiles)
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.currentGraceWatchRuntimeModeForWatchTests ()
+            |> should equal Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal false
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal true
+
+            let safetyFlags = readWatchStatusJsonSafetyFlags ()
+
+            safetyFlags
+            |> Set.contains "pendingWatchWork"
+            |> should equal false
+
+            Services.getGraceWatchStatus().Result
+            |> should not' (equal None))
+
     /// Verifies that processing pending Watch work publishes the dirty-to-clean IPC transition.
     [<Test>]
     let ``watch clean status transition is published after pending work drains`` () =
@@ -14194,6 +14239,128 @@ module WatchTests =
             |> should equal true
 
             operationEntered.IsSet |> should equal true)
+
+    /// Verifies that a Watch notification blocked on a local safe point does not own the repository file lease.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator releases file lease while waiting for safe point`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let dirtyStatus = { liveWatchStatus (Guid.NewGuid()) with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "safe-point-lease-test"))
+            let inspectStatus () = Task.FromResult(watchStatusInspection dirtyStatus)
+            let requestDegradedResync _ = Assert.Fail("Dirty IPC should wait for a safe point.")
+            let reestablishIpc _ _ = Task.FromResult(())
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("dirty local status must not apply"))
+            use waitStarted = new ManualResetEventSlim(false)
+            use releaseWait = new ManualResetEventSlim(false)
+
+            let waitForSafePoint _ _ =
+                task {
+                    waitStarted.Set() |> ignore
+                    releaseWait.Wait()
+                }
+
+            let materializationTask =
+                Task.Run (fun () ->
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        notification)
+                        .GetAwaiter()
+                        .GetResult())
+
+            try
+                waitStarted.Wait(5000) |> should equal true
+
+                use _leaseProbe = new FileStream(WorkingDirectoryMaterialization.leaseFileName (), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+
+                Task.Delay(150).Wait()
+
+                materializationTask.IsCompleted
+                |> should equal false
+            finally
+                releaseWait.Set() |> ignore
+
+            Task.WaitAll([| materializationTask :> Task |], 5000)
+            |> should equal true
+
+            materializationTask.Result.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint)
+
+    /// Verifies that a Watch notification blocked on degraded IPC retry does not own the repository file lease.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator releases file lease while retrying degraded ipc`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "degraded-lease-test"))
+
+            let inspectStatus () = Task.FromResult(missingWatchStatusInspection)
+            let requestDegradedResync _ = ()
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("missing IPC must not apply"))
+            use retryStarted = new ManualResetEventSlim(false)
+            use releaseRetry = new ManualResetEventSlim(false)
+
+            let reestablishIpc _ _ =
+                task {
+                    retryStarted.Set() |> ignore
+                    releaseRetry.Wait()
+                }
+
+            let materializationTask =
+                Task.Run (fun () ->
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        notification)
+                        .GetAwaiter()
+                        .GetResult())
+
+            try
+                retryStarted.Wait(5000) |> should equal true
+
+                use _leaseProbe = new FileStream(WorkingDirectoryMaterialization.leaseFileName (), FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+
+                Task.Delay(150).Wait()
+
+                materializationTask.IsCompleted
+                |> should equal false
+            finally
+                releaseRetry.Set() |> ignore
+
+            Task.WaitAll([| materializationTask :> Task |], 5000)
+            |> should equal true
+
+            materializationTask.Result.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync)
 
     /// Verifies that branch-switch working-tree materialization waits behind an active Reference materialization.
     [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]

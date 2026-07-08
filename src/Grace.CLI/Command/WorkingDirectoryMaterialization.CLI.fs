@@ -47,10 +47,9 @@ module internal WorkingDirectoryMaterialization =
             return leaseFile
         }
 
-    /// Runs a Grace-owned working-directory materialization action one at a time for the current repository/worktree.
-    let runSerialized (operation: unit -> Task<'T>) =
+    /// Runs an operation while this CLI process owns the repository/worktree-scoped file lease.
+    let internal runWithLease (operation: unit -> Task<'T>) =
         task {
-            do! lane.WaitAsync()
             let mutable leaseFile: FileStream = null
 
             try
@@ -59,6 +58,18 @@ module internal WorkingDirectoryMaterialization =
                 return! operation ()
             finally
                 if not (isNull leaseFile) then leaseFile.Dispose()
+        }
 
+    /// Runs a Grace-owned working-directory operation one at a time in the current CLI process.
+    let internal runSerializedLane (operation: unit -> Task<'T>) =
+        task {
+            do! lane.WaitAsync()
+
+            try
+                return! operation ()
+            finally
                 lane.Release() |> ignore
         }
+
+    /// Runs a Grace-owned working-directory materialization action one at a time for the current repository/worktree.
+    let runSerialized (operation: unit -> Task<'T>) = runSerializedLane (fun () -> runWithLease operation)

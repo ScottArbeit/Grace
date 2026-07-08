@@ -3072,7 +3072,7 @@ module Branch =
     let internal deleteBranchSwitchWorkflowLeaseIfOwned (switchLeaseFileName: string) (leaseText: string) =
         deleteBranchSwitchUpdateMarkerIfOwned switchLeaseFileName leaseText
 
-    /// Runs a branch-switch workflow under a non-Watch-suppressing lease before state is computed.
+    /// Runs a branch-switch workflow under precompute and materialization leases before state is computed.
     let internal runBranchSwitchWorkflowWithLease
         (operations: BranchSwitchWatchCleanPreflightOperations)
         correlationId
@@ -3116,7 +3116,7 @@ module Branch =
                     match! runBranchSwitchWatchCleanPreflight operations correlationId with
                     | Error error -> return Error error
                     | Ok () ->
-                        let! result = workflow ()
+                        let! result = WorkingDirectoryMaterialization.runWithLease workflow
                         return Ok result
                 finally
                     if leaseCreatedByThisInvocation then
@@ -3802,38 +3802,37 @@ module Branch =
                                         }
 
                                     let! workingTreeUpdateResult =
-                                        WorkingDirectoryMaterialization.runSerialized (fun () ->
-                                            runBranchSwitchWorkingTreeUpdateWithMarker
-                                                preflightOperations
-                                                (getCorrelationId parseResult)
-                                                workingTreeUpdateMarkerFileName
-                                                workingTreeUpdateMarkerText
-                                                (fun () ->
-                                                    task {
-                                                        //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
+                                        runBranchSwitchWorkingTreeUpdateWithMarker
+                                            preflightOperations
+                                            (getCorrelationId parseResult)
+                                            workingTreeUpdateMarkerFileName
+                                            workingTreeUpdateMarkerText
+                                            (fun () ->
+                                                task {
+                                                    //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
 
-                                                        // Update working directory based on new GraceStatus.Index
-                                                        do!
-                                                            updateWorkingDirectory
-                                                                newGraceStatus
-                                                                graceStatusWithNewDirectoryVersionsFromServer
-                                                                newDirectoryVersionDtos
-                                                                (getCorrelationId parseResult)
-                                                        //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
+                                                    // Update working directory based on new GraceStatus.Index
+                                                    do!
+                                                        updateWorkingDirectory
+                                                            newGraceStatus
+                                                            graceStatusWithNewDirectoryVersionsFromServer
+                                                            newDirectoryVersionDtos
+                                                            (getCorrelationId parseResult)
+                                                    //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
-                                                        // Save the new Grace Status.
-                                                        do!
-                                                            applyBranchSwitchLocalState
-                                                                (fun () -> writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer)
-                                                                (fun () ->
-                                                                    let configuration = Current()
-                                                                    configuration.BranchId <- newBranch.BranchId
-                                                                    configuration.BranchName <- newBranch.BranchName
-                                                                    updateConfiguration configuration)
-                                                                (fun () -> upsertObjectCache graceStatusWithNewDirectoryVersionsFromServer.Index.Values)
+                                                    // Save the new Grace Status.
+                                                    do!
+                                                        applyBranchSwitchLocalState
+                                                            (fun () -> writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer)
+                                                            (fun () ->
+                                                                let configuration = Current()
+                                                                configuration.BranchId <- newBranch.BranchId
+                                                                configuration.BranchName <- newBranch.BranchName
+                                                                updateConfiguration configuration)
+                                                            (fun () -> upsertObjectCache graceStatusWithNewDirectoryVersionsFromServer.Index.Values)
 
-                                                        t |> setProgressTaskValue showOutput 100.0
-                                                    }))
+                                                    t |> setProgressTaskValue showOutput 100.0
+                                                })
 
                                     match workingTreeUpdateResult with
                                     | Error error -> return Error error

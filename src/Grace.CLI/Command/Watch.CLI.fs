@@ -2143,10 +2143,9 @@ module Watch =
             this.HasDurableWatchJournalEvidence
             && not this.HasProcessablePendingWork
 
-    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
-    let private hasProcessablePendingWatchWork () =
-        hasManualPendingWatchWorkStatusFlag ()
-        || isGraceWatchResyncPending ()
+    /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
+    let private hasProcessablePendingWatchWorkExceptManual () =
+        isGraceWatchResyncPending ()
         || graceStatusHasChanged
         || not (
             filesToProcess.IsEmpty
@@ -2154,6 +2153,16 @@ module Watch =
             && statusUpdateTriggers.IsEmpty
             && not (hasPendingStatusDifferences ())
         )
+
+    /// Evaluates pending Watch work without counting the startup catch-up marker against its own clean publication.
+    let private hasPendingWatchWorkExceptManual () =
+        hasProcessablePendingWatchWorkExceptManual ()
+        || hasPendingDurableWatchJournalEvidence ()
+
+    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
+    let private hasProcessablePendingWatchWork () =
+        hasManualPendingWatchWorkStatusFlag ()
+        || hasProcessablePendingWatchWorkExceptManual ()
 
     /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
     let private hasPendingWatchWork () =
@@ -3358,42 +3367,48 @@ module Watch =
 
                             terminal <- true
                         | Clean status ->
-                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
-                                terminalOutcome <-
-                                    {
-                                        ReferenceId = payload.ReferenceId
-                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                        Decision = Some decision
-                                    }
-                            else
-                                setGraceWatchPendingWorkStatusFlag true
-                                publishPendingWatchWorkTransitionIfNeeded ()
+                            let! cleanOutcome =
+                                WorkingDirectoryMaterialization.runWithLease (fun () ->
+                                    task {
+                                        if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                            return
+                                                {
+                                                    ReferenceId = payload.ReferenceId
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                    Decision = Some decision
+                                                }
+                                        else
+                                            setGraceWatchPendingWorkStatusFlag true
+                                            publishPendingWatchWorkTransitionIfNeeded ()
 
-                                if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
-                                    terminalOutcome <-
-                                        {
-                                            ReferenceId = payload.ReferenceId
-                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                            Decision = Some decision
-                                        }
-                                else
-                                    try
-                                        do! clients.ApplyReference payload status
+                                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                        Decision = Some decision
+                                                    }
+                                            else
+                                                try
+                                                    do! clients.ApplyReference payload status
 
-                                        setGraceWatchPendingWorkStatusFlag false
-                                        publishPendingWatchWorkTransitionIfNeeded ()
+                                                    setGraceWatchPendingWorkStatusFlag false
+                                                    publishPendingWatchWorkTransitionIfNeeded ()
 
-                                        terminalOutcome <-
-                                            {
-                                                ReferenceId = payload.ReferenceId
-                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-                                                Decision = Some decision
-                                            }
-                                    with
-                                    | ex ->
-                                        setGraceWatchPendingWorkStatusFlag true
-                                        publishPendingWatchWorkTransitionIfNeeded ()
-                                        raise ex
+                                                    return
+                                                        {
+                                                            ReferenceId = payload.ReferenceId
+                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                            Decision = Some decision
+                                                        }
+                                                with
+                                                | ex ->
+                                                    setGraceWatchPendingWorkStatusFlag true
+                                                    publishPendingWatchWorkTransitionIfNeeded ()
+                                                    return raise ex
+                                    })
+
+                            terminalOutcome <- cleanOutcome
 
                             terminal <- true
                         | Blocked reason as gate ->
@@ -3568,7 +3583,7 @@ module Watch =
         (clients: CurrentBranchMaterializationCoordinatorClients)
         (payload: CurrentBranchReferenceNotification)
         =
-        WorkingDirectoryMaterialization.runSerialized (fun () -> processCurrentBranchMaterializationNotification clients payload)
+        WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
 
     /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
     let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
@@ -5315,7 +5330,7 @@ module Watch =
             let mutable attemptedStartupCompletion = false
 
             if
-                not (hasProcessablePendingWatchWork ())
+                not (hasProcessablePendingWatchWorkExceptManual ())
                 && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
             then
                 attemptedStartupCompletion <- true
@@ -5330,23 +5345,27 @@ module Watch =
 
             if
                 attemptedStartupCompletion
-                && not (hasPendingWatchWork ())
+                && not (hasPendingWatchWorkExceptManual ())
             then
                 promoteStartupModeIfRecoverySucceeded ()
 
             if
                 attemptedStartupCompletion
-                && not (hasPendingWatchWork ())
+                && not (hasPendingWatchWorkExceptManual ())
             then
                 let! startupCatchUpStatus = readGraceStatusFileClient ()
                 updateGraceStatusDirectoryIds startupCatchUpStatus
 
-                do!
-                    publishGraceWatchInterprocessFileForCurrentConfidence
+                setGraceWatchPendingWorkStatusFlag false
+
+                let! cleanStartupStatusPublished =
+                    tryPublishGraceWatchInterprocessFileForCurrentConfidence
                         startupCatchUpStatus
                         graceStatusDirectoryIds
                         updateGraceWatchInterprocessFileClient
                         "startup catch-up"
+
+                if not cleanStartupStatusPublished then setGraceWatchPendingWorkStatusFlag true
         }
 
     /// Exposes delayed startup replay completion to tests without starting the foreground watcher loop.

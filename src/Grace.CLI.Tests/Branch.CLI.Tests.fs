@@ -372,6 +372,7 @@ module BranchCommandTests =
             let mutable inspected = false
             let mutable workflowRan = false
             let mutable leaseSeenByWorkflow = false
+            let mutable materializationLeaseHeldByWorkflow = false
             let mutable markerSeenByWorkflow = false
 
             let operations: Branch.BranchSwitchWatchCleanPreflightOperations =
@@ -395,6 +396,15 @@ module BranchCommandTests =
                     task {
                         workflowRan <- true
                         leaseSeenByWorkflow <- File.Exists(switchLeaseFile)
+                        let materializationLeaseFile = WorkingDirectoryMaterialization.leaseFileName ()
+
+                        materializationLeaseHeldByWorkflow <-
+                            try
+                                use _probe = new FileStream(materializationLeaseFile, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+                                false
+                            with
+                            | :? IOException -> true
+
                         markerSeenByWorkflow <- File.Exists(updateMarkerFile)
                         return "computed"
                     }))
@@ -408,6 +418,10 @@ module BranchCommandTests =
             inspected |> should equal true
             workflowRan |> should equal true
             leaseSeenByWorkflow |> should equal true
+
+            materializationLeaseHeldByWorkflow
+            |> should equal true
+
             markerSeenByWorkflow |> should equal false
 
             File.Exists(switchLeaseFile) |> should equal false
