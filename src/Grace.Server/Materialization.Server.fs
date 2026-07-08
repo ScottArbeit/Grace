@@ -28,6 +28,13 @@ module Materialization =
     /// Public-safe selector error used when a DirectoryVersionId is missing or outside the authorized repository.
     let directoryVersionSelectorNotFoundMessage = "DirectoryVersionId selector did not match an authorized directory version."
 
+    /// Classifies Direct/Bypass plan creation failures after the route has parsed repository authority and target selector intent.
+    type internal DirectPlanFailure =
+        /// The request shape is invalid for the Direct root-only tracer contract and must remain a client error.
+        | ClientPlanValidation of GraceError
+        /// Server-side projection, actor, storage, artifact ensuring, or generated artifact descriptors failed after request validation.
+        | ServerProjectionFailure of GraceError
+
     /// Converts Materialization Plan JSON binding outcomes into route validation results instead of server faults.
     let bindPlanParametersWith (bindParameters: unit -> Task<PlanParameters>) correlationId =
         task {
@@ -98,20 +105,28 @@ module Materialization =
                 else
                     Ok()
 
-    /// Builds a Direct Materialization Plan for a target root that has already been resolved and authorized.
-    let createDirectPlanForResolvedRoot
+    /// Builds a Direct Materialization Plan with failure classification for the route status-code taxonomy.
+    let internal createDirectPlanForResolvedRootWithFailureKind
         (request: MaterializationPlanRequest)
         (targetRootDirectoryVersionId: DirectoryVersionId)
         (ensureArtifacts: CorrelationId -> Task<Result<MaterializationArtifactDescriptor array, GraceError>>)
         correlationId
-        : Task<Result<Grace.Types.MaterializationPlan.MaterializationPlan, GraceError>>
+        : Task<Result<Grace.Types.MaterializationPlan.MaterializationPlan, DirectPlanFailure>>
         =
         task {
             match validateDirectRootRequest request correlationId with
-            | Error error -> return Error error
+            | Error error -> return Error(ClientPlanValidation error)
             | Ok () ->
-                match! ensureArtifacts correlationId with
-                | Error error -> return Error error
+                let! artifactsResult =
+                    task {
+                        try
+                            return! ensureArtifacts correlationId
+                        with
+                        | ex -> return Error(GraceError.CreateWithException ex "Materialization Plan projection artifacts could not be ensured." correlationId)
+                    }
+
+                match artifactsResult with
+                | Error error -> return Error(ServerProjectionFailure error)
                 | Ok artifacts ->
                     let plan =
                         Grace.Types.MaterializationPlan.MaterializationPlan.Create(
@@ -123,7 +138,22 @@ module Materialization =
 
                     match Validation.validatePlan plan with
                     | Ok () -> return Ok plan
-                    | Error errors -> return Error(planError correlationId (String.concat " " errors))
+                    | Error errors -> return Error(ServerProjectionFailure(planError correlationId (String.concat " " errors)))
+        }
+
+    /// Builds a Direct Materialization Plan for a target root that has already been resolved and authorized.
+    let createDirectPlanForResolvedRoot
+        (request: MaterializationPlanRequest)
+        (targetRootDirectoryVersionId: DirectoryVersionId)
+        (ensureArtifacts: CorrelationId -> Task<Result<MaterializationArtifactDescriptor array, GraceError>>)
+        correlationId
+        : Task<Result<Grace.Types.MaterializationPlan.MaterializationPlan, GraceError>>
+        =
+        task {
+            match! createDirectPlanForResolvedRootWithFailureKind request targetRootDirectoryVersionId ensureArtifacts correlationId with
+            | Ok plan -> return Ok plan
+            | Error (ClientPlanValidation error)
+            | Error (ServerProjectionFailure error) -> return Error error
         }
 
     /// Validates that a resolved DirectoryVersion belongs to the authorized repository root without leaking cross-scope state.
@@ -194,7 +224,7 @@ module Materialization =
                             | Error error -> return! context |> result400BadRequest error
                             | Ok (targetRootDirectoryVersionId, actorProxy) ->
                                 let! planResult =
-                                    createDirectPlanForResolvedRoot
+                                    createDirectPlanForResolvedRootWithFailureKind
                                         request
                                         targetRootDirectoryVersionId
                                         (fun artifactCorrelationId ->
@@ -206,7 +236,8 @@ module Materialization =
                                         correlationId
 
                                 match planResult with
-                                | Error error -> return! context |> result400BadRequest error
+                                | Error (ClientPlanValidation error) -> return! context |> result400BadRequest error
+                                | Error (ServerProjectionFailure error) -> return! context |> result500ServerError error
                                 | Ok plan ->
                                     let graceReturnValue = GraceReturnValue.Create plan correlationId
 

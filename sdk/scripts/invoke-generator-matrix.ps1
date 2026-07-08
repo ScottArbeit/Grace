@@ -104,6 +104,12 @@ function Select-EvidenceLines {
         'not of type',
         'Cannot populate JSON array',
         'JsonSerializationException',
+        'Invalid schema',
+        'found errors',
+        'OpenAPI warning:',
+        'schema reference',
+        'error generating the client',
+        'does not exist',
         'schema must be a map/object',
         'Schema  property .* is null',
         'OpenAPI 3.1 support is still in beta',
@@ -159,6 +165,22 @@ function New-Directory {
     New-Item -ItemType Directory -Force -Path $Path | Out-Null
 }
 
+function Remove-TempToolDirectory {
+    param([string] $Path)
+
+    if (-not (Test-Path -LiteralPath $Path)) {
+        return
+    }
+
+    $resolvedTemp = (Resolve-Path -LiteralPath $env:TEMP).Path
+    $resolvedPath = (Resolve-Path -LiteralPath $Path).Path
+    if (-not $resolvedPath.StartsWith($resolvedTemp, [System.StringComparison]::OrdinalIgnoreCase)) {
+        throw "Refusing to remove tool cache outside temp: $resolvedPath"
+    }
+
+    Remove-Item -LiteralPath $resolvedPath -Recurse -Force
+}
+
 function Write-GeneratedOutputAttributes {
     param([string] $RepoRoot)
 
@@ -201,9 +223,34 @@ function Get-KiotaPath {
 
     $toolPath = Join-Path $env:TEMP 'grace-tools-221\kiota'
     $kiotaPath = Join-Path $toolPath 'kiota.exe'
-    if (-not (Test-Path -LiteralPath $kiotaPath -PathType Leaf)) {
-        New-Directory $toolPath
-        dotnet tool install Microsoft.OpenApi.Kiota --version $KiotaVersion --tool-path $toolPath | Out-Host
+
+    if (Test-Path -LiteralPath $kiotaPath -PathType Leaf) {
+        $versionResult = Invoke-CapturedNative $kiotaPath @('--version') $RepoRoot
+        if ($versionResult.exitCode -eq 0 -and @($versionResult.output).Count -gt 0) {
+            return $kiotaPath
+        }
+
+        Remove-TempToolDirectory $toolPath
+    }
+
+    New-Directory $toolPath
+    $installResult = Invoke-CapturedNative 'dotnet' @(
+        'tool',
+        'install',
+        'Microsoft.OpenApi.Kiota',
+        '--version',
+        $KiotaVersion,
+        '--tool-path',
+        $toolPath
+    ) $RepoRoot
+
+    if ($installResult.exitCode -ne 0) {
+        throw "Kiota tool installation failed with exit code $($installResult.exitCode): $($installResult.output -join ' ')"
+    }
+
+    $installedVersionResult = Invoke-CapturedNative $kiotaPath @('--version') $RepoRoot
+    if ($installedVersionResult.exitCode -ne 0 -or @($installedVersionResult.output).Count -eq 0) {
+        throw "Kiota tool installation did not produce an executable Kiota command: $($installedVersionResult.output -join ' ')"
     }
 
     return $kiotaPath
@@ -292,7 +339,12 @@ $toolVersions = [ordered]@{
 }
 
 $kiotaPath = Get-KiotaPath $repoRoot
-$toolVersions.kiota = (& $kiotaPath --version 2>&1 | Select-Object -First 1).ToString().Trim()
+$kiotaVersionResult = Invoke-CapturedNative $kiotaPath @('--version') $repoRoot
+if ($kiotaVersionResult.exitCode -ne 0 -or @($kiotaVersionResult.output).Count -eq 0) {
+    throw "Kiota version probe failed with exit code $($kiotaVersionResult.exitCode): $($kiotaVersionResult.output -join ' ')"
+}
+
+$toolVersions.kiota = @($kiotaVersionResult.output | Select-Object -First 1)[0].ToString().Trim()
 $npxExecutable = if ($IsWindows) { 'npx.cmd' } else { 'npx' }
 $npmExecutable = if ($IsWindows) { 'npm.cmd' } else { 'npm' }
 $nswagVersionResult = Invoke-CapturedNative $npxExecutable @('--yes', 'nswag', 'version') $repoRoot
@@ -416,7 +468,7 @@ else {
         throw "Cannot skip generation because existing matrix evidence is stale for $projection. Expected $existingProjectionHash, actual $currentProjectionHash."
     }
 
-    foreach ($entry in @($existingEvidence.matrix | Where-Object { $_.generator -eq 'OpenAPI Generator' })) {
+    foreach ($entry in @($existingEvidence.matrix)) {
         $entries.Add([ordered]@{
             generator = [string] $entry.generator
             language = [string] $entry.language

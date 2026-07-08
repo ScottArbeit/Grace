@@ -1598,6 +1598,18 @@ function Test-GeneratedClientMatrixProof {
         Add-Failure 'Generator matrix evidence must record why SDK-grade generated-client acceptance remains pending.'
     }
 
+    if ($null -eq $evidence.toolVersions -or $null -eq $evidence.toolVersions.PSObject.Properties['kiota']) {
+        Add-Failure 'Generator matrix evidence must record an executed Kiota version probe.'
+    }
+    else {
+        $kiotaVersion = [string] $evidence.toolVersions.kiota
+        if ([string]::IsNullOrWhiteSpace($kiotaVersion) -or
+            $kiotaVersion -eq 'unavailable' -or
+            $kiotaVersion -match 'does not exist|not recognized|failed|unavailable') {
+            Add-Failure "Generator matrix Kiota version proof must come from an executable Kiota tool; actual '$kiotaVersion'."
+        }
+    }
+
     foreach ($traceId in @('B-043', 'B-044', 'drift-002', 'drift-006', 'drift-008')) {
         if ($null -eq $evidence.traceability -or $null -eq $evidence.traceability.PSObject.Properties[$traceId]) {
             Add-Failure "Generator matrix traceability is missing '$traceId'."
@@ -1645,6 +1657,18 @@ function Test-GeneratedClientMatrixProof {
         }
         elseif ($entry.outcome -ne 'Rejected') {
             Add-Failure "$($rejected.generator) $($rejected.language) must remain rejected until schema-shape debt is fixed; actual outcome '$($entry.outcome)'."
+        }
+        elseif ($rejected.generator -eq 'Kiota') {
+            $kiotaEvidence = @($entry.evidence | ForEach-Object { [string] $_ })
+            $kiotaEvidenceText = $kiotaEvidence -join "`n"
+            if ($kiotaEvidence.Count -eq 0) {
+                Add-Failure "Generator matrix $($rejected.generator) $($rejected.language) rejection must include Kiota command output evidence."
+            }
+
+            if ($kiotaEvidenceText -match 'application to execute does not exist|does not exist: .*kiota|missing executable' -or
+                [string] $entry.conclusion -match 'missing executable|tool.*missing|tool.*unavailable') {
+                Add-Failure "Generator matrix $($rejected.generator) $($rejected.language) rejection records tool infrastructure failure instead of executed schema-shape evidence."
+            }
         }
     }
 
@@ -1762,7 +1786,7 @@ function Test-GeneratedClientMatrixProof {
         }
     }
 
-    Add-Pass 'Generated-client matrix accepts OpenAPI Generator TypeScript, Python, and Rust raw-client proof points with guardrails; Kiota and NSwag remain explicitly rejected.'
+    Add-Pass 'Generated-client matrix accepts OpenAPI Generator TypeScript, Python, and Rust raw-client proof points with guardrails; Kiota executed and remains explicitly rejected with schema-shape evidence.'
 }
 
 function Test-ProtocolVectorProof {

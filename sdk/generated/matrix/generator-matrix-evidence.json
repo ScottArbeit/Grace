@@ -15,7 +15,7 @@
     "docker": "Docker version 29.6.1, build 8900f1d",
     "java": "unavailable",
     "openApiGenerator": "openapitools/openapi-generator-cli:v7.22.0",
-    "kiota": "The application to execute does not exist: 'C:\\Users\\scott\\AppData\\Local\\Temp\\grace-tools-221\\kiota\\.store\\microsoft.openapi.kiota\\1.32.1\\microsoft.openapi.kiota\\1.32.1\\tools\\net10.0\\any\\kiota.dll'.",
+    "kiota": "1.32.1+958a7d04f87c48ab4c0dba1c4e91032ad2f6b9cb",
     "nswag": "NSwag version: 14.7.1.0"
   },
   "matrix": [
@@ -23,11 +23,33 @@
       "generator": "Kiota",
       "language": ".NET",
       "command": "kiota generate -l CSharp",
-      "exitCode": -2147450726,
+      "exitCode": 1,
       "outcome": "Rejected",
       "conclusion": "Full projection fails before generation on malformed schema references/null schema properties.",
       "outputPath": "",
-      "evidence": [],
+      "evidence": [
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/DifferenceType/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/FileSystemEntryType/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/RelativePath/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/RelativePath/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/FileSha1/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/CreatedAt1/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/FileSha2/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/CreatedAt2/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/InlineDiff/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/SideBySideOld/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/SideBySideNew/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/DiffPiece/properties/SubPieces/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/DiffPiece/properties/Type/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/ - The schema UploadSessionEventType is a polymorphic type but does not define a discriminator. This will result in serialization errors.",
+        "OpenAPI warning: #/components/schemas/CreateApprovalPolicyParameters/allOf/1/properties/NotificationUrl - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/CreateWebhookRuleParameters/allOf/1/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/MaterializationArtifactSource/properties/DirectUri - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/ScopedOutboundUrl/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/UploadMetadata/properties/BlobUriWithSasToken - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/UriString - The format uri is not supported by Kiota and the string type will be used.",
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)))"
+      ],
       "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
       "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
     },
@@ -35,11 +57,13 @@
       "generator": "Kiota",
       "language": "TypeScript",
       "command": "kiota generate -l TypeScript --disable-validation-rules All",
-      "exitCode": -2147450726,
+      "exitCode": 1,
       "outcome": "Rejected",
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
-      "evidence": [],
+      "evidence": [
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved))"
+      ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
     },
@@ -73,6 +97,7 @@
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
+        "[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/sdk/generated/matrix/openapi-generator/typescript-fetch) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
         "[main] INFO  o.o.codegen.TemplateManager - writing file /local/sdk/generated/matrix/openapi-generator/typescript-fetch/tsconfig.json",
         "[main] INFO  o.o.codegen.TemplateManager - writing file /local/sdk/generated/matrix/openapi-generator/typescript-fetch/tsconfig.esm.json"
@@ -96,6 +121,7 @@
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
+        "[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/sdk/generated/matrix/openapi-generator/python) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator."
       ],
       "transportPolicySupport": "Configuration object exposes host, default headers, API key, bearer token, and user agent hooks.",
@@ -117,6 +143,7 @@
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
+        "[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/sdk/generated/matrix/openapi-generator/rust) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator."
       ],
       "transportPolicySupport": "Generated configuration supports bearer token, API key, user agent, and reqwest client customization.",

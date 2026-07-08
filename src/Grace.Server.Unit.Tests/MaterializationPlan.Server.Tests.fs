@@ -89,6 +89,14 @@ type MaterializationPlanRouteTests() =
         | Ok _ -> Assert.Fail($"Expected an error containing '{expected}'.")
         | Error error -> Assert.That(error.Error, Does.Contain(expected))
 
+    /// Asserts the route-classification helper maps a failure to retryable server status handling.
+    let assertServerProjectionFailureContains expected (result: Result<'T, Materialization.DirectPlanFailure>) =
+        match result with
+        | Ok _ -> Assert.Fail($"Expected a server projection failure containing '{expected}'.")
+        | Error (Materialization.ClientPlanValidation error) ->
+            Assert.Fail($"Expected a retryable server projection failure, but got client validation '{error.Error}'.")
+        | Error (Materialization.ServerProjectionFailure error) -> Assert.That(error.Error, Does.Contain(expected))
+
     /// Verifies real projection descriptors with Direct sources satisfy the Direct/Bypass route validation path.
     [<Test>]
     member _.DirectRootRequestAcceptsDirectProjectionHelperDescriptors() =
@@ -334,6 +342,70 @@ type MaterializationPlanRouteTests() =
                     correlationId
 
             assertErrorContains "projection failed" result
+        }
+
+    /// Verifies valid Direct/Bypass requests with failed server-side projection map to the route's retryable 5xx path.
+    [<Test>]
+    member _.ProjectionFailureClassifiesAsRetryableServerFailure() =
+        task {
+            let! result =
+                Materialization.createDirectPlanForResolvedRootWithFailureKind
+                    (directRootRequest ())
+                    targetRootDirectoryVersionId
+                    (fun _ -> Task.FromResult(Error(GraceError.Create "projection failed" correlationId)))
+                    correlationId
+
+            assertServerProjectionFailureContains "projection failed" result
+        }
+
+    /// Verifies actor, storage, or artifact ensuring exceptions use the same retryable 5xx route classification.
+    [<Test>]
+    member _.ProjectionExceptionClassifiesAsRetryableServerFailure() =
+        task {
+            let! result =
+                Materialization.createDirectPlanForResolvedRootWithFailureKind
+                    (directRootRequest ())
+                    targetRootDirectoryVersionId
+                    (fun _ -> raise (InvalidOperationException("artifact store unavailable")))
+                    correlationId
+
+            assertServerProjectionFailureContains "Materialization Plan projection artifacts could not be ensured." result
+        }
+
+    /// Verifies client request-shape failures keep the route's 400 classification and never run projection.
+    [<Test>]
+    member _.PathScopedArtifactRequestClassifiesAsClientValidationBeforeProjectionArtifactsRun() =
+        task {
+            let mutable projectionCalled = false
+
+            let request =
+                MaterializationPlanRequest.Create(
+                    MaterializationTargetSelector.ForDirectoryVersion targetRootDirectoryVersionId,
+                    MaterializationExecutionMode.Direct,
+                    MaterializationCacheSelection.Bypass,
+                    [
+                        MaterializationArtifactKind.DirectoryVersionZip
+                        MaterializationArtifactKind.RecursiveDirectoryMetadata
+                        MaterializationArtifactKind.WholeFileContent
+                    ]
+                )
+
+            let! result =
+                Materialization.createDirectPlanForResolvedRootWithFailureKind
+                    request
+                    targetRootDirectoryVersionId
+                    (fun _ ->
+                        projectionCalled <- true
+                        Task.FromResult(Ok(rootArtifacts ())))
+                    correlationId
+
+            match result with
+            | Ok _ -> Assert.Fail("Expected a path-scoped artifact request to fail client validation.")
+            | Error (Materialization.ServerProjectionFailure error) ->
+                Assert.Fail($"Expected client validation before projection, but got server projection failure '{error.Error}'.")
+            | Error (Materialization.ClientPlanValidation error) ->
+                Assert.That(error.Error, Does.Contain("path-scoped artifact kinds are not supported"))
+                Assert.That(projectionCalled, Is.False)
         }
 
     /// Verifies the SDK exposes the route facade with the shared parameter contract.
