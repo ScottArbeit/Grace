@@ -2104,6 +2104,13 @@ module Watch =
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
+    let mutable private manualPendingWatchWorkStatusFlag = 0
+
+    /// Reports whether a coordinator-owned side effect must keep Watch IPC dirty before normal queues can observe it.
+    let private hasManualPendingWatchWorkStatusFlag () =
+        Volatile.Read(&manualPendingWatchWorkStatusFlag)
+        <> 0
+
     /// Reports whether unresolved durable journal rows must keep Watch status dirty.
     let private hasPendingDurableWatchJournalEvidence () =
         try
@@ -2138,7 +2145,8 @@ module Watch =
 
     /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
     let private hasProcessablePendingWatchWork () =
-        isGraceWatchResyncPending ()
+        hasManualPendingWatchWorkStatusFlag ()
+        || isGraceWatchResyncPending ()
         || graceStatusHasChanged
         || not (
             filesToProcess.IsEmpty
@@ -2178,7 +2186,12 @@ module Watch =
             false
 
     /// Records the pending-work flag that the next Watch IPC snapshot should publish.
-    let private setGraceWatchPendingWorkStatusFlag hasPendingWork = lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
+    let private setGraceWatchPendingWorkStatusFlag hasPendingWork =
+        lock watchStatusPublishLock (fun () ->
+            Interlocked.Exchange(&manualPendingWatchWorkStatusFlag, (if hasPendingWork then 1 else 0))
+            |> ignore
+
+            setGraceWatchHasPendingWorkForStatus hasPendingWork)
 
     /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
     let private pendingWatchWorkTransitionNeedsPublication () =
@@ -2741,6 +2754,7 @@ module Watch =
         uploadedFileVersions.Clear()
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
         lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
+        setGraceWatchPendingWorkStatusFlag false
         clearPendingStatusDifferencesForTests ()
         lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
         clearGraceWatchResyncPending ()
@@ -3224,7 +3238,10 @@ module Watch =
     /// Converts inspected Watch IPC into the private materialization gate used by the current-branch coordinator.
     let private currentBranchMaterializationStatusGate (inspection: GraceWatchStatusInspection) =
         if inspection.IsUsable then
-            Clean inspection.Status.Value
+            if hasPendingDurableWatchJournalEvidence () then
+                Blocked "durable Watch journal has pending local observations"
+            else
+                Clean inspection.Status.Value
         elif inspection.ReadError.IsSome then
             Degraded "unreadable Watch IPC/status authority"
         elif not inspection.Exists then
@@ -3245,6 +3262,13 @@ module Watch =
             | _, Some GraceWatchRuntimeMode.Suspended -> Blocked "Watch is suspended"
             | _, Some GraceWatchRuntimeMode.Stopping -> Degraded "Watch IPC/status authority is stopping"
             | _ -> Degraded "ambiguous Watch IPC/status authority"
+
+    /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
+    let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
+        let current = Current()
+
+        payload.RepositoryId = current.RepositoryId
+        && payload.BranchId = current.BranchId
 
     /// Runs #678 protocol and BranchDto latest checks before the coordinator consults the local IPC gate.
     let private currentBranchMaterializationDecision
@@ -3311,21 +3335,29 @@ module Watch =
 
                         match currentBranchMaterializationStatusGate inspection with
                         | Clean status ->
-                            setGraceWatchPendingWorkStatusFlag true
-                            publishPendingWatchWorkTransitionIfNeeded ()
-
-                            try
-                                do! clients.ApplyReference payload status
-
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
                                     {
                                         ReferenceId = payload.ReferenceId
-                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
                                         Decision = Some decision
                                     }
-                            finally
-                                setGraceWatchPendingWorkStatusFlag false
+                            else
+                                setGraceWatchPendingWorkStatusFlag true
                                 publishPendingWatchWorkTransitionIfNeeded ()
+
+                                try
+                                    do! clients.ApplyReference payload status
+
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                            Decision = Some decision
+                                        }
+                                finally
+                                    setGraceWatchPendingWorkStatusFlag false
+                                    publishPendingWatchWorkTransitionIfNeeded ()
 
                             terminal <- true
                         | Blocked reason as gate ->
@@ -3462,13 +3494,6 @@ module Watch =
                 currentBranchMaterializationLane.Release()
                 |> ignore
         }
-
-    /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
-    let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
-        let current = Current()
-
-        payload.RepositoryId = current.RepositoryId
-        && payload.BranchId = current.BranchId
 
     /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
     let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
