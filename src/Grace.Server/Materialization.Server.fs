@@ -319,25 +319,29 @@ module Materialization =
         }
 
     /// Validates that a branch-name lookup resolved to the requested live branch in the authorized repository.
-    let validateBranchNameSelectorScope repositoryId branchName (branchDto: BranchDto) correlationId =
+    let validateBranchNameSelectorScope repositoryId branchId branchName (branchDto: BranchDto) correlationId =
         if branchDto.BranchId = BranchId.Empty then
+            Error(planError correlationId branchNameSelectorNotFoundMessage)
+        elif branchDto.BranchId <> branchId then
             Error(planError correlationId branchNameSelectorNotFoundMessage)
         elif branchDto.RepositoryId <> repositoryId then
             Error(planError correlationId branchNameSelectorNotFoundMessage)
         elif branchDto.DeletedAt.IsSome then
             Error(planError correlationId branchNameSelectorNotFoundMessage)
-        elif branchDto.BranchName <> branchName then
+        elif not (String.Equals(string branchDto.BranchName, string branchName, StringComparison.OrdinalIgnoreCase)) then
             Error(planError correlationId branchNameSelectorNotFoundMessage)
         else
             Ok()
 
     /// Validates that a branch snapshot exposes one immutable latest reference for Direct planning.
-    let validateBranchTipReference repositoryId referenceId (referenceDto: ReferenceDto) correlationId =
+    let validateBranchTipReference repositoryId branchId referenceId (referenceDto: ReferenceDto) correlationId =
         if referenceDto.ReferenceId = ReferenceId.Empty then
             Error(planError correlationId branchTipSelectorNotFoundMessage)
         elif referenceDto.ReferenceId <> referenceId then
             Error(planError correlationId branchTipSelectorNotFoundMessage)
         elif referenceDto.RepositoryId <> repositoryId then
+            Error(planError correlationId branchTipSelectorNotFoundMessage)
+        elif referenceDto.BranchId <> branchId then
             Error(planError correlationId branchTipSelectorNotFoundMessage)
         elif referenceDto.DeletedAt.IsSome then
             Error(planError correlationId branchTipSelectorNotFoundMessage)
@@ -370,7 +374,7 @@ module Materialization =
                     | Some branchId ->
                         let! branchDto = getBranch branchId
 
-                        match validateBranchNameSelectorScope repositoryId branchName branchDto correlationId with
+                        match validateBranchNameSelectorScope repositoryId branchId branchName branchDto correlationId with
                         | Error error -> return Error error
                         | Ok () ->
                             let snapshotReferenceId = branchDto.LatestReference.ReferenceId
@@ -390,7 +394,7 @@ module Materialization =
                                 match latestReferenceResult with
                                 | Error error -> return Error error
                                 | Ok latestReference ->
-                                    match validateBranchTipReference repositoryId snapshotReferenceId latestReference correlationId with
+                                    match validateBranchTipReference repositoryId branchDto.BranchId snapshotReferenceId latestReference correlationId with
                                     | Error error -> return Error error
                                     | Ok () ->
                                         return!

@@ -410,6 +410,28 @@ type MaterializationPlanRouteTests() =
             | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
         }
 
+    /// Verifies durable branch-name resolver casing variants survive BranchDto revalidation.
+    [<Test>]
+    member _.BranchNameSelectorAcceptsResolverCasingVariant() =
+        task {
+            let requestedBranchName = BranchName "Feature"
+            let latestReference = reference referenceId explicitBranchId targetRootDirectoryVersionId
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    requestedBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
+                    (fun _ -> Task.FromResult latestReference)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+        }
+
     /// Verifies default branch selectors use the repository's current default branch name and resolve its latest root.
     [<Test>]
     member _.DefaultBranchSelectorResolvesRepositoryDefaultBranchRoot() =
@@ -496,6 +518,25 @@ type MaterializationPlanRouteTests() =
             assertErrorContains Materialization.branchNameSelectorNotFoundMessage result
         }
 
+    /// Verifies branch-name index drift cannot trust branch state that reports another durable branch id.
+    [<Test>]
+    member _.BranchNameSelectorRejectsBranchDtoIdMismatch() =
+        task {
+            let latestReference = reference referenceId defaultBranchId targetRootDirectoryVersionId
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun _ -> Task.FromResult(branch defaultBranchId explicitBranchName latestReference))
+                    (fun _ -> Task.FromResult latestReference)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.branchNameSelectorNotFoundMessage result
+        }
+
     /// Verifies branch-name index drift cannot materialize an unintended branch root.
     [<Test>]
     member _.BranchNameSelectorRejectsMismatchedBranchName() =
@@ -547,6 +588,26 @@ type MaterializationPlanRouteTests() =
                     (fun () -> Task.FromResult(Some explicitBranchId))
                     (fun branchId -> Task.FromResult(branch branchId explicitBranchName snapshotReference))
                     (fun _ -> Task.FromResult deletedLiveReference)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.branchTipSelectorNotFoundMessage result
+        }
+
+    /// Verifies a stale branch latest-reference snapshot cannot borrow another branch's live tip.
+    [<Test>]
+    member _.BranchNameSelectorRejectsLiveTipReferenceFromAnotherBranch() =
+        task {
+            let snapshotReference = reference referenceId explicitBranchId targetRootDirectoryVersionId
+            let otherBranchLiveReference = reference referenceId defaultBranchId targetRootDirectoryVersionId
+
+            let! result =
+                Materialization.resolveBranchNameSelectorWith
+                    repositoryId
+                    explicitBranchName
+                    (fun () -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName snapshotReference))
+                    (fun _ -> Task.FromResult otherBranchLiveReference)
                     (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
                     correlationId
 
