@@ -1286,6 +1286,126 @@ module Connect =
                 deleteStageRoot ()
         }
 
+    /// Classifies one Direct Materialization Plan execution failure so connect only replans retryable artifact-source faults.
+    type internal DirectPlanExecutionError =
+        | RetryableArtifactSourceFailure of GraceError
+        | PermanentPlanFailure of GraceError
+
+    /// Requests one fresh Direct plan after a retryable artifact-source failure without retrying permanent consistency failures.
+    let internal executeDirectPlanWithRetryOnce
+        correlationId
+        (requestPlan: unit -> Task<Result<'Plan, GraceError>>)
+        (executePlan: 'Plan -> Task<Result<'Result, DirectPlanExecutionError>>)
+        =
+        task {
+            let! firstPlanResult = requestPlan ()
+
+            match firstPlanResult with
+            | Error error -> return Error error
+            | Ok firstPlan ->
+                match! executePlan firstPlan with
+                | Ok result -> return Ok result
+                | Error (PermanentPlanFailure error) -> return Error error
+                | Error (RetryableArtifactSourceFailure _) ->
+                    let! retryPlanResult = requestPlan ()
+
+                    match retryPlanResult with
+                    | Error error -> return Error error
+                    | Ok retryPlan ->
+                        match! executePlan retryPlan with
+                        | Ok result -> return Ok result
+                        | Error (PermanentPlanFailure error) -> return Error error
+                        | Error (RetryableArtifactSourceFailure error) ->
+                            return Error(GraceError.Create $"Direct Materialization Plan artifact source failed after one retry: {error.Error}" correlationId)
+        }
+
+    /// Executes one planned Direct materialization without requesting replacement plans for permanent validation failures.
+    let private executeDirectMaterializationPlan parseResult (graceIds: GraceIds) (materializationPlanReturnValue: GraceReturnValue<MaterializationPlan>) =
+        task {
+            match prepareDirectPlanArtifactSources graceIds.CorrelationId materializationPlanReturnValue.ReturnValue with
+            | Error error -> return Error(PermanentPlanFailure error)
+            | Ok artifactSources ->
+                writeHumanLine parseResult $"[{Colors.Important}]Retrieving planned recursive DirectoryVersions.[/]"
+
+                match!
+                    fetchDirectUriArtifactStream
+                        graceIds.CorrelationId
+                        "RecursiveDirectoryMetadata"
+                        artifactSources.MetadataUri
+                        artifactSources.MetadataArtifact
+                    with
+                | Error error -> return Error(RetryableArtifactSourceFailure error)
+                | Ok metadataStream ->
+                    use metadataStream = metadataStream
+
+                    match! validatePlannedArtifactStream graceIds.CorrelationId "RecursiveDirectoryMetadata" artifactSources.MetadataArtifact metadataStream
+                        with
+                    | Error error -> return Error(PermanentPlanFailure error)
+                    | Ok () ->
+                        match decodeRecursiveMetadataArtifactStream graceIds.CorrelationId metadataStream with
+                        | Error error -> return Error(PermanentPlanFailure error)
+                        | Ok directoryVersionDtos ->
+                            writeHumanLine parseResult $"[{Colors.Important}]Retrieved planned recursive DirectoryVersions.[/]"
+
+                            match prepareDirectPlanExecutionArtifacts graceIds.CorrelationId materializationPlanReturnValue.ReturnValue directoryVersionDtos
+                                with
+                            | Error error -> return Error(PermanentPlanFailure error)
+                            | Ok executionArtifacts ->
+                                let force = parseResult.GetValue(Options.force)
+
+                                let! conflicts, filesToSkip = collectFileConflicts executionArtifacts.FileVersions force
+
+                                if conflicts.Count > 0 then
+                                    writeHumanLine parseResult $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
+
+                                    if parseResult |> verbose then
+                                        conflicts
+                                        |> Seq.sort
+                                        |> Seq.iter (fun conflict -> writeHumanLine parseResult $"[{Colors.Error}]{conflict}[/]")
+
+                                    return
+                                        Error(
+                                            PermanentPlanFailure(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
+                                        )
+                                else
+                                    let fileVersionsByRelativePath = buildFileVersionsByRelativePath executionArtifacts.FileVersions
+
+                                    match!
+                                        fetchDirectUriArtifactStream
+                                            graceIds.CorrelationId
+                                            "DirectoryVersionZip"
+                                            executionArtifacts.ZipUri
+                                            executionArtifacts.ZipArtifact
+                                        with
+                                    | Error error -> return Error(RetryableArtifactSourceFailure error)
+                                    | Ok zipFile ->
+                                        use zipFile = zipFile
+
+                                        match! validatePlannedArtifactStream graceIds.CorrelationId "DirectoryVersionZip" executionArtifacts.ZipArtifact zipFile
+                                            with
+                                        | Error error -> return Error(PermanentPlanFailure error)
+                                        | Ok () ->
+                                            match!
+                                                extractValidatedZipEntries
+                                                    parseResult
+                                                    graceIds.CorrelationId
+                                                    fileVersionsByRelativePath
+                                                    filesToSkip
+                                                    executionArtifacts.FileVersions
+                                                    zipFile
+                                                with
+                                            | Error error -> return Error(PermanentPlanFailure error)
+                                            | Ok () ->
+                                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
+                                                let! previousGraceStatus = readGraceStatusFile ()
+                                                let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                                                do! writeGraceStatusFile graceStatus
+
+                                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
+                                                do! upsertObjectCache graceStatus.Index.Values
+                                                return Ok 0
+        }
+
     /// Coordinates retrieve default branch and write behavior for this CLI command path.
     let private retrieveDefaultBranchAndWrite
         (parseResult: ParseResult)
@@ -1315,85 +1435,17 @@ module Connect =
             | Error error -> return (Error error |> renderOutput parseResult)
             | Ok targetSelector ->
                 writeHumanLine parseResult $"[{Colors.Important}]Requesting Direct Materialization Plan.[/]"
-                let! materializationPlanResult = requestDirectMaterializationPlan graceIds ownerDto organizationDto repositoryDto targetSelector
-                writeHumanLine parseResult $"[{Colors.Important}]Finished requesting Direct Materialization Plan.[/]"
 
-                match materializationPlanResult with
+                let requestPlan () =
+                    task {
+                        let! result = requestDirectMaterializationPlan graceIds ownerDto organizationDto repositoryDto targetSelector
+                        writeHumanLine parseResult $"[{Colors.Important}]Finished requesting Direct Materialization Plan.[/]"
+                        return result
+                    }
+
+                match! executeDirectPlanWithRetryOnce graceIds.CorrelationId requestPlan (executeDirectMaterializationPlan parseResult graceIds) with
                 | Error error -> return (Error error |> renderOutput parseResult)
-                | Ok materializationPlanReturnValue ->
-                    match prepareDirectPlanArtifactSources graceIds.CorrelationId materializationPlanReturnValue.ReturnValue with
-                    | Error error -> return (Error error |> renderOutput parseResult)
-                    | Ok artifactSources ->
-                        writeHumanLine parseResult $"[{Colors.Important}]Retrieving planned recursive DirectoryVersions.[/]"
-
-                        match!
-                            downloadPlannedDirectUriArtifact
-                                graceIds.CorrelationId
-                                "RecursiveDirectoryMetadata"
-                                artifactSources.MetadataUri
-                                artifactSources.MetadataArtifact
-                            with
-                        | Error error -> return (Error error |> renderOutput parseResult)
-                        | Ok metadataStream ->
-                            use metadataStream = metadataStream
-
-                            match decodeRecursiveMetadataArtifactStream graceIds.CorrelationId metadataStream with
-                            | Error error -> return (Error error |> renderOutput parseResult)
-                            | Ok directoryVersionDtos ->
-                                writeHumanLine parseResult $"[{Colors.Important}]Retrieved planned recursive DirectoryVersions.[/]"
-
-                                match prepareDirectPlanExecutionArtifacts graceIds.CorrelationId materializationPlanReturnValue.ReturnValue directoryVersionDtos
-                                    with
-                                | Error error -> return (Error error |> renderOutput parseResult)
-                                | Ok executionArtifacts ->
-                                    let force = parseResult.GetValue(Options.force)
-
-                                    let! conflicts, filesToSkip = collectFileConflicts executionArtifacts.FileVersions force
-
-                                    if conflicts.Count > 0 then
-                                        writeHumanLine parseResult $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
-
-                                        if parseResult |> verbose then
-                                            conflicts
-                                            |> Seq.sort
-                                            |> Seq.iter (fun conflict -> writeHumanLine parseResult $"[{Colors.Error}]{conflict}[/]")
-
-                                        return
-                                            (Error(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
-                                             |> renderOutput parseResult)
-                                    else
-                                        let fileVersionsByRelativePath = buildFileVersionsByRelativePath executionArtifacts.FileVersions
-
-                                        match!
-                                            downloadPlannedDirectUriArtifact
-                                                graceIds.CorrelationId
-                                                "DirectoryVersionZip"
-                                                executionArtifacts.ZipUri
-                                                executionArtifacts.ZipArtifact
-                                            with
-                                        | Error error -> return (Error error |> renderOutput parseResult)
-                                        | Ok zipFile ->
-                                            use zipFile = zipFile
-
-                                            match!
-                                                extractValidatedZipEntries
-                                                    parseResult
-                                                    graceIds.CorrelationId
-                                                    fileVersionsByRelativePath
-                                                    filesToSkip
-                                                    executionArtifacts.FileVersions
-                                                    zipFile
-                                                with
-                                            | Error error -> return (Error error |> renderOutput parseResult)
-                                            | Ok () ->
-                                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
-                                                let! previousGraceStatus = readGraceStatusFile ()
-                                                let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-                                                do! writeGraceStatusFile graceStatus
-
-                                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
-                                                do! upsertObjectCache graceStatus.Index.Values
-                                                return 0
+                | Ok exitCode -> return exitCode
         }
 
     /// Routes the connect command from parsed options through validation, the SDK call, and result rendering.
