@@ -6,18 +6,25 @@ open Grace.Actors.DirectoryVersion
 open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
+open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Server.Validations
 open Grace.Shared
 open Grace.Shared.Parameters.DirectoryVersion
 open Grace.Shared.Resources.Text
+open Grace.Types
 open Grace.Types.DirectoryVersion
 open Grace.Types.Common
+open Grace.Types.Authorization
+open Grace.Types.Branch
+open Grace.Types.Reference
+open Grace.Types.Visibility
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.DependencyInjection
 open System
 open System.Collections.Concurrent
 open System.Collections.Generic
@@ -36,6 +43,244 @@ module DirectoryVersion =
     //type QueryResult<'T, 'U when 'T :> DirectoryParameters> = 'T -> int -> IDirectoryVersionActor ->Task<'U>
 
     let activitySource = new ActivitySource("Branch")
+
+    /// Checks whether a version hash matches a caller-supplied prefix.
+    let private hashMatchesPrefix (hashPrefix: string) (candidateHash: string) =
+        not (String.IsNullOrWhiteSpace candidateHash)
+        && candidateHash.StartsWith(hashPrefix.Trim(), StringComparison.OrdinalIgnoreCase)
+
+    /// Resolves a hash prefix over an already-authorized candidate set.
+    let private resolveVisibleHashPrefix<'T> (hashPrefix: string) (getHash: 'T -> string) (matches: seq<'T>) : VersionHashPrefixResolution<'T> =
+        let boundedMatches =
+            matches
+            |> Seq.filter (fun candidate -> hashMatchesPrefix hashPrefix (getHash candidate))
+            |> Seq.truncate 2
+            |> Seq.toArray
+
+        match boundedMatches.Length with
+        | 0 -> NoMatches
+        | 1 -> UniqueMatch boundedMatches[0]
+        | _ -> AmbiguousMatches boundedMatches
+
+    /// Checks whether RBAC grants the requested operation over an authoritative Grace resource.
+    let private canPerformOperation (context: HttpContext) operation resource =
+        task {
+            let principals = PrincipalMapper.getPrincipals context.User
+            let claims = PrincipalMapper.getEffectiveClaims context.User
+            let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+            match! evaluator.CheckAsync(principals, claims, operation, resource) with
+            | Allowed _ -> return true
+            | Denied _ -> return false
+        }
+
+    /// Checks whether RBAC already grants the caller elevated authority over the branch.
+    let private canAdministerBranch (context: HttpContext) (branchDto: BranchDto) =
+        let resource = Resource.Branch(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId, branchDto.BranchId)
+        canPerformOperation context Operation.BranchAdmin resource
+
+    /// Converts the authenticated HTTP principal into the reusable visibility audience facts.
+    let private getVisibilityCallerAudience (context: HttpContext) (branchDto: BranchDto) =
+        task {
+            let callerUserId =
+                PrincipalMapper.tryGetUserId context.User
+                |> Option.map UserId
+
+            let resource = Resource.Repository(branchDto.OwnerId, branchDto.OrganizationId, branchDto.RepositoryId)
+            let! hasRepositoryAdministration = canPerformOperation context Operation.RepositoryAdmin resource
+
+            return { VisibilityCallerAudience.Anonymous with UserId = callerUserId; HasRepositoryAdministration = hasRepositoryAdministration }
+        }
+
+    /// Projects branch durable visibility facts into the shared visibility helper resource shape.
+    let private branchVisibilityResource (branchDto: BranchDto) =
+        let creatorUserId = if branchDto.UserId = UserId String.Empty then None else Some branchDto.UserId
+
+        { AuthorityKey = branchDto.BranchId; Visibility = branchDto.Visibility; Ownership = branchDto.Ownership; CreatorUserId = creatorUserId }
+
+    /// Builds branch-scoped authority only after checking the exact branch resource being considered.
+    let private getBranchResourceAudience (context: HttpContext) (branchDto: BranchDto) =
+        task {
+            let! hasBranchAdministration = canAdministerBranch context branchDto
+
+            return { VisibilityResourceAudience.None with HasBranchAdministration = hasBranchAdministration }
+        }
+
+    /// Projects reference durable visibility facts into the shared visibility helper resource shape.
+    let private referenceVisibilityResource (referenceDto: ReferenceDto) =
+        {
+            AuthorityKey = referenceDto.ReferenceId
+            Visibility = referenceDto.Visibility
+            Ownership = referenceDto.Ownership
+            CreatorUserId = referenceDto.CreatorUserId
+        }
+
+    /// Checks branch and reference visibility before a reference can reach directory read, hash, recursive, or zip surfaces.
+    let private canObserveReferenceInBranch (context: HttpContext) (branchDto: BranchDto) (referenceDto: ReferenceDto) =
+        task {
+            let! caller = getVisibilityCallerAudience context branchDto
+            let! branchAudience = getBranchResourceAudience context branchDto
+            let branchResource = branchVisibilityResource branchDto
+
+            let branchObservable = VisibilityAuthorization.canObserveBranch caller (fun _ -> branchAudience) branchResource
+
+            if not branchObservable then
+                return false
+            else
+                let resource = referenceVisibilityResource referenceDto
+                return VisibilityAuthorization.canObserveBranchReference caller (fun _ -> branchAudience) resource
+        }
+
+    /// Gets references in the repository that the caller can observe at response time.
+    let private getObservableReferences
+        (context: HttpContext)
+        (ownerId: OwnerId)
+        (organizationId: OrganizationId)
+        (repositoryId: RepositoryId)
+        (correlationId: CorrelationId)
+        =
+        task {
+            let! branches = getBranches ownerId organizationId repositoryId Int32.MaxValue false correlationId
+            let visibleReferences = List<ReferenceDto>()
+
+            for branchDto in branches do
+                let! branchReferences = getReferences repositoryId branchDto.BranchId Int32.MaxValue correlationId
+
+                for referenceDto in branchReferences do
+                    let! canObserve = canObserveReferenceInBranch context branchDto referenceDto
+
+                    if canObserve then visibleReferences.Add(referenceDto)
+
+            return visibleReferences :> seq<ReferenceDto>
+        }
+
+    /// Loads the unique directory versions reachable from the caller-observable reference roots.
+    let private getObservableDirectoryVersions
+        (context: HttpContext)
+        (ownerId: OwnerId)
+        (organizationId: OrganizationId)
+        (repositoryId: RepositoryId)
+        (correlationId: CorrelationId)
+        =
+        task {
+            let! references = getObservableReferences context ownerId organizationId repositoryId correlationId
+            let directoryVersions = Dictionary<DirectoryVersionId, DirectoryVersion>()
+
+            for referenceDto in references do
+                let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+                let! recursiveDirectories = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
+
+                for directoryVersionDto in recursiveDirectories do
+                    let directoryVersion = directoryVersionDto.DirectoryVersion
+                    directoryVersions[directoryVersion.DirectoryVersionId] <- directoryVersion
+
+            return directoryVersions.Values :> seq<DirectoryVersion>
+        }
+
+    /// Checks whether a directory version id is reachable from at least one caller-observable reference root.
+    let private canObserveDirectoryVersion
+        (context: HttpContext)
+        (ownerId: OwnerId)
+        (organizationId: OrganizationId)
+        (repositoryId: RepositoryId)
+        (directoryVersionId: DirectoryVersionId)
+        (correlationId: CorrelationId)
+        =
+        task {
+            let! directoryVersions = getObservableDirectoryVersions context ownerId organizationId repositoryId correlationId
+
+            return
+                directoryVersions
+                |> Seq.exists (fun directoryVersion -> directoryVersion.DirectoryVersionId = directoryVersionId)
+        }
+
+    /// Implements directory-version reachability as an absent-candidate validation result.
+    let private directoryIdIsObservable
+        (context: HttpContext)
+        (ownerId: OwnerId)
+        (organizationId: OrganizationId)
+        (repositoryIdText: string)
+        (directoryVersionIdText: string)
+        (correlationId: CorrelationId)
+        =
+        ValueTask<Result<unit, DirectoryVersionError>>(
+            task {
+                match Guid.TryParse repositoryIdText, Guid.TryParse directoryVersionIdText with
+                | (true, repositoryId), (true, directoryVersionId) ->
+                    let! isObservable = canObserveDirectoryVersion context ownerId organizationId repositoryId directoryVersionId correlationId
+
+                    return if isObservable then Ok() else Error DirectoryVersionError.DirectoryDoesNotExist
+                | _, (false, _) -> return Error DirectoryVersionError.InvalidDirectoryVersionId
+                | (false, _), _ -> return Error DirectoryVersionError.InvalidRepositoryId
+            }
+        )
+
+    /// Implements batch directory-version reachability as an absent-candidate validation result.
+    let private directoryIdsAreObservable
+        (context: HttpContext)
+        (ownerId: OwnerId)
+        (organizationId: OrganizationId)
+        (repositoryIdText: string)
+        (directoryVersionIds: IEnumerable<DirectoryVersionId>)
+        (correlationId: CorrelationId)
+        =
+        ValueTask<Result<unit, DirectoryVersionError>>(
+            task {
+                match Guid.TryParse repositoryIdText with
+                | false, _ -> return Error DirectoryVersionError.InvalidRepositoryId
+                | true, repositoryId ->
+                    let! directoryVersions = getObservableDirectoryVersions context ownerId organizationId repositoryId correlationId
+
+                    let observableDirectoryIds =
+                        directoryVersions
+                        |> Seq.map (fun directoryVersion -> directoryVersion.DirectoryVersionId)
+                        |> Set.ofSeq
+
+                    let allObservable =
+                        directoryVersionIds
+                        |> Seq.forall observableDirectoryIds.Contains
+
+                    return
+                        if allObservable then
+                            Ok()
+                        else
+                            Error DirectoryVersionError.DirectoryDoesNotExist
+            }
+        )
+
+    /// Resolves a SHA-256 prefix only against directory versions reachable from caller-observable reference roots.
+    let private resolveObservableDirectoryVersionBySha256Hash
+        (context: HttpContext)
+        ownerId
+        organizationId
+        repositoryId
+        (sha256Hash: Sha256Hash)
+        correlationId
+        =
+        task {
+            let! directoryVersions = getObservableDirectoryVersions context ownerId organizationId repositoryId correlationId
+
+            return
+                directoryVersions
+                |> resolveVisibleHashPrefix $"{sha256Hash}" (fun directoryVersion -> $"{directoryVersion.Sha256Hash}")
+        }
+
+    /// Resolves a BLAKE3 prefix only against directory versions reachable from caller-observable reference roots.
+    let private resolveObservableDirectoryVersionByBlake3Hash
+        (context: HttpContext)
+        ownerId
+        organizationId
+        repositoryId
+        (blake3Hash: Blake3Hash)
+        correlationId
+        =
+        task {
+            let! directoryVersions = getObservableDirectoryVersions context ownerId organizationId repositoryId correlationId
+
+            return
+                directoryVersions
+                |> resolveVisibleHashPrefix $"{blake3Hash}" (fun directoryVersion -> $"{directoryVersion.Blake3Hash}")
+        }
 
     /// Implements directory save depth for the server request pipeline.
     let private directorySaveDepth (relativePath: RelativePath) =
@@ -193,6 +438,13 @@ module DirectoryVersion =
                             repositoryId
                             parameters.CorrelationId
                             DirectoryVersionError.DirectoryDoesNotExist
+                        directoryIdIsObservable
+                            context
+                            graceIds.OwnerId
+                            graceIds.OrganizationId
+                            $"{parameters.RepositoryId}"
+                            $"{parameters.DirectoryVersionId}"
+                            parameters.CorrelationId
                     |]
 
                 /// Implements query for the server request pipeline.
@@ -228,6 +480,13 @@ module DirectoryVersion =
                             repositoryId
                             parameters.CorrelationId
                             DirectoryVersionError.DirectoryDoesNotExist
+                        directoryIdIsObservable
+                            context
+                            graceIds.OwnerId
+                            graceIds.OrganizationId
+                            $"{parameters.RepositoryId}"
+                            $"{parameters.DirectoryVersionId}"
+                            parameters.CorrelationId
                     |]
 
                 /// Implements query for the server request pipeline.
@@ -263,6 +522,13 @@ module DirectoryVersion =
                             repositoryId
                             parameters.CorrelationId
                             DirectoryVersionError.DirectoryDoesNotExist
+                        directoryIdsAreObservable
+                            context
+                            graceIds.OwnerId
+                            graceIds.OrganizationId
+                            $"{parameters.RepositoryId}"
+                            parameters.DirectoryIds
+                            parameters.CorrelationId
                     |]
 
                 /// Implements query for the server request pipeline.
@@ -313,7 +579,13 @@ module DirectoryVersion =
 
                     if validationsPassed then
                         let! resolution =
-                            getDirectoryVersionResolutionBySha256Hash (Guid.Parse(parameters.RepositoryId)) (Sha256Hash parameters.Sha256Hash) correlationId
+                            resolveObservableDirectoryVersionBySha256Hash
+                                context
+                                graceIds.OwnerId
+                                graceIds.OrganizationId
+                                (Guid.Parse(parameters.RepositoryId))
+                                (Sha256Hash parameters.Sha256Hash)
+                                correlationId
 
                         match resolution with
                         | NoMatches ->
@@ -394,7 +666,13 @@ module DirectoryVersion =
 
                     if validationsPassed then
                         let! resolution =
-                            getDirectoryVersionResolutionByBlake3Hash (Guid.Parse(parameters.RepositoryId)) (Blake3Hash parameters.Blake3Hash) correlationId
+                            resolveObservableDirectoryVersionByBlake3Hash
+                                context
+                                graceIds.OwnerId
+                                graceIds.OrganizationId
+                                (Guid.Parse(parameters.RepositoryId))
+                                (Blake3Hash parameters.Blake3Hash)
+                                correlationId
 
                         match resolution with
                         | NoMatches ->
@@ -454,6 +732,13 @@ module DirectoryVersion =
                             repositoryId
                             parameters.CorrelationId
                             DirectoryVersionError.DirectoryDoesNotExist
+                        directoryIdIsObservable
+                            context
+                            graceIds.OwnerId
+                            graceIds.OrganizationId
+                            $"{parameters.RepositoryId}"
+                            $"{parameters.DirectoryVersionId}"
+                            parameters.CorrelationId
                     |]
 
                 /// Implements query for the server request pipeline.
