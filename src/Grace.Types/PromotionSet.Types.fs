@@ -3,6 +3,7 @@ namespace Grace.Types
 open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Microsoft.Extensions.Configuration
 open NodaTime
 open Orleans
@@ -142,6 +143,9 @@ module PromotionSet =
             OrganizationId: OrganizationId
             RepositoryId: RepositoryId
             TargetBranchId: BranchId
+            Visibility: ResourceVisibility
+            Ownership: ResourceOwnership
+            CreatorUserId: UserId option
             OnBehalfOf: UserId list
             Steps: PromotionSetStep list
             ComputedAgainstParentTerminalPromotionReferenceId: ReferenceId option
@@ -166,6 +170,9 @@ module PromotionSet =
                 OrganizationId = OrganizationId.Empty
                 RepositoryId = RepositoryId.Empty
                 TargetBranchId = BranchId.Empty
+                Visibility = ResourceVisibility.Private
+                Ownership = ResourceOwnership.RepositoryOwned
+                CreatorUserId = Option.None
                 OnBehalfOf = []
                 Steps = []
                 ComputedAgainstParentTerminalPromotionReferenceId = Option.None
@@ -189,7 +196,10 @@ module PromotionSet =
             ownerId: OwnerId *
             organizationId: OrganizationId *
             repositoryId: RepositoryId *
-            targetBranchId: BranchId
+            targetBranchId: BranchId *
+            visibility: ResourceVisibility *
+            ownership: ResourceOwnership *
+            creatorUserId: UserId option
         | UpdateInputPromotions of promotionPointers: PromotionPointer list
         | RecomputeStepsIfStale of reason: string option
         | ResolveConflicts of stepId: PromotionSetStepId * resolutions: ConflictResolutionDecision list
@@ -202,7 +212,15 @@ module PromotionSet =
     /// Represents promotion set event type.
     [<KnownType("GetKnownTypes")>]
     type PromotionSetEventType =
-        | Created of promotionSetId: PromotionSetId * ownerId: OwnerId * organizationId: OrganizationId * repositoryId: RepositoryId * targetBranchId: BranchId
+        | Created of
+            promotionSetId: PromotionSetId *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
+            repositoryId: RepositoryId *
+            targetBranchId: BranchId *
+            visibility: ResourceVisibility *
+            ownership: ResourceOwnership *
+            creatorUserId: UserId option
         | InputPromotionsUpdated of promotionPointers: PromotionPointer list
         | RecomputeStarted of computedAgainstTerminal: ReferenceId
         | StepsUpdated of steps: PromotionSetStep list * computedAgainstTerminal: ReferenceId
@@ -225,13 +243,16 @@ module PromotionSet =
         let UpdateDto (promotionSetEvent: PromotionSetEvent) (currentDto: PromotionSetDto) =
             let updatedDto, shouldUpdateComputationTimestamp =
                 match promotionSetEvent.Event with
-                | Created (promotionSetId, ownerId, organizationId, repositoryId, targetBranchId) ->
+                | Created (promotionSetId, ownerId, organizationId, repositoryId, targetBranchId, visibility, ownership, creatorUserId) ->
                     { PromotionSetDto.Default with
                         PromotionSetId = promotionSetId
                         OwnerId = ownerId
                         OrganizationId = organizationId
                         RepositoryId = repositoryId
                         TargetBranchId = targetBranchId
+                        Visibility = visibility
+                        Ownership = ownership
+                        CreatorUserId = creatorUserId
                         CreatedBy = UserId promotionSetEvent.Metadata.Principal
                         CreatedAt = promotionSetEvent.Metadata.Timestamp
                     },

@@ -8,6 +8,7 @@ open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.FileProviders
@@ -187,6 +188,14 @@ module private WebhookDispatchTestHelpers =
 
         GraceEvent.PromotionSetEvent promotionSetEvent
 
+    /// Builds a private applied event that must not reach external webhook fanout before reference reveal.
+    let privateAppliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId =
+        let eventMetadata = metadata ownerId organizationId repositoryId targetBranchId promotionSetId "corr-webhook-private"
+        eventMetadata.Properties[ "Visibility" ] <- $"{ResourceVisibility.Private}"
+        eventMetadata.Properties[ "Ownership" ] <- $"{ResourceOwnership.ContributorOwned}"
+
+        GraceEvent.PromotionSetEvent { Event = PromotionSetEventType.Applied terminalReferenceId; Metadata = eventMetadata }
+
     /// Builds rule test data for the server unit webhook Dispatch scenarios in this file.
     let rule ruleId ownerId organizationId repositoryId targetBranchId =
         { WebhookRule.Default with
@@ -288,6 +297,34 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
             Assert.That(deliveries[0].AttemptCount, Is.EqualTo(1))
             Assert.That(deliveries[0].LastStatusCode, Is.EqualTo(Option.Some 202))
+        }
+
+    /// Verifies that private PromotionSet apply is suppressed before webhook dispatch fanout.
+    [<Test>]
+    member _.PrivatePromotionSetAppliedDoesNotCreateWebhookDelivery() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let terminalReferenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.Succeeded 202 ])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.privateAppliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId)
+
+            Assert.That(result.DeliveryCount, Is.EqualTo(0))
+            Assert.That(result.DeliveredCount, Is.EqualTo(0))
+            Assert.That(transport.Requests, Is.Empty)
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Is.Empty)
         }
 
     /// Verifies that committed Delivery Headers Use Stable Sha256 Payload Digest And Hmac Preimage.

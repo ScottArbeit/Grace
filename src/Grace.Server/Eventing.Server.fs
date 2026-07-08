@@ -11,6 +11,7 @@ open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Review
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Validation
 open Grace.Types.WorkItem
 open System
@@ -40,6 +41,35 @@ module EventingPublisher =
         match metadata.Properties.TryGetValue("ActorId") with
         | true, actorId when String.IsNullOrWhiteSpace actorId |> not -> actorId
         | _ -> defaultActorId
+
+    /// Suppresses public automation projections for private contributor-owned workflow metadata.
+    let private metadataAllowsPublicProjection (metadata: EventMetadata) =
+        let visibility =
+            match metadata.Properties.TryGetValue("Visibility") with
+            | true, value ->
+                ResourceVisibility.TryParsePublicInput value
+                |> Option.defaultValue ResourceVisibility.Private
+            | _ ->
+                match metadata.Properties.TryGetValue("InheritedVisibility") with
+                | true, value ->
+                    ResourceVisibility.TryParsePublicInput value
+                    |> Option.defaultValue ResourceVisibility.Private
+                | _ -> ResourceVisibility.Public
+
+        let ownership =
+            match metadata.Properties.TryGetValue("Ownership") with
+            | true, value ->
+                ResourceOwnership.TryParsePublicInput value
+                |> Option.defaultValue ResourceOwnership.ContributorOwned
+            | _ ->
+                match metadata.Properties.TryGetValue("InheritedOwnership") with
+                | true, value ->
+                    ResourceOwnership.TryParsePublicInput value
+                    |> Option.defaultValue ResourceOwnership.ContributorOwned
+                | _ -> ResourceOwnership.RepositoryOwned
+
+        visibility = ResourceVisibility.Public
+        || ownership = ResourceOwnership.RepositoryOwned
 
     /// Implements envelope for the server request pipeline.
     let private envelope
@@ -102,16 +132,21 @@ module EventingPublisher =
         | PromotionSetEvent promotionSetEvent ->
             let eventType = mapPromotionSetEventType promotionSetEvent.Event
 
-            envelope
-                eventType
-                promotionSetEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId promotionSetEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId promotionSetEvent.Metadata "PromotionSet")
-                (serialize promotionSetEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection promotionSetEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    eventType
+                    promotionSetEvent.Metadata
+                    (tryGetOwnerId promotionSetEvent.Metadata
+                     |> Option.defaultValue OwnerId.Empty)
+                    (tryGetOrganizationId promotionSetEvent.Metadata
+                     |> Option.defaultValue OrganizationId.Empty)
+                    (tryGetRepositoryId promotionSetEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId promotionSetEvent.Metadata "PromotionSet")
+                    (serialize promotionSetEvent)
+                |> Some
         | ValidationSetEvent validationSetEvent ->
             let eventType =
                 match validationSetEvent.Event with
@@ -191,7 +226,8 @@ module EventingPublisher =
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
             | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, _, referenceType, _, links) ->
-                if referenceType = ReferenceType.Promotion then
+                if referenceType = ReferenceType.Promotion
+                   && metadataAllowsPublicProjection referenceEvent.Metadata then
                     match tryGetTerminalPromotionSetId links with
                     | Some promotionSetId ->
                         let payload = {| promotionSetId = promotionSetId; targetBranchId = branchId; terminalPromotionReferenceId = referenceId |}

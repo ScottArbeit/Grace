@@ -26,15 +26,15 @@ type private BranchCreateVisibilityParameters() =
 [<Parallelizable(ParallelScope.All)>]
 type VisibilityContractTests() =
 
-    /// Verifies that branch and reference DTOs expose implemented visibility fields while promotion-set surfaces still defer them.
+    /// Verifies that branch, reference, and promotion-set DTOs expose implemented visibility fields.
     [<Test>]
-    member _.CurrentDtosExposeImplementedBranchAndReferenceVisibilityAndOwnershipFields() =
+    member _.CurrentDtosExposeImplementedVisibilityAndOwnershipFields() =
         Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Visibility"), Is.Not.Null)
         Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Ownership"), Is.Not.Null)
         Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Visibility"), Is.Not.Null)
         Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Ownership"), Is.Not.Null)
-        Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Visibility"), Is.Null)
-        Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Ownership"), Is.Null)
+        Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Visibility"), Is.Not.Null)
+        Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Ownership"), Is.Not.Null)
 
     /// Verifies that content-object contracts do not gain global visibility or ownership fields.
     [<Test>]
@@ -44,13 +44,13 @@ type VisibilityContractTests() =
         Assert.That(typeof<DirectoryVersion>.GetProperty ("Visibility"), Is.Null)
         Assert.That(typeof<DirectoryVersion>.GetProperty ("Ownership"), Is.Null)
 
-    /// Verifies that branch create exposes implemented visibility inputs while later routes do not accept no-ops.
+    /// Verifies that implemented create surfaces expose visibility inputs while unrelated routes do not accept no-ops.
     [<Test>]
-    member _.CurrentCreateParametersExposeOnlyImplementedBranchVisibilityAndOwnershipFields() =
+    member _.CurrentCreateParametersExposeImplementedVisibilityAndOwnershipFields() =
         Assert.That(typeof<CreateBranchParameters>.GetProperty ("Visibility"), Is.Not.Null)
         Assert.That(typeof<CreateBranchParameters>.GetProperty ("Ownership"), Is.Not.Null)
-        Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Visibility"), Is.Null)
-        Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Ownership"), Is.Null)
+        Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Visibility"), Is.Not.Null)
+        Assert.That(typeof<CreatePromotionSetParameters>.GetProperty ("Ownership"), Is.Not.Null)
 
     /// Verifies that ordinal and advertised visibility defaults do not fail open.
     [<Test>]

@@ -21,6 +21,7 @@ open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Common
 open Grace.Types.Validation
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -341,6 +342,15 @@ module PromotionSet =
 
             if promotionSetDto.RepositoryId <> RepositoryId.Empty then
                 properties[nameof RepositoryId] <- $"{promotionSetDto.RepositoryId}"
+                properties[nameof OwnerId] <- $"{promotionSetDto.OwnerId}"
+                properties[nameof OrganizationId] <- $"{promotionSetDto.OrganizationId}"
+                properties[nameof BranchId] <- $"{promotionSetDto.TargetBranchId}"
+                properties["TargetBranchId"] <- $"{promotionSetDto.TargetBranchId}"
+                properties["Visibility"] <- $"{promotionSetDto.Visibility}"
+                properties["Ownership"] <- $"{promotionSetDto.Ownership}"
+
+                promotionSetDto.CreatorUserId
+                |> Option.iter (fun creatorUserId -> properties["CreatorUserId"] <- $"{creatorUserId}")
 
             let actorId =
                 if promotionSetDto.PromotionSetId
@@ -1863,6 +1873,12 @@ module PromotionSet =
                     let referenceMetadata = this.WithActorMetadata metadata
                     referenceMetadata.Properties[ "ActorId" ] <- $"{referenceId}"
                     referenceMetadata.Properties[ nameof BranchId ] <- $"{promotionSetDto.TargetBranchId}"
+                    referenceMetadata.Properties[ "InheritedVisibility" ] <- $"{promotionSetDto.Visibility}"
+                    referenceMetadata.Properties[ "InheritedOwnership" ] <- $"{promotionSetDto.Ownership}"
+
+                    promotionSetDto.CreatorUserId
+                    |> Option.iter (fun creatorUserId -> referenceMetadata.Properties[ "InheritedCreatorUserId" ] <- $"{creatorUserId}")
+
                     let referenceActorProxy = Reference.CreateActorProxy referenceId promotionSetDto.RepositoryId this.correlationId
                     let referenceText = ReferenceText $"PromotionSet {promotionSetDto.PromotionSetId} Step {step.Order}"
 
@@ -2298,12 +2314,41 @@ module PromotionSet =
                 let processCommand (promotionSetCommand: PromotionSetCommand) (eventMetadata: EventMetadata) =
                     task {
                         match promotionSetCommand with
-                        | PromotionSetCommand.CreatePromotionSet (promotionSetId, ownerId, organizationId, repositoryId, targetBranchId) ->
+                        | PromotionSetCommand.CreatePromotionSet (promotionSetId,
+                                                                  ownerId,
+                                                                  organizationId,
+                                                                  repositoryId,
+                                                                  targetBranchId,
+                                                                  visibility,
+                                                                  ownership,
+                                                                  creatorUserId) ->
+                            let createdMetadata = this.WithActorMetadata eventMetadata
+                            createdMetadata.Properties[ nameof OwnerId ] <- $"{ownerId}"
+                            createdMetadata.Properties[ nameof OrganizationId ] <- $"{organizationId}"
+                            createdMetadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                            createdMetadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                            createdMetadata.Properties[ "TargetBranchId" ] <- $"{targetBranchId}"
+                            createdMetadata.Properties[ "Visibility" ] <- $"{visibility}"
+                            createdMetadata.Properties[ "Ownership" ] <- $"{ownership}"
+
+                            creatorUserId
+                            |> Option.iter (fun creator -> createdMetadata.Properties[ "CreatorUserId" ] <- $"{creator}")
+
                             return!
                                 this.ApplyEvent
                                     {
-                                        Event = PromotionSetEventType.Created(promotionSetId, ownerId, organizationId, repositoryId, targetBranchId)
-                                        Metadata = eventMetadata
+                                        Event =
+                                            PromotionSetEventType.Created(
+                                                promotionSetId,
+                                                ownerId,
+                                                organizationId,
+                                                repositoryId,
+                                                targetBranchId,
+                                                visibility,
+                                                ownership,
+                                                creatorUserId
+                                            )
+                                        Metadata = createdMetadata
                                     }
                         | PromotionSetCommand.UpdateInputPromotions promotionPointers ->
                             match! this.ApplyEvent { Event = PromotionSetEventType.InputPromotionsUpdated promotionPointers; Metadata = eventMetadata } with

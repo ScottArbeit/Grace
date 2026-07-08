@@ -1,20 +1,27 @@
 namespace Grace.Server
 
 open Giraffe
+open Grace.Actors
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Shared
 open Grace.Shared.Extensions
 open Grace.Shared.Parameters.PromotionSet
+open Grace.Shared.Parameters.Visibility
 open Grace.Shared.Validation.Common
 open Grace.Shared.Validation.Errors
 open Grace.Shared.Validation.Utilities
+open Grace.Types.Authorization
 open Grace.Types.PromotionSet
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Http
+open Microsoft.Extensions.DependencyInjection
 open System
+open System.Collections.Generic
 open System.Diagnostics
 open System.Threading.Tasks
 
@@ -57,6 +64,84 @@ module PromotionSet =
                     Option.None)
 
     let private approvalSubject = "promotion"
+
+    /// Checks exact Grace RBAC authority needed by visibility decisions after route authentication has completed.
+    let private canPerformOperation (context: HttpContext) operation resource =
+        task {
+            let principals = PrincipalMapper.getPrincipals context.User
+            let claims = PrincipalMapper.getEffectiveClaims context.User
+            let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+            match! evaluator.CheckAsync(principals, claims, operation, resource) with
+            | Allowed _ -> return true
+            | Denied _ -> return false
+        }
+
+    /// Converts the authenticated request into caller facts for PromotionSet visibility checks.
+    let private getVisibilityCallerAudience (context: HttpContext) (promotionSet: PromotionSetDto) =
+        task {
+            let callerUserId =
+                PrincipalMapper.tryGetUserId context.User
+                |> Option.map UserId
+
+            let resource = Resource.Repository(promotionSet.OwnerId, promotionSet.OrganizationId, promotionSet.RepositoryId)
+            let! hasRepositoryAdministration = canPerformOperation context Operation.RepositoryAdmin resource
+
+            return { VisibilityCallerAudience.Anonymous with UserId = callerUserId; HasRepositoryAdministration = hasRepositoryAdministration }
+        }
+
+    /// Projects durable PromotionSet visibility facts into the shared hidden-as-missing helper shape.
+    let private promotionSetVisibilityResource (promotionSet: PromotionSetDto) =
+        {
+            AuthorityKey = promotionSet.PromotionSetId
+            Visibility = promotionSet.Visibility
+            Ownership = promotionSet.Ownership
+            CreatorUserId = promotionSet.CreatorUserId
+        }
+
+    /// Checks whether the current caller may observe a loaded PromotionSet.
+    let internal canObservePromotionSet (context: HttpContext) (promotionSet: PromotionSetDto) =
+        task {
+            let! caller = getVisibilityCallerAudience context promotionSet
+
+            return
+                VisibilityAuthorization.canObservePromotionSet caller (fun _ -> VisibilityResourceAudience.None) (promotionSetVisibilityResource promotionSet)
+        }
+
+    /// Builds the route-equivalent missing response for an unobservable PromotionSet.
+    let private hiddenPromotionSetReturnValue promotionSetId correlationId =
+        GraceReturnValue.Create { PromotionSetDto.Default with PromotionSetId = promotionSetId } correlationId
+
+    /// Resolves create-time visibility into implemented public/private PromotionSet semantics.
+    let internal resolvePromotionSetVisibility (parameters: CreatePromotionSetParameters) =
+        let visibility =
+            if String.IsNullOrWhiteSpace parameters.Visibility then
+                Ok Option.None
+            else
+                match tryParseVisibilityInput parameters.Visibility with
+                | Some parsed -> Ok(Some parsed)
+                | Microsoft.FSharp.Core.Option.None -> Error "PromotionSet visibility must be Public or Private."
+
+        let ownership =
+            if String.IsNullOrWhiteSpace parameters.Ownership then
+                Ok Option.None
+            else
+                match tryParseOwnershipInput parameters.Ownership with
+                | Some parsed -> Ok(Some parsed)
+                | Microsoft.FSharp.Core.Option.None -> Error "PromotionSet ownership must be RepositoryOwned or ContributorOwned."
+
+        match visibility, ownership with
+        | Error message, _
+        | _, Error message -> Error message
+        | Ok (Some ResourceVisibility.Private), Ok (Some ResourceOwnership.RepositoryOwned) ->
+            Error "Private PromotionSet visibility requires ContributorOwned ownership."
+        | Ok (Some ResourceVisibility.Public), Ok (Some ResourceOwnership.ContributorOwned) ->
+            Error "ContributorOwned PromotionSet ownership requires Private visibility."
+        | Ok (Some ResourceVisibility.Private), _ -> Ok(ResourceVisibility.Private, ResourceOwnership.ContributorOwned)
+        | _, Ok (Some ResourceOwnership.ContributorOwned) -> Ok(ResourceVisibility.Private, ResourceOwnership.ContributorOwned)
+        | Ok (Some ResourceVisibility.Public), _
+        | _, Ok (Some ResourceOwnership.RepositoryOwned)
+        | Ok Option.None, Ok Option.None -> Ok(ResourceVisibility.Public, ResourceOwnership.RepositoryOwned)
 
     /// Implements approval scope from promotion set for the server request pipeline.
     let private approvalScopeFromPromotionSet (promotionSet: PromotionSetDto) (policy: PromotionSetApprovalPolicySnapshot) =
@@ -219,6 +304,7 @@ module PromotionSet =
         (parameters: 'T)
         (validations: Validations<'T>)
         (promotionSetId: PromotionSetId)
+        (requireObservable: bool)
         (command: PromotionSetCommand)
         =
         task {
@@ -233,29 +319,54 @@ module PromotionSet =
             if validationsPassed then
                 let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
 
-                match! actorProxy.Handle command metadata with
-                | Ok graceReturnValue ->
-                    graceReturnValue
-                        .enhance(parameterDictionary)
-                        .enhance(nameof OwnerId, graceIds.OwnerId)
-                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                        .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                        .enhance(nameof PromotionSetId, promotionSetId)
-                        .enhance ("Path", context.Request.Path.Value)
-                    |> ignore
+                let! canHandle =
+                    if requireObservable then
+                        task {
+                            let! promotionSet = actorProxy.Get correlationId
 
-                    return! context |> result200Ok graceReturnValue
-                | Error graceError ->
-                    graceError
-                        .enhance(parameterDictionary)
-                        .enhance(nameof OwnerId, graceIds.OwnerId)
-                        .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                        .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                        .enhance(nameof PromotionSetId, promotionSetId)
-                        .enhance ("Path", context.Request.Path.Value)
-                    |> ignore
+                            if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                                return false
+                            else
+                                return! canObservePromotionSet context promotionSet
+                        }
+                    else
+                        Task.FromResult true
+
+                if not canHandle then
+                    let graceError =
+                        (GraceError.Create "PromotionSet does not exist." correlationId)
+                            .enhance(parameterDictionary)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof PromotionSetId, promotionSetId)
+                            .enhance ("Path", context.Request.Path.Value)
 
                     return! context |> result400BadRequest graceError
+                else
+                    match! actorProxy.Handle command metadata with
+                    | Ok graceReturnValue ->
+                        graceReturnValue
+                            .enhance(parameterDictionary)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof PromotionSetId, promotionSetId)
+                            .enhance ("Path", context.Request.Path.Value)
+                        |> ignore
+
+                        return! context |> result200Ok graceReturnValue
+                    | Error graceError ->
+                        graceError
+                            .enhance(parameterDictionary)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof PromotionSetId, promotionSetId)
+                            .enhance ("Path", context.Request.Path.Value)
+                        |> ignore
+
+                        return! context |> result400BadRequest graceError
             else
                 let! validationError = validationResults |> getFirstError
                 let graceError = GraceError.Create (QueueError.getErrorMessage validationError) correlationId
@@ -269,19 +380,32 @@ module PromotionSet =
             let correlationId = getCorrelationId context
             let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
             let! promotionSet = actorProxy.Get correlationId
-            let! approvalSummary = deriveApprovalSummary promotionSet correlationId
 
-            let graceReturnValue =
-                (GraceReturnValue.Create promotionSet correlationId)
-                    .enhance(getParametersAsDictionary parameters)
-                    .enhance(nameof OwnerId, graceIds.OwnerId)
-                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                    .enhance(nameof PromotionSetId, promotionSetId)
-                    .enhance("ApprovalSummary", approvalSummary)
-                    .enhance ("Path", context.Request.Path.Value)
+            if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                return!
+                    context
+                    |> result200Ok (hiddenPromotionSetReturnValue promotionSetId correlationId)
+            else
+                let! isObservable = canObservePromotionSet context promotionSet
 
-            return! context |> result200Ok graceReturnValue
+                if not isObservable then
+                    return!
+                        context
+                        |> result200Ok (hiddenPromotionSetReturnValue promotionSetId correlationId)
+                else
+                    let! approvalSummary = deriveApprovalSummary promotionSet correlationId
+
+                    let graceReturnValue =
+                        (GraceReturnValue.Create promotionSet correlationId)
+                            .enhance(getParametersAsDictionary parameters)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance(nameof PromotionSetId, promotionSetId)
+                            .enhance("ApprovalSummary", approvalSummary)
+                            .enhance ("Path", context.Request.Path.Value)
+
+                    return! context |> result200Ok graceReturnValue
         }
 
     /// Coordinates process get events processing for Grace Server.
@@ -290,7 +414,19 @@ module PromotionSet =
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
             let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
-            let! events = actorProxy.GetEvents correlationId
+            let! promotionSet = actorProxy.Get correlationId
+
+            let! isObservable =
+                if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                    Task.FromResult false
+                else
+                    canObservePromotionSet context promotionSet
+
+            let! events =
+                if isObservable then
+                    actorProxy.GetEvents correlationId
+                else
+                    Task.FromResult(ResizeArray<PromotionSetEvent>() :> IReadOnlyList<PromotionSetEvent>)
 
             let graceReturnValue =
                 (GraceReturnValue.Create events correlationId)
@@ -326,16 +462,29 @@ module PromotionSet =
                             Guid.isValidAndNotEmptyGuid parameters.TargetBranchId QueueError.InvalidTargetBranchId
                         |]
 
-                    let command =
-                        PromotionSetCommand.CreatePromotionSet(
-                            promotionSetId,
-                            graceIds.OwnerId,
-                            graceIds.OrganizationId,
-                            graceIds.RepositoryId,
-                            Guid.Parse(parameters.TargetBranchId)
-                        )
+                    match resolvePromotionSetVisibility parameters with
+                    | Error errorMessage ->
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create errorMessage (getCorrelationId context))
+                    | Ok (visibility, ownership) ->
+                        let creatorUserId =
+                            PrincipalMapper.tryGetUserId context.User
+                            |> Option.map UserId
 
-                    return! processCommand context parameters validations promotionSetId command
+                        let command =
+                            PromotionSetCommand.CreatePromotionSet(
+                                promotionSetId,
+                                graceIds.OwnerId,
+                                graceIds.OrganizationId,
+                                graceIds.RepositoryId,
+                                Guid.Parse(parameters.TargetBranchId),
+                                visibility,
+                                ownership,
+                                creatorUserId
+                            )
+
+                        return! processCommand context parameters validations promotionSetId false command
             }
 
     /// Gets a promotion set.
@@ -429,7 +578,7 @@ module PromotionSet =
                 | Option.None ->
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                     let command = PromotionSetCommand.UpdateInputPromotions parameters.PromotionPointers
-                    return! processCommand context parameters validations promotionSetId command
+                    return! processCommand context parameters validations promotionSetId true command
             }
 
     /// Requests server-side recomputation for a promotion set.
@@ -457,7 +606,7 @@ module PromotionSet =
                         Option.Some parameters.Reason
 
                 let command = PromotionSetCommand.RecomputeStepsIfStale reason
-                return! processCommand context parameters validations promotionSetId command
+                return! processCommand context parameters validations promotionSetId true command
             }
 
     /// Applies a promotion set.
@@ -479,7 +628,7 @@ module PromotionSet =
                 let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                 let correlationId = getCorrelationId context
                 let command = PromotionSetCommand.Apply []
-                return! processCommand context parameters validations promotionSetId command
+                return! processCommand context parameters validations promotionSetId true command
             }
 
     /// Resolves blocked conflicts for a promotion set.
@@ -546,7 +695,7 @@ module PromotionSet =
                                 |> result400BadRequest (GraceError.Create "StepsComputationAttempt does not match current PromotionSet state." correlationId)
                         else
                             let command = PromotionSetCommand.ResolveConflicts(stepId, parameters.Decisions)
-                            return! processCommand context parameters validations promotionSetId command
+                            return! processCommand context parameters validations promotionSetId true command
             }
 
     /// Logically deletes a promotion set.
@@ -567,5 +716,5 @@ module PromotionSet =
 
                 let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                 let command = PromotionSetCommand.DeleteLogical(parameters.Force, DeleteReason parameters.DeleteReason)
-                return! processCommand context parameters validations promotionSetId command
+                return! processCommand context parameters validations promotionSetId true command
             }

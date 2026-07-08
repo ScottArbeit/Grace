@@ -8,6 +8,7 @@ open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.WorkItem
 open NodaTime
 open NUnit.Framework
@@ -31,6 +32,18 @@ type AutomationEventingTests() =
             ClientType = Microsoft.FSharp.Core.Option.None
             Properties = properties
         }
+
+    /// Adds private workflow visibility metadata to an event fixture.
+    let markPrivateContributorOwned (metadata: EventMetadata) =
+        metadata.Properties[ "Visibility" ] <- $"{ResourceVisibility.Private}"
+        metadata.Properties[ "Ownership" ] <- $"{ResourceOwnership.ContributorOwned}"
+        metadata
+
+    /// Adds private inherited reference visibility metadata to an event fixture.
+    let markPrivateInheritedReference (metadata: EventMetadata) =
+        metadata.Properties[ "InheritedVisibility" ] <- $"{ResourceVisibility.Private}"
+        metadata.Properties[ "InheritedOwnership" ] <- $"{ResourceOwnership.ContributorOwned}"
+        metadata
 
     /// Verifies that reference Promotion With Terminal Link Maps To Promotion Set Applied.
     [<Test>]
@@ -122,6 +135,41 @@ type AutomationEventingTests() =
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)
         Assert.That(envelope.IsNone, Is.True)
 
+    /// Verifies that private terminal Promotion references do not emit public applied automation events.
+    [<Test>]
+    member _.PrivateTerminalPromotionReferenceDoesNotMapToPromotionSetApplied() =
+        let repositoryId = Guid.NewGuid()
+        let referenceId = Guid.NewGuid()
+        let promotionSetId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+
+        let referenceEvent: ReferenceEvent =
+            {
+                Event =
+                    ReferenceEventType.Created(
+                        referenceId,
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        repositoryId,
+                        branchId,
+                        Guid.NewGuid(),
+                        Sha256Hash String.Empty,
+                        Blake3Hash String.Empty,
+                        ReferenceType.Promotion,
+                        "promotion",
+                        [
+                            ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                            ReferenceLinkType.PromotionSetTerminal promotionSetId
+                        ]
+                    )
+                Metadata =
+                    metadata "corr-private-terminal" repositoryId
+                    |> markPrivateInheritedReference
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
     /// Verifies that queue Promotion Set Enqueued Maps To Promotion Set Enqueued.
     [<Test>]
     member _.QueuePromotionSetEnqueuedMapsToPromotionSetEnqueued() =
@@ -162,6 +210,32 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetRecomputeStarted))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
+    /// Verifies that private PromotionSet creation does not create a public automation event.
+    [<Test>]
+    member _.PrivatePromotionSetCreatedDoesNotMapToAutomationEvent() =
+        let repositoryId = Guid.NewGuid()
+
+        let promotionSetEvent: PromotionSetEvent =
+            {
+                Event =
+                    PromotionSetEventType.Created(
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        repositoryId,
+                        Guid.NewGuid(),
+                        ResourceVisibility.Private,
+                        ResourceOwnership.ContributorOwned,
+                        Some(UserId "creator@example.test")
+                    )
+                Metadata =
+                    metadata "corr-private-created" repositoryId
+                    |> markPrivateContributorOwned
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.PromotionSetEvent promotionSetEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
     /// Verifies that promotion Set Steps Updated Maps To Automation Event.
     [<Test>]
     member _.PromotionSetStepsUpdatedMapsToAutomationEvent() =
@@ -188,6 +262,22 @@ type AutomationEventingTests() =
         Assert.That(envelope.IsSome, Is.True)
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetStepsUpdated))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    /// Verifies that private PromotionSet apply does not create a public automation event.
+    [<Test>]
+    member _.PrivatePromotionSetAppliedDoesNotMapToAutomationEvent() =
+        let repositoryId = Guid.NewGuid()
+
+        let promotionSetEvent: PromotionSetEvent =
+            {
+                Event = PromotionSetEventType.Applied(Guid.NewGuid())
+                Metadata =
+                    metadata "corr-private-apply" repositoryId
+                    |> markPrivateContributorOwned
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.PromotionSetEvent promotionSetEvent)
+        Assert.That(envelope.IsNone, Is.True)
 
     /// Verifies that work Item Artifact Linked Maps To Agent Summary Added.
     [<Test>]

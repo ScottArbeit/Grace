@@ -2,6 +2,7 @@ namespace Grace.Types.Tests
 
 open Grace.Types.PromotionSet
 open Grace.Types.Common
+open Grace.Types.Visibility
 open NodaTime
 open NUnit.Framework
 open System
@@ -25,7 +26,17 @@ type PromotionSetDeterminismTests() =
     let createPromotionSetDto timestamp =
         let createdEvent: PromotionSetEvent =
             {
-                Event = PromotionSetEventType.Created(Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid(), Guid.NewGuid())
+                Event =
+                    PromotionSetEventType.Created(
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        ResourceVisibility.Public,
+                        ResourceOwnership.RepositoryOwned,
+                        Option.None
+                    )
                 Metadata = createMetadata "corr-created" "tester" timestamp
             }
 
@@ -108,3 +119,31 @@ type PromotionSetDeterminismTests() =
         Assert.That(updated.StepsComputationAttempt, Is.EqualTo(2))
         Assert.That(updated.StepsComputationError.IsNone, Is.True)
         Assert.That(updated.ComputedAgainstParentTerminalPromotionReferenceId, Is.EqualTo(Option.Some computedAgainstTerminalReferenceId))
+
+    /// Verifies that created private promotion set events persist the audience facts used by route and event gates.
+    [<Test>]
+    member _.CreatedPrivatePromotionSetPersistsVisibilityOwnershipAndCreator() =
+        let timestamp = Instant.FromUtc(2026, 7, 7, 12, 0)
+        let creatorUserId = UserId "reviewer@example.test"
+
+        let createdEvent: PromotionSetEvent =
+            {
+                Event =
+                    PromotionSetEventType.Created(
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        ResourceVisibility.Private,
+                        ResourceOwnership.ContributorOwned,
+                        Some creatorUserId
+                    )
+                Metadata = createMetadata "corr-private-created" "reviewer@example.test" timestamp
+            }
+
+        let promotionSet = PromotionSetDto.UpdateDto createdEvent PromotionSetDto.Default
+
+        Assert.That(promotionSet.Visibility, Is.EqualTo(ResourceVisibility.Private))
+        Assert.That(promotionSet.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
+        Assert.That(promotionSet.CreatorUserId, Is.EqualTo(Some creatorUserId))

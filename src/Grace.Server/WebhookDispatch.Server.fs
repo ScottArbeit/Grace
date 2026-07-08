@@ -6,6 +6,7 @@ open Grace.Types
 open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Hosting
@@ -158,8 +159,24 @@ module WebhookDispatch =
 
     /// Creates the external webhook dispatch payload and dedupe key for promotion-set-applied events.
     let private tryCreatePromotionSetAppliedDispatchEvent (promotionSetEvent: PromotionSetEvent) =
+        /// Checks durable metadata before external webhook dispatch observes a PromotionSet apply event.
+        let allowsPublicDispatch =
+            match promotionSetEvent.Metadata.Properties.TryGetValue("Visibility"), promotionSetEvent.Metadata.Properties.TryGetValue("Ownership") with
+            | (true, visibility), (true, ownership) ->
+                let parsedVisibility =
+                    ResourceVisibility.TryParsePublicInput visibility
+                    |> Option.defaultValue ResourceVisibility.Private
+
+                let parsedOwnership =
+                    ResourceOwnership.TryParsePublicInput ownership
+                    |> Option.defaultValue ResourceOwnership.ContributorOwned
+
+                parsedVisibility = ResourceVisibility.Public
+                || parsedOwnership = ResourceOwnership.RepositoryOwned
+            | _ -> true
+
         match promotionSetEvent.Event with
-        | PromotionSetEventType.Applied terminalPromotionReferenceId ->
+        | PromotionSetEventType.Applied terminalPromotionReferenceId when allowsPublicDispatch ->
             let definition = ExternalWebhookEventRegistry.promotionSetApplied
             let scope = scopeFromMetadata promotionSetEvent.Metadata
 

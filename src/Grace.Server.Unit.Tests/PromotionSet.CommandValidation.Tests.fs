@@ -1,9 +1,11 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Shared.Parameters.PromotionSet
 open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open NodaTime
 open NUnit.Framework
@@ -375,3 +377,37 @@ type PromotionSetCommandValidationTests() =
         match PromotionSet.validateCommandForState [] dto (PromotionSetCommand.UpdateInputPromotions pointers) metadata with
         | Ok _ -> Assert.Fail("Expected update-input validation to fail for succeeded PromotionSet.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet has already succeeded and cannot be edited."))
+
+    /// Verifies that blank PromotionSet visibility inputs preserve the existing public workflow default.
+    [<Test>]
+    member _.PromotionSetVisibilityResolverDefaultsToPublicRepositoryOwned() =
+        let parameters = CreatePromotionSetParameters()
+
+        match Grace.Server.PromotionSet.resolvePromotionSetVisibility parameters with
+        | Ok (visibility, ownership) ->
+            Assert.That(visibility, Is.EqualTo(ResourceVisibility.Public))
+            Assert.That(ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
+        | Error errorMessage -> Assert.Fail($"Expected default visibility resolution, got {errorMessage}.")
+
+    /// Verifies that private PromotionSet visibility always resolves to contributor-owned hidden workflow state.
+    [<Test>]
+    member _.PromotionSetVisibilityResolverMakesPrivateContributorOwned() =
+        let parameters = CreatePromotionSetParameters()
+        parameters.Visibility <- "Private"
+
+        match Grace.Server.PromotionSet.resolvePromotionSetVisibility parameters with
+        | Ok (visibility, ownership) ->
+            Assert.That(visibility, Is.EqualTo(ResourceVisibility.Private))
+            Assert.That(ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
+        | Error errorMessage -> Assert.Fail($"Expected private visibility resolution, got {errorMessage}.")
+
+    /// Verifies that conflicting PromotionSet visibility inputs are rejected instead of becoming observable no-ops.
+    [<Test>]
+    member _.PromotionSetVisibilityResolverRejectsPrivateRepositoryOwnedConflict() =
+        let parameters = CreatePromotionSetParameters()
+        parameters.Visibility <- "Private"
+        parameters.Ownership <- "RepositoryOwned"
+
+        match Grace.Server.PromotionSet.resolvePromotionSetVisibility parameters with
+        | Error errorMessage -> Assert.That(errorMessage, Is.EqualTo("Private PromotionSet visibility requires ContributorOwned ownership."))
+        | Ok _ -> Assert.Fail("Expected private RepositoryOwned conflict to be rejected.")
