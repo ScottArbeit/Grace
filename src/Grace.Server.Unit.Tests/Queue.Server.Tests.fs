@@ -70,3 +70,25 @@ type QueuePromotionSetTests() =
         Assert.That(projected.RunningPromotionSetId, Is.EqualTo(Some visiblePromotionSetId))
         Assert.That(projected.State, Is.EqualTo(QueueState.Running))
         Assert.That(projected.UpdatedAt, Is.EqualTo(Some updatedAt))
+
+    /// Verifies that pause and resume use the caller-visible queue projection as mutation authority.
+    [<Test>]
+    member _.QueueActionMutationRequiresCallerVisibleWork() =
+        let visiblePromotionSetId: PromotionSetId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+
+        Assert.That(Grace.Server.Queue.hasCallerVisibleQueueWork [] None, Is.False)
+        Assert.That(Grace.Server.Queue.hasCallerVisibleQueueWork [ visiblePromotionSetId ] None, Is.True)
+        Assert.That(Grace.Server.Queue.hasCallerVisibleQueueWork [] (Some visiblePromotionSetId), Is.True)
+
+    /// Verifies that hidden-only pause and resume no-ops use the same deterministic result shape.
+    [<Test>]
+    member _.QueueActionNoObservableWorkReturnValueDoesNotExposeHiddenState() =
+        let pause = Grace.Server.Queue.noObservableQueueWorkReturnValue "Pause" "corr-queue-noop"
+        let resume = Grace.Server.Queue.noObservableQueueWorkReturnValue "Resume" "corr-queue-noop"
+
+        Assert.That(pause.CorrelationId, Is.EqualTo("corr-queue-noop"))
+        Assert.That(resume.CorrelationId, Is.EqualTo("corr-queue-noop"))
+        Assert.That(string pause.ReturnValue, Does.Not.Contain("Paused"))
+        Assert.That(string resume.ReturnValue, Does.Not.Contain("Running"))
+        Assert.That(string pause.ReturnValue, Does.Contain("no caller-visible queue work"))
+        Assert.That(string resume.ReturnValue, Does.Contain("no caller-visible queue work"))

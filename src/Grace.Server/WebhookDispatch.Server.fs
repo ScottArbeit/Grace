@@ -5,6 +5,7 @@ open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Events
 open Grace.Types.PromotionSet
+open Grace.Types.Reference
 open Grace.Types.Common
 open Grace.Types.Visibility
 open Grace.Types.Webhooks
@@ -158,6 +159,47 @@ module WebhookDispatch =
         }
 
     /// Creates the external webhook dispatch payload and dedupe key for promotion-set-applied events.
+    let private createPromotionSetAppliedDispatchEvent metadata terminalPromotionReferenceId =
+        let definition = ExternalWebhookEventRegistry.promotionSetApplied
+        let scope = scopeFromMetadata metadata
+
+        let promotionSetId =
+            tryGetPromotionSetId metadata
+            |> Option.defaultValue PromotionSetId.Empty
+
+        let dedupeKey =
+            String.Join(
+                ":",
+                [|
+                    definition.Name
+                    $"{definition.Version}"
+                    $"{scope.OwnerId}"
+                    $"{scope.OrganizationId}"
+                    $"{scope.RepositoryId}"
+                    $"{scope.TargetBranchId
+                       |> Option.defaultValue BranchId.Empty}"
+                    $"{promotionSetId}"
+                    $"{terminalPromotionReferenceId}"
+                |]
+            )
+
+        let payload =
+            {|
+                eventName = definition.Name
+                eventVersion = definition.Version
+                eventTime = metadata.Timestamp
+                correlationId = metadata.CorrelationId
+                ownerId = scope.OwnerId
+                organizationId = scope.OrganizationId
+                repositoryId = scope.RepositoryId
+                targetBranchId = scope.TargetBranchId
+                promotionSetId = promotionSetId
+                terminalPromotionReferenceId = terminalPromotionReferenceId
+            |}
+
+        Option.Some(definition, scope, dedupeKey, serialize payload)
+
+    /// Creates the external webhook dispatch payload and dedupe key for promotion-set-applied events.
     let private tryCreatePromotionSetAppliedDispatchEvent (promotionSetEvent: PromotionSetEvent) =
         /// Checks durable metadata before external webhook dispatch observes a PromotionSet apply event.
         let allowsPublicDispatch =
@@ -177,50 +219,23 @@ module WebhookDispatch =
 
         match promotionSetEvent.Event with
         | PromotionSetEventType.Applied terminalPromotionReferenceId when allowsPublicDispatch ->
-            let definition = ExternalWebhookEventRegistry.promotionSetApplied
-            let scope = scopeFromMetadata promotionSetEvent.Metadata
+            createPromotionSetAppliedDispatchEvent promotionSetEvent.Metadata terminalPromotionReferenceId
+        | _ -> Option.None
 
-            let promotionSetId =
-                tryGetPromotionSetId promotionSetEvent.Metadata
-                |> Option.defaultValue PromotionSetId.Empty
-
-            let dedupeKey =
-                String.Join(
-                    ":",
-                    [|
-                        definition.Name
-                        $"{definition.Version}"
-                        $"{scope.OwnerId}"
-                        $"{scope.OrganizationId}"
-                        $"{scope.RepositoryId}"
-                        $"{scope.TargetBranchId
-                           |> Option.defaultValue BranchId.Empty}"
-                        $"{promotionSetId}"
-                        $"{terminalPromotionReferenceId}"
-                    |]
-                )
-
-            let payload =
-                {|
-                    eventName = definition.Name
-                    eventVersion = definition.Version
-                    eventTime = promotionSetEvent.Metadata.Timestamp
-                    correlationId = promotionSetEvent.Metadata.CorrelationId
-                    ownerId = scope.OwnerId
-                    organizationId = scope.OrganizationId
-                    repositoryId = scope.RepositoryId
-                    targetBranchId = scope.TargetBranchId
-                    promotionSetId = promotionSetId
-                    terminalPromotionReferenceId = terminalPromotionReferenceId
-                |}
-
-            Option.Some(definition, scope, dedupeKey, serialize payload)
+    /// Creates reveal-time promotion-set-applied dispatch for terminal private PromotionSet publication.
+    let private tryCreatePromotionSetAppliedDispatchEventFromReveal (referenceEvent: ReferenceEvent) =
+        match referenceEvent.Event with
+        | ReferenceEventType.Revealed (_, _, _, fromVisibility, ResourceVisibility.Public) when fromVisibility <> ResourceVisibility.Public ->
+            match tryGetGuidFromMetadata "TerminalPromotionReferenceId" referenceEvent.Metadata with
+            | Option.Some terminalPromotionReferenceId -> createPromotionSetAppliedDispatchEvent referenceEvent.Metadata terminalPromotionReferenceId
+            | Option.None -> Option.None
         | _ -> Option.None
 
     /// Selects the external webhook event projection supported for a Grace domain event.
     let private tryCreateDispatchEvent graceEvent =
         match graceEvent with
         | GraceEvent.PromotionSetEvent promotionSetEvent -> tryCreatePromotionSetAppliedDispatchEvent promotionSetEvent
+        | GraceEvent.ReferenceEvent referenceEvent -> tryCreatePromotionSetAppliedDispatchEventFromReveal referenceEvent
         | _ -> Option.None
 
     /// Computes hmac sha256 hex data used by Grace Server.

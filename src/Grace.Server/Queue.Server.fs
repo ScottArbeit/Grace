@@ -66,6 +66,49 @@ module Queue =
                 UpdatedAt = if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
             }
 
+    /// Decides whether a queue route may mutate state from caller-visible work.
+    let internal hasCallerVisibleQueueWork (observablePromotionSetIds: PromotionSetId list) (observableRunningPromotionSetId: PromotionSetId option) =
+        not observablePromotionSetIds.IsEmpty
+        || observableRunningPromotionSetId.IsSome
+
+    /// Creates the stable no-op result for pause and resume when the caller has no visible queue work.
+    let internal noObservableQueueWorkReturnValue commandName correlationId =
+        GraceReturnValue.Create $"{commandName} skipped because no caller-visible queue work exists." correlationId
+
+    /// Builds caller-visible queue evidence before a pause or resume route mutates branch queue state.
+    let private getObservableQueueWork context repositoryId correlationId (queue: PromotionQueue) =
+        task {
+            let promotionSetIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+            let observablePromotionSetIds = ResizeArray<PromotionSetId>()
+            let promotionSetIdArray = promotionSetIds |> List.toArray
+            let mutable index = 0
+
+            while index < promotionSetIdArray.Length do
+                let promotionSetId = promotionSetIdArray[index]
+                let! promotionSet = tryGetObservablePromotionSet context repositoryId correlationId promotionSetId
+
+                if promotionSet.IsSome then observablePromotionSetIds.Add promotionSetId
+
+                index <- index + 1
+
+            let! observableRunningPromotionSetId =
+                if isNull (box queue.RunningPromotionSetId) then
+                    Task.FromResult None
+                else
+                    match queue.RunningPromotionSetId with
+                    | Some promotionSetId ->
+                        task {
+                            let! promotionSet = tryGetObservablePromotionSet context repositoryId correlationId promotionSetId
+
+                            return
+                                promotionSet
+                                |> Option.map (fun _ -> promotionSetId)
+                        }
+                    | None -> Task.FromResult None
+
+            return observablePromotionSetIds |> Seq.toList, observableRunningPromotionSetId
+        }
+
     /// Copies private PromotionSet visibility facts onto queue automation metadata.
     let private inheritPromotionSetVisibilityMetadata (metadata: EventMetadata) (promotionSet: Grace.Types.PromotionSet.PromotionSetDto) =
         metadata.Properties[ "InheritedVisibility" ] <- $"{promotionSet.Visibility}"
@@ -398,10 +441,18 @@ module Queue =
                 if validationsPassed then
                     let targetBranchId = Guid.Parse(parameters.TargetBranchId)
                     let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+                    let! queueJson = actorProxy.GetForRoute correlationId
+                    let queue = deserialize<PromotionQueue> queueJson
+                    let! observablePromotionSetIds, observableRunningPromotionSetId = getObservableQueueWork context graceIds.RepositoryId correlationId queue
 
-                    match! actorProxy.PauseForRoute(createMetadata context) with
-                    | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
-                    | Error graceError -> return! context |> result400BadRequest graceError
+                    if hasCallerVisibleQueueWork observablePromotionSetIds observableRunningPromotionSetId then
+                        match! actorProxy.PauseForRoute(createMetadata context) with
+                        | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                        | Error graceError -> return! context |> result400BadRequest graceError
+                    else
+                        return!
+                            context
+                            |> result200Ok (noObservableQueueWorkReturnValue (nameof Pause) correlationId)
                 else
                     let! error = validationResults |> getFirstError
 
@@ -431,10 +482,18 @@ module Queue =
                 if validationsPassed then
                     let targetBranchId = Guid.Parse(parameters.TargetBranchId)
                     let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+                    let! queueJson = actorProxy.GetForRoute correlationId
+                    let queue = deserialize<PromotionQueue> queueJson
+                    let! observablePromotionSetIds, observableRunningPromotionSetId = getObservableQueueWork context graceIds.RepositoryId correlationId queue
 
-                    match! actorProxy.ResumeForRoute(createMetadata context) with
-                    | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
-                    | Error graceError -> return! context |> result400BadRequest graceError
+                    if hasCallerVisibleQueueWork observablePromotionSetIds observableRunningPromotionSetId then
+                        match! actorProxy.ResumeForRoute(createMetadata context) with
+                        | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                        | Error graceError -> return! context |> result400BadRequest graceError
+                    else
+                        return!
+                            context
+                            |> result200Ok (noObservableQueueWorkReturnValue (nameof Resume) correlationId)
                 else
                     let! error = validationResults |> getFirstError
 

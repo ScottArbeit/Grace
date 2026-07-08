@@ -232,7 +232,21 @@ module Branch =
                 return VisibilityAuthorization.canObserveBranchReference caller (fun _ -> branchAudience) resource
         }
 
-    /// Validates that a reveal will not disclose hidden reference or promotion-review links.
+    /// Checks whether PromotionSet review metadata is safe to disclose because the selected reference is terminal.
+    let internal isRevealablePromotionSetMetadataLink (referenceDto: Reference.ReferenceDto) promotionSetId =
+        referenceDto.Links
+        |> Seq.exists (function
+            | ReferenceLinkType.PromotionSetTerminal terminalPromotionSetId when terminalPromotionSetId = promotionSetId -> true
+            | _ -> false)
+
+    /// Selects terminal PromotionSet authority from a reference reveal when it is the first public publication point.
+    let internal tryGetTerminalPromotionSetForReveal (referenceDto: Reference.ReferenceDto) =
+        referenceDto.Links
+        |> Seq.tryPick (function
+            | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
+            | _ -> None)
+
+    /// Validates that a reveal will not disclose hidden reference or non-terminal promotion-review links.
     let private validateRevealLinks repositoryId selectedReferenceId (referenceDto: Reference.ReferenceDto) correlationId =
         task {
             let linkArray = referenceDto.Links |> Seq.toArray
@@ -260,14 +274,14 @@ module Branch =
                                     .enhance(nameof ReferenceId, selectedReferenceId)
                                     .enhance ("BasedOnReferenceId", basedOnReferenceId)
                             )
-                | ReferenceLinkType.IncludedInPromotionSet promotionSetId
-                | ReferenceLinkType.PromotionSetTerminal promotionSetId ->
+                | ReferenceLinkType.IncludedInPromotionSet promotionSetId when not (isRevealablePromotionSetMetadataLink referenceDto promotionSetId) ->
                     error <-
                         Some(
                             (GraceError.Create "Reference reveal cannot disclose promotion review metadata in this slice." correlationId)
                                 .enhance(nameof ReferenceId, selectedReferenceId)
                                 .enhance (nameof PromotionSetId, promotionSetId)
                         )
+                | ReferenceLinkType.PromotionSetTerminal _ -> ()
                 | _ -> ()
 
                 index <- index + 1
@@ -2424,9 +2438,17 @@ module Branch =
 
                             let metadata = EventMetadata.New correlationId revealPrincipal
                             metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                            metadata.Properties[ nameof OwnerId ] <- $"{graceIds.OwnerId}"
+                            metadata.Properties[ nameof OrganizationId ] <- $"{graceIds.OrganizationId}"
                             metadata.Properties[ nameof BranchId ] <- $"{graceIds.BranchId}"
                             metadata.Properties[ nameof ReferenceId ] <- $"{parameters.ReferenceId}"
                             metadata.Properties[ "ReferenceRevealOperationId" ] <- parameters.OperationId
+
+                            referenceDto
+                            |> tryGetTerminalPromotionSetForReveal
+                            |> Option.iter (fun promotionSetId ->
+                                metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+                                metadata.Properties[ "TerminalPromotionReferenceId" ] <- $"{parameters.ReferenceId}")
 
                             /// Runs the durable actor transition after route-local reveal preconditions have passed or replay is detected.
                             let executeReveal () =
