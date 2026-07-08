@@ -1697,6 +1697,11 @@ module Services =
             isNotDeletedReference referenceDto
             && hasPromotionSetTerminalLink referenceDto)
 
+    /// Checks whether a terminal promotion reference can publish normal branch/base authority.
+    let internal terminalPromotionCanPublishBranchAuthority (referenceDto: ReferenceDto) =
+        referenceDto.Visibility = ResourceVisibility.Public
+        || referenceDto.Ownership = ResourceOwnership.RepositoryOwned
+
     /// Checks whether a terminal promotion reference can publish public branch/base authority for the supplied workflow.
     let internal terminalPromotionVisibleToPromotionSet (promotionSetDto: Grace.Types.PromotionSet.PromotionSetDto) (referenceDto: ReferenceDto) =
         match referenceDto.Visibility, referenceDto.Ownership, promotionSetDto.Visibility, promotionSetDto.Ownership with
@@ -2509,9 +2514,9 @@ module Services =
             | MongoDB -> return None
         }
 
-    /// Gets the latest public terminal promotion from a branch.
+    /// Gets the latest terminal promotion that can publish branch/base authority.
     let getLatestPromotion (repositoryId: RepositoryId) (branchId: BranchId) =
-        getLatestPromotionByPredicate repositoryId branchId (fun referenceDto -> referenceDto.Visibility = ResourceVisibility.Public)
+        getLatestPromotionByPredicate repositoryId branchId terminalPromotionCanPublishBranchAuthority
 
     /// Gets the latest terminal promotion visible to the supplied PromotionSet workflow.
     let getLatestPromotionForPromotionSet (promotionSetDto: Grace.Types.PromotionSet.PromotionSetDto) =

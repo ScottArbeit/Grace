@@ -169,6 +169,25 @@ type ServicesEffectivePromotionTests() =
 
         Assert.That(selected, Is.EqualTo(Some publicTerminal))
 
+    /// Verifies that branch base selection keeps repository-owned terminal authority available for default branches.
+    [<Test>]
+    member _.BranchAuthorityAllowsRepositoryOwnedTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 15)
+
+        let repositoryOwnedTerminal = createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.RepositoryOwned Option.None
+
+        Assert.That(Services.terminalPromotionCanPublishBranchAuthority repositoryOwnedTerminal, Is.True)
+
+    /// Verifies that branch base selection still rejects private contributor-owned terminal authority.
+    [<Test>]
+    member _.BranchAuthorityRejectsPrivateContributorOwnedTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 20)
+
+        let privateContributorTerminal =
+            createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.ContributorOwned (Some(UserId "creator-a"))
+
+        Assert.That(Services.terminalPromotionCanPublishBranchAuthority privateContributorTerminal, Is.False)
+
     /// Verifies that private PromotionSet base selection can share private terminal authority inside the same contributor audience.
     [<Test>]
     member _.LatestPromotionForPrivatePromotionSetAllowsSameContributorPrivateTerminalReference() =
