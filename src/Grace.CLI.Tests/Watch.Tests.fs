@@ -14162,6 +14162,119 @@ module WatchTests =
                     referenceB.ReferenceId
                 |])
 
+    /// Verifies that the repository/worktree lease blocks materialization in another lane owner.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``working directory materialization lane waits for repository lease`` () =
+        withTempRepo (fun root ->
+            configureCurrentWatchIdentity root "current-repo" "current-branch"
+            |> ignore
+
+            let leaseFileName = WorkingDirectoryMaterialization.leaseFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(leaseFileName))
+            |> ignore
+
+            use blockingLease = new FileStream(leaseFileName, FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None)
+            use operationEntered = new ManualResetEventSlim(false)
+
+            let materializationTask =
+                Task.Run (fun () ->
+                    (WorkingDirectoryMaterialization.runSerialized (fun () -> task { operationEntered.Set() |> ignore }))
+                        .GetAwaiter()
+                        .GetResult())
+
+            try
+                Task.Delay(150).Wait()
+
+                operationEntered.IsSet |> should equal false
+            finally
+                blockingLease.Dispose()
+
+            Task.WaitAll([| materializationTask |], 5000)
+            |> should equal true
+
+            operationEntered.IsSet |> should equal true)
+
+    /// Verifies that branch-switch working-tree materialization waits behind an active Reference materialization.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator blocks branch switch lane until active reference completes`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "branch-switch-lane-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync.")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+            use applyStarted = new ManualResetEventSlim(false)
+            use releaseApply = new ManualResetEventSlim(false)
+            use branchSwitchEntered = new ManualResetEventSlim(false)
+
+            let applyReference _ _ =
+                task {
+                    applyStarted.Set() |> ignore
+
+                    releaseApply.Wait()
+                }
+
+            let referenceTask =
+                Task.Run (fun () ->
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        notification)
+                        .GetAwaiter()
+                        .GetResult())
+
+            let mutable branchSwitchTask: Task = null
+
+            try
+                applyStarted.Wait(5000) |> should equal true
+
+                branchSwitchTask <-
+                    Task.Run (fun () ->
+                        (WorkingDirectoryMaterialization.runSerialized (fun () -> task { branchSwitchEntered.Set() |> ignore }))
+                            .GetAwaiter()
+                            .GetResult())
+
+                Task.Delay(150).Wait()
+
+                branchSwitchEntered.IsSet |> should equal false
+            finally
+                releaseApply.Set() |> ignore
+
+            let tasksToWait =
+                if isNull branchSwitchTask then
+                    [| referenceTask :> Task |]
+                else
+                    [|
+                        referenceTask :> Task
+                        branchSwitchTask
+                    |]
+
+            Task.WaitAll(tasksToWait, 5000)
+            |> should equal true
+
+            referenceTask.Result.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            branchSwitchEntered.IsSet |> should equal true)
+
     /// Verifies that a queued Reference is checked against BranchDto latest only after it owns the serialized lane.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``queued current branch reference revalidates BranchDto latest when processed`` () =

@@ -3802,37 +3802,38 @@ module Branch =
                                         }
 
                                     let! workingTreeUpdateResult =
-                                        runBranchSwitchWorkingTreeUpdateWithMarker
-                                            preflightOperations
-                                            (getCorrelationId parseResult)
-                                            workingTreeUpdateMarkerFileName
-                                            workingTreeUpdateMarkerText
-                                            (fun () ->
-                                                task {
-                                                    //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
+                                        WorkingDirectoryMaterialization.runSerialized (fun () ->
+                                            runBranchSwitchWorkingTreeUpdateWithMarker
+                                                preflightOperations
+                                                (getCorrelationId parseResult)
+                                                workingTreeUpdateMarkerFileName
+                                                workingTreeUpdateMarkerText
+                                                (fun () ->
+                                                    task {
+                                                        //logToAnsiConsole Colors.Verbose $"Succeeded downloading files from object storage for {directoryVersion.RelativePath}."
 
-                                                    // Update working directory based on new GraceStatus.Index
-                                                    do!
-                                                        updateWorkingDirectory
-                                                            newGraceStatus
-                                                            graceStatusWithNewDirectoryVersionsFromServer
-                                                            newDirectoryVersionDtos
-                                                            (getCorrelationId parseResult)
-                                                    //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
+                                                        // Update working directory based on new GraceStatus.Index
+                                                        do!
+                                                            updateWorkingDirectory
+                                                                newGraceStatus
+                                                                graceStatusWithNewDirectoryVersionsFromServer
+                                                                newDirectoryVersionDtos
+                                                                (getCorrelationId parseResult)
+                                                        //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
-                                                    // Save the new Grace Status.
-                                                    do!
-                                                        applyBranchSwitchLocalState
-                                                            (fun () -> writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer)
-                                                            (fun () ->
-                                                                let configuration = Current()
-                                                                configuration.BranchId <- newBranch.BranchId
-                                                                configuration.BranchName <- newBranch.BranchName
-                                                                updateConfiguration configuration)
-                                                            (fun () -> upsertObjectCache graceStatusWithNewDirectoryVersionsFromServer.Index.Values)
+                                                        // Save the new Grace Status.
+                                                        do!
+                                                            applyBranchSwitchLocalState
+                                                                (fun () -> writeGraceStatusFile graceStatusWithNewDirectoryVersionsFromServer)
+                                                                (fun () ->
+                                                                    let configuration = Current()
+                                                                    configuration.BranchId <- newBranch.BranchId
+                                                                    configuration.BranchName <- newBranch.BranchName
+                                                                    updateConfiguration configuration)
+                                                                (fun () -> upsertObjectCache graceStatusWithNewDirectoryVersionsFromServer.Index.Values)
 
-                                                    t |> setProgressTaskValue showOutput 100.0
-                                                })
+                                                        t |> setProgressTaskValue showOutput 100.0
+                                                    }))
 
                                     match workingTreeUpdateResult with
                                     | Error error -> return Error error

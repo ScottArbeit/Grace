@@ -3192,8 +3192,6 @@ module Watch =
     let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
         handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
 
-    let private currentBranchMaterializationLane = new SemaphoreSlim(1, 1)
-
     /// Names the coordinator result for one exact same-branch Reference notification.
     type internal CurrentBranchMaterializationCoordinatorOutcomeReason =
         /// The notification was ignored because it did not target the current Watch branch.
@@ -3570,15 +3568,7 @@ module Watch =
         (clients: CurrentBranchMaterializationCoordinatorClients)
         (payload: CurrentBranchReferenceNotification)
         =
-        task {
-            do! currentBranchMaterializationLane.WaitAsync()
-
-            try
-                return! processCurrentBranchMaterializationNotification clients payload
-            finally
-                currentBranchMaterializationLane.Release()
-                |> ignore
-        }
+        WorkingDirectoryMaterialization.runSerialized (fun () -> processCurrentBranchMaterializationNotification clients payload)
 
     /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
     let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
