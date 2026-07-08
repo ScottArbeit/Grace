@@ -328,7 +328,7 @@ type ManifestDownloadSdkTests() =
                     Task.FromResult(Ok(GraceReturnValue.Create result request.CorrelationId))
 
                 /// Builds whole file download test data used to exercise CLI manifest Download behavior.
-                let wholeFileDownload _ _ =
+                let wholeFileDownload _ _ _ =
                     Assert.Fail("Manifest-backed CLI downloads must not use the WholeFileContent object-storage path.")
                     Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
 
@@ -397,7 +397,7 @@ type ManifestDownloadSdkTests() =
                     Task.FromResult(Ok(GraceReturnValue.Create result request.CorrelationId))
 
                 /// Builds whole file download test data used to exercise CLI manifest Download behavior.
-                let wholeFileDownload _ _ =
+                let wholeFileDownload _ _ _ =
                     Assert.Fail("Manifest cache write failures must not fall back to WholeFileContent downloads.")
                     Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
 
@@ -452,7 +452,7 @@ type ManifestDownloadSdkTests() =
                     Task.FromResult(Error(GraceError.Create "simulated manifest reconstruction failure" request.CorrelationId))
 
                 /// Builds whole file download test data used to exercise CLI manifest Download behavior.
-                let wholeFileDownload _ _ =
+                let wholeFileDownload _ _ _ =
                     Assert.Fail("Manifest reconstruction failures must not fall back to WholeFileContent downloads.")
                     Task.FromResult(Error(GraceError.Create "unexpected whole-file download" getDownloadUriParameters.CorrelationId))
 

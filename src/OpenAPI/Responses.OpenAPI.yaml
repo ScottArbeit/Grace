@@ -47,6 +47,20 @@
             forbidden:
               summary: Framework authorization failure
               value: Forbidden.
+    '404':
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/GraceError'
+          examples:
+            hiddenOrMissing:
+              summary: Hidden or missing resource
+              value:
+                Error: The requested resource was not found.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties: {}
     '500':
       description: Internal Server Error
       content:

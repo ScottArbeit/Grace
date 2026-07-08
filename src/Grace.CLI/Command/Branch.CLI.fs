@@ -3469,6 +3469,11 @@ module Branch =
                                         OrganizationName = graceIds.OrganizationName,
                                         RepositoryId = graceIds.RepositoryIdString,
                                         RepositoryName = graceIds.RepositoryName,
+                                        ReferenceId =
+                                            (if String.IsNullOrWhiteSpace parameters.ReferenceId then
+                                                 ReferenceId.Empty
+                                             else
+                                                 Guid.Parse parameters.ReferenceId),
                                         CorrelationId = graceIds.CorrelationId
                                     )
 
@@ -3502,6 +3507,7 @@ module Branch =
                                                 newGraceStatus
                                                 graceStatusWithNewDirectoryVersionsFromServer
                                                 newDirectoryVersionDtos
+                                                getDownloadUriParameters.ReferenceId
                                                 (getCorrelationId parseResult)
                                         //logToAnsiConsole Colors.Verbose $"Succeeded calling updateWorkingDirectory."
 
@@ -3903,6 +3909,7 @@ module Branch =
                                             OwnerId = graceIds.OwnerIdString,
                                             OrganizationId = graceIds.OrganizationIdString,
                                             RepositoryId = graceIds.RepositoryIdString,
+                                            ReferenceId = parentLatestPromotion.ReferenceId,
                                             CorrelationId = graceIds.CorrelationId
                                         )
 

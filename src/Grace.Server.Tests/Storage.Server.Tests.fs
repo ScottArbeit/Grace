@@ -12,6 +12,7 @@ open Grace.Types.Common
 open NUnit.Framework
 open System
 open System.IO
+open System.IO.Compression
 open System.Net
 open System.Net.Http
 open System.Security.Cryptography
@@ -145,13 +146,67 @@ type StorageWholeFileCompatibility() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Compresses text file payload bytes the same way Grace object-cache uploads store non-binary whole files.
+    let gzipWholeFilePayload (payload: byte array) =
+        use compressed = new MemoryStream()
+        use gzipStream = new GZipStream(compressed, CompressionLevel.SmallestSize, leaveOpen = true)
+        gzipStream.Write(payload, 0, payload.Length)
+        gzipStream.Dispose()
+        compressed.ToArray()
+
+    /// Uploads whole-file bytes through server-issued SAS so saved references pass storage validation.
+    let uploadWholeFileWithClientAsync (client: HttpClient) repositoryId (fileVersion: FileVersion) (payload: byte array) =
+        task {
+            let! uploadResponse = client.PostAsync("/storage/getUploadMetadataForFiles", createJsonContent (createUploadParameters repositoryId fileVersion))
+
+            let! uploadContent = uploadResponse.Content.ReadAsStringAsync()
+            Assert.That(uploadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), uploadContent)
+            let metadata = getUploadMetadataJson uploadContent
+
+            let uploadUri =
+                Uri(
+                    (requireJsonProperty "BlobUriWithSasToken" metadata)
+                        .GetString()
+                )
+
+            let storedPayload = if fileVersion.IsBinary then payload else gzipWholeFilePayload payload
+
+            let blockBlobClient = BlockBlobClient(uploadUri)
+            use payloadStream = new MemoryStream(storedPayload, writable = false)
+            let uploadOptions = BlobUploadOptions()
+
+            if not fileVersion.IsBinary then
+                uploadOptions.HttpHeaders <- BlobHttpHeaders(ContentEncoding = "gzip")
+
+            let! response = blockBlobClient.UploadAsync(payloadStream, uploadOptions)
+            Assert.That(response.GetRawResponse().Status, Is.EqualTo(int HttpStatusCode.Created))
+        }
+
+    /// Saves a visible reference that reaches the whole-file version under test.
+    let createReachableReferenceForFile repositoryId (fileVersion: FileVersion) (payload: byte array) =
+        task {
+            do! uploadWholeFileWithClientAsync Client repositoryId fileVersion payload
+            let root = BranchServerTestHelpers.createRootDirectoryVersion repositoryId fileVersion
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ root ]
+            let! parentBranch = BranchServerTestHelpers.getBranchAsync repositoryId repositoryDefaultBranchIds[0]
+            let! branch = BranchServerTestHelpers.createBranchAsync repositoryId parentBranch $"StorageDownload{Guid.NewGuid():N}"
+            let! saveResponse = BranchServerTestHelpers.saveReferenceResponseAsync repositoryId branch root.DirectoryVersionId root.Sha256Hash
+            let! saveBody = saveResponse.Content.ReadAsStringAsync()
+            Assert.That(saveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), saveBody)
+            let! savedBranch = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            return savedBranch.LatestSave.ReferenceId
+        }
+
     /// Builds create download parameters for route calls.
-    let createDownloadParameters repositoryId fileVersion =
+    let createDownloadParameters repositoryId referenceId (fileVersion: FileVersion) =
         let parameters = Parameters.Storage.GetDownloadUriParameters()
         parameters.OwnerId <- ownerId
         parameters.OrganizationId <- organizationId
         parameters.RepositoryId <- repositoryId
-        parameters.FileVersion <- fileVersion
+        parameters.ReferenceId <- referenceId
+        parameters.RelativePath <- fileVersion.RelativePath
+        parameters.Sha256Hash <- fileVersion.Sha256Hash
+        parameters.Blake3Hash <- fileVersion.Blake3Hash
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
@@ -183,7 +238,7 @@ type StorageWholeFileCompatibility() =
             let relativePath = $"{relativeDirectory}/small.bin"
             let payload = Encoding.UTF8.GetBytes($"Grace whole-file compatibility {Guid.NewGuid():N}")
             let sha256Hash = computeSha256Hash payload
-            let blake3Hash = Blake3Hash "af1349b9f5f9a1a6a0404dea36dcc9499bcb25c9adcd1e8c76d9a8885f16a39f"
+            let blake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex payload)
 
             let fileVersion =
                 FileVersion.CreateWithHashes (RelativePath relativePath) (Sha256Hash sha256Hash) blake3Hash String.Empty true (int64 payload.Length)
@@ -222,7 +277,11 @@ type StorageWholeFileCompatibility() =
 
             Assert.That(blobUri.IsAbsoluteUri, Is.True)
 
-            let! downloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId fileVersion))
+            let! referenceId = createReachableReferenceForFile repositoryId fileVersion payload
+
+            let! downloadResponse =
+                Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId referenceId fileVersion))
+
             let! downloadUri = downloadResponse.Content.ReadAsStringAsync()
             Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUri)
             Assert.That(downloadUri, Does.Contain(StorageKeys.wholeFileContentObjectKey fileVersion))
@@ -293,24 +352,11 @@ type StorageWholeFileCompatibility() =
                     .GetString(),
                 Is.EqualTo(secondFileVersion.Blake3Hash)
             )
-
-            let! firstDownloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId firstFileVersion))
-            let! firstDownloadUri = firstDownloadResponse.Content.ReadAsStringAsync()
-            Assert.That(firstDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), firstDownloadUri)
-            Assert.That(firstDownloadUri, Does.Contain($"small_{sharedSha256Hash}_{firstFileVersion.Blake3Hash}.bin"))
-
-            let! secondDownloadResponse =
-                Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId secondFileVersion))
-
-            let! secondDownloadUri = secondDownloadResponse.Content.ReadAsStringAsync()
-            Assert.That(secondDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), secondDownloadUri)
-            Assert.That(secondDownloadUri, Does.Contain($"small_{sharedSha256Hash}_{secondFileVersion.Blake3Hash}.bin"))
-            Assert.That(firstDownloadUri, Is.Not.EqualTo(secondDownloadUri))
         }
 
-    /// Verifies the small whole file download uses current BLAKE3 key when blob has not been uploaded yet scenario.
+    /// Verifies the small whole file download uses current BLAKE3 key after server reachability proof scenario.
     [<Test>]
-    member _.SmallWholeFileDownloadUsesCurrentBlake3KeyWhenBlobHasNotBeenUploadedYet() =
+    member _.SmallWholeFileDownloadUsesCurrentBlake3KeyAfterReachabilityProof() =
         task {
             let repositoryId = repositoryIds[0]
             let relativeDirectory = $"wholefile-current-key/{Guid.NewGuid():N}"
@@ -322,7 +368,7 @@ type StorageWholeFileCompatibility() =
                 FileVersion.CreateWithHashes
                     (RelativePath relativePath)
                     (Sha256Hash sha256Hash)
-                    (Blake3Hash "9a35d91b2f631be9025de753139b88f7b1e71385c412bc3986ff2f38f230841d")
+                    (Blake3Hash(ContentAddress.computeBlake3Hex payload))
                     String.Empty
                     false
                     (int64 payload.Length)
@@ -331,11 +377,148 @@ type StorageWholeFileCompatibility() =
             let shaOnlyBlobName = StorageKeys.legacyWholeFileContentObjectKey fileVersion
             Assert.That(currentBlobName, Is.Not.EqualTo(shaOnlyBlobName))
 
-            let! downloadResponse = Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId fileVersion))
+            let! referenceId = createReachableReferenceForFile repositoryId fileVersion payload
+
+            let! downloadResponse =
+                Client.PostAsync("/storage/getDownloadUri", createJsonContent (createDownloadParameters repositoryId referenceId fileVersion))
+
             let! downloadUriText = downloadResponse.Content.ReadAsStringAsync()
             Assert.That(downloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), downloadUriText)
             Assert.That(downloadUriText, Does.Contain(currentBlobName))
             Assert.That(downloadUriText, Does.Not.Contain(shaOnlyBlobName))
+        }
+
+    /// Verifies whole-file download URI authorization requires a visible reference reachability proof.
+    [<Test>]
+    member _.WholeFileDownloadUriRequiresVisibleReferenceReachabilityProof() =
+        task {
+            let creatorUserId = $"{Guid.NewGuid()}"
+            let observerUserId = $"{Guid.NewGuid()}"
+            let! repositoryId = BranchServerTestHelpers.createRepositoryAsync "StorageDownloadReachability"
+
+            do! BranchServerTestHelpers.setRepositoryVisibilityAsync repositoryId "Public"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId creatorUserId "RepositoryContributor"
+            do! BranchServerTestHelpers.grantRepositoryRoleAsync repositoryId observerUserId "RepositoryReader"
+
+            use creatorClient = BranchServerTestHelpers.createClientWithUserId creatorUserId
+            use observerClient = BranchServerTestHelpers.createClientWithUserId observerUserId
+
+            let! observerBranches = BranchServerTestHelpers.getRepositoryBranchesWithClientAsync observerClient repositoryId
+            let parentBranch = observerBranches |> Array.exactlyOne
+
+            let! publicBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync
+                    creatorClient
+                    repositoryId
+                    parentBranch
+                    $"PublicDownload{Guid.NewGuid():N}"
+                    "Public"
+                    "RepositoryOwned"
+
+            let! privateBranchId =
+                BranchServerTestHelpers.createBranchWithVisibilityAsync
+                    creatorClient
+                    repositoryId
+                    parentBranch
+                    $"PrivateDownload{Guid.NewGuid():N}"
+                    "Private"
+                    "ContributorOwned"
+
+            let! publicBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId publicBranchId
+            do! BranchServerTestHelpers.assertOk publicBranchResponse
+            let! publicBranchReturnValue = deserializeContent<GraceReturnValue<Grace.Types.Branch.BranchDto>> publicBranchResponse
+            let publicBranch = publicBranchReturnValue.ReturnValue
+
+            let! privateBranchResponse = BranchServerTestHelpers.getBranchResponseAsync creatorClient repositoryId privateBranchId
+            do! BranchServerTestHelpers.assertOk privateBranchResponse
+            let! privateBranchReturnValue = deserializeContent<GraceReturnValue<Grace.Types.Branch.BranchDto>> privateBranchResponse
+            let privateBranch = privateBranchReturnValue.ReturnValue
+
+            let publicPayload = Encoding.UTF8.GetBytes($"public download {Guid.NewGuid():N}")
+            let privatePayload = Encoding.UTF8.GetBytes($"private download {Guid.NewGuid():N}")
+
+            let publicFileVersion =
+                FileVersion.CreateWithHashes
+                    (RelativePath $"downloads/public-{Guid.NewGuid():N}.txt")
+                    (Sha256Hash(computeSha256Hash publicPayload))
+                    (Blake3Hash(ContentAddress.computeBlake3Hex publicPayload))
+                    String.Empty
+                    false
+                    (int64 publicPayload.Length)
+
+            let privateFileVersion =
+                FileVersion.CreateWithHashes
+                    (RelativePath $"downloads/private-{Guid.NewGuid():N}.txt")
+                    (Sha256Hash(computeSha256Hash privatePayload))
+                    (Blake3Hash(ContentAddress.computeBlake3Hex privatePayload))
+                    String.Empty
+                    false
+                    (int64 privatePayload.Length)
+
+            let publicRoot = BranchServerTestHelpers.createRootDirectoryVersion repositoryId publicFileVersion
+            let privateRoot = BranchServerTestHelpers.createRootDirectoryVersion repositoryId privateFileVersion
+
+            do! uploadWholeFileWithClientAsync creatorClient repositoryId publicFileVersion publicPayload
+            do! uploadWholeFileWithClientAsync creatorClient repositoryId privateFileVersion privatePayload
+            do! BranchServerTestHelpers.saveDirectoryVersionsAsync repositoryId [ publicRoot; privateRoot ]
+
+            let! publicSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    publicBranch
+                    publicRoot.DirectoryVersionId
+                    publicRoot.Sha256Hash
+
+            let! publicSaveBody = publicSaveResponse.Content.ReadAsStringAsync()
+            Assert.That(publicSaveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), publicSaveBody)
+
+            let! privateSaveResponse =
+                BranchServerTestHelpers.saveReferenceWithClientResponseAsync
+                    creatorClient
+                    repositoryId
+                    privateBranch
+                    privateRoot.DirectoryVersionId
+                    privateRoot.Sha256Hash
+
+            let! privateSaveBody = privateSaveResponse.Content.ReadAsStringAsync()
+            Assert.That(privateSaveResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), privateSaveBody)
+
+            let! savedPublicBranch = BranchServerTestHelpers.getBranchAsync repositoryId publicBranchId
+            let! savedPrivateBranch = BranchServerTestHelpers.getBranchAsync repositoryId privateBranchId
+
+            let! publicDownloadResponse =
+                observerClient.PostAsync(
+                    "/storage/getDownloadUri",
+                    createJsonContent (createDownloadParameters repositoryId savedPublicBranch.LatestSave.ReferenceId publicFileVersion)
+                )
+
+            let! publicDownloadBody = publicDownloadResponse.Content.ReadAsStringAsync()
+            Assert.That(publicDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.OK), publicDownloadBody)
+            Assert.That(publicDownloadBody, Does.Contain(StorageKeys.wholeFileContentObjectKey publicFileVersion))
+            Assert.That(publicDownloadBody, Does.Contain("sp=r"))
+            Assert.That(publicDownloadBody, Does.Not.Contain("sp=rl"))
+
+            let! hiddenPrivateDownloadResponse =
+                observerClient.PostAsync(
+                    "/storage/getDownloadUri",
+                    createJsonContent (createDownloadParameters repositoryId savedPrivateBranch.LatestSave.ReferenceId privateFileVersion)
+                )
+
+            let! hiddenPrivateBody = hiddenPrivateDownloadResponse.Content.ReadAsStringAsync()
+
+            let! missingReferenceDownloadResponse =
+                observerClient.PostAsync(
+                    "/storage/getDownloadUri",
+                    createJsonContent (createDownloadParameters repositoryId (Guid.NewGuid()) privateFileVersion)
+                )
+
+            let! missingReferenceBody = missingReferenceDownloadResponse.Content.ReadAsStringAsync()
+
+            Assert.That(hiddenPrivateDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), hiddenPrivateBody)
+            Assert.That(missingReferenceDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.NotFound), missingReferenceBody)
+            Assert.That(hiddenPrivateBody, Is.EqualTo(missingReferenceBody))
+            Assert.That(hiddenPrivateBody, Does.Not.Contain(StorageKeys.wholeFileContentObjectKey privateFileVersion))
         }
 
 /// Covers storage content block SAS routes scenarios.
@@ -1432,11 +1615,14 @@ type StorageManifestUploadSessionRoutes() =
         }
 
     /// Gets manifest file download URI from the running test server.
-    let getManifestFileDownloadUri repositoryId correlationId (fileVersion: FileVersion) =
+    let getManifestFileDownloadUri repositoryId correlationId referenceId (fileVersion: FileVersion) =
         task {
             let parameters = Parameters.Storage.GetDownloadUriParameters()
             setStorageParameters parameters repositoryId correlationId
-            parameters.FileVersion <- fileVersion
+            parameters.ReferenceId <- referenceId
+            parameters.RelativePath <- fileVersion.RelativePath
+            parameters.Sha256Hash <- fileVersion.Sha256Hash
+            parameters.Blake3Hash <- fileVersion.Blake3Hash
 
             let! response = Client.PostAsync("/storage/getDownloadUri", createJsonContent parameters)
             let! body = response.Content.ReadAsStringAsync()
@@ -2050,7 +2236,7 @@ type StorageManifestUploadSessionRoutes() =
             Assert.That(wrongPoolDownloadResponse.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), wrongPoolDownloadBody)
             Assert.That(wrongPoolDownloadBody, Does.Contain("storage pool"))
 
-            let! downloadUri = getManifestFileDownloadUri repositoryId correlationId manifestFileVersion
+            let! downloadUri = getManifestFileDownloadUri repositoryId correlationId savedBranch.LatestSave.ReferenceId manifestFileVersion
             let! downloadedPayload = downloadFileWithSas downloadUri
 
             Assert.That(downloadedPayload.Length, Is.EqualTo(payload.Length))

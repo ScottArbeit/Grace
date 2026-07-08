@@ -2789,7 +2789,8 @@ paths:
   /storage/getDownloadUri:
     post:
       summary: Gets a download URI for whole-file content.
-      description: Compatibility endpoint for downloading repository-scoped WholeFileContent.
+      description: |
+        Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape.
       operationId: GetDownloadUri
       requestBody:
         required: true
@@ -2810,6 +2811,8 @@ paths:
                   value: https://storage.example.net/grace/repo/file.txt?sv=2023-11-03&sig=example
         '400':
           $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
   /storage/getContentBlockUploadUri:
@@ -4377,13 +4380,23 @@ components:
           items:
             $ref: '#/components/schemas/FileVersion'
     GetDownloadUriParameters:
-      description: Parameters for /storage/getDownloadUri.
+      description: |
+        Parameters for /storage/getDownloadUri. The request identifies an observable reference, file path, and file hash proof; the server derives the FileVersion from that reachable reference tree before issuing a read-only object SAS. Supplying a FileVersion body is not accepted as authorization.
       allOf:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
       properties:
-        FileVersion:
-          $ref: '#/components/schemas/FileVersion'
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        RelativePath:
+          $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+      required:
+        - ReferenceId
+        - RelativePath
     GetContentBlockUploadUriParameters:
       description: Parameters for /storage/getContentBlockUploadUri.
       allOf:
@@ -6980,6 +6993,20 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /owner/get
+    '404':
+      description: Not Found
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/GraceError'
+          examples:
+            hiddenOrMissing:
+              summary: Hidden or missing resource
+              value:
+                Error: The requested resource was not found.
+                EventTime: '2026-06-04T18:15:00Z'
+                CorrelationId: cli-20260604T181500Z-0001
+                Properties: {}
     '500':
       description: Internal Server Error
       content:

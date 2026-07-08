@@ -51,13 +51,25 @@ UriString:
   format: uri
 
 GetDownloadUriParameters:
-  description: Parameters for /storage/getDownloadUri.
+  description: >
+    Parameters for /storage/getDownloadUri. The request identifies an observable reference, file path, and file hash
+    proof; the server derives the FileVersion from that reachable reference tree before issuing a read-only object SAS.
+    Supplying a FileVersion body is not accepted as authorization.
   allOf:
     - $ref: '#/StorageParameters'
   type: object
   properties:
-    FileVersion:
-      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/FileVersion'
+    ReferenceId:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+    RelativePath:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+    Sha256Hash:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+    Blake3Hash:
+      $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+  required:
+    - ReferenceId
+    - RelativePath
 
 GetContentBlockUploadUriParameters:
   description: Parameters for /storage/getContentBlockUploadUri.

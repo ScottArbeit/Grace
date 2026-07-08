@@ -25,7 +25,7 @@ module internal StorageAuthorizationResources =
 
     /// Builds the authorization resource for issuing a download URI.
     let downloadUriResource ownerId organizationId repositoryId (parameters: Storage.GetDownloadUriParameters) =
-        pathResource ownerId organizationId repositoryId parameters.FileVersion.RelativePath
+        pathResource ownerId organizationId repositoryId parameters.RelativePath
 
     /// Builds the authorization resource for uploading a content block.
     let contentBlockUploadResource ownerId organizationId repositoryId (parameters: Storage.GetContentBlockUploadUriParameters) =

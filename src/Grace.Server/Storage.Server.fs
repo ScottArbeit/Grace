@@ -13,6 +13,7 @@ open Grace.Actors.Extensions.ActorProxy
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Server.ApplicationContext
+open Grace.Server.Security
 open Grace.Server.Services
 open Grace.Shared.Parameters.Storage
 open Grace.Shared.Utilities
@@ -23,6 +24,7 @@ open Grace.Types.ContentBlockMetadata
 open Grace.Types.UploadSession
 open Grace.Types.Repository
 open Grace.Types.Common
+open Grace.Types.Reference
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.Logging
 open System
@@ -1523,7 +1525,83 @@ module Storage =
                                 )
         }
 
-    /// Gets a download URI for the specified file version that can be used by a Grace client.
+    /// Identifies a rejected whole-file download request before reachability lookup.
+    type private WholeFileDownloadValidation =
+        | Valid
+        | Invalid of GraceError
+
+    /// Validates the public whole-file download proof tuple before any storage materialization or SAS issuance.
+    let private validateWholeFileDownloadRequest (parameters: GetDownloadUriParameters) correlationId =
+        let requestedSha256Hash = string parameters.Sha256Hash
+        let requestedBlake3Hash = string parameters.Blake3Hash
+
+        if parameters.ReferenceId = ReferenceId.Empty then
+            Invalid(GraceError.Create "ReferenceId is required for whole-file download authorization." correlationId)
+        elif String.IsNullOrWhiteSpace(string parameters.RelativePath) then
+            Invalid(GraceError.Create "RelativePath is required for whole-file download authorization." correlationId)
+        elif String.IsNullOrWhiteSpace requestedSha256Hash
+             && String.IsNullOrWhiteSpace requestedBlake3Hash then
+            Invalid(GraceError.Create "Sha256Hash or Blake3Hash is required for whole-file download authorization." correlationId)
+        elif
+            not (String.IsNullOrWhiteSpace requestedSha256Hash)
+            && not (Constants.Sha256FullHashRegex.IsMatch requestedSha256Hash)
+        then
+            Invalid(GraceError.Create "Sha256Hash must be a full 64-character hexadecimal value." correlationId)
+        elif
+            not (String.IsNullOrWhiteSpace requestedBlake3Hash)
+            && not (Constants.Blake3FullHashRegex.IsMatch requestedBlake3Hash)
+        then
+            Invalid(GraceError.Create "Blake3Hash must be a full 64-character lowercase hexadecimal value." correlationId)
+        else
+            Valid
+
+    /// Checks whether the reachable FileVersion matches the caller's path and hash proof.
+    let private fileVersionMatchesDownloadProof (parameters: GetDownloadUriParameters) (fileVersion: FileVersion) =
+        let requestedPath = normalizeFilePath $"{parameters.RelativePath}"
+        let requestedSha256Hash = string parameters.Sha256Hash
+        let requestedBlake3Hash = string parameters.Blake3Hash
+
+        let pathMatches = String.Equals(normalizeFilePath $"{fileVersion.RelativePath}", requestedPath, StringComparison.Ordinal)
+
+        let shaMatches =
+            String.IsNullOrWhiteSpace requestedSha256Hash
+            || String.Equals(string fileVersion.Sha256Hash, requestedSha256Hash, StringComparison.OrdinalIgnoreCase)
+
+        let blake3Matches =
+            String.IsNullOrWhiteSpace requestedBlake3Hash
+            || String.Equals(string fileVersion.Blake3Hash, requestedBlake3Hash, StringComparison.Ordinal)
+
+        pathMatches && shaMatches && blake3Matches
+
+    /// Resolves a FileVersion only when the requested reference is observable and its root tree reaches the file proof.
+    let private tryResolveReachableFileVersionForDownload (context: HttpContext) repositoryId (parameters: GetDownloadUriParameters) correlationId =
+        task {
+            let referenceActorProxy = Reference.CreateActorProxy parameters.ReferenceId repositoryId correlationId
+            let! referenceDto = referenceActorProxy.Get correlationId
+
+            if referenceDto.ReferenceId = ReferenceId.Empty
+               || referenceDto.DeletedAt.IsSome
+               || referenceDto.RepositoryId <> repositoryId then
+                return None
+            else
+                let branchActorProxy = Grace.Actors.Extensions.ActorProxy.Branch.CreateActorProxy referenceDto.BranchId referenceDto.RepositoryId correlationId
+
+                let! branchDto = branchActorProxy.Get correlationId
+                let! visibleReferences = Grace.Server.Branch.filterVisibleReferenceWindowForBranch context branchDto -1 [| referenceDto |]
+
+                if visibleReferences.Length = 0 then
+                    return None
+                else
+                    let directoryActorProxy = DirectoryVersion.CreateActorProxy referenceDto.DirectoryId repositoryId correlationId
+                    let! recursiveDirectoryVersions = directoryActorProxy.GetRecursiveDirectoryVersions false correlationId
+
+                    return
+                        recursiveDirectoryVersions
+                        |> Seq.collect (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion.Files)
+                        |> Seq.tryFind (fileVersionMatchesDownloadProof parameters)
+        }
+
+    /// Gets a download URI for a reachable file proof that can be used by a Grace client.
     let GetDownloadUri: HttpHandler =
         fun (next: HttpFunc) (context: HttpContext) ->
             task {
@@ -1536,40 +1614,48 @@ module Storage =
                     let repositoryActor = Repository.CreateActorProxy organizationId repositoryId correlationId
                     let! repositoryDto = repositoryActor.Get correlationId
 
-                    match validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId with
-                    | Error error -> return! context |> result400BadRequest error
-                    | Ok () ->
-                        let contentReference =
-                            if isNull (box parameters.FileVersion.ContentReference) then
-                                FileContentReference.WholeFileContent
-                            else
-                                parameters.FileVersion.ContentReference
+                    match validateRepositoryExistsForStorageRequest repositoryId repositoryDto correlationId,
+                          validateWholeFileDownloadRequest parameters correlationId
+                        with
+                    | Error error, _ -> return! context |> result400BadRequest error
+                    | _, Invalid error -> return! context |> result400BadRequest error
+                    | Ok (), Valid ->
+                        let! reachableFileVersion = tryResolveReachableFileVersionForDownload context repositoryId parameters correlationId
 
-                        let blobName = StorageKeys.wholeFileContentObjectKey parameters.FileVersion
+                        match reachableFileVersion with
+                        | None -> return! context |> result404NotFound
+                        | Some fileVersion ->
+                            let contentReference =
+                                if isNull (box fileVersion.ContentReference) then
+                                    FileContentReference.WholeFileContent
+                                else
+                                    fileVersion.ContentReference
 
-                        let! materializationResult =
-                            match contentReference.ReferenceType with
-                            | FileContentReferenceType.WholeFileContent -> Task.FromResult(Ok())
-                            | FileContentReferenceType.FileManifest ->
-                                NormalFileMaterialization.materializeForDownload
-                                    repositoryDto
-                                    $"{parameters.FileVersion.RelativePath}"
-                                    parameters.FileVersion
-                                    blobName
-                                    correlationId
-                                    context.RequestAborted
-                            | unsupported ->
-                                Task.FromResult(
-                                    Error(GraceError.Create $"Unsupported file content reference type for download URI: {unsupported}." correlationId)
-                                )
+                            let blobName = StorageKeys.wholeFileContentObjectKey fileVersion
 
-                        match materializationResult with
-                        | Error error -> return! context |> result400BadRequest error
-                        | Ok () ->
-                            let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
-                            context.SetStatusCode StatusCodes.Status200OK
-                            //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| parameters.FileVersion.RelativePath, downloadUri |])
-                            return! context.WriteStringAsync $"{downloadUri}"
+                            let! materializationResult =
+                                match contentReference.ReferenceType with
+                                | FileContentReferenceType.WholeFileContent -> Task.FromResult(Ok())
+                                | FileContentReferenceType.FileManifest ->
+                                    NormalFileMaterialization.materializeForDownload
+                                        repositoryDto
+                                        $"{fileVersion.RelativePath}"
+                                        fileVersion
+                                        blobName
+                                        correlationId
+                                        context.RequestAborted
+                                | unsupported ->
+                                    Task.FromResult(
+                                        Error(GraceError.Create $"Unsupported file content reference type for download URI: {unsupported}." correlationId)
+                                    )
+
+                            match materializationResult with
+                            | Error error -> return! context |> result400BadRequest error
+                            | Ok () ->
+                                let! downloadUri = getUriWithReadSharedAccessSignature repositoryDto blobName correlationId
+                                context.SetStatusCode StatusCodes.Status200OK
+                                //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| fileVersion.RelativePath, downloadUri |])
+                                return! context.WriteStringAsync $"{downloadUri}"
                 with
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
