@@ -59,6 +59,10 @@
               type: array
               items:
                 $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+            Visibility:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ResourceVisibility'
+            Ownership:
+              $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ResourceOwnership'
     RebaseParameters:
       description: Parameters for the /branch/rebase endpoint.
       allOf:

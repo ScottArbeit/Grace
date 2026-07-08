@@ -1,6 +1,6 @@
 # FileManifest
 
-Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
+Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not a publication right for a client to choose physical storage shards.
 
 ## Properties
 
@@ -10,7 +10,7 @@ Name | Type | Description | Notes
 **manifest_address** | **str** | Lowercase 64-character BLAKE3-derived FileManifest address. | 
 **chunking_suite_id** | **str** | Versioned chunking suite identifier. | 
 **file_content_hash** | **str** | Lowercase 64-character BLAKE3 hash of the complete unencoded file bytes. | 
-**storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly. | 
+**storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly. | 
 **size** | **int** |  | 
 **blocks** | [**List[ContentBlock]**](ContentBlock.md) |  | 
 

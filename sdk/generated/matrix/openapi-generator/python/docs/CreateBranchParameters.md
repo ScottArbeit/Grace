@@ -19,6 +19,8 @@ Name | Type | Description | Notes
 **parent_branch_id** | **UUID** |  | [optional] 
 **parent_branch_name** | **str** |  | [optional] 
 **initial_permissions** | [**List[ReferenceType]**](ReferenceType.md) |  | [optional] 
+**visibility** | [**ResourceVisibility**](ResourceVisibility.md) |  | [optional] 
+**ownership** | [**ResourceOwnership**](ResourceOwnership.md) |  | [optional] 
 
 ## Example
 

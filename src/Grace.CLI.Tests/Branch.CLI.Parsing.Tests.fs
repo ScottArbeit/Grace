@@ -160,6 +160,41 @@ module BranchCommandParsingTests =
                         blake3Hash |]
         |> ignore
 
+    /// Verifies that branch create parses implemented visibility and ownership values.
+    [<Test>]
+    let ``branch create parses visibility and ownership options`` () =
+        assertParses [| "branch"
+                        "create"
+                        "--branch-name"
+                        "feature/private-work"
+                        "--visibility"
+                        "Private"
+                        "--ownership"
+                        "ContributorOwned" |]
+        |> ignore
+
+    /// Verifies that branch create rejects deferred visibility values.
+    [<Test>]
+    let ``branch create rejects unsupported visibility option`` () =
+        assertDoesNotParse [| "branch"
+                              "create"
+                              "--branch-name"
+                              "feature/private-work"
+                              "--visibility"
+                              "SecurityEmbargoed" |]
+        |> ignore
+
+    /// Verifies that branch create rejects unsupported ownership values.
+    [<Test>]
+    let ``branch create rejects unsupported ownership option`` () =
+        assertDoesNotParse [| "branch"
+                              "create"
+                              "--branch-name"
+                              "feature/private-work"
+                              "--ownership"
+                              "Contributor:alice" |]
+        |> ignore
+
     /// Verifies that branch version locator commands parse display hash modes independently from lookup.
     [<TestCase("switch")>]
     [<TestCase("list-contents")>]

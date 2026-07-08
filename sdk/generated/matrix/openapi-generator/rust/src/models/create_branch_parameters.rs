@@ -42,6 +42,10 @@ pub struct CreateBranchParameters {
     pub parent_branch_name: Option<String>,
     #[serde(rename = "InitialPermissions", skip_serializing_if = "Option::is_none")]
     pub initial_permissions: Option<Vec<models::ReferenceType>>,
+    #[serde(rename = "Visibility", skip_serializing_if = "Option::is_none")]
+    pub visibility: Option<models::ResourceVisibility>,
+    #[serde(rename = "Ownership", skip_serializing_if = "Option::is_none")]
+    pub ownership: Option<models::ResourceOwnership>,
 }
 
 impl CreateBranchParameters {
@@ -61,6 +65,8 @@ impl CreateBranchParameters {
             parent_branch_id: None,
             parent_branch_name: None,
             initial_permissions: None,
+            visibility: None,
+            ownership: None,
         }
     }
 }

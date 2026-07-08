@@ -21,6 +21,7 @@ import json
 from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
 from typing_extensions import Annotated
+from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -37,14 +38,17 @@ class GetContentBlockDownloadUriParameters(BaseModel):
     organization_name: Optional[StrictStr] = Field(default=None, alias="OrganizationName")
     repository_id: Optional[StrictStr] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
-    authorized_scope: Optional[StrictStr] = Field(default=None, alias="AuthorizedScope")
-    storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.", alias="StoragePoolId")
-    content_block_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
-    manifest_address: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3-derived FileManifest address.", alias="ManifestAddress")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "AuthorizedScope", "StoragePoolId", "ContentBlockAddress", "ManifestAddress"]
+    reference_id: UUID = Field(alias="ReferenceId")
+    authorized_scope: StrictStr = Field(alias="AuthorizedScope")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
+    storage_pool_id: StrictStr = Field(description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.", alias="StoragePoolId")
+    content_block_address: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3-derived ContentBlock address.", alias="ContentBlockAddress")
+    manifest_address: Annotated[str, Field(strict=True)] = Field(description="Lowercase 64-character BLAKE3-derived FileManifest address.", alias="ManifestAddress")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ReferenceId", "AuthorizedScope", "Sha256Hash", "Blake3Hash", "StoragePoolId", "ContentBlockAddress", "ManifestAddress"]
 
-    @field_validator('content_block_address')
-    def content_block_address_validate_regular_expression(cls, value):
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
         if value is None:
             return value
@@ -56,12 +60,32 @@ class GetContentBlockDownloadUriParameters(BaseModel):
             raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
         return value
 
-    @field_validator('manifest_address')
-    def manifest_address_validate_regular_expression(cls, value):
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
         """Validates the regular expression"""
         if value is None:
             return value
 
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('content_block_address')
+    def content_block_address_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('manifest_address')
+    def manifest_address_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
         if not isinstance(value, str):
             value = str(value)
 
@@ -128,7 +152,10 @@ class GetContentBlockDownloadUriParameters(BaseModel):
             "OrganizationName": obj.get("OrganizationName"),
             "RepositoryId": obj.get("RepositoryId"),
             "RepositoryName": obj.get("RepositoryName"),
+            "ReferenceId": obj.get("ReferenceId"),
             "AuthorizedScope": obj.get("AuthorizedScope"),
+            "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash"),
             "StoragePoolId": obj.get("StoragePoolId"),
             "ContentBlockAddress": obj.get("ContentBlockAddress"),
             "ManifestAddress": obj.get("ManifestAddress")

@@ -3505,6 +3505,10 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/ReferenceType'
+            Visibility:
+              $ref: '#/components/schemas/ResourceVisibility'
+            Ownership:
+              $ref: '#/components/schemas/ResourceOwnership'
     RebaseParameters:
       description: Parameters for the /branch/rebase endpoint.
       allOf:
@@ -5213,6 +5217,18 @@ components:
         - RetryScheduled
         - Failed
         - DeadLettered
+    ResourceVisibility:
+      type: string
+      description: Branch, reference, and promotion-set audience values implemented by Grace.
+      enum:
+        - Private
+        - Public
+    ResourceOwnership:
+      type: string
+      description: Principal family that owns a branch, reference, or promotion-set workflow.
+      enum:
+        - RepositoryOwned
+        - ContributorOwned
     BranchCommandReturnValue:
       description: Grace response envelope returned by branch command endpoints.
       type: object

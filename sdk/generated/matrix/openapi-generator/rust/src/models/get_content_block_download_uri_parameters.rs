@@ -31,21 +31,29 @@ pub struct GetContentBlockDownloadUriParameters {
     pub repository_id: Option<String>,
     #[serde(rename = "RepositoryName", skip_serializing_if = "Option::is_none")]
     pub repository_name: Option<String>,
-    #[serde(rename = "AuthorizedScope", skip_serializing_if = "Option::is_none")]
-    pub authorized_scope: Option<String>,
-    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
-    #[serde(rename = "StoragePoolId", skip_serializing_if = "Option::is_none")]
-    pub storage_pool_id: Option<String>,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
+    #[serde(rename = "AuthorizedScope")]
+    pub authorized_scope: String,
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
+    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.
+    #[serde(rename = "StoragePoolId")]
+    pub storage_pool_id: String,
     /// Lowercase 64-character BLAKE3-derived ContentBlock address.
-    #[serde(rename = "ContentBlockAddress", skip_serializing_if = "Option::is_none")]
-    pub content_block_address: Option<String>,
+    #[serde(rename = "ContentBlockAddress")]
+    pub content_block_address: String,
     /// Lowercase 64-character BLAKE3-derived FileManifest address.
-    #[serde(rename = "ManifestAddress", skip_serializing_if = "Option::is_none")]
-    pub manifest_address: Option<String>,
+    #[serde(rename = "ManifestAddress")]
+    pub manifest_address: String,
 }
 
 impl GetContentBlockDownloadUriParameters {
-    pub fn new() -> GetContentBlockDownloadUriParameters {
+    pub fn new(reference_id: uuid::Uuid, authorized_scope: String, storage_pool_id: String, content_block_address: String, manifest_address: String) -> GetContentBlockDownloadUriParameters {
         GetContentBlockDownloadUriParameters {
             correlation_id: None,
             principal: None,
@@ -55,10 +63,13 @@ impl GetContentBlockDownloadUriParameters {
             organization_name: None,
             repository_id: None,
             repository_name: None,
-            authorized_scope: None,
-            storage_pool_id: None,
-            content_block_address: None,
-            manifest_address: None,
+            reference_id,
+            authorized_scope,
+            sha256_hash: None,
+            blake3_hash: None,
+            storage_pool_id,
+            content_block_address,
+            manifest_address,
         }
     }
 }

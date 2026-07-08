@@ -146,6 +146,24 @@ module Branch =
         let branchNameRequired =
             new Option<String>(OptionName.BranchName, [| "-b" |], Required = true, Description = "The name of the branch.", Arity = ArgumentArity.ExactlyOne)
 
+        let visibility =
+            (new Option<String>(
+                "--visibility",
+                Required = false,
+                Description = "Optional branch visibility: Private or Public. Defaults to repository policy.",
+                Arity = ArgumentArity.ExactlyOne
+            ))
+                .AcceptOnlyFromAmong("Private", "Public")
+
+        let ownership =
+            (new Option<String>(
+                "--ownership",
+                Required = false,
+                Description = "Optional branch ownership boundary: RepositoryOwned or ContributorOwned.",
+                Arity = ArgumentArity.ExactlyOne
+            ))
+                .AcceptOnlyFromAmong("RepositoryOwned", "ContributorOwned")
+
         let parentBranchId =
             new Option<Guid>(
                 OptionName.ParentBranchId,
@@ -675,6 +693,8 @@ module Branch =
                                 ParentBranchId = parentBranchIdString,
                                 ParentBranchName = parentBranchName,
                                 InitialPermissions = initialPermissions,
+                                Visibility = parseResult.GetValue(Options.visibility),
+                                Ownership = parseResult.GetValue(Options.ownership),
                                 CorrelationId = graceIds.CorrelationId
                             )
 
@@ -4698,6 +4718,8 @@ module Branch =
             |> addOption Options.repositoryName
             |> addOption Options.repositoryId
             |> addOption Options.initialPermissions
+            |> addOption Options.visibility
+            |> addOption Options.ownership
             |> addOption Options.doNotSwitch
 
         branchCreateCommand.Action <- new Create()

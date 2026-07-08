@@ -14,7 +14,7 @@ use serde::{Deserialize, Serialize};
 /// ClaimedReuseRange : Reuse range accepted by the upload-session workflow.
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct ClaimedReuseRange {
-    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+    /// StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.
     #[serde(rename = "StoragePoolId")]
     pub storage_pool_id: String,
     /// Lowercase 64-character BLAKE3-derived ContentBlock address.

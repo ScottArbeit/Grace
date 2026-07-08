@@ -13,6 +13,20 @@
  */
 
 import { mapValues } from '../runtime';
+import type { ResourceVisibility } from './ResourceVisibility';
+import {
+    ResourceVisibilityFromJSON,
+    ResourceVisibilityFromJSONTyped,
+    ResourceVisibilityToJSON,
+    ResourceVisibilityToJSONTyped,
+} from './ResourceVisibility';
+import type { ResourceOwnership } from './ResourceOwnership';
+import {
+    ResourceOwnershipFromJSON,
+    ResourceOwnershipFromJSONTyped,
+    ResourceOwnershipToJSON,
+    ResourceOwnershipToJSONTyped,
+} from './ResourceOwnership';
 import type { ReferenceType } from './ReferenceType';
 import {
     ReferenceTypeFromJSON,
@@ -105,7 +119,21 @@ export interface CreateBranchParameters {
      * @memberof CreateBranchParameters
      */
     initialPermissions?: Array<ReferenceType>;
+    /**
+     * 
+     * @type {ResourceVisibility}
+     * @memberof CreateBranchParameters
+     */
+    visibility?: ResourceVisibility;
+    /**
+     * 
+     * @type {ResourceOwnership}
+     * @memberof CreateBranchParameters
+     */
+    ownership?: ResourceOwnership;
 }
+
+
 
 /**
  * Check if a given object implements the CreateBranchParameters interface.
@@ -137,6 +165,8 @@ export function CreateBranchParametersFromJSONTyped(json: any, ignoreDiscriminat
         'parentBranchId': json['ParentBranchId'] == null ? undefined : json['ParentBranchId'],
         'parentBranchName': json['ParentBranchName'] == null ? undefined : json['ParentBranchName'],
         'initialPermissions': json['InitialPermissions'] == null ? undefined : ((json['InitialPermissions'] as Array<any>).map(ReferenceTypeFromJSON)),
+        'visibility': json['Visibility'] == null ? undefined : ResourceVisibilityFromJSON(json['Visibility']),
+        'ownership': json['Ownership'] == null ? undefined : ResourceOwnershipFromJSON(json['Ownership']),
     };
 }
 
@@ -164,6 +194,8 @@ export function CreateBranchParametersToJSONTyped(value?: CreateBranchParameters
         'ParentBranchId': value['parentBranchId'],
         'ParentBranchName': value['parentBranchName'],
         'InitialPermissions': value['initialPermissions'] == null ? undefined : ((value['initialPermissions'] as Array<any>).map(ReferenceTypeToJSON)),
+        'Visibility': ResourceVisibilityToJSON(value['visibility']),
+        'Ownership': ResourceOwnershipToJSON(value['ownership']),
     };
 }
 
