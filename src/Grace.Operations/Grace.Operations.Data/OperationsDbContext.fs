@@ -111,8 +111,8 @@ module OperationsModel =
         |> ignore
 
         rawFact
-            .Property<Nullable<System.Guid>>("RehydrationLeaseId")
-            .HasColumnType("uniqueidentifier")
+            .Property<Nullable<System.DateTime>>("RehydrationExpiresAtUtc")
+            .HasColumnType("datetime2(7)")
         |> ignore
 
         rawFact

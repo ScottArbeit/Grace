@@ -20,7 +20,7 @@
     <Compile Include="Migrations\20260707000000_AddRawUsageFactPayload.fs" />
     <Compile Include="Migrations\20260707120000_AddOperationsMonthlyPartitioning.fs" />
     <Compile Include="Migrations\20260707130000_AddRawUsageFactArchiveState.fs" />
-    <Compile Include="Migrations\20260707140000_AddRawUsageFactRehydrationLease.fs" />
+    <Compile Include="Migrations\20260707140000_AddRawUsageFactRehydrationExpiry.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>

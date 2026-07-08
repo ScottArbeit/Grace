@@ -7,6 +7,8 @@ open Microsoft.Data.SqlClient
 open NodaTime
 open System
 open System.Data
+open System.Runtime.ExceptionServices
+open System.Text
 open System.Threading
 open System.Threading.Tasks
 
@@ -105,13 +107,15 @@ type RawUsageFactArchiveReplayItem =
         Pointer: RawUsageFactArchivePointer
     }
 
+/// Carries one verified archived payload that should become temporarily hot in SQL.
+type RawUsageFactRehydrationItem = { Pointer: RawUsageFactArchivePointer; RawPayload: byte array }
+
 /// Records the local support-audit evidence for one temporarily rehydrated archived payload.
 type RawUsageFactRehydrationAuditEntry =
     {
         UsageFactId: UsageFactId
         Scope: RawUsageFactArchiveScope
         Pointer: RawUsageFactArchivePointer
-        RehydrationLeaseId: Guid
         RequestedBy: string
         Reason: string
         RehydratedAt: Instant
@@ -138,12 +142,12 @@ type IOperationsUsageArchiveStore =
         scope: RawUsageFactArchiveScope option * after: RawUsageFactArchiveReplayCursor option * batchSize: int * cancellationToken: CancellationToken ->
             Task<RawUsageFactArchiveReplayItem list>
 
-    /// Temporarily restores archived payload bytes only when the SQL pointer still matches Blob authority.
-    abstract RehydrateArchivedPayloadAsync:
-        pointer: RawUsageFactArchivePointer * rawPayload: byte array * rehydrationLeaseId: Guid * cancellationToken: CancellationToken -> Task<bool>
+    /// Temporarily restores or refreshes archived payload bytes only when SQL pointers still match Blob authority.
+    abstract RehydrateArchivedPayloadsAsync:
+        items: RawUsageFactRehydrationItem list * expiresAt: Instant * cancellationToken: CancellationToken -> Task<UsageFactId list>
 
-    /// Clears a temporary support rehydration only when the SQL pointer and request lease still match.
-    abstract CleanupRehydratedPayloadAsync: pointer: RawUsageFactArchivePointer * rehydrationLeaseId: Guid * cancellationToken: CancellationToken -> Task<bool>
+    /// Clears expired temporary support rehydrations left behind after caller or process failure.
+    abstract CleanupExpiredRehydratedPayloadsAsync: expiresBefore: Instant * batchSize: int * cancellationToken: CancellationToken -> Task<int>
 
 /// Chooses whether schema initialization may connect to `master` to create the operations database.
 type OperationsUsageSchemaBootstrapMode =
@@ -501,31 +505,120 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                 | _ -> false
         }
 
-    /// Executes a single-row archive payload update guarded by the exact Blob pointer and request lease.
-    let executeArchivePayloadTransitionAsync commandText pointer rawPayload rehydrationLeaseId cancellationToken =
+    /// Builds the parameterized insert block for one rehydration payload batch.
+    let rehydrationBatchInsertSql (items: RawUsageFactRehydrationItem array) =
+        let builder = StringBuilder()
+
+        builder.AppendLine(OperationsUsageSql.DeclareRehydratedRawUsageFactBatch.Trim())
+        |> ignore
+
+        builder.AppendLine() |> ignore
+
+        builder.AppendLine("INSERT INTO @RehydrationRows")
+        |> ignore
+
+        builder.AppendLine("(") |> ignore
+        builder.AppendLine("    UsageFactId,") |> ignore
+        builder.AppendLine("    RawPayload,") |> ignore
+
+        builder.AppendLine("    ArchiveBlobName,")
+        |> ignore
+
+        builder.AppendLine("    ArchiveChecksumSha256Hex,")
+        |> ignore
+
+        builder.AppendLine("    ArchiveByteLength")
+        |> ignore
+
+        builder.AppendLine(")") |> ignore
+        builder.AppendLine("VALUES") |> ignore
+
+        let mutable index = 0
+
+        while index < items.Length do
+            let suffix = if index = items.Length - 1 then ";" else ","
+
+            builder
+                .Append("    (@UsageFactId")
+                .Append(index)
+                .Append(", @RawPayload")
+                .Append(index)
+                .Append(", @ArchiveBlobName")
+                .Append(index)
+                .Append(", @ArchiveChecksumSha256Hex")
+                .Append(index)
+                .Append(", @ArchiveByteLength")
+                .Append(index)
+                .AppendLine($"){suffix}")
+            |> ignore
+
+            index <- index + 1
+
+        builder.AppendLine() |> ignore
+
+        builder.AppendLine(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch.Trim())
+        |> ignore
+
+        builder.ToString()
+
+    /// Executes one bounded rehydration batch and returns rows whose expiry was durably refreshed.
+    let executeRehydrationPayloadBatchAsync (items: RawUsageFactRehydrationItem array) expiresAt cancellationToken =
         task {
             use! connection = openConnectionAsync cancellationToken
             use command = connection.CreateCommand()
             command.CommandType <- CommandType.Text
-            command.CommandText <- commandText
+            command.CommandText <- rehydrationBatchInsertSql items
             addArchiveStateParameters command
-            addArchivePointerParameters command pointer
-            addParameter command "@RehydrationLeaseId" SqlDbType.UniqueIdentifier rehydrationLeaseId
+            addParameter command "@RehydrationExpiresAtUtc" SqlDbType.DateTime2 (toUtcDateTime expiresAt)
 
-            match rawPayload with
-            | Some payload ->
+            let mutable index = 0
+
+            while index < items.Length do
+                let item = items[index]
+                addParameter command $"@UsageFactId{index}" SqlDbType.UniqueIdentifier item.Pointer.UsageFactId
                 let parameter = command.Parameters.Add("@RawPayload", SqlDbType.VarBinary, -1)
-                parameter.Value <- Array.copy payload
-            | None -> ()
+                parameter.ParameterName <- $"@RawPayload{index}"
+                parameter.Value <- Array.copy item.RawPayload
+                addStringParameter command $"@ArchiveBlobName{index}" OperationsUsageSql.ArchiveBlobNameMaxLength item.Pointer.BlobName
+
+                let checksumParameter =
+                    command.Parameters.Add($"@ArchiveChecksumSha256Hex{index}", SqlDbType.Char, OperationsUsageSql.ArchiveChecksumSha256HexLength)
+
+                checksumParameter.Value <- item.Pointer.ChecksumSha256Hex
+                addParameter command $"@ArchiveByteLength{index}" SqlDbType.BigInt item.Pointer.ByteLength
+                index <- index + 1
+
+            use! reader = command.ExecuteReaderAsync cancellationToken
+            let changed = ResizeArray<UsageFactId>()
+            let mutable reading = true
+
+            while reading do
+                let! hasRow = reader.ReadAsync cancellationToken
+
+                if hasRow then changed.Add(reader.GetGuid 0) else reading <- false
+
+            return changed |> Seq.toList
+        }
+
+    /// Clears one bounded batch of expired temporary payloads and returns the rows recovered from durable expiry state.
+    let cleanupExpiredRehydratedPayloadsAsync expiresBefore batchSize cancellationToken =
+        task {
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads
+            addArchiveStateParameters command
+            addParameter command "@ExpiresBeforeUtc" SqlDbType.DateTime2 (toUtcDateTime expiresBefore)
+            addParameter command "@BatchSize" SqlDbType.Int batchSize
 
             let! scalar = command.ExecuteScalarAsync cancellationToken
 
             return
                 match scalar with
-                | :? int as value -> value = 1
-                | :? int64 as value -> value = 1L
-                | :? decimal as value -> value = 1M
-                | _ -> false
+                | :? int as value -> value
+                | :? int64 as value -> int value
+                | :? decimal as value -> int value
+                | _ -> 0
         }
 
     interface IOperationsUsageArchiveStore with
@@ -684,19 +777,50 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                 return items |> Seq.toList
             }
 
-        member _.RehydrateArchivedPayloadAsync(pointer, rawPayload, rehydrationLeaseId, cancellationToken) =
-            if isNull rawPayload || rawPayload.Length = 0 then
-                invalidArg (nameof rawPayload) "Rehydrated raw payload bytes are required."
+        member _.RehydrateArchivedPayloadsAsync(items, expiresAt, cancellationToken) =
+            task {
+                let itemArray = items |> List.toArray
 
-            executeArchivePayloadTransitionAsync
-                OperationsUsageSql.RehydrateArchivedRawUsageFactPayload
-                pointer
-                (Some rawPayload)
-                rehydrationLeaseId
-                cancellationToken
+                if itemArray.Length = 0 then
+                    return []
+                else
+                    let mutable index = 0
 
-        member _.CleanupRehydratedPayloadAsync(pointer, rehydrationLeaseId, cancellationToken) =
-            executeArchivePayloadTransitionAsync OperationsUsageSql.CleanupRehydratedRawUsageFactPayload pointer None rehydrationLeaseId cancellationToken
+                    while index < itemArray.Length do
+                        let item = itemArray[index]
+
+                        if isNull item.RawPayload
+                           || item.RawPayload.Length = 0 then
+                            invalidArg (nameof items) "Rehydrated raw payload bytes are required."
+
+                        index <- index + 1
+
+                    let changed = ResizeArray<UsageFactId>()
+                    let mutable offset = 0
+
+                    while offset < itemArray.Length do
+                        let count = Math.Min(OperationsUsageSql.RehydrationPayloadBatchSize, itemArray.Length - offset)
+                        let batch = Array.zeroCreate<RawUsageFactRehydrationItem> count
+                        Array.Copy(itemArray, offset, batch, 0, count)
+                        let! batchChanged = executeRehydrationPayloadBatchAsync batch expiresAt cancellationToken
+                        changed.AddRange batchChanged
+                        offset <- offset + count
+
+                    return changed |> Seq.toList
+            }
+
+        member _.CleanupExpiredRehydratedPayloadsAsync(expiresBefore, batchSize, cancellationToken) =
+            if batchSize <= 0 then
+                invalidArg (nameof batchSize) "Temporary-hot cleanup batch size must be greater than zero."
+
+            let boundedBatchSize = Math.Min(batchSize, OperationsUsageSql.TemporaryHotCleanupBatchSize)
+            cleanupExpiredRehydratedPayloadsAsync expiresBefore boundedBatchSize cancellationToken
+
+/// Initializes the Operations usage schema before hosted services query or mutate operations tables.
+type IOperationsUsageSchemaInitializer =
+
+    /// Applies the reviewed Operations usage schema migrations before runtime processing starts.
+    abstract EnsureCreatedAsync: cancellationToken: CancellationToken -> Task
 
 /// Ensures the operations usage SQL schema exists before ingestion starts consuming durable messages.
 type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsUsageSchemaBootstrapMode) =
@@ -751,6 +875,50 @@ type OperationsUsageSchema(connectionString: string, ?bootstrapMode: OperationsU
             use context = OperationsDbContextFactory.create bootstrapPlan.SchemaConnectionString
             do! context.Database.MigrateAsync cancellationToken
         }
+
+    interface IOperationsUsageSchemaInitializer with
+
+        member this.EnsureCreatedAsync(cancellationToken) = this.EnsureCreatedAsync cancellationToken
+
+/// Shares one Operations schema initialization attempt across hosted services before SQL runtime work begins.
+type OperationsUsageSchemaInitializationBarrier(schema: OperationsUsageSchema) =
+    let gate = obj ()
+    let mutable initialized = false
+    let mutable inFlight: Task option = None
+
+    /// Starts or joins the shared schema initialization attempt.
+    member _.EnsureCreatedAsync(cancellationToken: CancellationToken) =
+        let initialization =
+            lock gate (fun () ->
+                if initialized then
+                    Task.CompletedTask
+                else
+                    match inFlight with
+                    | Some task -> task
+                    | None ->
+                        let task =
+                            task {
+                                try
+                                    do! schema.EnsureCreatedAsync CancellationToken.None
+
+                                    lock gate (fun () ->
+                                        initialized <- true
+                                        inFlight <- None)
+                                with
+                                | ex ->
+                                    lock gate (fun () -> inFlight <- None)
+                                    ExceptionDispatchInfo.Capture(ex).Throw()
+                            }
+                            :> Task
+
+                        inFlight <- Some task
+                        task)
+
+        initialization.WaitAsync cancellationToken
+
+    interface IOperationsUsageSchemaInitializer with
+
+        member this.EnsureCreatedAsync(cancellationToken) = this.EnsureCreatedAsync cancellationToken
 
 /// Persists usage facts through a transaction-scoped raw insert and aggregate projection.
 type OperationsUsageStore(transactionScope: IOperationsUsageTransactionScope) =

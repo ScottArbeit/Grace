@@ -44,6 +44,14 @@ module OperationsUsageSql =
     [<Literal>]
     let ArchiveChecksumSha256HexLength = 64
 
+    /// Caps parameterized payload restore batches below SQL Server's 2100-parameter command limit.
+    [<Literal>]
+    let RehydrationPayloadBatchSize = 400
+
+    /// Caps expired temporary-hot cleanup statements to a practical SQL Server row batch.
+    [<Literal>]
+    let TemporaryHotCleanupBatchSize = 1000
+
     /// Creates the configured operations database when SQL Server does not already contain it.
     [<Literal>]
     let CreateDatabaseIfMissing =
@@ -217,40 +225,56 @@ WHERE NOT EXISTS
 );
 """
 
-    /// Restores archived raw payload bytes only for an exact SQL Blob pointer match during scoped support rehydration.
+    /// Declares the temporary table variable used for batched temporary-hot payload restore.
     [<Literal>]
-    let RehydrateArchivedRawUsageFactPayload =
+    let DeclareRehydratedRawUsageFactBatch =
         """
-UPDATE ops.RawUsageFact
-SET
-    RawPayload = @RawPayload,
-    RehydrationLeaseId = @RehydrationLeaseId
-WHERE UsageFactId = @UsageFactId
-AND ArchiveState = @ArchiveStateArchived
-AND RawPayload IS NULL
-AND RehydrationLeaseId IS NULL
-AND ArchiveBlobName = @ArchiveBlobName
-AND ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex
-AND ArchiveByteLength = @ArchiveByteLength;
-
-SELECT @@ROWCOUNT;
+DECLARE @RehydrationRows table
+(
+    UsageFactId uniqueidentifier NOT NULL PRIMARY KEY,
+    RawPayload varbinary(max) NOT NULL,
+    ArchiveBlobName nvarchar(512) NOT NULL,
+    ArchiveChecksumSha256Hex char(64) NOT NULL,
+    ArchiveByteLength bigint NOT NULL
+);
 """
 
-    /// Clears temporarily rehydrated raw payload bytes only when the archived Blob pointer still matches.
+    /// Restores or refreshes archived raw payload bytes only for exact SQL Blob pointer matches.
     [<Literal>]
-    let CleanupRehydratedRawUsageFactPayload =
+    let RehydrateArchivedRawUsageFactPayloadBatch =
         """
-UPDATE ops.RawUsageFact
+UPDATE target
+SET
+    RawPayload = source.RawPayload,
+    RehydrationExpiresAtUtc = @RehydrationExpiresAtUtc
+OUTPUT inserted.UsageFactId
+FROM ops.RawUsageFact AS target
+INNER JOIN @RehydrationRows AS source
+    ON source.UsageFactId = target.UsageFactId
+WHERE target.ArchiveState = @ArchiveStateArchived
+AND target.ArchiveBlobName = source.ArchiveBlobName
+AND target.ArchiveChecksumSha256Hex = source.ArchiveChecksumSha256Hex
+AND target.ArchiveByteLength = source.ArchiveByteLength
+AND target.ArchiveBlobName IS NOT NULL
+AND target.ArchiveChecksumSha256Hex IS NOT NULL
+AND target.ArchiveByteLength IS NOT NULL;
+"""
+
+    /// Clears one batch of expired temporary-hot raw payload bytes while retaining archived SQL pointer authority.
+    [<Literal>]
+    let CleanupExpiredRehydratedRawUsageFactPayloads =
+        """
+UPDATE TOP (@BatchSize) ops.RawUsageFact
 SET
     RawPayload = NULL,
-    RehydrationLeaseId = NULL
-WHERE UsageFactId = @UsageFactId
-AND ArchiveState = @ArchiveStateArchived
+    RehydrationExpiresAtUtc = NULL
+WHERE ArchiveState = @ArchiveStateArchived
 AND RawPayload IS NOT NULL
-AND RehydrationLeaseId = @RehydrationLeaseId
-AND ArchiveBlobName = @ArchiveBlobName
-AND ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex
-AND ArchiveByteLength = @ArchiveByteLength;
+AND RehydrationExpiresAtUtc IS NOT NULL
+AND RehydrationExpiresAtUtc <= @ExpiresBeforeUtc
+AND ArchiveBlobName IS NOT NULL
+AND ArchiveChecksumSha256Hex IS NOT NULL
+AND ArchiveByteLength IS NOT NULL;
 
 SELECT @@ROWCOUNT;
 """

@@ -7,6 +7,7 @@ open Azure.Storage.Blobs
 open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Diagnostics.HealthChecks
 open Microsoft.Extensions.Hosting
+open NodaTime
 open System
 
 /// Starts the Grace operations worker host.
@@ -32,6 +33,11 @@ module Program =
                     services.AddSingleton(settings) |> ignore
 
                     services.AddSingleton(OperationsUsageSchema(settings.SqlConnectionString, settings.SchemaBootstrapMode))
+                    |> ignore
+
+                    services.AddSingleton<IOperationsUsageSchemaInitializer> (fun serviceProvider ->
+                        OperationsUsageSchemaInitializationBarrier(serviceProvider.GetRequiredService<OperationsUsageSchema>())
+                        :> IOperationsUsageSchemaInitializer)
                     |> ignore
 
                     services.AddSingleton<OperationsUsageReadinessState>()
@@ -93,7 +99,18 @@ module Program =
                         services.AddSingleton<OperationsUsageArchiveProcessor>()
                         |> ignore
 
+                        services.AddSingleton<OperationsUsageTemporaryHotCleanupProcessor> (fun serviceProvider ->
+                            OperationsUsageTemporaryHotCleanupProcessor(
+                                serviceProvider.GetRequiredService<IOperationsUsageArchiveStore>(),
+                                SystemClock.Instance,
+                                serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<OperationsUsageTemporaryHotCleanupProcessor>>()
+                            ))
+                        |> ignore
+
                         services.AddHostedService<OperationsUsageArchiveWorkerService>()
+                        |> ignore
+
+                        services.AddHostedService<OperationsUsageTemporaryHotCleanupWorkerService>()
                         |> ignore
                     | None -> ())
                 .Build()

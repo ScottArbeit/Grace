@@ -54,8 +54,8 @@ type RawUsageFactEntity() =
     /// Stores when the hot raw payload was cleared after Blob authority was verified.
     member val ArchivedAtUtc = Nullable<DateTime>() with get, set
 
-    /// Stores the support-request lease that owns the temporary rehydrated payload.
-    member val RehydrationLeaseId = Nullable<Guid>() with get, set
+    /// Stores when a temporarily restored archived payload must return to cold SQL state.
+    member val RehydrationExpiresAtUtc = Nullable<DateTime>() with get, set
 
     /// Stores the SQL-created UTC timestamp for the raw fact row.
     member val CreatedAtUtc = DateTime.MinValue with get, set

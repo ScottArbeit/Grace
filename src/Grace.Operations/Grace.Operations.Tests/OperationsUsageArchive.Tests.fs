@@ -11,6 +11,7 @@ open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
 open Microsoft.EntityFrameworkCore.Metadata
 open Microsoft.Extensions.Configuration
+open Microsoft.Extensions.Hosting
 open Microsoft.Extensions.Logging.Abstractions
 open NodaTime
 open NUnit.Framework
@@ -87,20 +88,20 @@ type private RecordingArchiveStore
     (
         candidates: RawUsageFactArchiveCandidate list,
         events: List<string>,
-        ?rehydrateResults: Result<bool, exn> list,
-        ?afterRehydrate: RawUsageFactArchivePointer -> bool -> unit,
-        ?cleanupResults: Result<bool, exn> list
+        ?rehydrateResults: Result<UsageFactId list, exn> list,
+        ?afterRehydrate: RawUsageFactRehydrationItem -> bool -> unit,
+        ?expiredCleanupResults: int list
     ) =
     let markedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let completedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let rehydratedPointers = ResizeArray<RawUsageFactArchivePointer>()
-    let cleanedPointers = ResizeArray<RawUsageFactArchivePointer>()
-    let rehydrationLeaseIds = ResizeArray<Guid>()
-    let cleanupLeaseIds = ResizeArray<Guid>()
+    let rehydrationExpiresAtValues = ResizeArray<Instant>()
     let rehydrateCancellationCanBeCanceled = ResizeArray<bool>()
-    let rehydrateResults = Queue<Result<bool, exn>>(defaultArg rehydrateResults [])
-    let cleanupResults = Queue<Result<bool, exn>>(defaultArg cleanupResults [])
+    let rehydrateResults = Queue<Result<UsageFactId list, exn>>(defaultArg rehydrateResults [])
+    let expiredCleanupResults = Queue<int>(defaultArg expiredCleanupResults [])
+    let expiredCleanupBatchSizes = ResizeArray<int>()
     let afterRehydrate = defaultArg afterRehydrate (fun _ _ -> ())
+    let mutable expiredCleanupCount = 0
 
     /// Returns Blob pointers recorded as verified in SQL.
     member _.MarkedPointers = markedPointers |> Seq.toList
@@ -111,14 +112,14 @@ type private RecordingArchiveStore
     /// Returns Blob pointers restored for temporary support rehydration.
     member _.RehydratedPointers = rehydratedPointers |> Seq.toList
 
-    /// Returns Blob pointers cleaned after temporary support rehydration.
-    member _.CleanedPointers = cleanedPointers |> Seq.toList
+    /// Returns durable expiry values used to restore temporary payloads.
+    member _.RehydrationExpiresAtValues = rehydrationExpiresAtValues |> Seq.toList
 
-    /// Returns request leases used to restore temporary payloads.
-    member _.RehydrationLeaseIds = rehydrationLeaseIds |> Seq.toList
+    /// Returns the number of expired lease cleanup passes requested by the archive processor.
+    member _.ExpiredCleanupCount = expiredCleanupCount
 
-    /// Returns request leases used to clean temporary payloads.
-    member _.CleanupLeaseIds = cleanupLeaseIds |> Seq.toList
+    /// Returns bounded cleanup batch sizes requested from the archive store.
+    member _.ExpiredCleanupBatchSizes = expiredCleanupBatchSizes |> Seq.toList
 
     /// Returns whether each rehydration SQL mutation received a cancelable caller token.
     member _.RehydrateCancellationCanBeCanceled = rehydrateCancellationCanBeCanceled |> Seq.toList
@@ -188,32 +189,47 @@ type private RecordingArchiveStore
 
             Task.FromResult replayItems
 
-        member _.RehydrateArchivedPayloadAsync(pointer, rawPayload, rehydrationLeaseId, cancellationToken) =
+        member _.RehydrateArchivedPayloadsAsync(items, expiresAt, cancellationToken) =
             events.Add("rehydrate")
-            Assert.That(rawPayload, Is.Not.Empty)
-            rehydrationLeaseIds.Add rehydrationLeaseId
+            let itemArray = items |> List.toArray
+
+            itemArray
+            |> Array.iter (fun item -> Assert.That(item.RawPayload, Is.Not.Empty))
+
+            rehydrationExpiresAtValues.Add expiresAt
             rehydrateCancellationCanBeCanceled.Add cancellationToken.CanBeCanceled
 
-            let result = if rehydrateResults.Count > 0 then rehydrateResults.Dequeue() else Ok true
+            let result =
+                if rehydrateResults.Count > 0 then
+                    rehydrateResults.Dequeue()
+                else
+                    Ok(
+                        itemArray
+                        |> Array.map (fun item -> item.Pointer.UsageFactId)
+                        |> Array.toList
+                    )
 
             match result with
-            | Ok changed ->
-                if changed then rehydratedPointers.Add pointer
+            | Ok changedUsageFactIds ->
+                let changedSet = HashSet<UsageFactId>(changedUsageFactIds)
 
-                afterRehydrate pointer changed
-                Task.FromResult changed
-            | Error ex -> Task.FromException<bool> ex
+                itemArray
+                |> Array.iter (fun item ->
+                    let changed = changedSet.Contains item.Pointer.UsageFactId
 
-        member _.CleanupRehydratedPayloadAsync(pointer, rehydrationLeaseId, _cancellationToken) =
-            events.Add("cleanup-rehydrated")
-            cleanupLeaseIds.Add rehydrationLeaseId
-            cleanedPointers.Add pointer
+                    if changed then rehydratedPointers.Add item.Pointer
 
-            let result = if cleanupResults.Count > 0 then cleanupResults.Dequeue() else Ok true
+                    afterRehydrate item changed)
 
-            match result with
-            | Ok changed -> Task.FromResult changed
-            | Error ex -> Task.FromException<bool> ex
+                Task.FromResult changedUsageFactIds
+            | Error ex -> Task.FromException<UsageFactId list> ex
+
+        member _.CleanupExpiredRehydratedPayloadsAsync(_expiresBefore, batchSize, _cancellationToken) =
+            events.Add("cleanup-expired-rehydrated")
+            expiredCleanupCount <- expiredCleanupCount + 1
+            expiredCleanupBatchSizes.Add batchSize
+            let cleaned = if expiredCleanupResults.Count > 0 then expiredCleanupResults.Dequeue() else 0
+            Task.FromResult cleaned
 
 /// Stores archive blobs in memory while preserving checksum and length verification semantics.
 type private RecordingArchiveBlobStore(events: List<string>) =
@@ -307,6 +323,23 @@ type private FixedClock(now: Instant) =
 
         member _.GetCurrentInstant() = now
 
+/// Records archive schema initialization attempts without opening SQL connections.
+type private RecordingSchemaInitializer(events: List<string>, ?failure: exn) =
+    let invoked = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
+
+    /// Completes when the archive worker reaches the schema gate.
+    member _.Invoked = invoked.Task
+
+    interface IOperationsUsageSchemaInitializer with
+
+        member _.EnsureCreatedAsync(_cancellationToken) =
+            events.Add("schema")
+            invoked.TrySetResult() |> ignore
+
+            match failure with
+            | Some ex -> Task.FromException ex
+            | None -> Task.CompletedTask
+
 /// Covers hot/cold archive layout, Blob verification, SQL state ordering, and migration shape.
 [<TestFixture>]
 type OperationsUsageArchiveTests() =
@@ -367,6 +400,89 @@ type OperationsUsageArchiveTests() =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsArchiveMigrationModel;Integrated Security=true;"
 
         context.Model.FindEntityType(typeof<RawUsageFactEntity>)
+
+    /// Creates archive worker settings for hosted-service ordering tests without opening Blob storage.
+    let archiveWorkerSettings () =
+        {
+            BlobConnectionString = Some "UseDevelopmentStorage=true"
+            BlobServiceUri = None
+            BlobContainerName = "usage-facts"
+            HotRetentionDays = 90
+            BatchSize = 10
+            PollInterval = TimeSpan.FromSeconds(30.0)
+        }
+
+    /// Verifies the cleanup processor drains expired temporary rehydration payloads in bounded batches.
+    [<Test>]
+    member _.TemporaryHotCleanupProcessorDrainsExpiredRehydrationsInBoundedBatches() =
+        task {
+            let events = List<string>()
+            let archiveStore = RecordingArchiveStore([], events, expiredCleanupResults = [ 1000; 1000; 5 ])
+
+            let processor =
+                OperationsUsageTemporaryHotCleanupProcessor(
+                    archiveStore,
+                    FixedClock(Instant.FromUtc(2026, 7, 7, 11, 0, 0)),
+                    NullLogger<OperationsUsageTemporaryHotCleanupProcessor>
+                        .Instance
+                )
+
+            let! cleaned = processor.CleanupExpiredAsync(OperationsUsageSql.TemporaryHotCleanupBatchSize, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(cleaned, Is.EqualTo(2005))
+                    Assert.That(archiveStore.ExpiredCleanupCount, Is.EqualTo(3))
+                    Assert.That(String.Join(",", archiveStore.ExpiredCleanupBatchSizes), Is.EqualTo("1000,1000,1000"))
+                    Assert.That(String.Join("|", events), Is.EqualTo("cleanup-expired-rehydrated|cleanup-expired-rehydrated|cleanup-expired-rehydrated")))
+            )
+        }
+
+    /// Verifies the archive hosted service does not query archive state before schema migrations succeed.
+    [<Test>]
+    member _.ArchiveWorkerSchemaFailureDoesNotQueryArchiveState() =
+        task {
+            let events = List<string>()
+            let schema = RecordingSchemaInitializer(events, InvalidOperationException("schema unavailable"))
+            let archiveStore = RecordingArchiveStore([], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            let processor = createProcessor archiveStore blobStore
+            let readiness = OperationsUsageReadinessState()
+
+            let service =
+                new OperationsUsageArchiveWorkerService(
+                    archiveWorkerSettings (),
+                    schema,
+                    processor,
+                    readiness :> IOperationsUsageReadinessRecorder,
+                    NullLogger<OperationsUsageArchiveWorkerService>
+                        .Instance
+                )
+
+            do!
+                (service :> IHostedService)
+                    .StartAsync(CancellationToken.None)
+
+            do! schema.Invoked.WaitAsync(TimeSpan.FromSeconds(5.0))
+
+            use stopCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5.0))
+
+            do!
+                (service :> IHostedService)
+                    .StopAsync(stopCancellation.Token)
+
+            let snapshot =
+                (readiness :> IOperationsUsageReadinessProbe)
+                    .GetSnapshot()
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(String.Join("|", events), Is.EqualTo("schema"))
+                    Assert.That(archiveStore.ExpiredCleanupCount, Is.EqualTo(0))
+                    Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(snapshot.DependencyFailure.Value, Does.Contain("Operations usage schema initialization failed (InvalidOperationException).")))
+            )
+        }
 
     /// Verifies deterministic gzip JSONL output and pointer authority for a hot raw usage fact.
     [<Test>]
@@ -680,20 +796,25 @@ type OperationsUsageArchiveTests() =
                 Assert.That(OperationsUsageSql.SelectArchivedRawUsageFactsForReplay, Does.Contain("WITH (READCOMMITTEDLOCK)")))
         )
 
-    /// Verifies support rehydration cleanup is owned by the request lease that restored the payload.
+    /// Verifies support rehydration stores only durable expiry state and cleanup runs in bounded batches.
     [<Test>]
-    member _.RehydrationSqlUsesRequestLeaseForRestoreAndCleanupOwnership() =
+    member _.RehydrationSqlUsesExpiryOnlyRestoreAndBoundedCleanup() =
         Assert.Multiple(
             Action (fun () ->
-                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayload, Does.Contain("RehydrationLeaseId = @RehydrationLeaseId"))
-                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayload, Does.Contain("AND RehydrationLeaseId IS NULL"))
-                Assert.That(OperationsUsageSql.CleanupRehydratedRawUsageFactPayload, Does.Contain("RehydrationLeaseId = NULL"))
-                Assert.That(OperationsUsageSql.CleanupRehydratedRawUsageFactPayload, Does.Contain("AND RehydrationLeaseId = @RehydrationLeaseId")))
+                Assert.That(OperationsUsageSql.DeclareRehydratedRawUsageFactBatch, Does.Contain("@RehydrationRows table"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("RehydrationExpiresAtUtc = @RehydrationExpiresAtUtc"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("OUTPUT inserted.UsageFactId"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("INNER JOIN @RehydrationRows AS source"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Not.Contain("RehydrationLeaseId"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Not.Contain("RehydrationRequestedBy"))
+                Assert.That(OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads, Does.Contain("UPDATE TOP (@BatchSize)"))
+                Assert.That(OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads, Does.Contain("RehydrationExpiresAtUtc = NULL"))
+                Assert.That(OperationsUsageSql.CleanupExpiredRehydratedRawUsageFactPayloads, Does.Contain("RehydrationExpiresAtUtc <= @ExpiresBeforeUtc")))
         )
 
-    /// Verifies support rehydration requires scope, quota, local audit proof, and exact-pointer cleanup.
+    /// Verifies support rehydration requires scope, quota, local audit proof, and durable expiry persistence.
     [<Test>]
-    member _.RehydrationIsScopedQuotaLimitedAuditedAndCleanedUp() =
+    member _.RehydrationIsScopedQuotaLimitedAuditedAndPersistsExpiry() =
         task {
             let events = List<string>()
             let firstUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484848")
@@ -739,8 +860,6 @@ type OperationsUsageArchiveTests() =
                 | Ok value -> value
                 | Error errors -> failwith (String.Join("; ", errors))
 
-            let! cleaned = processor.CleanupAsync(result.AuditEntries, CancellationToken.None)
-
             Assert.Multiple(
                 Action (fun () ->
                     Assert.That(result.AuditEntries |> List.length, Is.EqualTo(1))
@@ -748,18 +867,16 @@ type OperationsUsageArchiveTests() =
                     Assert.That(result.AuditEntries[0].RequestedBy, Is.EqualTo(request.RequestedBy))
                     Assert.That(result.AuditEntries[0].Reason, Is.EqualTo(request.Reason))
                     Assert.That(result.AuditEntries[0].ExpiresAt, Is.EqualTo(request.ExpiresAt))
-                    Assert.That(result.AuditEntries[0].RehydrationLeaseId, Is.Not.EqualTo(Guid.Empty))
+                    Assert.That(archiveStore.RehydrationExpiresAtValues[0], Is.EqualTo(request.ExpiresAt))
                     Assert.That(result.AuditEntries[0].RestoredByteLength, Is.GreaterThan(0))
-                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1))
-                    Assert.That(cleaned, Is.EqualTo(1))
-                    Assert.That(archiveStore.CleanedPointers |> List.length, Is.EqualTo(1))
-                    Assert.That(archiveStore.CleanupLeaseIds[0], Is.EqualTo(result.AuditEntries[0].RehydrationLeaseId)))
+                    Assert.That(result.AuditEntries[0].ChangedSqlState, Is.True)
+                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1)))
             )
         }
 
-    /// Verifies support rehydration cleans rows restored by this request when a later row fails.
+    /// Verifies archive payload validation fails before SQL expiry state is changed.
     [<Test>]
-    member _.RehydrationCleansChangedRowsOnPartialFailure() =
+    member _.RehydrationDoesNotPersistExpiryWhenBlobValidationFails() =
         task {
             let events = List<string>()
             let firstUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484849")
@@ -773,21 +890,10 @@ type OperationsUsageArchiveTests() =
                 OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Archived None (Some archiveBlob.Pointer), archiveBlob
 
             let firstCandidate, firstBlob = createReplayCandidate firstUsageFactId
-            let secondCandidate, secondBlob = createReplayCandidate secondUsageFactId
-
-            let archiveStore =
-                RecordingArchiveStore(
-                    [ firstCandidate; secondCandidate ],
-                    events,
-                    [
-                        Ok true
-                        Error(InvalidOperationException("second rehydration failed"))
-                    ]
-                )
-
+            let secondCandidate, _secondBlob = createReplayCandidate secondUsageFactId
+            let archiveStore = RecordingArchiveStore([ firstCandidate; secondCandidate ], events)
             let blobStore = RecordingArchiveBlobStore(events)
             blobStore.Put(firstBlob.Pointer.BlobName, firstBlob.Content)
-            blobStore.Put(secondBlob.Pointer.BlobName, secondBlob.Content)
 
             let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
             let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
@@ -810,107 +916,21 @@ type OperationsUsageArchiveTests() =
 
             try
                 let! _ = processor.RehydrateAsync(request, CancellationToken.None)
-                Assert.Fail("Partial rehydration failure should be surfaced.")
+                Assert.Fail("Missing archive Blob should be surfaced before SQL expiry persistence.")
             with
             | :? InvalidOperationException as ex -> message <- Some ex.Message
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(message.Value, Is.EqualTo("second rehydration failed"))
-                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1))
-                    Assert.That(archiveStore.RehydratedPointers[0], Is.EqualTo(firstBlob.Pointer))
-                    Assert.That(archiveStore.CleanedPointers |> List.length, Is.EqualTo(1))
-                    Assert.That(archiveStore.CleanedPointers[0], Is.EqualTo(firstBlob.Pointer))
-                    Assert.That(archiveStore.CleanupLeaseIds[0], Is.EqualTo(archiveStore.RehydrationLeaseIds[0])))
+                    Assert.That(message.Value, Does.Contain("is missing"))
+                    Assert.That(events, Does.Not.Contain("rehydrate"))
+                    Assert.That(archiveStore.RehydratedPointers, Is.Empty))
             )
         }
 
-    /// Verifies rollback cleanup attempts every changed row before surfacing the original rehydration failure.
+    /// Verifies caller cancellation after SQL persistence does not prevent durable expiry evidence.
     [<Test>]
-    member _.RehydrationRollbackCleanupContinuesAfterCleanupFailure() =
-        task {
-            let events = List<string>()
-            let firstUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484854")
-            let secondUsageFactId = Guid.Parse("49494949-4949-4949-8949-494949494955")
-            let thirdUsageFactId = Guid.Parse("50505050-5050-5050-9050-505050505056")
-
-            let createReplayCandidate usageFactId =
-                let fact = OperationsUsageArchiveTestData.usageFact usageFactId
-                let rawPayload = OperationsUsageArchiveTestData.usageFactPayload fact
-                let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
-                let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
-                OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Archived None (Some archiveBlob.Pointer), archiveBlob
-
-            let firstCandidate, firstBlob = createReplayCandidate firstUsageFactId
-            let secondCandidate, secondBlob = createReplayCandidate secondUsageFactId
-            let thirdCandidate, thirdBlob = createReplayCandidate thirdUsageFactId
-
-            let archiveStore =
-                RecordingArchiveStore(
-                    [
-                        firstCandidate
-                        secondCandidate
-                        thirdCandidate
-                    ],
-                    events,
-                    [
-                        Ok true
-                        Ok true
-                        Error(InvalidOperationException("third rehydration failed"))
-                    ],
-                    cleanupResults =
-                        [
-                            Error(InvalidOperationException("first cleanup failed"))
-                            Ok true
-                        ]
-                )
-
-            let blobStore = RecordingArchiveBlobStore(events)
-            blobStore.Put(firstBlob.Pointer.BlobName, firstBlob.Content)
-            blobStore.Put(secondBlob.Pointer.BlobName, secondBlob.Content)
-            blobStore.Put(thirdBlob.Pointer.BlobName, thirdBlob.Content)
-
-            let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
-            let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
-
-            let request: OperationsUsageRehydrationRequest =
-                {
-                    Scope =
-                        {
-                            OwnerId = Some OperationsUsageArchiveTestData.ownerId
-                            OrganizationId = Some OperationsUsageArchiveTestData.organizationId
-                            RepositoryId = Some OperationsUsageArchiveTestData.repositoryId
-                        }
-                    MaxFacts = 3
-                    RequestedBy = "support@example.test"
-                    Reason = "Investigate archived customer support case"
-                    ExpiresAt = now + Duration.FromHours 1.0
-                }
-
-            let mutable message = None
-
-            try
-                let! _ = processor.RehydrateAsync(request, CancellationToken.None)
-                Assert.Fail("Original rehydration failure should be surfaced after rollback cleanup attempts.")
-            with
-            | :? InvalidOperationException as ex -> message <- Some ex.Message
-
-            Assert.Multiple(
-                Action (fun () ->
-                    Assert.That(message.Value, Is.EqualTo("third rehydration failed"))
-                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(2))
-                    Assert.That(archiveStore.CleanedPointers |> List.length, Is.EqualTo(2))
-                    Assert.That(archiveStore.CleanedPointers[0], Is.EqualTo(firstBlob.Pointer))
-                    Assert.That(archiveStore.CleanedPointers[1], Is.EqualTo(secondBlob.Pointer))
-                    Assert.That(archiveStore.CleanupLeaseIds |> List.length, Is.EqualTo(2))
-                    Assert.That(archiveStore.CleanupLeaseIds[0], Is.EqualTo(archiveStore.RehydrationLeaseIds[0]))
-                    Assert.That(archiveStore.CleanupLeaseIds[1], Is.EqualTo(archiveStore.RehydrationLeaseIds[1])))
-            )
-        }
-
-    /// Verifies partial rehydration cleanup still runs when caller cancellation arrives after a restore.
-    [<Test>]
-    member _.RehydrationCleansChangedRowsWhenCancellationArrivesAfterPartialRestore() =
+    member _.RehydrationPersistsExpiryBeforeCancellationAfterSqlMutation() =
         task {
             let events = List<string>()
             let firstUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484852")
@@ -928,7 +948,11 @@ type OperationsUsageArchiveTests() =
             use cancellationSource = new CancellationTokenSource()
 
             let archiveStore =
-                RecordingArchiveStore([ firstCandidate; secondCandidate ], events, [ Ok true ], (fun _ changed -> if changed then cancellationSource.Cancel()))
+                RecordingArchiveStore(
+                    [ firstCandidate; secondCandidate ],
+                    events,
+                    afterRehydrate = (fun _ changed -> if changed then cancellationSource.Cancel())
+                )
 
             let blobStore = RecordingArchiveBlobStore(events)
             blobStore.Put(firstBlob.Pointer.BlobName, firstBlob.Content)
@@ -953,23 +977,21 @@ type OperationsUsageArchiveTests() =
 
             try
                 let! _ = processor.RehydrateAsync(request, cancellationSource.Token)
-                Assert.Fail("Cancellation after partial rehydration should be surfaced.")
+                Assert.Fail("Cancellation after SQL expiry persistence should be surfaced.")
             with
             | :? OperationCanceledException -> ()
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1))
-                    Assert.That(archiveStore.RehydratedPointers[0], Is.EqualTo(firstBlob.Pointer))
-                    Assert.That(archiveStore.RehydrateCancellationCanBeCanceled[0], Is.False)
-                    Assert.That(archiveStore.CleanedPointers |> List.length, Is.EqualTo(1))
-                    Assert.That(archiveStore.CleanedPointers[0], Is.EqualTo(firstBlob.Pointer)))
+                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(2))
+                    Assert.That(archiveStore.RehydrationExpiresAtValues[0], Is.EqualTo(request.ExpiresAt))
+                    Assert.That(archiveStore.RehydrateCancellationCanBeCanceled[0], Is.False))
             )
         }
 
-    /// Verifies cleanup does not clear payloads for audit entries where this request did not change SQL.
+    /// Verifies overlapping requests refresh durable expiry instead of conflicting on request-owned state.
     [<Test>]
-    member _.RehydrationCleanupSkipsRowsThisRequestDidNotRestore() =
+    member _.OverlappingRehydrationRefreshesExpiresAt() =
         task {
             let events = List<string>()
             let firstUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484850")
@@ -984,7 +1006,7 @@ type OperationsUsageArchiveTests() =
 
             let firstCandidate, firstBlob = createReplayCandidate firstUsageFactId
             let secondCandidate, secondBlob = createReplayCandidate secondUsageFactId
-            let archiveStore = RecordingArchiveStore([ firstCandidate; secondCandidate ], events, [ Ok false; Ok true ])
+            let archiveStore = RecordingArchiveStore([ firstCandidate; secondCandidate ], events)
             let blobStore = RecordingArchiveBlobStore(events)
             blobStore.Put(firstBlob.Pointer.BlobName, firstBlob.Content)
             blobStore.Put(secondBlob.Pointer.BlobName, secondBlob.Content)
@@ -1006,27 +1028,91 @@ type OperationsUsageArchiveTests() =
                     ExpiresAt = now + Duration.FromHours 1.0
                 }
 
-            let! rehydrated = processor.RehydrateAsync(request, CancellationToken.None)
+            let refreshedRequest = { request with Reason = "Second support request for the same archived rows"; ExpiresAt = now + Duration.FromHours 2.0 }
 
-            let result =
-                match rehydrated with
-                | Ok value -> value
+            let! firstResult = processor.RehydrateAsync(request, CancellationToken.None)
+            let! secondResult = processor.RehydrateAsync(refreshedRequest, CancellationToken.None)
+
+            let firstAudit =
+                match firstResult with
+                | Ok value -> value.AuditEntries
                 | Error errors -> failwith (String.Join("; ", errors))
 
-            let! cleaned = processor.CleanupAsync(result.AuditEntries, CancellationToken.None)
-
-            let changedStates =
-                result.AuditEntries
-                |> List.map (fun entry -> entry.ChangedSqlState)
+            let secondAudit =
+                match secondResult with
+                | Ok value -> value.AuditEntries
+                | Error errors -> failwith (String.Join("; ", errors))
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(changedStates |> List.length, Is.EqualTo(2))
-                    Assert.That(changedStates[0], Is.False)
-                    Assert.That(changedStates[1], Is.True)
-                    Assert.That(cleaned, Is.EqualTo(1))
-                    Assert.That(archiveStore.CleanedPointers |> List.length, Is.EqualTo(1))
-                    Assert.That(archiveStore.CleanedPointers[0], Is.EqualTo(secondBlob.Pointer)))
+                    Assert.That(firstAudit |> List.length, Is.EqualTo(2))
+                    Assert.That(secondAudit |> List.length, Is.EqualTo(2))
+                    Assert.That(archiveStore.RehydrationExpiresAtValues[0], Is.EqualTo(request.ExpiresAt))
+                    Assert.That(archiveStore.RehydrationExpiresAtValues[1], Is.EqualTo(refreshedRequest.ExpiresAt))
+
+                    Assert.That(
+                        secondAudit
+                        |> List.forall (fun entry -> entry.ChangedSqlState),
+                        Is.True
+                    ))
+            )
+        }
+
+    /// Verifies a request fails closed when SQL cannot persist expiry for every verified archive pointer.
+    [<Test>]
+    member _.RehydrationFailsWhenExpiryPersistenceMissesVerifiedPointer() =
+        task {
+            let events = List<string>()
+            let firstUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484854")
+            let secondUsageFactId = Guid.Parse("49494949-4949-4949-8949-494949494955")
+
+            let createReplayCandidate usageFactId =
+                let fact = OperationsUsageArchiveTestData.usageFact usageFactId
+                let rawPayload = OperationsUsageArchiveTestData.usageFactPayload fact
+                let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+                let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+                OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Archived None (Some archiveBlob.Pointer), archiveBlob
+
+            let firstCandidate, firstBlob = createReplayCandidate firstUsageFactId
+            let secondCandidate, secondBlob = createReplayCandidate secondUsageFactId
+
+            let archiveStore = RecordingArchiveStore([ firstCandidate; secondCandidate ], events, [ Ok [ secondUsageFactId ] ])
+
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(firstBlob.Pointer.BlobName, firstBlob.Content)
+            blobStore.Put(secondBlob.Pointer.BlobName, secondBlob.Content)
+
+            let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
+            let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
+
+            let request: OperationsUsageRehydrationRequest =
+                {
+                    Scope =
+                        {
+                            OwnerId = Some OperationsUsageArchiveTestData.ownerId
+                            OrganizationId = Some OperationsUsageArchiveTestData.organizationId
+                            RepositoryId = Some OperationsUsageArchiveTestData.repositoryId
+                        }
+                    MaxFacts = 2
+                    RequestedBy = "support@example.test"
+                    Reason = "Investigate archived customer support case"
+                    ExpiresAt = now + Duration.FromHours 1.0
+                }
+
+            let mutable message = None
+
+            try
+                let! _ = processor.RehydrateAsync(request, CancellationToken.None)
+                Assert.Fail("Rehydration must not return success when SQL did not persist every expiry.")
+            with
+            | :? InvalidOperationException as ex -> message <- Some ex.Message
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(message.Value, Does.Contain("could not persist expiry"))
+                    Assert.That(message.Value, Does.Contain(string firstUsageFactId))
+                    Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1))
+                    Assert.That(archiveStore.RehydratedPointers[0], Is.EqualTo(secondBlob.Pointer)))
             )
         }
 
@@ -1209,12 +1295,18 @@ type OperationsUsageArchiveTests() =
                     Is.EqualTo("datetime2(7)")
                 )
 
+                Assert.That(rawFact.FindProperty("RehydrationLeaseId"), Is.Null)
+                Assert.That(rawFact.FindProperty("RehydrationRequestedBy"), Is.Null)
+                Assert.That(rawFact.FindProperty("RehydrationReason"), Is.Null)
+
                 Assert.That(
                     rawFact
-                        .FindProperty("RehydrationLeaseId")
+                        .FindProperty("RehydrationExpiresAtUtc")
                         .GetColumnType(),
-                    Is.EqualTo("uniqueidentifier")
+                    Is.EqualTo("datetime2(7)")
                 )
+
+                Assert.That(rawFact.FindProperty("RehydratedAtUtc"), Is.Null)
 
                 Assert.That(hasArchiveIndex, Is.True))
         )
@@ -1231,7 +1323,11 @@ type OperationsUsageArchiveTests() =
                 Assert.That(script, Does.Contain("ArchiveBlobName nvarchar(512) NULL"))
                 Assert.That(script, Does.Contain("ArchiveChecksumSha256Hex char(64) NULL"))
                 Assert.That(script, Does.Contain("ArchiveByteLength bigint NULL"))
-                Assert.That(script, Does.Contain("RehydrationLeaseId uniqueidentifier NULL"))
+                Assert.That(script, Does.Contain("RehydrationExpiresAtUtc datetime2(7) NULL"))
+                Assert.That(script, Does.Not.Contain("RehydrationLeaseId uniqueidentifier NULL"))
+                Assert.That(script, Does.Not.Contain("RehydrationRequestedBy nvarchar(200) NULL"))
+                Assert.That(script, Does.Not.Contain("RehydrationReason nvarchar(512) NULL"))
+                Assert.That(script, Does.Not.Contain("RehydratedAtUtc datetime2(7) NULL"))
                 Assert.That(script, Does.Contain("ALTER COLUMN RawPayload varbinary(max) NULL"))
                 Assert.That(script, Does.Contain("CREATE INDEX IX_ops_RawUsageFact_ArchiveStateObservedAt"))
                 Assert.That(script, Does.Contain("ON PS_ops_OperationsUsageMonthUtc(ObservedAtUtc)")))

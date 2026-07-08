@@ -112,8 +112,8 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         rawFact
-            .Property<System.Nullable<System.Guid>>("RehydrationLeaseId")
-            .HasColumnType("uniqueidentifier")
+            .Property<System.Nullable<System.DateTime>>("RehydrationExpiresAtUtc")
+            .HasColumnType("datetime2(7)")
         |> ignore
 
         rawFact

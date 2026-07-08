@@ -20,7 +20,6 @@ open System.Collections.Generic
 open System.Globalization
 open System.IO
 open System.IO.Compression
-open System.Runtime.ExceptionServices
 open System.Security.Cryptography
 open System.Text
 open System.Text.Json
@@ -440,6 +439,49 @@ type OperationsUsageArchiveProcessor
             return archived
         }
 
+/// Clears expired temporary-hot archived payloads without deleting compact replay authority.
+type OperationsUsageTemporaryHotCleanupProcessor
+    (
+        archiveStore: IOperationsUsageArchiveStore,
+        clock: IClock,
+        logger: ILogger<OperationsUsageTemporaryHotCleanupProcessor>
+    ) =
+
+    /// Stops one cleanup pass if SQL keeps returning full batches beyond the reviewed safety bound.
+    [<Literal>]
+    let MaxCleanupBatchesPerPass = 100
+
+    /// Clears expired temporary-hot payloads in bounded SQL batches until the current pass drains.
+    member _.CleanupExpiredAsync(batchSize: int, cancellationToken: CancellationToken) =
+        task {
+            if batchSize <= 0 then
+                invalidArg (nameof batchSize) "Temporary-hot cleanup batch size must be greater than zero."
+
+            let expiresBefore = clock.GetCurrentInstant()
+            let mutable totalCleaned = 0
+            let mutable batches = 0
+            let mutable keepCleaning = true
+
+            while keepCleaning do
+                cancellationToken.ThrowIfCancellationRequested()
+                let! cleaned = archiveStore.CleanupExpiredRehydratedPayloadsAsync(expiresBefore, batchSize, cancellationToken)
+                totalCleaned <- totalCleaned + cleaned
+                batches <- batches + 1
+
+                keepCleaning <-
+                    cleaned = batchSize
+                    && batches < MaxCleanupBatchesPerPass
+
+            logger.LogInformation(
+                "Cleaned expired operations UsageFact temporary-hot payloads. CleanedFacts: {CleanedFacts}; Batches: {Batches}; ExpiresBeforeUtc: {ExpiresBeforeUtc}.",
+                totalCleaned,
+                batches,
+                expiresBefore
+            )
+
+            return totalCleaned
+        }
+
 /// Summarizes one archive replay batch.
 type OperationsUsageArchiveReplayBatchResult = { Examined: int; Accepted: int; AlreadyProcessed: int }
 
@@ -552,35 +594,12 @@ type OperationsUsageRehydrationProcessor
 
         if errors.Count > 0 then Error(List.ofSeq errors) else Ok()
 
-    /// Rehydrates one archived payload after replay-equivalent archive validation.
-    let rehydrateItemAsync request rehydrationLeaseId rehydratedAt (item: RawUsageFactArchiveReplayItem) cancellationToken =
+    /// Downloads and validates one archived payload before batched SQL rehydration mutates durable state.
+    let buildRehydrationItemAsync (item: RawUsageFactArchiveReplayItem) cancellationToken =
         task {
             let! content = blobStore.DownloadVerifiedAsync(item.Pointer, cancellationToken)
             let _, rawPayload = OperationsUsageArchiveFormat.readValidatedUsageFact item content
-            let! changed = archiveStore.RehydrateArchivedPayloadAsync(item.Pointer, rawPayload, rehydrationLeaseId, CancellationToken.None)
-
-            logger.LogInformation(
-                "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; RehydrationLeaseId: {RehydrationLeaseId}; ChangedSqlState: {ChangedSqlState}; RequestedBy: {RequestedBy}.",
-                item.UsageFactId,
-                item.Pointer.BlobName,
-                rehydrationLeaseId,
-                changed,
-                request.RequestedBy
-            )
-
-            return
-                {
-                    UsageFactId = item.UsageFactId
-                    Scope = request.Scope
-                    Pointer = item.Pointer
-                    RehydrationLeaseId = rehydrationLeaseId
-                    RequestedBy = request.RequestedBy
-                    Reason = request.Reason
-                    RehydratedAt = rehydratedAt
-                    ExpiresAt = request.ExpiresAt
-                    RestoredByteLength = rawPayload.Length
-                    ChangedSqlState = changed
-                }
+            return { Pointer = item.Pointer; RawPayload = rawPayload }
         }
 
     /// Rehydrates up to the explicit quota for one scoped support request and returns local audit proof.
@@ -591,85 +610,65 @@ type OperationsUsageRehydrationProcessor
             | Ok () ->
                 let! items = archiveStore.ListArchivedUsageFactsAsync(Some request.Scope, None, request.MaxFacts, cancellationToken)
                 let itemArray = items |> List.toArray
-                let entries = ResizeArray<RawUsageFactRehydrationAuditEntry>()
-                let rehydrationLeaseId = Guid.NewGuid()
-                let rehydratedAt = clock.GetCurrentInstant()
+                let rehydrationItems = ResizeArray<RawUsageFactRehydrationItem>()
                 let mutable index = 0
 
-                try
-                    while index < itemArray.Length do
-                        cancellationToken.ThrowIfCancellationRequested()
-                        let! entry = rehydrateItemAsync request rehydrationLeaseId rehydratedAt itemArray[index] cancellationToken
-                        entries.Add entry
-                        index <- index + 1
-                with
-                | ex ->
-                    let changedEntries =
-                        entries
-                        |> Seq.filter (fun entry -> entry.ChangedSqlState)
-                        |> Seq.toArray
+                while index < itemArray.Length do
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let! rehydrationItem = buildRehydrationItemAsync itemArray[index] cancellationToken
+                    rehydrationItems.Add rehydrationItem
+                    index <- index + 1
 
-                    let mutable cleanupIndex = 0
-                    let cleanupFailures = ResizeArray<exn>()
+                let rehydratedAt = clock.GetCurrentInstant()
 
-                    while cleanupIndex < changedEntries.Length do
-                        let entry = changedEntries[cleanupIndex]
+                let! changedUsageFactIds =
+                    archiveStore.RehydrateArchivedPayloadsAsync(rehydrationItems |> Seq.toList, request.ExpiresAt, CancellationToken.None)
 
-                        try
-                            let! _ = archiveStore.CleanupRehydratedPayloadAsync(entry.Pointer, entry.RehydrationLeaseId, CancellationToken.None)
-                            ()
-                        with
-                        | cleanupEx ->
-                            cleanupFailures.Add cleanupEx
+                let changedSet = HashSet<UsageFactId>(changedUsageFactIds)
 
-                            logger.LogError(
-                                cleanupEx,
-                                "Temporary operations UsageFact rehydration rollback cleanup failed. UsageFactId: {UsageFactId}; BlobName: {BlobName}; RehydrationLeaseId: {RehydrationLeaseId}.",
-                                entry.UsageFactId,
-                                entry.Pointer.BlobName,
-                                entry.RehydrationLeaseId
-                            )
+                if changedSet.Count <> rehydrationItems.Count then
+                    let missingIds =
+                        rehydrationItems
+                        |> Seq.map (fun item -> item.Pointer.UsageFactId)
+                        |> Seq.filter (fun usageFactId -> not (changedSet.Contains usageFactId))
+                        |> Seq.map string
+                        |> fun values -> String.Join(", ", values)
 
-                        cleanupIndex <- cleanupIndex + 1
+                    invalidOp $"Archived UsageFact rehydration could not persist expiry for every requested SQL pointer. MissingUsageFactIds: {missingIds}."
 
-                    if cleanupFailures.Count > 0 then
-                        logger.LogError(
-                            ex,
-                            "Temporary operations UsageFact rehydration failed after {CleanupFailureCount} rollback cleanup failure(s); rethrowing the original rehydration error.",
-                            cleanupFailures.Count
-                        )
+                let entries = ResizeArray<RawUsageFactRehydrationAuditEntry>()
+                let mutable auditIndex = 0
 
-                    ExceptionDispatchInfo.Capture(ex).Throw()
+                while auditIndex < itemArray.Length do
+                    cancellationToken.ThrowIfCancellationRequested()
+                    let item = itemArray[auditIndex]
+                    let rehydrationItem = rehydrationItems[auditIndex]
+
+                    entries.Add
+                        {
+                            UsageFactId = item.UsageFactId
+                            Scope = request.Scope
+                            Pointer = item.Pointer
+                            RequestedBy = request.RequestedBy
+                            Reason = request.Reason
+                            RehydratedAt = rehydratedAt
+                            ExpiresAt = request.ExpiresAt
+                            RestoredByteLength = rehydrationItem.RawPayload.Length
+                            ChangedSqlState = changedSet.Contains item.UsageFactId
+                        }
+
+                    logger.LogInformation(
+                        "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ExpiresAtUtc: {ExpiresAtUtc}; ExpiryPersisted: {ExpiryPersisted}; RequestedBy: {RequestedBy}.",
+                        item.UsageFactId,
+                        item.Pointer.BlobName,
+                        request.ExpiresAt,
+                        changedSet.Contains item.UsageFactId,
+                        request.RequestedBy
+                    )
+
+                    auditIndex <- auditIndex + 1
 
                 return Ok { AuditEntries = entries |> Seq.toList }
-        }
-
-    /// Clears only payloads this support request actually restored.
-    member _.CleanupAsync(entries: RawUsageFactRehydrationAuditEntry list, cancellationToken: CancellationToken) =
-        task {
-            let entryArray =
-                entries
-                |> List.filter (fun entry -> entry.ChangedSqlState)
-                |> List.toArray
-
-            let mutable index = 0
-            let mutable cleaned = 0
-
-            while index < entryArray.Length do
-                cancellationToken.ThrowIfCancellationRequested()
-                let! changed = archiveStore.CleanupRehydratedPayloadAsync(entryArray[index].Pointer, entryArray[index].RehydrationLeaseId, cancellationToken)
-
-                if changed then cleaned <- cleaned + 1
-
-                index <- index + 1
-
-            logger.LogInformation(
-                "Cleaned up temporary operations UsageFact rehydration. Requested: {Requested}; Cleaned: {Cleaned}.",
-                entryArray.Length,
-                cleaned
-            )
-
-            return cleaned
         }
 
 /// Reads Blob archive settings required by the hot/cold usage fact archive worker.
@@ -866,6 +865,9 @@ type internal OperationsUsageReadinessFailureSource =
     /// Archive retention failures remain visible until a later configured archive batch succeeds.
     | ArchiveRetentionRuntime = 5
 
+    /// Temporary-hot cleanup failures remain visible until a later cleanup pass succeeds.
+    | TemporaryHotCleanupRuntime = 6
+
 /// Tracks one active readiness failure and the ordering point needed for source-owned recovery.
 type internal OperationsUsageReadinessFailure =
     {
@@ -923,6 +925,12 @@ type IOperationsUsageReadinessRecorder =
     /// Clears archive-owned retention failures after a later archive batch succeeds.
     abstract MarkArchiveProcessingSuccess: unit -> unit
 
+    /// Records a redacted temporary-hot cleanup failure that prevents configured retention from being ready.
+    abstract MarkTemporaryHotCleanupFailure: description: string -> unit
+
+    /// Clears cleanup-owned failures after a later cleanup pass succeeds.
+    abstract MarkTemporaryHotCleanupSuccess: unit -> unit
+
     /// Records the latest unsupported ingestion contract observed at the broker boundary.
     abstract MarkUnsupportedContract: description: string -> unit
 
@@ -941,7 +949,7 @@ type OperationsUsageReadinessState() =
 
         dependencyFailures[startupKey] <- {
                                               Source = OperationsUsageReadinessFailureSource.StartupDependency
-                                              Description = "Operations usage worker has not completed dependency startup."
+                                              Description = "Operations usage schema initialization is pending."
                                               Version = failureVersion
                                               RecoveryKey = None
                                           }
@@ -1025,6 +1033,9 @@ type OperationsUsageReadinessState() =
         member _.MarkArchiveProcessingFailure(description) =
             lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.ArchiveRetentionRuntime description None)
 
+        member _.MarkTemporaryHotCleanupFailure(description) =
+            lock gate (fun () -> recordFailure OperationsUsageReadinessFailureSource.TemporaryHotCleanupRuntime description None)
+
         member _.MarkServiceBusReceiveSuccess(attempt) =
             lock gate (fun () -> clearFailureWhenFresh OperationsUsageReadinessFailureSource.ServiceBusReceiveLink attempt)
 
@@ -1034,6 +1045,8 @@ type OperationsUsageReadinessState() =
         member _.MarkServiceBusProcessorSuccess(attempt, recoveryKey) = lock gate (fun () -> clearServiceBusProcessorFailureWhenFresh attempt recoveryKey)
 
         member _.MarkArchiveProcessingSuccess() = lock gate (fun () -> clearFailure OperationsUsageReadinessFailureSource.ArchiveRetentionRuntime None)
+
+        member _.MarkTemporaryHotCleanupSuccess() = lock gate (fun () -> clearFailure OperationsUsageReadinessFailureSource.TemporaryHotCleanupRuntime None)
 
         member _.MarkUnsupportedContract(description) = lock gate (fun () -> lastUnsupportedContract <- Some description)
 
@@ -1690,6 +1703,7 @@ module internal OperationsUsageServiceBusMessage =
 type OperationsUsageArchiveWorkerService
     (
         settings: OperationsUsageArchiveSettings,
+        schema: IOperationsUsageSchemaInitializer,
         processor: OperationsUsageArchiveProcessor,
         readiness: IOperationsUsageReadinessRecorder,
         logger: ILogger<OperationsUsageArchiveWorkerService>
@@ -1716,6 +1730,22 @@ type OperationsUsageArchiveWorkerService
             )
         }
 
+    /// Waits for schema readiness without misclassifying migration startup as archive dependency failure.
+    let tryEnsureSchemaReadyAsync cancellationToken =
+        task {
+            try
+                do! schema.EnsureCreatedAsync cancellationToken
+                return true
+            with
+            | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> return false
+            | ex ->
+                readiness.MarkDependencyFailure($"Operations usage schema initialization failed ({ex.GetType().Name}).")
+
+                logger.LogWarning(ex, "Operations usage archive worker is waiting for schema initialization before querying archive state.")
+
+                return false
+        }
+
     /// Delays between archive passes while allowing prompt host shutdown.
     let delayUntilNextBatchAsync (cancellationToken: CancellationToken) = Task.Delay(settings.PollInterval, cancellationToken)
 
@@ -1734,7 +1764,10 @@ type OperationsUsageArchiveWorkerService
             while running
                   && not stoppingToken.IsCancellationRequested do
                 try
-                    do! runBatchAsync stoppingToken
+                    let! schemaReady = tryEnsureSchemaReadyAsync stoppingToken
+
+                    if schemaReady then do! runBatchAsync stoppingToken
+
                     do! delayUntilNextBatchAsync stoppingToken
                 with
                 | :? OperationCanceledException when stoppingToken.IsCancellationRequested -> running <- false
@@ -1744,11 +1777,83 @@ type OperationsUsageArchiveWorkerService
                     do! delayUntilNextBatchAsync stoppingToken
         }
 
+/// Runs periodic cleanup for expired temporary-hot archived payloads.
+type OperationsUsageTemporaryHotCleanupWorkerService
+    (
+        schema: IOperationsUsageSchemaInitializer,
+        processor: OperationsUsageTemporaryHotCleanupProcessor,
+        readiness: IOperationsUsageReadinessRecorder,
+        logger: ILogger<OperationsUsageTemporaryHotCleanupWorkerService>
+    ) =
+    inherit BackgroundService()
+
+    /// Uses the operator-approved cadence for temporary-hot expiry cleanup.
+    let cleanupInterval: TimeSpan = TimeSpan.FromMinutes(30.0)
+
+    /// Runs one cleanup pass after schema initialization succeeds.
+    let runCleanupAsync cancellationToken =
+        task {
+            let! cleaned = processor.CleanupExpiredAsync(OperationsUsageSql.TemporaryHotCleanupBatchSize, cancellationToken)
+            readiness.MarkTemporaryHotCleanupSuccess()
+
+            logger.LogInformation(
+                "Completed operations usage temporary-hot cleanup pass. CleanedFacts: {CleanedFacts}; BatchSize: {BatchSize}.",
+                cleaned,
+                OperationsUsageSql.TemporaryHotCleanupBatchSize
+            )
+        }
+
+    /// Waits for schema readiness without misclassifying migration startup as cleanup failure.
+    let tryEnsureSchemaReadyAsync cancellationToken =
+        task {
+            try
+                do! schema.EnsureCreatedAsync cancellationToken
+                return true
+            with
+            | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> return false
+            | ex ->
+                readiness.MarkDependencyFailure($"Operations usage schema initialization failed ({ex.GetType().Name}).")
+
+                logger.LogWarning(ex, "Operations usage temporary-hot cleanup worker is waiting for schema initialization before querying archive state.")
+
+                return false
+        }
+
+    /// Delays between cleanup passes while allowing prompt host shutdown.
+    let delayUntilNextCleanupAsync (cancellationToken: CancellationToken) = Task.Delay(cleanupInterval, cancellationToken)
+
+    /// Runs cleanup passes until the worker host shuts down.
+    override _.ExecuteAsync(stoppingToken: CancellationToken) =
+        task {
+            logger.LogInformation(
+                "Started operations usage temporary-hot cleanup worker. PollInterval: {PollInterval}; BatchSize: {BatchSize}.",
+                cleanupInterval,
+                OperationsUsageSql.TemporaryHotCleanupBatchSize
+            )
+
+            let mutable running = true
+
+            while running
+                  && not stoppingToken.IsCancellationRequested do
+                try
+                    let! schemaReady = tryEnsureSchemaReadyAsync stoppingToken
+
+                    if schemaReady then do! runCleanupAsync stoppingToken
+
+                    do! delayUntilNextCleanupAsync stoppingToken
+                with
+                | :? OperationCanceledException when stoppingToken.IsCancellationRequested -> running <- false
+                | ex ->
+                    readiness.MarkTemporaryHotCleanupFailure($"Temporary-hot cleanup failed ({ex.GetType().Name}).")
+                    logger.LogError(ex, "Operations usage temporary-hot cleanup failed; retrying after the configured poll interval.")
+                    do! delayUntilNextCleanupAsync stoppingToken
+        }
+
 /// Runs the operational fact Service Bus processor for the Grace operations worker process.
 type OperationsUsageWorkerService
     (
         settings: OperationsWorkerSettings,
-        schema: OperationsUsageSchema,
+        schema: IOperationsUsageSchemaInitializer,
         processor: OperationsUsageIngestionProcessor,
         readiness: IOperationsUsageReadinessRecorder,
         logger: ILogger<OperationsUsageWorkerService>
