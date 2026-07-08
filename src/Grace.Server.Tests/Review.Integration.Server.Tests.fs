@@ -209,7 +209,7 @@ module private ReviewIntegrationHelpers =
     /// Defines retry behavior for the surrounding tests used by the server integration review Integration scenario.
     let retryAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateProjectionParameters()) repositoryId candidateId
-        postBadRequestContainsAsync<CandidateProjectionParameters> "/review/candidate/retry" parameters "PromotionSet does not exist."
+        postBadRequestContainsAsync<CandidateProjectionParameters> "/review/candidate/retry" parameters "no policy snapshot is currently available"
 
     /// Defines cancel behavior for the surrounding tests used by the server integration review Integration scenario.
     let cancelAsync repositoryId candidateId =
@@ -220,7 +220,7 @@ module private ReviewIntegrationHelpers =
     let gateRerunAsync repositoryId candidateId =
         let parameters = candidateScoped (CandidateGateRerunParameters()) repositoryId candidateId
         parameters.Gate <- "required-validation"
-        postBadRequestContainsAsync<CandidateGateRerunParameters> "/review/candidate/gate-rerun" parameters "PromotionSet does not exist."
+        postOkBodyContainsAsync<CandidateGateRerunParameters> "/review/candidate/gate-rerun" parameters "deterministic promotion-set recompute"
 
     /// Defines deepen stub behavior for the surrounding tests used by the server integration review Integration scenario.
     let deepenStubAsync repositoryId promotionSetId =
@@ -244,7 +244,7 @@ type ReviewRouteIntegrationTests() =
 
             let! identity = ReviewIntegrationHelpers.candidateIdentityAsync repositoryId promotionSetId
             Assert.That(identity.Identity.CandidateId, Is.EqualTo(promotionSetId))
-            Assert.That(identity.Identity.PromotionSetId, Is.EqualTo(Guid.Empty.ToString()))
+            Assert.That(identity.Identity.PromotionSetId, Is.EqualTo(promotionSetId))
             Assert.That(identity.Identity.IdentityMode, Is.EqualTo(CandidateIdentityModes.DirectPromotionSetProjection))
 
             let identitySourceSections =
@@ -254,7 +254,13 @@ type ReviewRouteIntegrationTests() =
 
             Assert.That(identitySourceSections, Does.Contain("identity"))
 
-            let! _ = ReviewIntegrationHelpers.candidateGetCurrentFailureAsync repositoryId promotionSetId
+            let! candidate = ReviewIntegrationHelpers.candidateGetAsync repositoryId promotionSetId
+            Assert.That(candidate.Identity.PromotionSetId, Is.EqualTo(promotionSetId))
+            Assert.That(candidate.QueueState, Is.EqualTo(ProjectionSourceStates.NotAvailable))
+            Assert.That(candidate.RequiredActions, Does.Contain("RetryComputation"))
+            Assert.That(candidate.RequiredActions, Does.Contain("ConfirmValidationSummary"))
+            Assert.That(candidate.Diagnostics, Does.Contain("Queue state is unavailable for this candidate."))
+            Assert.That(candidate.Diagnostics, Does.Contain("Review notes are not available for this candidate."))
 
             do! ReviewIntegrationHelpers.checkpointAsync repositoryId promotionSetId reviewedUpToReferenceId policySnapshotId
 
@@ -264,11 +270,14 @@ type ReviewRouteIntegrationTests() =
 
             let! _ = ReviewIntegrationHelpers.resolveMissingFindingAsync repositoryId promotionSetId (Guid.NewGuid().ToString())
 
-            let! _ = ReviewIntegrationHelpers.candidateRequiredActionsCurrentFailureAsync repositoryId promotionSetId
+            let! requiredActions = ReviewIntegrationHelpers.candidateRequiredActionsAsync repositoryId promotionSetId
+            Assert.That(requiredActions.Identity.PromotionSetId, Is.EqualTo(promotionSetId))
+            Assert.That(requiredActions.RequiredActions, Does.Contain("RetryComputation"))
+            Assert.That(requiredActions.RequiredActions, Does.Contain("ConfirmValidationSummary"))
 
             let! attestations = ReviewIntegrationHelpers.candidateAttestationsAsync repositoryId promotionSetId
             Assert.That(attestations.Identity.CandidateId, Is.EqualTo(promotionSetId))
-            Assert.That(attestations.Identity.PromotionSetId, Is.EqualTo(Guid.Empty.ToString()))
+            Assert.That(attestations.Identity.PromotionSetId, Is.EqualTo(promotionSetId))
 
             let attestationNames =
                 attestations.Attestations
@@ -280,7 +289,7 @@ type ReviewRouteIntegrationTests() =
             Assert.That(attestationNames[1], Is.EqualTo("ReviewCheckpoint"))
 
             Assert.That(attestations.Attestations[0].Status, Is.EqualTo(ProjectionSourceStates.NotAvailable))
-            Assert.That(attestations.Attestations[1].Status, Is.EqualTo(ProjectionSourceStates.NotAvailable))
+            Assert.That(attestations.Attestations[1].Status, Is.EqualTo(ProjectionSourceStates.Authoritative))
 
             let attestationSourceSections =
                 attestations.SourceStates
@@ -292,7 +301,9 @@ type ReviewRouteIntegrationTests() =
             Assert.That(attestationSourceSections[1], Is.EqualTo("policy"))
             Assert.That(attestationSourceSections[2], Is.EqualTo("checkpoint"))
 
-            let! _ = ReviewIntegrationHelpers.reviewReportCurrentFailureAsync repositoryId promotionSetId
+            let! report = ReviewIntegrationHelpers.reviewReportAsync repositoryId promotionSetId
+            Assert.That(report.SectionOrder[0], Is.EqualTo(ReviewModels.ReviewReportSections.CandidateAndPromotionSet))
+            Assert.That(report.SectionOrder[1], Is.EqualTo(ReviewModels.ReviewReportSections.QueueAndRequiredActions))
             let! _ = ReviewIntegrationHelpers.retryAsync repositoryId promotionSetId
             let! _ = ReviewIntegrationHelpers.cancelAsync repositoryId promotionSetId
             let! _ = ReviewIntegrationHelpers.gateRerunAsync repositoryId promotionSetId

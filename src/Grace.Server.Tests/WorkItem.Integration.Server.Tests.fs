@@ -129,6 +129,25 @@ module private WorkItemIntegrationHelpers =
             return workItemId
         }
 
+    /// Creates a public repository-owned PromotionSet that work-item link routes may observe.
+    let createPromotionSetAsync (repositoryId: string) =
+        task {
+            let promotionSetId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let parameters = Grace.Shared.Parameters.PromotionSet.CreatePromotionSetParameters()
+            parameters.OwnerId <- ownerId
+            parameters.OrganizationId <- organizationId
+            parameters.RepositoryId <- repositoryId
+            parameters.PromotionSetId <- promotionSetId.ToString()
+            parameters.TargetBranchId <- targetBranchId.ToString()
+            parameters.CorrelationId <- generateCorrelationId ()
+
+            let! response = Client.PostAsync("/promotion-set/create", createJsonContent parameters)
+            let! body = response.Content.ReadAsStringAsync()
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.OK), body)
+            return promotionSetId
+        }
+
     /// Defines update work item response behavior for the surrounding tests used by the server integration work Item Integration scenario.
     let updateWorkItemResponseAsync (client: HttpClient) (repositoryId: string) (workItemIdentifier: string) =
         task {
@@ -673,7 +692,7 @@ type WorkItemNumberAndLinksIntegrationTests() =
             let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-links-lifecycle"
             let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "links lifecycle"
             let referenceId = Guid.NewGuid()
-            let promotionSetId = Guid.NewGuid()
+            let! promotionSetId = WorkItemIntegrationHelpers.createPromotionSetAsync repositoryId
 
             do! WorkItemIntegrationHelpers.linkReferenceAsync repositoryId workItemId referenceId
             do! WorkItemIntegrationHelpers.linkPromotionSetAsync repositoryId workItemId promotionSetId
@@ -1247,7 +1266,7 @@ type WorkItemSdkSmokeIntegrationTests() =
                         let! repositoryId = WorkItemIntegrationHelpers.createRepositoryAsync "wi-sdk-roundtrip"
                         let! workItemId = WorkItemIntegrationHelpers.createWorkItemAsync repositoryId "sdk links"
                         let referenceId = Guid.NewGuid()
-                        let promotionSetId = Guid.NewGuid()
+                        let! promotionSetId = WorkItemIntegrationHelpers.createPromotionSetAsync repositoryId
 
                         do! WorkItemIntegrationHelpers.linkReferenceAsync repositoryId workItemId referenceId
                         do! WorkItemIntegrationHelpers.linkPromotionSetAsync repositoryId workItemId promotionSetId
