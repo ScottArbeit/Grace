@@ -8,6 +8,7 @@ open Grace.Shared
 open Grace.Shared.Parameters.Branch
 open Grace.Shared.Utilities
 open Grace.Types.Annotation
+open Grace.Types.Branch
 open Grace.Types.Common
 open Grace.Types.Reference
 open NUnit.Framework
@@ -141,6 +142,31 @@ module BranchCommandTests =
     let private fileSha256Hash = Sha256Hash "aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999"
 
     let private fileBlake3Hash = Blake3Hash "bbbbccccddddeeeeffff0000111122223333444455556666777788889999aaaa"
+
+    /// Builds reference metadata with the supplied identity for branch-switch download authority tests.
+    let private referenceDto referenceId = { ReferenceDto.Default with ReferenceId = referenceId }
+
+    /// Verifies that branch switch downloads use the resolved branch latest reference when the caller switches by branch.
+    [<Test>]
+    let ``branch switch download reference uses resolved branch latest reference for branch targets`` () =
+        let latestReferenceId = ReferenceId.NewGuid()
+        let targetBranch = { BranchDto.Default with LatestReference = referenceDto latestReferenceId }
+        let parameters = Branch.SwitchParameters(ToBranchName = "feature")
+
+        Branch.switchDownloadReferenceIdForResolvedTarget parameters ReferenceDto.Default targetBranch
+        |> should equal latestReferenceId
+
+    /// Verifies that branch switch downloads keep the exact resolved reference when a reference locator is supplied.
+    [<Test>]
+    let ``branch switch download reference uses resolved reference locator when supplied`` () =
+        let latestReferenceId = ReferenceId.NewGuid()
+        let resolvedReferenceId = ReferenceId.NewGuid()
+        let targetBranch = { BranchDto.Default with LatestReference = referenceDto latestReferenceId }
+        let targetReference = referenceDto resolvedReferenceId
+        let parameters = Branch.SwitchParameters(ReferenceId = $"{resolvedReferenceId}")
+
+        Branch.switchDownloadReferenceIdForResolvedTarget parameters targetReference targetBranch
+        |> should equal resolvedReferenceId
 
     /// Builds branch directory with file test data used to exercise CLI branch behavior.
     let private branchDirectoryWithFile () =

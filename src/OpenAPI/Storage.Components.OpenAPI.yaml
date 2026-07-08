@@ -70,6 +70,11 @@ GetDownloadUriParameters:
   required:
     - ReferenceId
     - RelativePath
+  anyOf:
+    - required:
+        - Sha256Hash
+    - required:
+        - Blake3Hash
 
 GetContentBlockUploadUriParameters:
   description: Parameters for /storage/getContentBlockUploadUri.

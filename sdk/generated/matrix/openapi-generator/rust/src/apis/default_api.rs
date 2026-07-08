@@ -74,6 +74,7 @@ pub enum GetContentBlockUploadUriError {
 #[serde(untagged)]
 pub enum GetDownloadUriError {
     Status400(models::GraceError),
+    Status404(),
     Status500(models::GraceError),
     UnknownValue(serde_json::Value),
 }
@@ -378,7 +379,7 @@ pub async fn get_content_block_upload_uri(configuration: &configuration::Configu
     }
 }
 
-/// Compatibility endpoint for downloading repository-scoped WholeFileContent.
+/// Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape. 
 pub async fn get_download_uri(configuration: &configuration::Configuration, get_download_uri_parameters: models::GetDownloadUriParameters) -> Result<String, Error<GetDownloadUriError>> {
     // add a prefix to parameters to efficiently prevent name collisions
     let p_body_get_download_uri_parameters = get_download_uri_parameters;

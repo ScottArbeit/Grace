@@ -1753,7 +1753,7 @@ class DefaultApi:
     ) -> str:
         """Gets a download URI for whole-file content.
 
-        Compatibility endpoint for downloading repository-scoped WholeFileContent.
+        Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape. 
 
         :param get_download_uri_parameters: (required)
         :type get_download_uri_parameters: GetDownloadUriParameters
@@ -1790,6 +1790,7 @@ class DefaultApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "str",
             '400': "GraceError",
+            '404': None,
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -1822,7 +1823,7 @@ class DefaultApi:
     ) -> ApiResponse[str]:
         """Gets a download URI for whole-file content.
 
-        Compatibility endpoint for downloading repository-scoped WholeFileContent.
+        Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape. 
 
         :param get_download_uri_parameters: (required)
         :type get_download_uri_parameters: GetDownloadUriParameters
@@ -1859,6 +1860,7 @@ class DefaultApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "str",
             '400': "GraceError",
+            '404': None,
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(
@@ -1891,7 +1893,7 @@ class DefaultApi:
     ) -> RESTResponseType:
         """Gets a download URI for whole-file content.
 
-        Compatibility endpoint for downloading repository-scoped WholeFileContent.
+        Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape. 
 
         :param get_download_uri_parameters: (required)
         :type get_download_uri_parameters: GetDownloadUriParameters
@@ -1928,6 +1930,7 @@ class DefaultApi:
         _response_types_map: Dict[str, Optional[str]] = {
             '200': "str",
             '400': "GraceError",
+            '404': None,
             '500': "GraceError",
         }
         response_data = self.api_client.call_api(

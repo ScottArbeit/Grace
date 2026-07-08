@@ -2876,6 +2876,15 @@ module Branch =
         /// Stores a parsed command value for handler execution.
         member val ReferenceId: string = String.Empty with get, set
 
+    /// Selects the reference that authorizes branch-switch file download SAS requests after the switch target is resolved.
+    let internal switchDownloadReferenceIdForResolvedTarget (parameters: SwitchParameters) (targetReference: ReferenceDto) (targetBranch: BranchDto) =
+        if targetReference.ReferenceId <> ReferenceId.Empty
+           && (not (String.IsNullOrWhiteSpace parameters.ReferenceId)
+               || not (String.IsNullOrWhiteSpace parameters.Sha256Hash)) then
+            targetReference.ReferenceId
+        else
+            targetBranch.LatestReference.ReferenceId
+
     /// Executes the switch command by binding ParseResult values to the SDK request and CLI output contract.
     type Switch() =
         inherit AsynchronousCommandLineAction()
@@ -3201,7 +3210,43 @@ module Branch =
                                             $"Retrieved {directoryIds.Count()} directory version(s) for branch {newBranch.BranchName}."
 
                                     t |> setProgressTaskValue showOutput 100.0
-                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
+
+                                    let! getReferenceResult =
+                                        if
+                                            not (String.IsNullOrWhiteSpace switchParameters.ReferenceId)
+                                            || not (String.IsNullOrWhiteSpace switchParameters.Sha256Hash)
+                                        then
+                                            let getReferenceParameters =
+                                                GetReferenceParameters(
+                                                    OwnerId = graceIds.OwnerIdString,
+                                                    OwnerName = graceIds.OwnerName,
+                                                    OrganizationId = graceIds.OrganizationIdString,
+                                                    OrganizationName = graceIds.OrganizationName,
+                                                    RepositoryId = graceIds.RepositoryIdString,
+                                                    RepositoryName = graceIds.RepositoryName,
+                                                    BranchId = $"{newBranch.BranchId}",
+                                                    ReferenceId = switchParameters.ReferenceId,
+                                                    Sha256Hash = switchParameters.Sha256Hash,
+                                                    CorrelationId = graceIds.CorrelationId
+                                                )
+
+                                            Branch.GetReference getReferenceParameters
+                                        else
+                                            Task.FromResult(Ok(GraceReturnValue.Create newBranch.LatestReference graceIds.CorrelationId))
+
+                                    match getReferenceResult with
+                                    | Error error -> return Error error
+                                    | Ok referenceReturnValue ->
+                                        let downloadReferenceId =
+                                            switchDownloadReferenceIdForResolvedTarget parameters referenceReturnValue.ReturnValue newBranch
+
+                                        if downloadReferenceId = ReferenceId.Empty then
+                                            return
+                                                Error(
+                                                    GraceError.Create "Branch switch could not resolve a reference for file downloads." graceIds.CorrelationId
+                                                )
+                                        else
+                                            return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds, downloadReferenceId)
                         }
 
                     let getVersionToSwitchToFromReference
@@ -3265,7 +3310,12 @@ module Branch =
                                     let newBranch = branchReturnValue.ReturnValue
                                     let directoryIds = versionReturnValue.ReturnValue
                                     t |> setProgressTaskValue showOutput 100.0
-                                    return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds)
+                                    let downloadReferenceId = switchDownloadReferenceIdForResolvedTarget parameters reference newBranch
+
+                                    if downloadReferenceId = ReferenceId.Empty then
+                                        return Error(GraceError.Create "Branch switch could not resolve a reference for file downloads." graceIds.CorrelationId)
+                                    else
+                                        return Ok(showOutput, parseResult, parameters, currentBranch, newBranch, directoryIds, downloadReferenceId)
                                 | Error error, _ -> return Error error
                                 | _, Error error -> return Error error
                         }
@@ -3297,7 +3347,36 @@ module Branch =
                             | Ok returnValue ->
                                 let directoryIds = returnValue.ReturnValue
                                 t |> setProgressTaskValue showOutput 100.0
-                                return Ok(showOutput, parseResult, parameters, currentBranch, currentBranch, directoryIds)
+
+                                let! getReferenceResult =
+                                    if not (String.IsNullOrWhiteSpace sha256Hash) then
+                                        let getReferenceParameters =
+                                            GetReferenceParameters(
+                                                OwnerId = graceIds.OwnerIdString,
+                                                OwnerName = graceIds.OwnerName,
+                                                OrganizationId = graceIds.OrganizationIdString,
+                                                OrganizationName = graceIds.OrganizationName,
+                                                RepositoryId = graceIds.RepositoryIdString,
+                                                RepositoryName = graceIds.RepositoryName,
+                                                BranchId = $"{currentBranch.BranchId}",
+                                                Sha256Hash = sha256Hash,
+                                                CorrelationId = graceIds.CorrelationId
+                                            )
+
+                                        Branch.GetReference getReferenceParameters
+                                    else
+                                        Task.FromResult(Ok(GraceReturnValue.Create currentBranch.LatestReference graceIds.CorrelationId))
+
+                                match getReferenceResult with
+                                | Error error -> return Error error
+                                | Ok referenceReturnValue ->
+                                    let downloadReferenceId =
+                                        switchDownloadReferenceIdForResolvedTarget parameters referenceReturnValue.ReturnValue currentBranch
+
+                                    if downloadReferenceId = ReferenceId.Empty then
+                                        return Error(GraceError.Create "Branch switch could not resolve a reference for file downloads." graceIds.CorrelationId)
+                                    else
+                                        return Ok(showOutput, parseResult, parameters, currentBranch, currentBranch, directoryIds, downloadReferenceId)
                             | Error error -> return Error error
                         }
 
@@ -3434,7 +3513,8 @@ module Branch =
                          parameters: SwitchParameters,
                          currentBranch: BranchDto,
                          newBranch: BranchDto,
-                         directoryIds: IEnumerable<DirectoryVersionId>)
+                         directoryIds: IEnumerable<DirectoryVersionId>,
+                         downloadReferenceId: ReferenceId)
                         =
                         task {
                             t |> startProgressTask showOutput
@@ -3469,11 +3549,7 @@ module Branch =
                                         OrganizationName = graceIds.OrganizationName,
                                         RepositoryId = graceIds.RepositoryIdString,
                                         RepositoryName = graceIds.RepositoryName,
-                                        ReferenceId =
-                                            (if String.IsNullOrWhiteSpace parameters.ReferenceId then
-                                                 ReferenceId.Empty
-                                             else
-                                                 Guid.Parse parameters.ReferenceId),
+                                        ReferenceId = downloadReferenceId,
                                         CorrelationId = graceIds.CorrelationId
                                     )
 

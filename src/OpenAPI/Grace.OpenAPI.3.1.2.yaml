@@ -4397,6 +4397,11 @@ components:
       required:
         - ReferenceId
         - RelativePath
+      anyOf:
+        - required:
+            - Sha256Hash
+        - required:
+            - Blake3Hash
     GetContentBlockUploadUriParameters:
       description: Parameters for /storage/getContentBlockUploadUri.
       allOf:
@@ -6995,18 +7000,6 @@ components:
                   Path: /owner/get
     '404':
       description: Not Found
-      content:
-        application/json:
-          schema:
-            $ref: '#/components/schemas/GraceError'
-          examples:
-            hiddenOrMissing:
-              summary: Hidden or missing resource
-              value:
-                Error: The requested resource was not found.
-                EventTime: '2026-06-04T18:15:00Z'
-                CorrelationId: cli-20260604T181500Z-0001
-                Properties: {}
     '500':
       description: Internal Server Error
       content:
