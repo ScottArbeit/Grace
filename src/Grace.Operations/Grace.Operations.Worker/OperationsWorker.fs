@@ -522,6 +522,8 @@ type OperationsUsageArchiveReplayProcessor
     /// Replays archived rows in SQL-index pages, using UsageFactId idempotency to avoid duplicate aggregate projection.
     member _.ReplayBatchAsync(scope: RawUsageFactArchiveScope option, batchSize: int, cancellationToken: CancellationToken) =
         task {
+            let query = { Scope = scope; ObservedAfterUtc = None; ObservedBeforeUtc = None; CorrelationIds = []; UsageFactIds = [] }
+
             let mutable cursor = None
             let mutable keepReading = true
             let mutable examined = 0
@@ -529,7 +531,7 @@ type OperationsUsageArchiveReplayProcessor
             let mutable alreadyProcessed = 0
 
             while keepReading do
-                let! items = archiveStore.ListArchivedUsageFactsAsync(scope, cursor, batchSize, cancellationToken)
+                let! items = archiveStore.ListArchivedUsageFactsAsync(query, cursor, batchSize, cancellationToken)
                 let itemArray = items |> List.toArray
                 let mutable index = 0
 
@@ -553,10 +555,16 @@ type OperationsUsageArchiveReplayProcessor
         }
 
 /// Requests temporary support access to archived payloads for one Grace repository scope.
-type OperationsUsageRehydrationRequest = { Scope: RawUsageFactArchiveScope; MaxFacts: int; RequestedBy: string; Reason: string; ExpiresAt: Instant }
+type OperationsUsageRehydrationRequest = { Query: RawUsageFactArchiveQuery; DryRun: bool; RequestedBy: string; Reason: string; ExpiresAt: Instant option }
 
 /// Reports temporary support rehydration audit evidence and cleanup targets.
-type OperationsUsageRehydrationResult = { AuditEntries: RawUsageFactRehydrationAuditEntry list }
+type OperationsUsageRehydrationResult =
+    {
+        MatchingArchivedFactCount: int64
+        DryRun: bool
+        Warnings: string list
+        AuditEntries: RawUsageFactRehydrationAuditEntry list
+    }
 
 /// Restores archived payloads temporarily for scoped support workflows and provides cleanup.
 type OperationsUsageRehydrationProcessor
@@ -567,21 +575,51 @@ type OperationsUsageRehydrationProcessor
         logger: ILogger<OperationsUsageRehydrationProcessor>
     ) =
 
+    /// Provides the default support rehydration lease duration when the operator does not supply one.
+    [<Literal>]
+    let DefaultExpiryHours = 8.0
+
+    /// Bounds temporary support rehydration leases so archived payloads cannot remain hot indefinitely.
+    [<Literal>]
+    let MaximumExpiryDays = 7.0
+
+    /// Names the match-count threshold where operators receive an explicit high-volume warning.
+    [<Literal>]
+    let RehydrationWarningThreshold = 10000L
+
+    /// Uses the SQL payload batch size as the archive exploration page size for support rehydration.
+    let RehydrationArchivePageSize = OperationsUsageSql.RehydrationPayloadBatchSize
+
+    /// Retries each verified SQL rehydration batch after transient failures before failing the operator request.
+    [<Literal>]
+    let RehydrationBatchRetryLimit = 3
+
     /// Rejects global or unbounded rehydration requests before any Blob reads occur.
     let validateRequest (request: OperationsUsageRehydrationRequest) =
         let errors = ResizeArray<string>()
+        let requestedAt = clock.GetCurrentInstant()
 
-        if request.Scope.OwnerId.IsNone then
-            errors.Add("Rehydration requires OwnerId scope.")
+        let scope =
+            match request.Query.Scope with
+            | Some scope ->
+                if scope.OwnerId.IsNone then errors.Add("Rehydration requires OwnerId scope.")
 
-        if request.Scope.OrganizationId.IsNone then
-            errors.Add("Rehydration requires OrganizationId scope.")
+                if scope.OrganizationId.IsNone then
+                    errors.Add("Rehydration requires OrganizationId scope.")
 
-        if request.Scope.RepositoryId.IsNone then
-            errors.Add("Rehydration requires RepositoryId scope.")
+                if scope.RepositoryId.IsNone then
+                    errors.Add("Rehydration requires RepositoryId scope.")
 
-        if request.MaxFacts <= 0 then
-            errors.Add("Rehydration MaxFacts quota must be greater than zero.")
+                Some scope
+            | None ->
+                errors.Add("Rehydration requires OwnerId scope.")
+                errors.Add("Rehydration requires OrganizationId scope.")
+                errors.Add("Rehydration requires RepositoryId scope.")
+                None
+
+        if request.Query.ObservedAfterUtc.IsNone
+           && request.Query.ObservedBeforeUtc.IsNone then
+            errors.Add("Rehydration requires ObservedAfterUtc or ObservedBeforeUtc.")
 
         if String.IsNullOrWhiteSpace request.RequestedBy then
             errors.Add("Rehydration RequestedBy audit value is required.")
@@ -589,85 +627,169 @@ type OperationsUsageRehydrationProcessor
         if String.IsNullOrWhiteSpace request.Reason then
             errors.Add("Rehydration Reason audit value is required.")
 
-        if request.ExpiresAt <= clock.GetCurrentInstant() then
+        let expiresAt =
+            request.ExpiresAt
+            |> Option.defaultValue (requestedAt.Plus(Duration.FromHours DefaultExpiryHours))
+
+        if expiresAt <= requestedAt then
             errors.Add("Rehydration ExpiresAt must be in the future.")
 
-        if errors.Count > 0 then Error(List.ofSeq errors) else Ok()
+        if expiresAt > requestedAt.Plus(Duration.FromDays MaximumExpiryDays) then
+            errors.Add("Rehydration ExpiresAt must be no more than 7 days after request time.")
+
+        if errors.Count > 0 then
+            Error(List.ofSeq errors)
+        else
+            match scope with
+            | Some scope -> Ok(requestedAt, expiresAt, scope)
+            | None -> Error(List.ofSeq errors)
 
     /// Downloads and validates one archived payload before batched SQL rehydration mutates durable state.
-    let buildRehydrationItemAsync (item: RawUsageFactArchiveReplayItem) cancellationToken =
+    let buildRehydrationItemAsync (item: RawUsageFactArchiveReplayItem) (cancellationToken: CancellationToken) =
         task {
             let! content = blobStore.DownloadVerifiedAsync(item.Pointer, cancellationToken)
             let _, rawPayload = OperationsUsageArchiveFormat.readValidatedUsageFact item content
             return { Pointer = item.Pointer; RawPayload = rawPayload }
         }
 
-    /// Rehydrates up to the explicit quota for one scoped support request and returns local audit proof.
+    /// Raises a clear operator-facing failure when SQL did not commit every selected pointer in a batch.
+    let raiseIncompleteBatchFailure (rehydrationItems: RawUsageFactRehydrationItem array) (changedUsageFactIds: UsageFactId list) =
+        let changedSet = HashSet<UsageFactId>(changedUsageFactIds)
+
+        if changedSet.Count <> rehydrationItems.Length then
+            let missingIds =
+                rehydrationItems
+                |> Array.map (fun item -> item.Pointer.UsageFactId)
+                |> Array.filter (fun usageFactId -> not (changedSet.Contains usageFactId))
+                |> Array.map string
+                |> fun values -> String.Join(", ", values)
+
+            invalidOp
+                $"Grace Operator support rehydration failed because SQL did not verify and rehydrate every selected archive pointer in the batch. MissingUsageFactIds: {missingIds}."
+
+        changedSet
+
+    /// Retries a verified support rehydration batch without rolling back earlier committed batches.
+    let rehydrateBatchWithRetryAsync (items: RawUsageFactArchiveReplayItem array) expiresAt (cancellationToken: CancellationToken) =
+        task {
+            let rehydrationItems = ResizeArray<RawUsageFactRehydrationItem>()
+            let mutable index = 0
+
+            while index < items.Length do
+                cancellationToken.ThrowIfCancellationRequested()
+                let! rehydrationItem = buildRehydrationItemAsync items[index] cancellationToken
+                rehydrationItems.Add rehydrationItem
+                index <- index + 1
+
+            let rehydrationArray = rehydrationItems.ToArray()
+            let mutable attempt = 0
+            let mutable completed = false
+            let mutable changedSet = HashSet<UsageFactId>()
+
+            while not completed
+                  && attempt <= RehydrationBatchRetryLimit do
+                try
+                    let! changedUsageFactIds = archiveStore.RehydrateArchivedPayloadsAsync(rehydrationArray |> Array.toList, expiresAt, CancellationToken.None)
+
+                    changedSet <- raiseIncompleteBatchFailure rehydrationArray changedUsageFactIds
+                    completed <- true
+                with
+                | ex when attempt < RehydrationBatchRetryLimit ->
+                    logger.LogWarning(
+                        ex,
+                        "Retrying temporary support rehydration SQL batch after failure. Attempt: {Attempt}; RetryLimit: {RetryLimit}.",
+                        attempt + 1,
+                        RehydrationBatchRetryLimit
+                    )
+
+                    attempt <- attempt + 1
+                | ex ->
+                    invalidOp
+                        $"Grace Operator support rehydration failed after {attempt} retries for a verified archive batch. No compensation was attempted for earlier successful batches; expiry cleanup will remove prior temporary-hot rows. Failure: {ex.Message}"
+
+            return rehydrationArray, changedSet
+        }
+
+    /// Rehydrates all rows matching the scoped support predicate and returns local audit proof.
     member _.RehydrateAsync(request: OperationsUsageRehydrationRequest, cancellationToken: CancellationToken) =
         task {
             match validateRequest request with
             | Error errors -> return Error errors
-            | Ok () ->
-                let! items = archiveStore.ListArchivedUsageFactsAsync(Some request.Scope, None, request.MaxFacts, cancellationToken)
-                let itemArray = items |> List.toArray
-                let rehydrationItems = ResizeArray<RawUsageFactRehydrationItem>()
-                let mutable index = 0
+            | Ok (_requestedAt, expiresAt, scope) ->
+                let warnings = ResizeArray<string>()
+                let! matchingCount = archiveStore.CountArchivedUsageFactsAsync(request.Query, cancellationToken)
 
-                while index < itemArray.Length do
-                    cancellationToken.ThrowIfCancellationRequested()
-                    let! rehydrationItem = buildRehydrationItemAsync itemArray[index] cancellationToken
-                    rehydrationItems.Add rehydrationItem
-                    index <- index + 1
+                logger.LogInformation(
+                    "Support rehydration archive exploration matched {MatchingArchivedFactCount} archived operational UsageFacts. DryRun: {DryRun}.",
+                    matchingCount,
+                    request.DryRun
+                )
 
-                let rehydratedAt = clock.GetCurrentInstant()
+                if matchingCount > RehydrationWarningThreshold then
+                    let warning = $"Support rehydration matched {matchingCount} archived UsageFacts, which is above the 10000-row operator warning threshold."
 
-                let! changedUsageFactIds =
-                    archiveStore.RehydrateArchivedPayloadsAsync(rehydrationItems |> Seq.toList, request.ExpiresAt, CancellationToken.None)
+                    warnings.Add warning
+                    logger.LogWarning("{Warning}", warning)
 
-                let changedSet = HashSet<UsageFactId>(changedUsageFactIds)
+                if request.DryRun then
+                    return Ok { MatchingArchivedFactCount = matchingCount; DryRun = true; Warnings = warnings |> Seq.toList; AuditEntries = [] }
+                else
+                    let entries = ResizeArray<RawUsageFactRehydrationAuditEntry>()
+                    let mutable cursor = None
+                    let mutable keepReading = true
 
-                if changedSet.Count <> rehydrationItems.Count then
-                    let missingIds =
-                        rehydrationItems
-                        |> Seq.map (fun item -> item.Pointer.UsageFactId)
-                        |> Seq.filter (fun usageFactId -> not (changedSet.Contains usageFactId))
-                        |> Seq.map string
-                        |> fun values -> String.Join(", ", values)
+                    while keepReading do
+                        let! items = archiveStore.ListArchivedUsageFactsAsync(request.Query, cursor, RehydrationArchivePageSize, cancellationToken)
+                        let itemArray = items |> List.toArray
 
-                    invalidOp $"Archived UsageFact rehydration could not persist expiry for every requested SQL pointer. MissingUsageFactIds: {missingIds}."
+                        if itemArray.Length = 0 then
+                            keepReading <- false
+                        else
+                            let! rehydrationItems, changedSet = rehydrateBatchWithRetryAsync itemArray expiresAt cancellationToken
+                            let rehydratedAt = clock.GetCurrentInstant()
+                            let mutable auditIndex = 0
 
-                let entries = ResizeArray<RawUsageFactRehydrationAuditEntry>()
-                let mutable auditIndex = 0
+                            while auditIndex < itemArray.Length do
+                                cancellationToken.ThrowIfCancellationRequested()
+                                let item = itemArray[auditIndex]
+                                let rehydrationItem = rehydrationItems[auditIndex]
 
-                while auditIndex < itemArray.Length do
-                    cancellationToken.ThrowIfCancellationRequested()
-                    let item = itemArray[auditIndex]
-                    let rehydrationItem = rehydrationItems[auditIndex]
+                                entries.Add
+                                    {
+                                        UsageFactId = item.UsageFactId
+                                        Scope = scope
+                                        Pointer = item.Pointer
+                                        RequestedBy = request.RequestedBy
+                                        Reason = request.Reason
+                                        RehydratedAt = rehydratedAt
+                                        ExpiresAt = expiresAt
+                                        RestoredByteLength = rehydrationItem.RawPayload.Length
+                                        ChangedSqlState = changedSet.Contains item.UsageFactId
+                                    }
 
-                    entries.Add
-                        {
-                            UsageFactId = item.UsageFactId
-                            Scope = request.Scope
-                            Pointer = item.Pointer
-                            RequestedBy = request.RequestedBy
-                            Reason = request.Reason
-                            RehydratedAt = rehydratedAt
-                            ExpiresAt = request.ExpiresAt
-                            RestoredByteLength = rehydrationItem.RawPayload.Length
-                            ChangedSqlState = changedSet.Contains item.UsageFactId
-                        }
+                                logger.LogInformation(
+                                    "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ExpiresAtUtc: {ExpiresAtUtc}; ExpiryPersisted: {ExpiryPersisted}.",
+                                    item.UsageFactId,
+                                    item.Pointer.BlobName,
+                                    expiresAt,
+                                    changedSet.Contains item.UsageFactId
+                                )
 
-                    logger.LogInformation(
-                        "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ExpiresAtUtc: {ExpiresAtUtc}; ExpiryPersisted: {ExpiryPersisted}.",
-                        item.UsageFactId,
-                        item.Pointer.BlobName,
-                        request.ExpiresAt,
-                        changedSet.Contains item.UsageFactId
-                    )
+                                auditIndex <- auditIndex + 1
 
-                    auditIndex <- auditIndex + 1
+                            cursor <-
+                                Some { ObservedAt = itemArray[itemArray.Length - 1].ObservedAt; UsageFactId = itemArray[itemArray.Length - 1].UsageFactId }
 
-                return Ok { AuditEntries = entries |> Seq.toList }
+                            keepReading <- itemArray.Length = RehydrationArchivePageSize
+
+                    return
+                        Ok
+                            {
+                                MatchingArchivedFactCount = matchingCount
+                                DryRun = false
+                                Warnings = warnings |> Seq.toList
+                                AuditEntries = entries |> Seq.toList
+                            }
         }
 
 /// Reads Blob archive settings required by the hot/cold usage fact archive worker.

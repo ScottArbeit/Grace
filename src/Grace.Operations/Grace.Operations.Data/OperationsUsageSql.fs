@@ -246,13 +246,7 @@ DECLARE @RehydrationRows table
 UPDATE target
 SET
     RawPayload = source.RawPayload,
-    RehydrationExpiresAtUtc =
-        CASE
-            WHEN target.RehydrationExpiresAtUtc IS NOT NULL
-                AND target.RehydrationExpiresAtUtc > @RehydrationExpiresAtUtc
-                THEN target.RehydrationExpiresAtUtc
-            ELSE @RehydrationExpiresAtUtc
-        END
+    RehydrationExpiresAtUtc = @RehydrationExpiresAtUtc
 OUTPUT inserted.UsageFactId
 FROM ops.RawUsageFact AS target
 INNER JOIN @RehydrationRows AS source

@@ -89,6 +89,16 @@ type RawUsageFactArchivePointer = { UsageFactId: UsageFactId; BlobName: string; 
 /// Limits archive replay or support rehydration to an explicit Grace repository scope.
 type RawUsageFactArchiveScope = { OwnerId: OwnerId option; OrganizationId: OrganizationId option; RepositoryId: RepositoryId option }
 
+/// Selects archived UsageFacts for replay or scoped support rehydration without reading Blob payloads.
+type RawUsageFactArchiveQuery =
+    {
+        Scope: RawUsageFactArchiveScope option
+        ObservedAfterUtc: Instant option
+        ObservedBeforeUtc: Instant option
+        CorrelationIds: CorrelationId list
+        UsageFactIds: UsageFactId list
+    }
+
 /// Carries the last archived row seen so replay pages advance through stable SQL ordering.
 type RawUsageFactArchiveReplayCursor = { ObservedAt: Instant; UsageFactId: UsageFactId }
 
@@ -137,12 +147,15 @@ type IOperationsUsageArchiveStore =
     /// Clears the hot SQL payload only when the verified SQL pointer still matches the supplied Blob authority.
     abstract CompleteArchiveAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
 
-    /// Returns archived rows whose compact SQL pointer is the authority for replay or support rehydration.
+    /// Returns archived rows whose compact SQL pointer identifies the archived payload for replay or support rehydration.
     abstract ListArchivedUsageFactsAsync:
-        scope: RawUsageFactArchiveScope option * after: RawUsageFactArchiveReplayCursor option * batchSize: int * cancellationToken: CancellationToken ->
+        query: RawUsageFactArchiveQuery * after: RawUsageFactArchiveReplayCursor option * batchSize: int * cancellationToken: CancellationToken ->
             Task<RawUsageFactArchiveReplayItem list>
 
-    /// Temporarily restores or refreshes archived payload bytes only when SQL pointers still match Blob authority.
+    /// Counts archived rows matching a support predicate without materializing Blob payloads.
+    abstract CountArchivedUsageFactsAsync: query: RawUsageFactArchiveQuery * cancellationToken: CancellationToken -> Task<int64>
+
+    /// Temporarily restores or refreshes archived payload bytes only when SQL pointer fields still match the Blob checksum row.
     abstract RehydrateArchivedPayloadsAsync:
         items: RawUsageFactRehydrationItem list * expiresAt: Instant * cancellationToken: CancellationToken -> Task<UsageFactId list>
 
@@ -485,6 +498,148 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
         addOptionalGuidParameter "@OrganizationId" organizationId
         addOptionalGuidParameter "@RepositoryId" repositoryId
 
+    /// Adds optional archived-row predicate parameters used by replay and support rehydration scans.
+    let addArchiveQueryParameters (command: SqlCommand) (query: RawUsageFactArchiveQuery) =
+        addArchiveScopeParameters command query.Scope
+
+        addParameter
+            command
+            "@ObservedAfterUtc"
+            SqlDbType.DateTime2
+            (query.ObservedAfterUtc
+             |> Option.map (fun value -> box (toUtcDateTime value))
+             |> Option.defaultValue DBNull.Value)
+
+        addParameter
+            command
+            "@ObservedBeforeUtc"
+            SqlDbType.DateTime2
+            (query.ObservedBeforeUtc
+             |> Option.map (fun value -> box (toUtcDateTime value))
+             |> Option.defaultValue DBNull.Value)
+
+        let usageFactIds = query.UsageFactIds |> List.toArray
+        let mutable usageFactIdIndex = 0
+
+        while usageFactIdIndex < usageFactIds.Length do
+            addParameter command $"@UsageFactIdFilter{usageFactIdIndex}" SqlDbType.UniqueIdentifier usageFactIds[usageFactIdIndex]
+            usageFactIdIndex <- usageFactIdIndex + 1
+
+        let correlationIds = query.CorrelationIds |> List.toArray
+        let mutable correlationIdIndex = 0
+
+        while correlationIdIndex < correlationIds.Length do
+            addStringParameter command $"@CorrelationIdFilter{correlationIdIndex}" OperationsUsageSql.CorrelationIdMaxLength correlationIds[correlationIdIndex]
+
+            correlationIdIndex <- correlationIdIndex + 1
+
+    /// Builds a deterministic archived-row SQL predicate for index-only count and page scans.
+    let archivedUsageFactPredicateSql (query: RawUsageFactArchiveQuery) (includeCursor: bool) =
+        let builder = StringBuilder()
+
+        builder.AppendLine("WHERE ArchiveState = @ArchiveStateArchived")
+        |> ignore
+
+        builder.AppendLine("AND ArchiveBlobName IS NOT NULL")
+        |> ignore
+
+        builder.AppendLine("AND ArchiveChecksumSha256Hex IS NOT NULL")
+        |> ignore
+
+        builder.AppendLine("AND ArchiveByteLength IS NOT NULL")
+        |> ignore
+
+        builder.AppendLine("AND (@OwnerId IS NULL OR OwnerId = @OwnerId)")
+        |> ignore
+
+        builder.AppendLine("AND (@OrganizationId IS NULL OR OrganizationId = @OrganizationId)")
+        |> ignore
+
+        builder.AppendLine("AND (@RepositoryId IS NULL OR RepositoryId = @RepositoryId)")
+        |> ignore
+
+        builder.AppendLine("AND (@ObservedAfterUtc IS NULL OR ObservedAtUtc >= @ObservedAfterUtc)")
+        |> ignore
+
+        builder.AppendLine("AND (@ObservedBeforeUtc IS NULL OR ObservedAtUtc <= @ObservedBeforeUtc)")
+        |> ignore
+
+        if not query.UsageFactIds.IsEmpty then
+            builder.Append("AND UsageFactId IN (") |> ignore
+            let usageFactIds = query.UsageFactIds |> List.toArray
+            let mutable index = 0
+
+            while index < usageFactIds.Length do
+                if index > 0 then builder.Append(", ") |> ignore
+
+                builder.Append($"@UsageFactIdFilter{index}")
+                |> ignore
+
+                index <- index + 1
+
+            builder.AppendLine(")") |> ignore
+
+        if not query.CorrelationIds.IsEmpty then
+            builder.Append("AND CorrelationId IN (") |> ignore
+            let correlationIds = query.CorrelationIds |> List.toArray
+            let mutable index = 0
+
+            while index < correlationIds.Length do
+                if index > 0 then builder.Append(", ") |> ignore
+
+                builder.Append($"@CorrelationIdFilter{index}")
+                |> ignore
+
+                index <- index + 1
+
+            builder.AppendLine(")") |> ignore
+
+        if includeCursor then
+            builder.AppendLine("AND") |> ignore
+            builder.AppendLine("(") |> ignore
+
+            builder.AppendLine("    @AfterObservedAtUtc IS NULL")
+            |> ignore
+
+            builder.AppendLine("    OR ObservedAtUtc > @AfterObservedAtUtc")
+            |> ignore
+
+            builder.AppendLine("    OR (ObservedAtUtc = @AfterObservedAtUtc AND UsageFactId > @AfterUsageFactId)")
+            |> ignore
+
+            builder.AppendLine(")") |> ignore
+
+        builder.ToString()
+
+    /// Builds the archived-row page scan used by replay and support rehydration exploration.
+    let archivedUsageFactPageSql query =
+        $"""
+SELECT TOP (@BatchSize)
+    UsageFactId,
+    CorrelationId,
+    FactKind,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    StoragePoolId,
+    Quantity,
+    ObservedAtUtc,
+    ArchiveState,
+    ArchiveBlobName,
+    ArchiveChecksumSha256Hex,
+    ArchiveByteLength
+FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
+{archivedUsageFactPredicateSql query true}ORDER BY ObservedAtUtc ASC, UsageFactId ASC;
+"""
+
+    /// Builds the index-only archived-row count used before support rehydration mutates SQL.
+    let archivedUsageFactCountSql query =
+        $"""
+SELECT COUNT_BIG(1)
+FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
+{archivedUsageFactPredicateSql query false};
+"""
+
     /// Executes an archive transition command and returns whether this call changed SQL state.
     let executeArchiveTransitionAsync commandText pointer cancellationToken =
         task {
@@ -721,7 +876,7 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
         member _.CompleteArchiveAsync(pointer, cancellationToken) =
             executeArchiveTransitionAsync OperationsUsageSql.CompleteRawUsageFactArchive pointer cancellationToken
 
-        member _.ListArchivedUsageFactsAsync(scope, after, batchSize, cancellationToken) =
+        member _.ListArchivedUsageFactsAsync(query, after, batchSize, cancellationToken) =
             task {
                 if batchSize <= 0 then
                     invalidArg (nameof batchSize) "Archive replay batch size must be greater than zero."
@@ -729,10 +884,10 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                 use! connection = openConnectionAsync cancellationToken
                 use command = connection.CreateCommand()
                 command.CommandType <- CommandType.Text
-                command.CommandText <- OperationsUsageSql.SelectArchivedRawUsageFactsForReplay
+                command.CommandText <- archivedUsageFactPageSql query
                 addParameter command "@BatchSize" SqlDbType.Int batchSize
                 addArchiveStateParameters command
-                addArchiveScopeParameters command scope
+                addArchiveQueryParameters command query
 
                 match after with
                 | Some cursor ->
@@ -790,6 +945,25 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                         reading <- false
 
                 return items |> Seq.toList
+            }
+
+        member _.CountArchivedUsageFactsAsync(query, cancellationToken) =
+            task {
+                use! connection = openConnectionAsync cancellationToken
+                use command = connection.CreateCommand()
+                command.CommandType <- CommandType.Text
+                command.CommandText <- archivedUsageFactCountSql query
+                addArchiveStateParameters command
+                addArchiveQueryParameters command query
+
+                let! scalar = command.ExecuteScalarAsync cancellationToken
+
+                return
+                    match scalar with
+                    | :? int as value -> int64 value
+                    | :? int64 as value -> value
+                    | :? decimal as value -> int64 value
+                    | _ -> 0L
             }
 
         member _.RehydrateArchivedPayloadsAsync(items, expiresAt, cancellationToken) =
