@@ -9,6 +9,7 @@ open Grace.Types.Branch
 open Grace.Types.MaterializationPlan
 open Grace.Types.Common
 open Grace.Types.DirectoryVersion
+open Grace.Types.Reference
 open MessagePack
 open NUnit.Framework
 open Spectre.Console
@@ -103,8 +104,13 @@ module ConnectTests =
     let private repositoryId = Guid.Parse("33333333-3333-3333-3333-333333333333")
     let private rootId = Guid.Parse("44444444-4444-4444-4444-444444444444")
     let private alternateRootId = Guid.Parse("55555555-5555-5555-5555-555555555555")
+    let private unpromotedTipRootId = Guid.Parse("77777777-7777-7777-7777-777777777777")
+    let private basedOnRootId = Guid.Parse("88888888-8888-8888-8888-888888888888")
     let private sha256Hash = Sha256Hash(String.replicate 64 "a")
     let private blake3Hash = Blake3Hash(String.replicate 64 "b")
+
+    /// Builds a branch reference carrying the directory version id used by connect target selection tests.
+    let private referenceDto referenceType directoryId = { ReferenceDto.Default with ReferenceType = referenceType; DirectoryId = directoryId }
 
     /// Computes the SHA-256 descriptor hash for artifact validation tests.
     let private computeSha256Hash (bytes: byte array) = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
@@ -145,6 +151,10 @@ module ConnectTests =
             source
         )
 
+    /// Builds a Direct plan descriptor whose only integrity field is the supplied payload's BLAKE3 hash.
+    let private zipArtifactForBlake3OnlyBytes source (bytes: byte array) =
+        MaterializationArtifactDescriptor.DirectoryVersionZip(rootId, int64 bytes.LongLength, None, Some(computeBlake3Hash bytes), source)
+
     /// Builds a recursive metadata descriptor whose integrity fields match the supplied payload.
     let private metadataArtifactForBytes source (bytes: byte array) =
         MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
@@ -175,20 +185,49 @@ module ConnectTests =
         request.TargetSelector.DirectoryVersionId
         |> should equal None
 
-    /// Verifies that Direct plan requests preserve default branch selection as a moving branch selector.
+    /// Verifies that implicit default connect keeps promoted target semantics even when the branch tip has moved.
     [<Test>]
-    let ``connect direct plan request preserves default branch selector intent`` () =
+    let ``connect default resolver chooses latest promotion before unpromoted tip`` () =
+        let branchDto =
+            { BranchDto.Default with
+                BranchName = BranchName "trunk"
+                BasedOn = referenceDto ReferenceType.Commit basedOnRootId
+                LatestReference = referenceDto ReferenceType.Commit unpromotedTipRootId
+                LatestPromotion = referenceDto ReferenceType.Promotion rootId
+                LatestCommit = referenceDto ReferenceType.Commit unpromotedTipRootId
+            }
+
+        Connect.resolveDefaultDirectoryVersionId branchDto
+        |> should equal (Some rootId)
+
+    /// Verifies that implicit default connect falls back to the branch base when no promotion exists.
+    [<Test>]
+    let ``connect default resolver falls back to based on when promotion is missing`` () =
+        let branchDto =
+            { BranchDto.Default with
+                BranchName = BranchName "trunk"
+                BasedOn = referenceDto ReferenceType.Commit basedOnRootId
+                LatestReference = referenceDto ReferenceType.Commit unpromotedTipRootId
+                LatestCommit = referenceDto ReferenceType.Commit unpromotedTipRootId
+            }
+
+        Connect.resolveDefaultDirectoryVersionId branchDto
+        |> should equal (Some basedOnRootId)
+
+    /// Verifies that Direct plan requests send the already-resolved implicit default target as an immutable selector.
+    [<Test>]
+    let ``connect direct plan request sends resolved default target as directory version selector`` () =
         let branchDto = { BranchDto.Default with BranchName = BranchName "trunk" }
 
         let request = Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector Connect.UseDefault branchDto rootId)
 
         request.TargetSelector.SelectorKind
-        |> should equal MaterializationTargetSelectorKind.BranchName
-
-        request.TargetSelector.BranchName
-        |> should equal (Some(BranchName "trunk"))
+        |> should equal MaterializationTargetSelectorKind.DirectoryVersionId
 
         request.TargetSelector.DirectoryVersionId
+        |> should equal (Some rootId)
+
+        request.TargetSelector.BranchName
         |> should equal None
 
     /// Verifies that Direct plan execution preparation preserves recursive metadata file versions and planned zip source.
@@ -305,6 +344,76 @@ module ConnectTests =
         match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact downloadedBytes with
         | Ok _ -> Assert.Fail("Expected artifact hash mismatch to fail before extraction.")
         | Error error -> error.Error |> should contain "SHA-256 mismatch"
+
+    /// Verifies that planned artifact validation accepts descriptors that carry matching BLAKE3-only integrity evidence.
+    [<Test>]
+    let ``connect direct plan artifact validation accepts blake3 only descriptor`` () =
+        let bytes = [| 1uy; 2uy; 3uy |]
+        let artifact = zipArtifactForBlake3OnlyBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))) bytes
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact bytes with
+        | Error error -> Assert.Fail($"Unexpected BLAKE3-only artifact validation error: {error.Error}")
+        | Ok () -> ()
+
+    /// Verifies that planned artifact validation rejects descriptors whose BLAKE3-only integrity evidence does not match.
+    [<Test>]
+    let ``connect direct plan artifact validation rejects blake3 only mismatch`` () =
+        let plannedBytes = [| 1uy; 2uy; 3uy |]
+        let downloadedBytes = [| 1uy; 2uy; 4uy |]
+        let artifact = zipArtifactForBlake3OnlyBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))) plannedBytes
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact downloadedBytes with
+        | Ok _ -> Assert.Fail("Expected BLAKE3-only artifact hash mismatch to fail before extraction.")
+        | Error error -> error.Error |> should contain "BLAKE3 mismatch"
+
+    /// Verifies that streamed DirectUri artifact validation accepts BLAKE3-only descriptors before extraction.
+    [<Test>]
+    let ``connect direct plan artifact stream validation accepts blake3 only descriptor`` () =
+        let bytes = [| 1uy; 2uy; 3uy |]
+        let artifact = zipArtifactForBlake3OnlyBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))) bytes
+
+        use stream = new MemoryStream(bytes)
+
+        match Connect.validatePlannedArtifactStream "correlation-id" "DirectoryVersionZip" artifact stream
+              |> fun task -> task.GetAwaiter().GetResult()
+            with
+        | Error error -> Assert.Fail($"Unexpected streamed BLAKE3-only artifact validation error: {error.Error}")
+        | Ok () -> stream.Position |> should equal 0L
+
+    /// Verifies that streamed DirectUri artifact validation rejects mismatched BLAKE3-only descriptors before extraction.
+    [<Test>]
+    let ``connect direct plan artifact stream validation rejects blake3 only mismatch`` () =
+        let plannedBytes = [| 1uy; 2uy; 3uy |]
+        let downloadedBytes = [| 1uy; 2uy; 4uy |]
+        let artifact = zipArtifactForBlake3OnlyBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))) plannedBytes
+
+        use stream = new MemoryStream(downloadedBytes)
+
+        match Connect.validatePlannedArtifactStream "correlation-id" "DirectoryVersionZip" artifact stream
+              |> fun task -> task.GetAwaiter().GetResult()
+            with
+        | Ok _ -> Assert.Fail("Expected streamed BLAKE3-only artifact hash mismatch to fail before extraction.")
+        | Error error -> error.Error |> should contain "BLAKE3 mismatch"
+
+    /// Verifies that planned artifact validation still rejects descriptors with no supported integrity evidence.
+    [<Test>]
+    let ``connect direct plan artifact validation rejects missing integrity evidence`` () =
+        let bytes = [| 1uy; 2uy; 3uy |]
+
+        let artifact =
+            MaterializationArtifactDescriptor.DirectoryVersionZip(
+                rootId,
+                int64 bytes.LongLength,
+                None,
+                None,
+                Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))
+            )
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact bytes with
+        | Ok _ -> Assert.Fail("Expected artifact validation to reject descriptors with no supported integrity evidence.")
+        | Error error ->
+            error.Error
+            |> should contain "SHA-256 or BLAKE3 integrity evidence"
 
     /// Verifies that connect executes recursive metadata from the planned artifact payload.
     [<Test>]

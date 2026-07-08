@@ -679,12 +679,12 @@ module Connect =
             RetrievedDefaultBranch = retrievedDefaultBranch
         }
 
-    /// Builds the Materialization Plan target selector that preserves the user's moving selector when the plan supports it.
-    let internal createDirectPlanTargetSelector selection (branchDto: BranchDto) resolvedDirectoryVersionId =
+    /// Builds the Materialization Plan target selector while preserving implicit default connect promotion semantics.
+    let internal createDirectPlanTargetSelector selection (_branchDto: BranchDto) resolvedDirectoryVersionId =
         match selection with
         | UseDirectoryVersionId directoryVersionId -> MaterializationTargetSelector.ForDirectoryVersion(directoryVersionId)
         | UseReferenceId referenceId -> MaterializationTargetSelector.ForReference(referenceId)
-        | UseDefault -> MaterializationTargetSelector.ForBranch(branchDto.BranchName)
+        | UseDefault -> MaterializationTargetSelector.ForDirectoryVersion(resolvedDirectoryVersionId)
         | UseReferenceType _ -> MaterializationTargetSelector.ForDirectoryVersion(resolvedDirectoryVersionId)
 
     /// Builds the Direct Materialization Plan request for the target selected by connect.
@@ -832,7 +832,19 @@ module Connect =
                         FileVersions = fileVersions
                     }
 
-    /// Validates downloaded artifact bytes against the size and hash evidence carried by the Materialization Plan.
+    /// Returns the planned SHA-256 digest only when it carries usable integrity evidence.
+    let private tryGetPlannedSha256Hash (artifact: MaterializationArtifactDescriptor) =
+        match artifact.Sha256Hash with
+        | Some sha256Hash when not (String.IsNullOrWhiteSpace(string sha256Hash)) -> Some sha256Hash
+        | _ -> None
+
+    /// Returns the planned BLAKE3 digest only when it carries usable integrity evidence.
+    let private tryGetPlannedBlake3Hash (artifact: MaterializationArtifactDescriptor) =
+        match artifact.Blake3Hash with
+        | Some blake3Hash when not (String.IsNullOrWhiteSpace(string blake3Hash)) -> Some blake3Hash
+        | _ -> None
+
+    /// Validates downloaded artifact bytes against each supported hash evidence carried by the Materialization Plan.
     let internal validatePlannedArtifactBytes correlationId (artifactName: string) (artifact: MaterializationArtifactDescriptor) (bytes: byte array) =
         match artifact.SizeInBytes with
         | Some expectedSize when int64 bytes.LongLength <> expectedSize ->
@@ -842,25 +854,31 @@ module Connect =
                     correlationId
             )
         | _ ->
-            match artifact.Sha256Hash with
-            | Some expectedSha256Hash ->
-                let actualSha256Hash = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
+            match tryGetPlannedSha256Hash artifact, tryGetPlannedBlake3Hash artifact with
+            | None, None ->
+                Error(GraceError.Create $"Materialization Plan {artifactName} artifact is missing SHA-256 or BLAKE3 integrity evidence." correlationId)
+            | expectedSha256Hash, expectedBlake3Hash ->
+                match expectedSha256Hash with
+                | Some expectedSha256Hash ->
+                    let actualSha256Hash = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
 
-                if not (String.Equals(string actualSha256Hash, string expectedSha256Hash, StringComparison.OrdinalIgnoreCase)) then
-                    Error(GraceError.Create $"Materialization Plan {artifactName} artifact SHA-256 mismatch." correlationId)
-                else
-                    match artifact.Blake3Hash with
-                    | Some expectedBlake3Hash when not (String.IsNullOrWhiteSpace(string expectedBlake3Hash)) ->
+                    if not (String.Equals(string actualSha256Hash, string expectedSha256Hash, StringComparison.OrdinalIgnoreCase)) then
+                        Error(GraceError.Create $"Materialization Plan {artifactName} artifact SHA-256 mismatch." correlationId)
+                    else
+                        Ok()
+                | None -> Ok()
+                |> Result.bind (fun () ->
+                    match expectedBlake3Hash with
+                    | Some expectedBlake3Hash ->
                         let actualBlake3Hash = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
 
                         if not (String.Equals(string actualBlake3Hash, string expectedBlake3Hash, StringComparison.OrdinalIgnoreCase)) then
                             Error(GraceError.Create $"Materialization Plan {artifactName} artifact BLAKE3 mismatch." correlationId)
                         else
                             Ok()
-                    | _ -> Ok()
-            | None -> Error(GraceError.Create $"Materialization Plan {artifactName} artifact is missing SHA-256 integrity evidence." correlationId)
+                    | None -> Ok())
 
-    /// Validates a downloaded artifact stream against the size and hash evidence carried by the Materialization Plan.
+    /// Validates a downloaded artifact stream against each supported hash evidence carried by the Materialization Plan.
     let internal validatePlannedArtifactStream correlationId (artifactName: string) (artifact: MaterializationArtifactDescriptor) (stream: Stream) =
         task {
             if not stream.CanSeek then
@@ -875,22 +893,27 @@ module Connect =
                                 correlationId
                         )
                 | _ ->
-                    match artifact.Sha256Hash with
-                    | None ->
-                        return Error(GraceError.Create $"Materialization Plan {artifactName} artifact is missing SHA-256 integrity evidence." correlationId)
-                    | Some expectedSha256Hash ->
+                    match tryGetPlannedSha256Hash artifact, tryGetPlannedBlake3Hash artifact with
+                    | None, None ->
+                        return
+                            Error(
+                                GraceError.Create $"Materialization Plan {artifactName} artifact is missing SHA-256 or BLAKE3 integrity evidence." correlationId
+                            )
+                    | Some expectedSha256Hash, expectedBlake3Hash ->
                         stream.Position <- 0L
                         let! actualSha256Hash = Grace.Shared.Services.computeSha256ForFile stream (RelativePath artifactName)
 
                         if not (String.Equals(string actualSha256Hash, string expectedSha256Hash, StringComparison.OrdinalIgnoreCase)) then
+                            stream.Position <- 0L
                             return Error(GraceError.Create $"Materialization Plan {artifactName} artifact SHA-256 mismatch." correlationId)
                         else
-                            match artifact.Blake3Hash with
-                            | Some expectedBlake3Hash when not (String.IsNullOrWhiteSpace(string expectedBlake3Hash)) ->
+                            match expectedBlake3Hash with
+                            | Some expectedBlake3Hash ->
                                 stream.Position <- 0L
                                 let! actualBlake3Hash = Grace.Shared.Services.computeBlake3ForFile stream
 
                                 if not (String.Equals(string actualBlake3Hash, string expectedBlake3Hash, StringComparison.OrdinalIgnoreCase)) then
+                                    stream.Position <- 0L
                                     return Error(GraceError.Create $"Materialization Plan {artifactName} artifact BLAKE3 mismatch." correlationId)
                                 else
                                     stream.Position <- 0L
@@ -898,6 +921,16 @@ module Connect =
                             | _ ->
                                 stream.Position <- 0L
                                 return Ok()
+                    | None, Some expectedBlake3Hash ->
+                        stream.Position <- 0L
+                        let! actualBlake3Hash = Grace.Shared.Services.computeBlake3ForFile stream
+
+                        if not (String.Equals(string actualBlake3Hash, string expectedBlake3Hash, StringComparison.OrdinalIgnoreCase)) then
+                            stream.Position <- 0L
+                            return Error(GraceError.Create $"Materialization Plan {artifactName} artifact BLAKE3 mismatch." correlationId)
+                        else
+                            stream.Position <- 0L
+                            return Ok()
         }
 
     /// Decodes the planned recursive metadata artifact stream after descriptor integrity validation.
