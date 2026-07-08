@@ -13700,6 +13700,11 @@ module WatchTests =
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let status = liveWatchStatus (Guid.NewGuid())
 
+            LocalStateDb
+                .ensureDbInitialized(Current().GraceStatusFile)
+                .GetAwaiter()
+                .GetResult()
+
             let payload =
                 validCurrentBranchReferenceNotification
                     currentRepositoryId
