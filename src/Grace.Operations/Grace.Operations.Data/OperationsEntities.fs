@@ -57,6 +57,18 @@ type RawUsageFactEntity() =
     /// Stores when a temporarily restored archived payload must return to cold SQL state.
     member val RehydrationExpiresAtUtc = Nullable<DateTime>() with get, set
 
+    /// Stores the latest redacted row-scoped archive failure summary for operator inspection.
+    member val LastArchiveFailureReason: string = null with get, set
+
+    /// Stores when the latest row-scoped archive failure was recorded.
+    member val LastArchiveFailureAtUtc = Nullable<DateTime>() with get, set
+
+    /// Stores the number of consecutive archive failures since the latest successful retry or operator repair.
+    member val ArchiveFailureCount = 0 with get, set
+
+    /// Stores when repeated archive failures retired the row from automatic retries pending operator repair.
+    member val ArchiveRetiredAtUtc = Nullable<DateTime>() with get, set
+
     /// Stores the SQL-created UTC timestamp for the raw fact row.
     member val CreatedAtUtc = DateTime.MinValue with get, set
 

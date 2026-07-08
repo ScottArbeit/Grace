@@ -99,6 +99,7 @@ type private RecordingArchiveStore
     ) =
     let markedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let completedPointers = ResizeArray<RawUsageFactArchivePointer>()
+    let recordedFailures = ResizeArray<UsageFactId * string>()
     let rehydratedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let rehydrationExpiresAtValues = ResizeArray<Instant>()
     let rehydrateCancellationCanBeCanceled = ResizeArray<bool>()
@@ -115,6 +116,9 @@ type private RecordingArchiveStore
 
     /// Returns Blob pointers completed by clearing the hot SQL payload.
     member _.CompletedPointers = completedPointers |> Seq.toList
+
+    /// Returns row-scoped archive failures recorded for operator repair.
+    member _.RecordedFailures = recordedFailures |> Seq.toList
 
     /// Returns Blob pointers restored for temporary support rehydration.
     member _.RehydratedPointers = rehydratedPointers |> Seq.toList
@@ -185,6 +189,11 @@ type private RecordingArchiveStore
             completedPointers.Add pointer
             let changed = if completeResults.Count > 0 then completeResults.Dequeue() else true
             Task.FromResult changed
+
+        member _.RecordArchiveFailureAsync(usageFactId, reason, _cancellationToken) =
+            events.Add("record-archive-failure")
+            recordedFailures.Add((usageFactId, reason))
+            Task.CompletedTask
 
         member this.ListArchivedUsageFactsAsync(query, after, batchSize, _cancellationToken) =
             events.Add("list-archived")
@@ -784,63 +793,79 @@ type OperationsUsageArchiveTests() =
             )
         }
 
-    /// Verifies missing or corrupt verified blobs fail before SQL cleanup can clear hot payload authority.
+    /// Verifies a missing verified Blob records row-scoped evidence and does not block later safe candidates.
     [<Test>]
-    member _.ArchiveBatchFailsBeforeCleanupWhenVerifiedBlobIsMissingOrCorrupt() =
+    member _.ArchiveBatchRecordsVerifiedBlobFailureAndContinuesPastBadRow() =
         task {
             let events = List<string>()
-            let usageFactId = Guid.Parse("43434343-4343-4343-8343-434343434343")
-            let rawPayload = OperationsUsageArchiveTestData.payload usageFactId
-            let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
-            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+            let badUsageFactId = Guid.Parse("43434343-4343-4343-8343-434343434343")
+            let safeUsageFactId = Guid.Parse("43434343-4343-4343-8343-434343434344")
+            let badRawPayload = OperationsUsageArchiveTestData.payload badUsageFactId
+            let badHotCandidate = OperationsUsageArchiveTestData.candidate badUsageFactId RawUsageFactArchiveState.Hot (Some badRawPayload) None
+            let badArchiveBlob = OperationsUsageArchiveFormat.createArchiveBlob badHotCandidate badRawPayload
 
             let verifiedCandidate =
-                OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.ArchiveVerified None (Some archiveBlob.Pointer)
+                OperationsUsageArchiveTestData.candidate badUsageFactId RawUsageFactArchiveState.ArchiveVerified None (Some badArchiveBlob.Pointer)
 
-            let archiveStore = RecordingArchiveStore([ verifiedCandidate ], events)
+            let safeRawPayload = OperationsUsageArchiveTestData.payload safeUsageFactId
+            let safeCandidate = OperationsUsageArchiveTestData.candidate safeUsageFactId RawUsageFactArchiveState.Hot (Some safeRawPayload) None
+            let safeArchiveBlob = OperationsUsageArchiveFormat.createArchiveBlob safeCandidate safeRawPayload
+            let archiveStore = RecordingArchiveStore([ verifiedCandidate; safeCandidate ], events)
             let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(safeArchiveBlob.Pointer.BlobName, safeArchiveBlob.Content)
             let processor = createProcessor archiveStore blobStore
 
-            let mutable message = None
-
-            try
-                let! _ = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
-                Assert.Fail("Missing verified archive Blob should fail before SQL cleanup.")
-            with
-            | :? InvalidOperationException as ex -> message <- Some ex.Message
+            let! archived = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(message.Value, Does.Contain("is missing"))
-                    Assert.That(String.Join("|", events), Is.EqualTo("list-candidates|verify-blob"))
-                    Assert.That(archiveStore.CompletedPointers, Is.Empty))
+                    Assert.That(archived, Is.EqualTo(1))
+
+                    Assert.That(
+                        String.Join("|", events),
+                        Is.EqualTo("list-candidates|verify-blob|record-archive-failure|write-verify-blob|mark-verified|verify-blob|complete-archive")
+                    )
+
+                    Assert.That(archiveStore.RecordedFailures |> List.length, Is.EqualTo(1))
+                    Assert.That(fst archiveStore.RecordedFailures[0], Is.EqualTo(badUsageFactId))
+                    Assert.That(snd archiveStore.RecordedFailures[0], Does.Contain("is missing"))
+                    Assert.That(archiveStore.CompletedPointers |> List.length, Is.EqualTo(1))
+                    Assert.That(archiveStore.CompletedPointers[0], Is.EqualTo(safeArchiveBlob.Pointer)))
             )
         }
 
-    /// Verifies a hot row without payload bytes fails loudly instead of recording fake Blob authority.
+    /// Verifies a hot row without payload bytes records failure evidence and does not block later safe candidates.
     [<Test>]
-    member _.ArchiveBatchRejectsHotCandidateWithoutRawPayload() =
+    member _.ArchiveBatchRecordsMissingPayloadFailureAndContinuesPastBadRow() =
         task {
             let events = List<string>()
-            let usageFactId = Guid.Parse("44444444-4444-4444-8444-444444444444")
-            let candidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot None None
-            let archiveStore = RecordingArchiveStore([ candidate ], events)
+            let badUsageFactId = Guid.Parse("44444444-4444-4444-8444-444444444444")
+            let safeUsageFactId = Guid.Parse("44444444-4444-4444-8444-444444444445")
+            let badCandidate = OperationsUsageArchiveTestData.candidate badUsageFactId RawUsageFactArchiveState.Hot None None
+            let safeRawPayload = OperationsUsageArchiveTestData.payload safeUsageFactId
+            let safeCandidate = OperationsUsageArchiveTestData.candidate safeUsageFactId RawUsageFactArchiveState.Hot (Some safeRawPayload) None
+            let safeArchiveBlob = OperationsUsageArchiveFormat.createArchiveBlob safeCandidate safeRawPayload
+            let archiveStore = RecordingArchiveStore([ badCandidate; safeCandidate ], events)
             let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(safeArchiveBlob.Pointer.BlobName, safeArchiveBlob.Content)
             let processor = createProcessor archiveStore blobStore
-            let mutable message = None
 
-            try
-                let! _ = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
-                Assert.Fail("Hot rows without raw payload bytes should fail before Blob writes.")
-            with
-            | :? InvalidOperationException as ex -> message <- Some ex.Message
+            let! archived = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(message.Value, Does.Contain("has no raw payload"))
-                    Assert.That(String.Join("|", events), Is.EqualTo("list-candidates"))
-                    Assert.That(archiveStore.MarkedPointers, Is.Empty)
-                    Assert.That(archiveStore.CompletedPointers, Is.Empty))
+                    Assert.That(archived, Is.EqualTo(1))
+
+                    Assert.That(
+                        String.Join("|", events),
+                        Is.EqualTo("list-candidates|record-archive-failure|write-verify-blob|mark-verified|verify-blob|complete-archive")
+                    )
+
+                    Assert.That(archiveStore.RecordedFailures |> List.length, Is.EqualTo(1))
+                    Assert.That(fst archiveStore.RecordedFailures[0], Is.EqualTo(badUsageFactId))
+                    Assert.That(snd archiveStore.RecordedFailures[0], Does.Contain("has no raw payload"))
+                    Assert.That(archiveStore.CompletedPointers |> List.length, Is.EqualTo(1))
+                    Assert.That(archiveStore.CompletedPointers[0], Is.EqualTo(safeArchiveBlob.Pointer)))
             )
         }
 
@@ -1014,6 +1039,21 @@ type OperationsUsageArchiveTests() =
                 Assert.That(OperationsUsageSql.CompleteRawUsageFactArchive, Does.Contain("RawPayload IS NULL OR RehydrationExpiresAtUtc IS NOT NULL")))
         )
 
+    /// Verifies archive failure state is durable on failure and cleared by later successful retry transitions.
+    [<Test>]
+    member _.ArchiveFailureSqlRecordsRetirementEvidenceAndSuccessfulRetryClearsIt() =
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(OperationsUsageSql.RecordRawUsageFactArchiveFailure, Does.Contain("LastArchiveFailureReason = @LastArchiveFailureReason"))
+                Assert.That(OperationsUsageSql.RecordRawUsageFactArchiveFailure, Does.Contain("ArchiveFailureCount = ArchiveFailureCount + 1"))
+                Assert.That(OperationsUsageSql.RecordRawUsageFactArchiveFailure, Does.Contain("ArchiveRetiredAtUtc"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactsForArchive, Does.Contain("AND ArchiveRetiredAtUtc IS NULL"))
+                Assert.That(OperationsUsageSql.MarkRawUsageFactArchiveVerified, Does.Contain("LastArchiveFailureReason = NULL"))
+                Assert.That(OperationsUsageSql.MarkRawUsageFactArchiveVerified, Does.Contain("ArchiveFailureCount = 0"))
+                Assert.That(OperationsUsageSql.CompleteRawUsageFactArchive, Does.Contain("LastArchiveFailureReason = NULL"))
+                Assert.That(OperationsUsageSql.CompleteRawUsageFactArchive, Does.Contain("ArchiveFailureCount = 0")))
+        )
+
     /// Verifies chunked rehydration uses one SQL transaction instead of committing each batch independently.
     [<Test>]
     member _.RehydrationDataLayerRunsChunkedBatchesInOneTransaction() =
@@ -1158,6 +1198,71 @@ type OperationsUsageArchiveTests() =
             match result with
             | Error errors -> Assert.Fail(String.Join("; ", errors))
             | Ok value -> Assert.That(value.MatchingArchivedFactCount, Is.EqualTo(1))
+        }
+
+    /// Verifies large optional filter lists have identical dry-run and mutation semantics without per-value SQL parameters.
+    [<Test>]
+    member _.RehydrationLargeFilterListsUseBoundedSqlShapeAndConsistentSemantics() =
+        task {
+            let source = sourceText "src/Grace.Operations/Grace.Operations.Data/OperationsData.fs"
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(source, Does.Contain("@UsageFactIdsJson"))
+                    Assert.That(source, Does.Contain("@CorrelationIdsJson"))
+                    Assert.That(source, Does.Contain("OPENJSON(@UsageFactIdsJson)"))
+                    Assert.That(source, Does.Contain("OPENJSON(@CorrelationIdsJson)"))
+                    Assert.That(source, Does.Not.Contain("@UsageFactIdFilter{"))
+                    Assert.That(source, Does.Not.Contain("@CorrelationIdFilter{")))
+            )
+
+            let events = List<string>()
+            let matchingUsageFactId = Guid.Parse("48484848-4848-4848-8848-484848484866")
+            let candidate, archiveBlob = archivedCandidate matchingUsageFactId (Instant.FromUtc(2026, 7, 4, 10, 0, 0))
+            let archiveStore = RecordingArchiveStore([ candidate ], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
+            let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
+            let processor = createRehydrationProcessor archiveStore blobStore (FixedClock now)
+
+            let manyUsageFactIds =
+                [
+                    for index in 0..2105 do
+                        let suffix = sprintf "%012i" (index + 1)
+                        Guid.Parse($"99999999-9999-4999-8999-{suffix}")
+                ]
+                @ [ matchingUsageFactId ]
+
+            let manyCorrelationIds =
+                [
+                    for index in 0..2105 do
+                        CorrelationId $"nonmatching-correlation-{index}"
+                ]
+                @ [ candidate.CorrelationId ]
+
+            let query =
+                { rehydrationQuery (Some candidate.ObservedAt) (Some candidate.ObservedAt) with
+                    UsageFactIds = manyUsageFactIds
+                    CorrelationIds = manyCorrelationIds
+                }
+
+            let dryRunRequest = { rehydrationRequest now with Query = query; DryRun = true }
+            let rehydrateRequest = { rehydrationRequest now with Query = query; DryRun = false }
+
+            let! dryRun = processor.RehydrateAsync(dryRunRequest, CancellationToken.None)
+            let! rehydrated = processor.RehydrateAsync(rehydrateRequest, CancellationToken.None)
+
+            match dryRun, rehydrated with
+            | Ok dryRunResult, Ok rehydratedResult ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(dryRunResult.MatchingArchivedFactCount, Is.EqualTo(1))
+                        Assert.That(rehydratedResult.MatchingArchivedFactCount, Is.EqualTo(1))
+                        Assert.That(rehydratedResult.AuditEntries |> List.length, Is.EqualTo(1))
+                        Assert.That(rehydratedResult.AuditEntries[0].UsageFactId, Is.EqualTo(matchingUsageFactId)))
+                )
+            | Error errors, _
+            | _, Error errors -> Assert.Fail(String.Join("; ", errors))
         }
 
     /// Verifies dry run reports count and warnings without Blob download or SQL rehydration.
@@ -1749,6 +1854,28 @@ type OperationsUsageArchiveTests() =
                     Assert.That(errorText, Does.Contain(OperationsUsageArchiveSettings.PollIntervalSecondsEnvironmentVariable)))
             )
 
+    /// Verifies archive retention batch size is capped before raw payload batches can be materialized.
+    [<Test>]
+    member _.ArchiveSettingsRejectBatchSizeAboveRetentionCap() =
+        let configuration =
+            archiveConfiguration [ KeyValuePair(OperationsUsageArchiveSettings.BlobConnectionStringEnvironmentVariable, "UseDevelopmentStorage=true")
+                                   KeyValuePair(OperationsUsageArchiveSettings.BlobContainerNameEnvironmentVariable, "usage-archives")
+                                   KeyValuePair(
+                                       OperationsUsageArchiveSettings.BatchSizeEnvironmentVariable,
+                                       string (OperationsUsageArchiveSettings.MaxBatchSize + 1)
+                                   ) ]
+
+        match OperationsUsageArchiveSettings.fromConfiguration configuration with
+        | Ok _ -> Assert.Fail("Archive settings should reject over-cap retention batch sizes.")
+        | Error errors ->
+            let errorText = String.Join("|", errors)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(errorText, Does.Contain(OperationsUsageArchiveSettings.BatchSizeEnvironmentVariable))
+                    Assert.That(errorText, Does.Contain(string OperationsUsageArchiveSettings.MaxBatchSize)))
+            )
+
     /// Verifies archive Blob container names follow Azure's lowercase DNS-style naming rules.
     [<TestCase("UsageArchives")>]
     [<TestCase("archive--hot")>]
@@ -1847,6 +1974,36 @@ type OperationsUsageArchiveTests() =
                     Is.EqualTo("datetime2(7)")
                 )
 
+                Assert.That(
+                    rawFact
+                        .FindProperty("LastArchiveFailureReason")
+                        .GetMaxLength(),
+                    Is.EqualTo(Nullable OperationsUsageSql.ArchiveFailureReasonMaxLength)
+                )
+
+                Assert.That(
+                    rawFact
+                        .FindProperty("LastArchiveFailureAtUtc")
+                        .GetColumnType(),
+                    Is.EqualTo("datetime2(7)")
+                )
+
+                Assert.That(
+                    rawFact
+                        .FindProperty(
+                            "ArchiveFailureCount"
+                        )
+                        .IsNullable,
+                    Is.False
+                )
+
+                Assert.That(
+                    rawFact
+                        .FindProperty("ArchiveRetiredAtUtc")
+                        .GetColumnType(),
+                    Is.EqualTo("datetime2(7)")
+                )
+
                 Assert.That(rawFact.FindProperty("RehydratedAtUtc"), Is.Null)
 
                 Assert.That(hasArchiveIndex, Is.True))
@@ -1865,6 +2022,11 @@ type OperationsUsageArchiveTests() =
                 Assert.That(script, Does.Contain("ArchiveChecksumSha256Hex char(64) NULL"))
                 Assert.That(script, Does.Contain("ArchiveByteLength bigint NULL"))
                 Assert.That(script, Does.Contain("RehydrationExpiresAtUtc datetime2(7) NULL"))
+                Assert.That(script, Does.Contain("LastArchiveFailureReason nvarchar(400) NULL"))
+                Assert.That(script, Does.Contain("LastArchiveFailureAtUtc datetime2(7) NULL"))
+                Assert.That(script, Does.Contain("ArchiveFailureCount int NOT NULL"))
+                Assert.That(script, Does.Contain("CONSTRAINT DF_ops_RawUsageFact_ArchiveFailureCount DEFAULT (0) WITH VALUES"))
+                Assert.That(script, Does.Contain("ArchiveRetiredAtUtc datetime2(7) NULL"))
                 Assert.That(script, Does.Not.Contain("RehydrationLeaseId uniqueidentifier NULL"))
                 Assert.That(script, Does.Not.Contain("RehydrationRequestedBy nvarchar(200) NULL"))
                 Assert.That(script, Does.Not.Contain("RehydrationReason nvarchar(512) NULL"))

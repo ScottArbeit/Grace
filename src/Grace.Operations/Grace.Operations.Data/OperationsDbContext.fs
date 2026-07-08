@@ -116,6 +116,26 @@ module OperationsModel =
         |> ignore
 
         rawFact
+            .Property<string>("LastArchiveFailureReason")
+            .HasMaxLength(OperationsUsageSql.ArchiveFailureReasonMaxLength)
+        |> ignore
+
+        rawFact
+            .Property<Nullable<System.DateTime>>("LastArchiveFailureAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<int>("ArchiveFailureCount")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<Nullable<System.DateTime>>("ArchiveRetiredAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
             .Property<System.DateTime>("CreatedAtUtc")
             .HasColumnType("datetime2(7)")
             .HasDefaultValueSql("SYSUTCDATETIME()")

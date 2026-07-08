@@ -391,6 +391,20 @@ type OperationsUsageArchiveProcessor
             { UsageFactId = candidate.UsageFactId; BlobName = blobName; ChecksumSha256Hex = checksum; ByteLength = byteLength }
         | _ -> invalidOp $"UsageFactId '{candidate.UsageFactId}' is marked archive-verified without a complete Blob pointer."
 
+    /// Builds bounded row-scoped failure evidence for operators without including raw payload bytes.
+    let archiveFailureReason (ex: exn) =
+        let message =
+            if String.IsNullOrWhiteSpace ex.Message then
+                ex.GetType().Name
+            else
+                $"{ex.GetType().Name}: {ex.Message}"
+
+        if message.Length
+           <= OperationsUsageSql.ArchiveFailureReasonMaxLength then
+            message
+        else
+            message.Substring(0, OperationsUsageSql.ArchiveFailureReasonMaxLength)
+
     /// Archives one hot candidate or resumes cleanup for an already verified candidate.
     let archiveCandidateAsync (candidate: RawUsageFactArchiveCandidate) cancellationToken =
         task {
@@ -432,8 +446,25 @@ type OperationsUsageArchiveProcessor
 
             while index < candidateArray.Length do
                 cancellationToken.ThrowIfCancellationRequested()
-                do! archiveCandidateAsync candidateArray[index] cancellationToken
-                archived <- archived + 1
+                let candidate = candidateArray[index]
+
+                try
+                    do! archiveCandidateAsync candidate cancellationToken
+                    archived <- archived + 1
+                with
+                | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> cancellationToken.ThrowIfCancellationRequested()
+                | ex ->
+                    let failureReason = archiveFailureReason ex
+                    do! archiveStore.RecordArchiveFailureAsync(candidate.UsageFactId, failureReason, cancellationToken)
+
+                    logger.LogError(
+                        ex,
+                        "Operations usage archive candidate failed; row-scoped failure evidence was recorded and the batch will continue. UsageFactId: {UsageFactId}; ArchiveState: {ArchiveState}; FailureReason: {FailureReason}.",
+                        candidate.UsageFactId,
+                        candidate.ArchiveState,
+                        failureReason
+                    )
+
                 index <- index + 1
 
             return archived
@@ -827,6 +858,10 @@ module OperationsUsageArchiveSettings =
     [<Literal>]
     let BatchSizeEnvironmentVariable = "grace__operations__archive__batch_size"
 
+    /// Caps archive retention batches before the worker materializes raw payload bytes.
+    [<Literal>]
+    let MaxBatchSize = OperationsUsageSql.ArchiveRetentionBatchSizeMax
+
     /// The environment variable that controls the delay between archive worker batches.
     [<Literal>]
     let PollIntervalSecondsEnvironmentVariable = "grace__operations__archive__poll_interval_seconds"
@@ -903,7 +938,8 @@ module OperationsUsageArchiveSettings =
         | Error error -> errors.Add error
 
         match batchSize with
-        | Ok _ -> ()
+        | Ok value when value <= MaxBatchSize -> ()
+        | Ok _ -> errors.Add($"{BatchSizeEnvironmentVariable} must be less than or equal to {MaxBatchSize}.")
         | Error error -> errors.Add error
 
         match pollIntervalSeconds with

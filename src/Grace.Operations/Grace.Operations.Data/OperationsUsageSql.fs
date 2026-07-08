@@ -48,6 +48,18 @@ module OperationsUsageSql =
     [<Literal>]
     let RehydrationPayloadBatchSize = 400
 
+    /// Caps raw-payload archive retention batches so one worker pass cannot materialize too many hot rows.
+    [<Literal>]
+    let ArchiveRetentionBatchSizeMax = 400
+
+    /// Caps repeated row-scoped archive failures before the worker retires the row for operator repair.
+    [<Literal>]
+    let ArchiveFailureRetirementThreshold = 5
+
+    /// Limits the operator-visible archive failure summary retained with a raw fact row.
+    [<Literal>]
+    let ArchiveFailureReasonMaxLength = 400
+
     /// Caps expired temporary-hot cleanup statements to a practical SQL Server row batch.
     [<Literal>]
     let TemporaryHotCleanupBatchSize = 1000
@@ -127,9 +139,14 @@ SELECT TOP (@BatchSize)
     ArchiveState,
     ArchiveBlobName,
     ArchiveChecksumSha256Hex,
-    ArchiveByteLength
+    ArchiveByteLength,
+    LastArchiveFailureReason,
+    LastArchiveFailureAtUtc,
+    ArchiveFailureCount,
+    ArchiveRetiredAtUtc
 FROM ops.RawUsageFact WITH (READPAST, READCOMMITTEDLOCK)
 WHERE ObservedAtUtc < @ObservedBeforeUtc
+AND ArchiveRetiredAtUtc IS NULL
 AND
 (
     (
@@ -289,7 +306,11 @@ SET
     ArchiveBlobName = @ArchiveBlobName,
     ArchiveChecksumSha256Hex = @ArchiveChecksumSha256Hex,
     ArchiveByteLength = @ArchiveByteLength,
-    ArchiveVerifiedAtUtc = SYSUTCDATETIME()
+    ArchiveVerifiedAtUtc = SYSUTCDATETIME(),
+    LastArchiveFailureReason = NULL,
+    LastArchiveFailureAtUtc = NULL,
+    ArchiveFailureCount = 0,
+    ArchiveRetiredAtUtc = NULL
 WHERE UsageFactId = @UsageFactId
 AND ArchiveState = @ArchiveStateHot
 AND RawPayload IS NOT NULL
@@ -326,7 +347,11 @@ UPDATE ops.RawUsageFact
 SET
     RawPayload = NULL,
     ArchiveState = @ArchiveStateArchived,
-    ArchivedAtUtc = SYSUTCDATETIME()
+    ArchivedAtUtc = SYSUTCDATETIME(),
+    LastArchiveFailureReason = NULL,
+    LastArchiveFailureAtUtc = NULL,
+    ArchiveFailureCount = 0,
+    ArchiveRetiredAtUtc = NULL
 WHERE UsageFactId = @UsageFactId
 AND ArchiveState = @ArchiveStateVerified
 AND ArchiveBlobName = @ArchiveBlobName
@@ -355,6 +380,24 @@ ELSE
 BEGIN
     THROW 57202, 'Raw UsageFact hot payload could not be cleared because verified SQL archive authority is missing or different.', 1;
 END;
+"""
+
+    /// Records a row-scoped archive failure and retires repeatedly failing rows until operator repair clears the evidence.
+    [<Literal>]
+    let RecordRawUsageFactArchiveFailure =
+        """
+UPDATE ops.RawUsageFact
+SET
+    LastArchiveFailureReason = @LastArchiveFailureReason,
+    LastArchiveFailureAtUtc = SYSUTCDATETIME(),
+    ArchiveFailureCount = ArchiveFailureCount + 1,
+    ArchiveRetiredAtUtc =
+        CASE
+            WHEN ArchiveFailureCount + 1 >= @ArchiveFailureRetirementThreshold THEN SYSUTCDATETIME()
+            ELSE ArchiveRetiredAtUtc
+        END
+WHERE UsageFactId = @UsageFactId
+AND ArchiveState IN (@ArchiveStateHot, @ArchiveStateVerified);
 """
 
     /// Adds a quantity to the minute aggregate row associated with a newly accepted raw fact.

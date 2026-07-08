@@ -117,6 +117,26 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         rawFact
+            .Property<string>("LastArchiveFailureReason")
+            .HasMaxLength(400)
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<System.DateTime>>("LastArchiveFailureAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
+            .Property<int>("ArchiveFailureCount")
+            .IsRequired()
+        |> ignore
+
+        rawFact
+            .Property<System.Nullable<System.DateTime>>("ArchiveRetiredAtUtc")
+            .HasColumnType("datetime2(7)")
+        |> ignore
+
+        rawFact
             .Property<System.DateTime>("CreatedAtUtc")
             .HasColumnType("datetime2(7)")
             .HasDefaultValueSql("SYSUTCDATETIME()")

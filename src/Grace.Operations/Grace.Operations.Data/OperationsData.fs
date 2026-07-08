@@ -9,6 +9,7 @@ open System
 open System.Data
 open System.Runtime.ExceptionServices
 open System.Text
+open System.Text.Json
 open System.Threading
 open System.Threading.Tasks
 
@@ -146,6 +147,9 @@ type IOperationsUsageArchiveStore =
 
     /// Clears the hot SQL payload only when the verified SQL pointer still matches the supplied Blob authority.
     abstract CompleteArchiveAsync: pointer: RawUsageFactArchivePointer * cancellationToken: CancellationToken -> Task<bool>
+
+    /// Records a row-scoped archive failure so operators can inspect and repair durable retention blockers.
+    abstract RecordArchiveFailureAsync: usageFactId: UsageFactId * reason: string * cancellationToken: CancellationToken -> Task
 
     /// Returns archived rows whose compact SQL pointer identifies the archived payload for replay or support rehydration.
     abstract ListArchivedUsageFactsAsync:
@@ -518,20 +522,54 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
              |> Option.map (fun value -> box (toUtcDateTime value))
              |> Option.defaultValue DBNull.Value)
 
-        let usageFactIds = query.UsageFactIds |> List.toArray
-        let mutable usageFactIdIndex = 0
+        let serializedFilterValues values =
+            if List.isEmpty values then
+                box DBNull.Value
+            else
+                values
+                |> List.map string
+                |> List.toArray
+                |> JsonSerializer.Serialize
+                |> box
 
-        while usageFactIdIndex < usageFactIds.Length do
-            addParameter command $"@UsageFactIdFilter{usageFactIdIndex}" SqlDbType.UniqueIdentifier usageFactIds[usageFactIdIndex]
-            usageFactIdIndex <- usageFactIdIndex + 1
+        let usageFactIdsJson = command.Parameters.Add("@UsageFactIdsJson", SqlDbType.NVarChar, -1)
+        usageFactIdsJson.Value <- serializedFilterValues query.UsageFactIds
 
-        let correlationIds = query.CorrelationIds |> List.toArray
-        let mutable correlationIdIndex = 0
+        let correlationIdsJson = command.Parameters.Add("@CorrelationIdsJson", SqlDbType.NVarChar, -1)
+        correlationIdsJson.Value <- serializedFilterValues query.CorrelationIds
 
-        while correlationIdIndex < correlationIds.Length do
-            addStringParameter command $"@CorrelationIdFilter{correlationIdIndex}" OperationsUsageSql.CorrelationIdMaxLength correlationIds[correlationIdIndex]
+    /// Declares and populates bounded filter-list tables from JSON parameters so SQL command shape stays constant.
+    let archiveFilterStagingSql =
+        """
+DECLARE @UsageFactIdFilters table
+(
+    UsageFactId uniqueidentifier NOT NULL PRIMARY KEY
+);
 
-            correlationIdIndex <- correlationIdIndex + 1
+IF @UsageFactIdsJson IS NOT NULL
+BEGIN
+    INSERT INTO @UsageFactIdFilters (UsageFactId)
+    SELECT DISTINCT UsageFactId
+    FROM OPENJSON(@UsageFactIdsJson)
+    WITH (UsageFactId uniqueidentifier '$')
+    WHERE UsageFactId IS NOT NULL;
+END;
+
+DECLARE @CorrelationIdFilters table
+(
+    CorrelationId nvarchar(200) NOT NULL PRIMARY KEY
+);
+
+IF @CorrelationIdsJson IS NOT NULL
+BEGIN
+    INSERT INTO @CorrelationIdFilters (CorrelationId)
+    SELECT DISTINCT CorrelationId
+    FROM OPENJSON(@CorrelationIdsJson)
+    WITH (CorrelationId nvarchar(max) '$')
+    WHERE CorrelationId IS NOT NULL
+    AND LEN(CorrelationId) <= 200;
+END;
+"""
 
     /// Builds a deterministic archived-row SQL predicate for index-only count and page scans.
     let archivedUsageFactPredicateSql (query: RawUsageFactArchiveQuery) (includeCursor: bool) =
@@ -564,35 +602,11 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
         builder.AppendLine("AND (@ObservedBeforeUtc IS NULL OR ObservedAtUtc <= @ObservedBeforeUtc)")
         |> ignore
 
-        if not query.UsageFactIds.IsEmpty then
-            builder.Append("AND UsageFactId IN (") |> ignore
-            let usageFactIds = query.UsageFactIds |> List.toArray
-            let mutable index = 0
+        builder.AppendLine("AND (NOT EXISTS (SELECT 1 FROM @UsageFactIdFilters) OR UsageFactId IN (SELECT UsageFactId FROM @UsageFactIdFilters))")
+        |> ignore
 
-            while index < usageFactIds.Length do
-                if index > 0 then builder.Append(", ") |> ignore
-
-                builder.Append($"@UsageFactIdFilter{index}")
-                |> ignore
-
-                index <- index + 1
-
-            builder.AppendLine(")") |> ignore
-
-        if not query.CorrelationIds.IsEmpty then
-            builder.Append("AND CorrelationId IN (") |> ignore
-            let correlationIds = query.CorrelationIds |> List.toArray
-            let mutable index = 0
-
-            while index < correlationIds.Length do
-                if index > 0 then builder.Append(", ") |> ignore
-
-                builder.Append($"@CorrelationIdFilter{index}")
-                |> ignore
-
-                index <- index + 1
-
-            builder.AppendLine(")") |> ignore
+        builder.AppendLine("AND (NOT EXISTS (SELECT 1 FROM @CorrelationIdFilters) OR CorrelationId IN (SELECT CorrelationId FROM @CorrelationIdFilters))")
+        |> ignore
 
         if includeCursor then
             builder.AppendLine("AND") |> ignore
@@ -614,6 +628,8 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
     /// Builds the archived-row page scan used by replay and support rehydration exploration.
     let archivedUsageFactPageSql query =
         $"""
+{archiveFilterStagingSql}
+
 SELECT TOP (@BatchSize)
     UsageFactId,
     CorrelationId,
@@ -635,10 +651,36 @@ FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
     /// Builds the index-only archived-row count used before support rehydration mutates SQL.
     let archivedUsageFactCountSql query =
         $"""
+{archiveFilterStagingSql}
+
 SELECT COUNT_BIG(1)
 FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
 {archivedUsageFactPredicateSql query false};
 """
+
+    /// Records one archive failure without reading raw payload bytes or changing archive authority.
+    let recordArchiveFailureAsync usageFactId reason cancellationToken =
+        task {
+            let boundedReason =
+                if String.IsNullOrWhiteSpace reason then
+                    "Archive retention failed."
+                elif reason.Length
+                     <= OperationsUsageSql.ArchiveFailureReasonMaxLength then
+                    reason
+                else
+                    reason.Substring(0, OperationsUsageSql.ArchiveFailureReasonMaxLength)
+
+            use! connection = openConnectionAsync cancellationToken
+            use command = connection.CreateCommand()
+            command.CommandType <- CommandType.Text
+            command.CommandText <- OperationsUsageSql.RecordRawUsageFactArchiveFailure
+            addArchiveStateParameters command
+            addParameter command "@UsageFactId" SqlDbType.UniqueIdentifier usageFactId
+            addStringParameter command "@LastArchiveFailureReason" OperationsUsageSql.ArchiveFailureReasonMaxLength boundedReason
+            addParameter command "@ArchiveFailureRetirementThreshold" SqlDbType.Int OperationsUsageSql.ArchiveFailureRetirementThreshold
+            let! _ = command.ExecuteNonQueryAsync cancellationToken
+            return ()
+        }
 
     /// Executes an archive transition command and returns whether this call changed SQL state.
     let executeArchiveTransitionAsync commandText pointer cancellationToken =
@@ -875,6 +917,8 @@ FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
 
         member _.CompleteArchiveAsync(pointer, cancellationToken) =
             executeArchiveTransitionAsync OperationsUsageSql.CompleteRawUsageFactArchive pointer cancellationToken
+
+        member _.RecordArchiveFailureAsync(usageFactId, reason, cancellationToken) = recordArchiveFailureAsync usageFactId reason cancellationToken
 
         member _.ListArchivedUsageFactsAsync(query, after, batchSize, cancellationToken) =
             task {
