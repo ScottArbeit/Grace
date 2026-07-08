@@ -302,14 +302,16 @@ type MaterializationPlanRouteTests() =
         | Error missingError, Error hiddenError -> Assert.That(hiddenError.Error, Is.EqualTo(missingError.Error))
         | _ -> Assert.Fail("Expected missing and hidden DirectoryVersion selectors to fail.")
 
-    /// Verifies authorized non-root DirectoryVersion selectors keep the path-scoped validation error.
+    /// Verifies authorized non-root DirectoryVersion selectors remain supported for scoped Direct plans.
     [<Test>]
-    member _.DirectoryVersionSelectorRejectsPathScopedVersionAfterRepositoryScope() =
+    member _.DirectoryVersionSelectorAcceptsPathScopedVersionAfterRepositoryScope() =
         let pathScopedDirectoryVersion = directoryVersion targetRootDirectoryVersionId repositoryId "src"
 
         let result = Materialization.validateDirectoryVersionSelectorScope repositoryId pathScopedDirectoryVersion correlationId
 
-        assertErrorContains "Path-scoped Materialization Plan selectors are not supported" result
+        match result with
+        | Error error -> Assert.Fail(error.Error)
+        | Ok () -> ()
 
     /// Verifies missing selector actor results keep the public-safe 400 message.
     [<Test>]
@@ -387,6 +389,233 @@ type MaterializationPlanRouteTests() =
                     correlationId
 
             assertErrorContains Materialization.referenceSelectorNotFoundMessage result
+        }
+
+    /// Verifies ReferenceType selectors resolve the latest matching branch reference at plan time.
+    [<Test>]
+    member _.ReferenceTypeSelectorResolvesLatestMatchingReferenceRoot() =
+        task {
+            let olderReference =
+                { reference
+                      (ReferenceId.Parse "88888888-8888-8888-8888-888888888888")
+                      explicitBranchId
+                      (DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999") with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 1, 12, 0)
+                }
+
+            let latestReference =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName latestReference))
+                    (fun _ -> Task.FromResult(Some latestReference))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+        }
+
+    /// Verifies ReferenceType selectors fail before planning when the branch has no matching reference.
+    [<Test>]
+    member _.ReferenceTypeSelectorRejectsMissingMatchingReference() =
+        task {
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName ReferenceDto.Default))
+                    (fun _ -> Task.FromResult None)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            assertErrorContains Materialization.referenceTypeSelectorNotFoundMessage result
+        }
+
+    /// Verifies ReferenceType selectors carrying BranchId do not resolve through a stale or reused branch name.
+    [<Test>]
+    member _.ReferenceTypeSelectorPreservesBranchIdIdentityWithoutNameLookup() =
+        task {
+            let selectedReference =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let mutable nameLookupWasUsed = false
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    (Some explicitBranchId)
+                    None
+                    ReferenceType.Promotion
+                    (fun _ ->
+                        nameLookupWasUsed <- true
+                        Task.FromResult(Some defaultBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId (BranchName "renamed-after-cli-lookup") selectedReference))
+                    (fun _ -> Task.FromResult(Some selectedReference))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
+                        Assert.That(nameLookupWasUsed, Is.False))
+                )
+        }
+
+    /// Verifies ReferenceType selectors skip deleted candidates before returning the newest live reference.
+    [<Test>]
+    member _.ReferenceTypeSelectorSkipsDeletedNewestReference() =
+        task {
+            let liveRoot = DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999"
+
+            let deletedNewest =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 3, 12, 0)
+                    DeletedAt = Some(NodaTime.Instant.FromUtc(2026, 7, 4, 12, 0))
+                }
+
+            let liveOlder =
+                { reference (ReferenceId.Parse "88888888-8888-8888-8888-888888888888") explicitBranchId liveRoot with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName liveOlder))
+                    (fun _ -> Task.FromResult(Some liveOlder))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(liveRoot))
+        }
+
+    /// Verifies ReferenceType selectors rely on storage paging to skip more deleted references than one list window.
+    [<Test>]
+    member _.ReferenceTypeSelectorSkipsBeyondDeletedCandidateWindow() =
+        task {
+            let liveRoot = DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999"
+
+            let deletedCandidateCount = 51
+
+            let deletedCandidates =
+                Array.init deletedCandidateCount (fun index ->
+                    let referenceOrdinal = index + 1
+
+                    { reference
+                          (ReferenceId.Parse($"aaaaaaaa-aaaa-aaaa-aaaa-{referenceOrdinal.ToString().PadLeft(12, '0')}"))
+                          explicitBranchId
+                          targetRootDirectoryVersionId with
+                        ReferenceType = ReferenceType.Promotion
+                        CreatedAt =
+                            NodaTime
+                                .Instant
+                                .FromUtc(2026, 7, 3, 12, 0)
+                                .Minus(NodaTime.Duration.FromMinutes(int64 referenceOrdinal))
+                        DeletedAt = Some(NodaTime.Instant.FromUtc(2026, 7, 4, 12, 0))
+                    })
+
+            let liveOlder =
+                { reference (ReferenceId.Parse "88888888-8888-8888-8888-888888888888") explicitBranchId liveRoot with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 1, 12, 0)
+                }
+
+            let storageOrderedCandidates = Array.append deletedCandidates [| liveOlder |]
+            let mutable latestLiveLookupSawDeletedWindow = false
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName liveOlder))
+                    (fun _ ->
+                        latestLiveLookupSawDeletedWindow <-
+                            storageOrderedCandidates
+                            |> Array.take 50
+                            |> Array.forall (fun reference -> reference.DeletedAt.IsSome)
+
+                        storageOrderedCandidates
+                        |> Array.tryFind (fun reference -> reference.DeletedAt.IsNone)
+                        |> Task.FromResult)
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        Assert.That(resolvedRoot, Is.EqualTo(liveRoot))
+                        Assert.That(latestLiveLookupSawDeletedWindow, Is.True))
+                )
+        }
+
+    /// Verifies ReferenceType selectors choose by creation order instead of mutable UpdatedAt churn.
+    [<Test>]
+    member _.ReferenceTypeSelectorUsesCreatedAtInsteadOfUpdatedAt() =
+        task {
+            let olderRoot = DirectoryVersionId.Parse "99999999-9999-9999-9999-999999999999"
+
+            let updatedOlder =
+                { reference (ReferenceId.Parse "88888888-8888-8888-8888-888888888888") explicitBranchId olderRoot with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 1, 12, 0)
+                    UpdatedAt = Some(NodaTime.Instant.FromUtc(2026, 7, 4, 12, 0))
+                }
+
+            let createdNewer =
+                { reference referenceId explicitBranchId targetRootDirectoryVersionId with
+                    ReferenceType = ReferenceType.Promotion
+                    CreatedAt = NodaTime.Instant.FromUtc(2026, 7, 2, 12, 0)
+                }
+
+            let! result =
+                Materialization.resolveReferenceTypeSelectorWith
+                    repositoryId
+                    None
+                    (Some explicitBranchName)
+                    ReferenceType.Promotion
+                    (fun _ -> Task.FromResult(Some explicitBranchId))
+                    (fun branchId -> Task.FromResult(branch branchId explicitBranchName createdNewer))
+                    (fun _ -> Task.FromResult(Some createdNewer))
+                    (fun directoryVersionId -> Task.FromResult(directoryVersionDto directoryVersionId repositoryId Constants.RootDirectoryPath))
+                    correlationId
+
+            match result with
+            | Error error -> Assert.Fail(error.Error)
+            | Ok resolvedRoot -> Assert.That(resolvedRoot, Is.EqualTo(targetRootDirectoryVersionId))
         }
 
     /// Verifies explicit branch selectors resolve the current branch tip to one immutable root.

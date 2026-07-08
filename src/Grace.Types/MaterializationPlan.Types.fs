@@ -2,6 +2,7 @@ namespace Grace.Types
 
 open Grace.Shared
 open Grace.Types.Common
+open Grace.Types.Reference
 open Orleans
 open System
 open System.Collections.Generic
@@ -22,6 +23,7 @@ module MaterializationPlan =
         | DirectoryVersionId = 1
         | ReferenceId = 2
         | BranchName = 3
+        | ReferenceType = 4
 
     /// Identifies the cache behavior requested for artifact source selection.
     type MaterializationCacheSelectionKind =
@@ -78,7 +80,9 @@ module MaterializationPlan =
             SelectorKind: MaterializationTargetSelectorKind
             DirectoryVersionId: DirectoryVersionId option
             ReferenceId: ReferenceId option
+            BranchId: BranchId option
             BranchName: BranchName option
+            ReferenceType: ReferenceType option
         }
 
         /// Selects a known immutable directory version root directly.
@@ -88,7 +92,9 @@ module MaterializationPlan =
                 SelectorKind = MaterializationTargetSelectorKind.DirectoryVersionId
                 DirectoryVersionId = Some directoryVersionId
                 ReferenceId = None
+                BranchId = None
                 BranchName = None
+                ReferenceType = None
             }
 
         /// Selects the directory version reached by a stored Grace reference.
@@ -98,7 +104,9 @@ module MaterializationPlan =
                 SelectorKind = MaterializationTargetSelectorKind.ReferenceId
                 DirectoryVersionId = None
                 ReferenceId = Some referenceId
+                BranchId = None
                 BranchName = None
+                ReferenceType = None
             }
 
         /// Selects the directory version reached by the current branch tip at resolution time.
@@ -108,7 +116,33 @@ module MaterializationPlan =
                 SelectorKind = MaterializationTargetSelectorKind.BranchName
                 DirectoryVersionId = None
                 ReferenceId = None
+                BranchId = None
                 BranchName = Some branchName
+                ReferenceType = None
+            }
+
+        /// Selects the latest reference of a given type for one branch name at server resolution time.
+        static member ForReferenceType(branchName: BranchName, referenceType: ReferenceType) =
+            {
+                Class = nameof MaterializationTargetSelector
+                SelectorKind = MaterializationTargetSelectorKind.ReferenceType
+                DirectoryVersionId = None
+                ReferenceId = None
+                BranchId = None
+                BranchName = Some branchName
+                ReferenceType = Some referenceType
+            }
+
+        /// Selects the latest reference of a given type for one branch id at server resolution time.
+        static member ForReferenceType(branchId: BranchId, referenceType: ReferenceType) =
+            {
+                Class = nameof MaterializationTargetSelector
+                SelectorKind = MaterializationTargetSelectorKind.ReferenceType
+                DirectoryVersionId = None
+                ReferenceId = None
+                BranchId = Some branchId
+                BranchName = None
+                ReferenceType = Some referenceType
             }
 
         /// Represents an empty selector used before caller input contributes target identity.
@@ -118,7 +152,9 @@ module MaterializationPlan =
                 SelectorKind = MaterializationTargetSelectorKind.DirectoryVersionId
                 DirectoryVersionId = None
                 ReferenceId = None
+                BranchId = None
                 BranchName = None
+                ReferenceType = None
             }
 
     /// Records cache-selection intent separately from artifact source details.
@@ -462,8 +498,14 @@ module MaterializationPlan =
                         if selector.ReferenceId.IsSome then
                             errors.Add("TargetSelector.ReferenceId must be empty for DirectoryVersionId selectors.")
 
+                        if selector.BranchId.IsSome then
+                            errors.Add("TargetSelector.BranchId must be empty for DirectoryVersionId selectors.")
+
                         if selector.BranchName.IsSome then
                             errors.Add("TargetSelector.BranchName must be empty for DirectoryVersionId selectors.")
+
+                        if selector.ReferenceType.IsSome then
+                            errors.Add("TargetSelector.ReferenceType must be empty for DirectoryVersionId selectors.")
                     | MaterializationTargetSelectorKind.ReferenceId ->
                         match selector.ReferenceId with
                         | Some referenceId when referenceId <> ReferenceId.Empty -> ()
@@ -472,8 +514,14 @@ module MaterializationPlan =
                         if selector.DirectoryVersionId.IsSome then
                             errors.Add("TargetSelector.DirectoryVersionId must be empty for ReferenceId selectors.")
 
+                        if selector.BranchId.IsSome then
+                            errors.Add("TargetSelector.BranchId must be empty for ReferenceId selectors.")
+
                         if selector.BranchName.IsSome then
                             errors.Add("TargetSelector.BranchName must be empty for ReferenceId selectors.")
+
+                        if selector.ReferenceType.IsSome then
+                            errors.Add("TargetSelector.ReferenceType must be empty for ReferenceId selectors.")
                     | MaterializationTargetSelectorKind.BranchName ->
                         match selector.BranchName with
                         | Some branchName when
@@ -490,6 +538,46 @@ module MaterializationPlan =
 
                         if selector.ReferenceId.IsSome then
                             errors.Add("TargetSelector.ReferenceId must be empty for BranchName selectors.")
+
+                        if selector.BranchId.IsSome then
+                            errors.Add("TargetSelector.BranchId must be empty for BranchName selectors.")
+
+                        if selector.ReferenceType.IsSome then
+                            errors.Add("TargetSelector.ReferenceType must be empty for BranchName selectors.")
+                    | MaterializationTargetSelectorKind.ReferenceType ->
+                        let hasBranchId =
+                            match selector.BranchId with
+                            | Some branchId when branchId <> BranchId.Empty -> true
+                            | Some _ ->
+                                errors.Add("TargetSelector.BranchId is required when supplied for ReferenceType selectors.")
+                                false
+                            | None -> false
+
+                        let hasBranchName =
+                            match selector.BranchName with
+                            | Some branchName when
+                                not (String.IsNullOrWhiteSpace branchName)
+                                && Constants.GraceNameRegex.IsMatch(branchName)
+                                ->
+                                true
+                            | Some branchName when not (String.IsNullOrWhiteSpace branchName) ->
+                                errors.Add("TargetSelector.BranchName must be a valid Grace branch name.")
+                                false
+                            | Some _ -> false
+                            | None -> false
+
+                        if hasBranchId = hasBranchName then
+                            errors.Add("TargetSelector must include exactly one of BranchId or BranchName for ReferenceType selectors.")
+
+                        match selector.ReferenceType with
+                        | Some _ -> ()
+                        | _ -> errors.Add("TargetSelector.ReferenceType is required.")
+
+                        if selector.DirectoryVersionId.IsSome then
+                            errors.Add("TargetSelector.DirectoryVersionId must be empty for ReferenceType selectors.")
+
+                        if selector.ReferenceId.IsSome then
+                            errors.Add("TargetSelector.ReferenceId must be empty for ReferenceType selectors.")
                     | _ -> errors.Add($"TargetSelector.SelectorKind '{int selector.SelectorKind}' is not supported.")
 
             if errors.Count = 0 then Ok() else Error(List.ofSeq errors)
