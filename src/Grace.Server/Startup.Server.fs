@@ -1340,6 +1340,12 @@ module Application =
                                route "/saveDirectoryVersions" (composeHandlers requireRepositoryWriteOrAdmin DirectoryVersion.SaveDirectoryVersions)
                                |> addMetadata typeof<DirectoryVersion.SaveDirectoryVersionsParameters> ]
                     ]
+                subRoute
+                    "/materialization"
+                    [
+                        POST [ route "/plan" (composeHandlers requireRepositoryRead Materialization.Plan)
+                               |> addMetadata typeof<Grace.Shared.Parameters.Materialization.PlanParameters> ]
+                    ]
                 subRoute "/notifications" [ GET [] ]
                 subRoute
                     "/organization"

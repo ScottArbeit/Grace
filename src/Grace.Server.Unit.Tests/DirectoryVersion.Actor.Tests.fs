@@ -29,7 +29,7 @@ type DirectoryVersionProjectionEnsureTests() =
         task {
             let targetRootDirectoryVersionId = DirectoryVersionId.Parse "11111111-1111-1111-1111-111111111111"
             let zipSource = Some(MaterializationArtifactSource.Direct "https://example.invalid/root.zip")
-            let metadataSource = Some(MaterializationArtifactSource.CacheOnly "recursive/root.msgpack")
+            let metadataSource = Some(MaterializationArtifactSource.Direct "https://example.invalid/root.msgpack")
 
             let! result =
                 ensureRequiredProjectionArtifactsWith

@@ -98,6 +98,7 @@ Class | Method | HTTP request | Description
 *DirectoriesApi* | [**list_directory_versions_by_id**](docs/DirectoriesApi.md#list_directory_versions_by_id) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**list_directory_versions_recursive**](docs/DirectoriesApi.md#list_directory_versions_recursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
 *DirectoriesApi* | [**save_directory_versions**](docs/DirectoriesApi.md#save_directory_versions) | **POST** /directory/saveDirectoryVersions | Save directory versions.
+*MaterializationApi* | [**create_materialization_plan**](docs/MaterializationApi.md#create_materialization_plan) | **POST** /materialization/plan | Create a Materialization Plan.
 *OrganizationsApi* | [**create_organization**](docs/OrganizationsApi.md#create_organization) | **POST** /organization/create | Create an organization.
 *OrganizationsApi* | [**delete_organization**](docs/OrganizationsApi.md#delete_organization) | **POST** /organization/delete | Delete an organization.
 *OrganizationsApi* | [**get_organization**](docs/OrganizationsApi.md#get_organization) | **POST** /organization/get | Get an organization.
@@ -277,6 +278,18 @@ Class | Method | HTTP request | Description
  - [ListRepositoriesParameters](docs/ListRepositoriesParameters.md)
  - [ListWebhookDeliveriesParameters](docs/ListWebhookDeliveriesParameters.md)
  - [ListWebhookRulesParameters](docs/ListWebhookRulesParameters.md)
+ - [MaterializationArtifactDescriptor](docs/MaterializationArtifactDescriptor.md)
+ - [MaterializationArtifactKind](docs/MaterializationArtifactKind.md)
+ - [MaterializationArtifactSource](docs/MaterializationArtifactSource.md)
+ - [MaterializationArtifactSourceKind](docs/MaterializationArtifactSourceKind.md)
+ - [MaterializationCacheSelection](docs/MaterializationCacheSelection.md)
+ - [MaterializationCacheSelectionKind](docs/MaterializationCacheSelectionKind.md)
+ - [MaterializationExecutionMode](docs/MaterializationExecutionMode.md)
+ - [MaterializationPlan](docs/MaterializationPlan.md)
+ - [MaterializationPlanRequest](docs/MaterializationPlanRequest.md)
+ - [MaterializationPlanReturnValue](docs/MaterializationPlanReturnValue.md)
+ - [MaterializationTargetSelector](docs/MaterializationTargetSelector.md)
+ - [MaterializationTargetSelectorKind](docs/MaterializationTargetSelectorKind.md)
  - [ObjectStorageProvider](docs/ObjectStorageProvider.md)
  - [OrganizationCommandReturnValue](docs/OrganizationCommandReturnValue.md)
  - [OrganizationDto](docs/OrganizationDto.md)
@@ -289,6 +302,7 @@ Class | Method | HTTP request | Description
  - [OwnerParameters](docs/OwnerParameters.md)
  - [OwnerReturnValue](docs/OwnerReturnValue.md)
  - [OwnerType](docs/OwnerType.md)
+ - [PlanParameters](docs/PlanParameters.md)
  - [PopulateParameters](docs/PopulateParameters.md)
  - [ProblemDetails](docs/ProblemDetails.md)
  - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)

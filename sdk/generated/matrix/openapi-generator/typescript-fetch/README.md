@@ -114,6 +114,7 @@ All URIs are relative to *http://localhost:5000*
 *DirectoriesApi* | [**listDirectoryVersionsById**](docs/DirectoriesApi.md#listdirectoryversionsbyid) | **POST** /directory/getByDirectoryIds | List directory versions by id.
 *DirectoriesApi* | [**listDirectoryVersionsRecursive**](docs/DirectoriesApi.md#listdirectoryversionsrecursive) | **POST** /directory/getDirectoryVersionsRecursive | List a directory version and its children.
 *DirectoriesApi* | [**saveDirectoryVersions**](docs/DirectoriesApi.md#savedirectoryversions) | **POST** /directory/saveDirectoryVersions | Save directory versions.
+*MaterializationApi* | [**createMaterializationPlan**](docs/MaterializationApi.md#creatematerializationplan) | **POST** /materialization/plan | Create a Materialization Plan.
 *OrganizationsApi* | [**createOrganization**](docs/OrganizationsApi.md#createorganization) | **POST** /organization/create | Create an organization.
 *OrganizationsApi* | [**deleteOrganization**](docs/OrganizationsApi.md#deleteorganization) | **POST** /organization/delete | Delete an organization.
 *OrganizationsApi* | [**getOrganization**](docs/OrganizationsApi.md#getorganization) | **POST** /organization/get | Get an organization.
@@ -293,6 +294,18 @@ All URIs are relative to *http://localhost:5000*
 - [ListRepositoriesParameters](docs/ListRepositoriesParameters.md)
 - [ListWebhookDeliveriesParameters](docs/ListWebhookDeliveriesParameters.md)
 - [ListWebhookRulesParameters](docs/ListWebhookRulesParameters.md)
+- [MaterializationArtifactDescriptor](docs/MaterializationArtifactDescriptor.md)
+- [MaterializationArtifactKind](docs/MaterializationArtifactKind.md)
+- [MaterializationArtifactSource](docs/MaterializationArtifactSource.md)
+- [MaterializationArtifactSourceKind](docs/MaterializationArtifactSourceKind.md)
+- [MaterializationCacheSelection](docs/MaterializationCacheSelection.md)
+- [MaterializationCacheSelectionKind](docs/MaterializationCacheSelectionKind.md)
+- [MaterializationExecutionMode](docs/MaterializationExecutionMode.md)
+- [MaterializationPlan](docs/MaterializationPlan.md)
+- [MaterializationPlanRequest](docs/MaterializationPlanRequest.md)
+- [MaterializationPlanReturnValue](docs/MaterializationPlanReturnValue.md)
+- [MaterializationTargetSelector](docs/MaterializationTargetSelector.md)
+- [MaterializationTargetSelectorKind](docs/MaterializationTargetSelectorKind.md)
 - [ObjectStorageProvider](docs/ObjectStorageProvider.md)
 - [OrganizationCommandReturnValue](docs/OrganizationCommandReturnValue.md)
 - [OrganizationDto](docs/OrganizationDto.md)
@@ -305,6 +318,7 @@ All URIs are relative to *http://localhost:5000*
 - [OwnerParameters](docs/OwnerParameters.md)
 - [OwnerReturnValue](docs/OwnerReturnValue.md)
 - [OwnerType](docs/OwnerType.md)
+- [PlanParameters](docs/PlanParameters.md)
 - [PopulateParameters](docs/PopulateParameters.md)
 - [ProblemDetails](docs/ProblemDetails.md)
 - [PromotionSetApprovalState](docs/PromotionSetApprovalState.md)

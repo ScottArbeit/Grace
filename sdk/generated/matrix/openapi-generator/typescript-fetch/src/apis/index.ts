@@ -5,6 +5,7 @@ export * from './BranchesApi';
 export * from './DefaultApi';
 export * from './DiffsApi';
 export * from './DirectoriesApi';
+export * from './MaterializationApi';
 export * from './OrganizationsApi';
 export * from './OwnersApi';
 export * from './RepositoriesApi';
