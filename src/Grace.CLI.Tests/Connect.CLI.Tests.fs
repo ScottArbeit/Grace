@@ -215,6 +215,23 @@ module ConnectTests =
 
         output.ToArray()
 
+    /// Builds a zip payload with multiple Grace text entries stored as gzip-compressed bytes.
+    let private zipBytesForTextEntries (entries: (string * byte array) seq) =
+        use output = new MemoryStream()
+
+        do
+            use zip = new ZipArchive(output, ZipArchiveMode.Create, leaveOpen = true)
+
+            entries
+            |> Seq.iter (fun (relativePath, payload) ->
+                let entry = zip.CreateEntry(relativePath)
+
+                use entryStream = entry.Open()
+                let compressedPayload = gzipBytes payload
+                entryStream.Write(compressedPayload, 0, compressedPayload.Length))
+
+        output.ToArray()
+
     /// Builds the relative-path lookup required by Direct zip extraction.
     let private fileVersionLookup (fileVersions: FileVersion seq) =
         let lookup = Dictionary<RelativePath, FileVersion>()
@@ -776,6 +793,81 @@ module ConnectTests =
 
                         File.ReadAllText(filePath)
                         |> should equal sentinel)
+                ))
+
+    /// Verifies that staged Direct zip validation extracts files skipped only for final worktree writes.
+    [<Test>]
+    let ``connect staged direct zip validation extracts final skip-set files`` () =
+        withTempDir (fun root ->
+            Grace.Shared.Client.Configuration.resetConfiguration ()
+            let configuration = Grace.Shared.Client.Configuration.Current()
+
+            let unchangedPayload = Encoding.UTF8.GetBytes("already materialized text")
+            let updatedPayload = Encoding.UTF8.GetBytes("new materialized text")
+            let unchangedRelativePath = RelativePath "src/unchanged.fs"
+            let updatedRelativePath = RelativePath "src/updated.fs"
+            let unchangedFilePath = Path.Combine(root, string unchangedRelativePath)
+            let updatedFilePath = Path.Combine(root, string updatedRelativePath)
+
+            Directory.CreateDirectory(Path.GetDirectoryName(unchangedFilePath))
+            |> ignore
+
+            File.WriteAllBytes(unchangedFilePath, unchangedPayload)
+
+            let unchangedFileVersion =
+                FileVersion.CreateWithHashes
+                    unchangedRelativePath
+                    (computeSha256Hash unchangedPayload)
+                    (computeBlake3Hash unchangedPayload)
+                    String.Empty
+                    false
+                    (int64 unchangedPayload.Length)
+
+            let updatedFileVersion =
+                FileVersion.CreateWithHashes
+                    updatedRelativePath
+                    (computeSha256Hash updatedPayload)
+                    (computeBlake3Hash updatedPayload)
+                    String.Empty
+                    false
+                    (int64 updatedPayload.Length)
+
+            let filesToSkip = HashSet<RelativePath>()
+
+            filesToSkip.Add(unchangedRelativePath) |> ignore
+
+            use zipStream =
+                new MemoryStream(
+                    zipBytesForTextEntries [ string unchangedRelativePath, unchangedPayload
+                                             string updatedRelativePath, updatedPayload ]
+                )
+
+            let fileVersions =
+                [|
+                    unchangedFileVersion
+                    updatedFileVersion
+                |]
+
+            let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+
+            let result =
+                Connect.extractValidatedZipEntries parseResult "correlation-id" (fileVersionLookup fileVersions) filesToSkip fileVersions zipStream
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match result with
+            | Error error -> Assert.Fail($"Unexpected staged Direct zip validation error: {error.Error}")
+            | Ok () ->
+                let objectFiles = Directory.GetFiles(string configuration.ObjectDirectory, "*", SearchOption.AllDirectories)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        File.ReadAllBytes(unchangedFilePath)
+                        |> should equal unchangedPayload
+
+                        File.ReadAllBytes(updatedFilePath)
+                        |> should equal updatedPayload
+
+                        objectFiles |> should haveLength 2)
                 ))
 
     /// Verifies that staged Direct zip validation still writes final files and object-cache bytes on success.

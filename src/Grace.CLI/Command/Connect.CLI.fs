@@ -1258,7 +1258,9 @@ module Connect =
                             Directory.CreateDirectory(stageRootDirectory)
                             |> ignore
 
-                            extractZipEntries parseResult stageRootDirectory stageObjectDirectory fileVersionsByRelativePath filesToSkip true false zipFile
+                            let stageFilesToSkip = HashSet<RelativePath>()
+
+                            extractZipEntries parseResult stageRootDirectory stageObjectDirectory fileVersionsByRelativePath stageFilesToSkip true false zipFile
 
                             return! validateMaterializedFilesInRoot correlationId stageRootDirectory fileVersions
                         with
