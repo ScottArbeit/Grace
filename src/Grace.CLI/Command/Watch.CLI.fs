@@ -3219,6 +3219,7 @@ module Watch =
 
     /// Names the local status gate that decides whether a BranchDto-latest Reference may reach apply.
     type internal CurrentBranchMaterializationStatusGate =
+        | NotCurrentBranch
         | Clean of GraceWatchStatus
         | Blocked of string
         | Degraded of string
@@ -3235,10 +3236,32 @@ module Watch =
             MaxAttempts: int option
         }
 
-    /// Converts inspected Watch IPC into the private materialization gate used by the current-branch coordinator.
-    let private currentBranchMaterializationStatusGate (inspection: GraceWatchStatusInspection) =
-        if inspection.IsUsable then
-            if hasPendingDurableWatchJournalEvidence () then
+    /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
+    let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
+        let current = Current()
+
+        payload.RepositoryId = current.RepositoryId
+        && payload.BranchId = current.BranchId
+
+    /// Reports whether the local-state database can be opened as durable Watch authority before materialization side effects.
+    let private hasReadableLocalStateDbAuthority () =
+        let inspection = Grace.CLI.LocalStateDb.inspectReadOnly (Current().GraceStatusFile)
+
+        inspection.ParentDirectoryExists
+        && inspection.DbFileExists
+        && not inspection.DbPathIsDirectory
+        && inspection.OpenedReadOnly
+
+    /// Converts current target, local queues, durable DB authority, and inspected IPC into the private materialization gate.
+    let private currentBranchMaterializationStatusGate payload (inspection: GraceWatchStatusInspection) =
+        if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+            NotCurrentBranch
+        elif hasProcessablePendingWatchWork () then
+            Blocked "process-local Watch queues have pending local observations"
+        elif inspection.IsUsable then
+            if not (hasReadableLocalStateDbAuthority ()) then
+                Degraded "missing local-state DB authority"
+            elif hasPendingDurableWatchJournalEvidence () then
                 Blocked "durable Watch journal has pending local observations"
             else
                 Clean inspection.Status.Value
@@ -3262,13 +3285,6 @@ module Watch =
             | _, Some GraceWatchRuntimeMode.Suspended -> Blocked "Watch is suspended"
             | _, Some GraceWatchRuntimeMode.Stopping -> Degraded "Watch IPC/status authority is stopping"
             | _ -> Degraded "ambiguous Watch IPC/status authority"
-
-    /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
-    let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
-        let current = Current()
-
-        payload.RepositoryId = current.RepositoryId
-        && payload.BranchId = current.BranchId
 
     /// Runs #678 protocol and BranchDto latest checks before the coordinator consults the local IPC gate.
     let private currentBranchMaterializationDecision
@@ -3333,7 +3349,16 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
                         let! inspection = clients.InspectLocalStatus()
 
-                        match currentBranchMaterializationStatusGate inspection with
+                        match currentBranchMaterializationStatusGate payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
                         | Clean status ->
                             if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
@@ -3391,25 +3416,35 @@ module Watch =
 
                                 terminal <- true
                         | Degraded reason ->
-                            if degradedResyncRequestedForReason <> Some reason then
-                                clients.RequestDegradedResync reason
-                                degradedResyncRequestedForReason <- Some reason
-
-                            logToAnsiConsole
-                                Colors.Important
-                                $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
-
-                            if canRetry () then
-                                do! clients.ReestablishIpc payload reason
-                            else
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
                                     {
                                         ReferenceId = payload.ReferenceId
-                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
                                         Decision = Some decision
                                     }
 
                                 terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
                     | LatestCurrentBranchReferenceDecisionReason.NoApplicableReference ->
                         terminalOutcome <-
                             {
@@ -3434,7 +3469,16 @@ module Watch =
                     | LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync ->
                         let! inspection = clients.InspectLocalStatus()
 
-                        match currentBranchMaterializationStatusGate inspection with
+                        match currentBranchMaterializationStatusGate payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
                         | Clean _ ->
                             if attempts >= 3 then
                                 terminalOutcome <-
@@ -3471,25 +3515,35 @@ module Watch =
 
                                 terminal <- true
                         | Degraded reason ->
-                            if degradedResyncRequestedForReason <> Some reason then
-                                clients.RequestDegradedResync reason
-                                degradedResyncRequestedForReason <- Some reason
-
-                            logToAnsiConsole
-                                Colors.Important
-                                $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
-
-                            if canRetry () then
-                                do! clients.ReestablishIpc payload reason
-                            else
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                 terminalOutcome <-
                                     {
                                         ReferenceId = payload.ReferenceId
-                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
                                         Decision = Some decision
                                     }
 
                                 terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
                     | _ ->
                         terminalOutcome <-
                             {

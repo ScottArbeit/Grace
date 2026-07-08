@@ -13620,6 +13620,10 @@ module WatchTests =
 
     /// Wraps a Watch status snapshot in the inspected IPC shape consumed by the materialization coordinator.
     let private watchStatusInspection (status: Services.GraceWatchStatus) : Services.GraceWatchStatusInspection =
+        (LocalStateDb.ensureDbInitialized (Current().GraceStatusFile))
+            .GetAwaiter()
+            .GetResult()
+
         { Exists = true; Status = Some status; PersistedMode = Some status.Mode; SafetyFlags = status.SafetyFlags; ReadError = None }
 
     /// Represents missing Watch IPC authority for deterministic degraded coordinator tests.
@@ -14519,6 +14523,159 @@ module WatchTests =
                     |]
             finally
                 Watch.resetWatchJournalClientsForWatchTests ())
+
+    /// Verifies that process-local Watch queues block materialization before IPC or journal snapshots can appear clean.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator blocks clean ipc with process local pending work`` () =
+        withTempRepo (fun root ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let queuedFile = Path.Combine(root, "queued-before-ipc.txt")
+            File.WriteAllText(queuedFile, "queued local work")
+            Watch.OnChanged(changedEvent queuedFile)
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "process-local-work-gate-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync _ = Assert.Fail("Process-local queues should wait, not request degraded resync.")
+            let safePointWaits = ResizeArray<string>()
+
+            let waitForSafePoint _ gate =
+                task {
+                    match gate with
+                    | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
+                    | _ -> Assert.Fail("Expected process-local Watch queues to block the coordinator.")
+                }
+
+            let reestablishIpc _ _ = Task.FromResult(())
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("process-local Watch queues must not apply"))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+
+            safePointWaits.ToArray()
+            |> should
+                equal
+                [|
+                    "process-local Watch queues have pending local observations"
+                    "process-local Watch queues have pending local observations"
+                |])
+
+    /// Verifies that clean IPC does not let materialization proceed when the local-state database is missing.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator fails closed when local state database is missing`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+            deleteLocalStateDbFiles ()
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "missing-local-state-gate-test"))
+
+            let inspectStatus () =
+                Task.FromResult<Services.GraceWatchStatusInspection>(
+                    { Exists = true; Status = Some status; PersistedMode = Some status.Mode; SafetyFlags = status.SafetyFlags; ReadError = None }
+                )
+
+            let degradedRequests = ResizeArray<string>()
+            let requestDegradedResync reason = degradedRequests.Add(reason)
+            let reestablishIpc _ _ = Task.FromResult(())
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("missing local-state DB must not wait as clean work"))
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("missing local-state DB must not apply"))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+
+            degradedRequests.ToArray()
+            |> should equal [| "missing local-state DB authority" |])
+
+    /// Verifies that degraded resync is not requested after the notification stops targeting Current().
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator rechecks branch before degraded resync request`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
+            let branchBId = Guid.NewGuid()
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "degraded-current-recheck-test"))
+
+            let inspectStatus () =
+                let current = Current()
+                current.BranchId <- branchBId
+                current.BranchName <- "branch-b"
+
+                Task.FromResult(missingWatchStatusInspection)
+
+            let requestDegradedResync _ = Assert.Fail("Stale notification must not request degraded resync.")
+            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not reestablish IPC"))
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not wait for a safe point"))
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not apply"))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
 
     /// Verifies that missing IPC enters degraded resync and keeps the exact Reference for revalidation.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
