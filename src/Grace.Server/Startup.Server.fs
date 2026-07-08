@@ -1289,6 +1289,9 @@ module Application =
                                route "/rebase" Branch.Rebase
                                |> addMetadata typeof<Branch.RebaseParameters>
 
+                               route "/revealReference" (composeHandlers requireBranchWriteOrAdmin Branch.RevealReference)
+                               |> addMetadata typeof<Branch.RevealReferenceParameters>
+
                                route "/save" (composeHandlers requireBranchWriteOrAdmin Branch.Save)
                                |> addMetadata typeof<Branch.CreateReferenceParameters>
 

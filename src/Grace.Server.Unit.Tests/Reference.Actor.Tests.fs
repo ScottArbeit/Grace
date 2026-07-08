@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Common
 open Grace.Types.Reference
+open Grace.Types.Visibility
 open NUnit.Framework
 open System
 open System.Collections.Generic
@@ -453,3 +454,46 @@ type ReferenceActorHashValidationTests() =
         assertBoundaryForcesRegeneration
             "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
             "let existingReferenceReturnValue () ="
+
+    /// Verifies that reference reveal idempotency uses durable operation id instead of correlation id.
+    [<Test>]
+    member _.RevealIdempotencyUsesOperationId() =
+        let metadata =
+            {
+                Timestamp = getCurrentInstant ()
+                CorrelationId = "reveal-correlation-1"
+                Principal = "reviewer@example.test"
+                ClientType = None
+                Properties = Dictionary<string, string>()
+            }
+
+        let revealEvent =
+            {
+                Event =
+                    ReferenceEventType.Revealed(
+                        "reveal-operation-1",
+                        "reviewer@example.test",
+                        "accepted work",
+                        ResourceVisibility.Private,
+                        ResourceVisibility.Public
+                    )
+                Metadata = metadata
+            }
+
+        let events = [ revealEvent ]
+
+        Assert.That(revealEventMatchesCommand "reveal-operation-1" "accepted work" "reviewer@example.test" ResourceVisibility.Public events, Is.True)
+
+        Assert.That(revealEventMatchesCommand "reveal-operation-1" "different reason" "reviewer@example.test" ResourceVisibility.Public events, Is.False)
+
+        Assert.That(
+            tryFindRevealEventByOperationId "reveal-operation-1" events
+            |> Option.isSome,
+            Is.True
+        )
+
+        Assert.That(
+            tryFindRevealEventByOperationId "other-operation" events
+            |> Option.isNone,
+            Is.True
+        )

@@ -26,13 +26,13 @@ type private BranchCreateVisibilityParameters() =
 [<Parallelizable(ParallelScope.All)>]
 type VisibilityContractTests() =
 
-    /// Verifies that branch DTOs now expose implemented visibility fields while later surfaces still defer them.
+    /// Verifies that branch and reference DTOs expose implemented visibility fields while promotion-set surfaces still defer them.
     [<Test>]
-    member _.CurrentDtosExposeOnlyImplementedBranchVisibilityAndOwnershipFields() =
+    member _.CurrentDtosExposeImplementedBranchAndReferenceVisibilityAndOwnershipFields() =
         Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Visibility"), Is.Not.Null)
         Assert.That(typeof<Grace.Types.Branch.BranchDto>.GetProperty ("Ownership"), Is.Not.Null)
-        Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Visibility"), Is.Null)
-        Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Ownership"), Is.Null)
+        Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Visibility"), Is.Not.Null)
+        Assert.That(typeof<Grace.Types.Reference.ReferenceDto>.GetProperty ("Ownership"), Is.Not.Null)
         Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Visibility"), Is.Null)
         Assert.That(typeof<Grace.Types.PromotionSet.PromotionSetDto>.GetProperty ("Ownership"), Is.Null)
 

@@ -56,14 +56,15 @@ type VisibilityAuthorizationUnitTests() =
         Assert.That(canObserveBranch VisibilityCallerAudience.Anonymous noResourceAudience hiddenBranch, Is.False)
         Assert.That(canObserveBranch (caller (userId "other-user")) noResourceAudience hiddenBranch, Is.False)
 
-    /// Verifies that branch administration authority does not authorize non-branch hidden resources.
+    /// Verifies that branch administration authority is limited to branch-owned reference read surfaces.
     [<Test>]
-    member _.``canObserveReference and canObservePromotionSet ignore branch administration authority``() =
+    member _.``canObserveBranchReference allows branch administration while generic helpers ignore it``() =
         let hiddenResource = resource "reference-1" ResourceVisibility.Private ResourceOwnership.ContributorOwned (Some(userId "creator"))
         let branchAdminAudience _ = { VisibilityResourceAudience.None with HasBranchAdministration = true }
 
         let branchAdminCaller = caller (userId "branch-admin")
 
+        Assert.That(canObserveBranchReference branchAdminCaller branchAdminAudience hiddenResource, Is.True)
         Assert.That(canObserveReference branchAdminCaller branchAdminAudience hiddenResource, Is.False)
         Assert.That(canObservePromotionSet branchAdminCaller branchAdminAudience hiddenResource, Is.False)
 
