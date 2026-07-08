@@ -557,7 +557,7 @@ type OperationsUsageRehydrationProcessor
         task {
             let! content = blobStore.DownloadVerifiedAsync(item.Pointer, cancellationToken)
             let _, rawPayload = OperationsUsageArchiveFormat.readValidatedUsageFact item content
-            let! changed = archiveStore.RehydrateArchivedPayloadAsync(item.Pointer, rawPayload, cancellationToken)
+            let! changed = archiveStore.RehydrateArchivedPayloadAsync(item.Pointer, rawPayload, CancellationToken.None)
 
             logger.LogInformation(
                 "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ChangedSqlState: {ChangedSqlState}; RequestedBy: {RequestedBy}.",

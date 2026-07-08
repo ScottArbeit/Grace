@@ -152,7 +152,7 @@ SELECT TOP (@BatchSize)
     ArchiveBlobName,
     ArchiveChecksumSha256Hex,
     ArchiveByteLength
-FROM ops.RawUsageFact WITH (READPAST, READCOMMITTEDLOCK)
+FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
 WHERE ArchiveState = @ArchiveStateArchived
 AND ArchiveBlobName IS NOT NULL
 AND ArchiveChecksumSha256Hex IS NOT NULL

@@ -94,6 +94,7 @@ type private RecordingArchiveStore
     let completedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let rehydratedPointers = ResizeArray<RawUsageFactArchivePointer>()
     let cleanedPointers = ResizeArray<RawUsageFactArchivePointer>()
+    let rehydrateCancellationCanBeCanceled = ResizeArray<bool>()
     let rehydrateResults = Queue<Result<bool, exn>>(defaultArg rehydrateResults [])
     let afterRehydrate = defaultArg afterRehydrate (fun _ _ -> ())
 
@@ -108,6 +109,9 @@ type private RecordingArchiveStore
 
     /// Returns Blob pointers cleaned after temporary support rehydration.
     member _.CleanedPointers = cleanedPointers |> Seq.toList
+
+    /// Returns whether each rehydration SQL mutation received a cancelable caller token.
+    member _.RehydrateCancellationCanBeCanceled = rehydrateCancellationCanBeCanceled |> Seq.toList
 
     interface IOperationsUsageArchiveStore with
 
@@ -174,9 +178,10 @@ type private RecordingArchiveStore
 
             Task.FromResult replayItems
 
-        member _.RehydrateArchivedPayloadAsync(pointer, rawPayload, _cancellationToken) =
+        member _.RehydrateArchivedPayloadAsync(pointer, rawPayload, cancellationToken) =
             events.Add("rehydrate")
             Assert.That(rawPayload, Is.Not.Empty)
+            rehydrateCancellationCanBeCanceled.Add cancellationToken.CanBeCanceled
 
             let result = if rehydrateResults.Count > 0 then rehydrateResults.Dequeue() else Ok true
 
@@ -649,6 +654,15 @@ type OperationsUsageArchiveTests() =
     member _.ReplayInsertSqlDoesNotReferenceRawPayloadParameter() =
         Assert.That(OperationsUsageSql.TryInsertReplayedArchivedRawUsageFact, Does.Not.Contain("@RawPayload"))
 
+    /// Verifies replay scans block instead of advancing the cursor past a locked lower-key row.
+    [<Test>]
+    member _.ReplayScanSqlDoesNotUseReadPast() =
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(OperationsUsageSql.SelectArchivedRawUsageFactsForReplay, Does.Not.Contain("READPAST"))
+                Assert.That(OperationsUsageSql.SelectArchivedRawUsageFactsForReplay, Does.Contain("WITH (READCOMMITTEDLOCK)")))
+        )
+
     /// Verifies support rehydration requires scope, quota, local audit proof, and exact-pointer cleanup.
     [<Test>]
     member _.RehydrationIsScopedQuotaLimitedAuditedAndCleanedUp() =
@@ -833,6 +847,7 @@ type OperationsUsageArchiveTests() =
                 Action (fun () ->
                     Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1))
                     Assert.That(archiveStore.RehydratedPointers[0], Is.EqualTo(firstBlob.Pointer))
+                    Assert.That(archiveStore.RehydrateCancellationCanBeCanceled[0], Is.False)
                     Assert.That(archiveStore.CleanedPointers |> List.length, Is.EqualTo(1))
                     Assert.That(archiveStore.CleanedPointers[0], Is.EqualTo(firstBlob.Pointer)))
             )
