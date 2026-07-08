@@ -65,42 +65,89 @@ module PromotionSet =
 
     /// Represents the conflict resolution outcome contract.
     [<GenerateSerializer>]
-    type ConflictResolutionOutcome = { ModelResolution: string; Confidence: float; Accepted: bool option }
+    type ConflictResolutionOutcome =
+        {
+            [<Id(0u)>]
+            ModelResolution: string
+            [<Id(1u)>]
+            Confidence: float
+            [<Id(2u)>]
+            Accepted: bool option
+        }
 
     /// Represents the conflict hunk contract.
     [<GenerateSerializer>]
-    type ConflictHunk = { StartLine: int; EndLine: int; OursContent: string; TheirsContent: string }
+    type ConflictHunk =
+        {
+            [<Id(0u)>]
+            StartLine: int
+            [<Id(1u)>]
+            EndLine: int
+            [<Id(2u)>]
+            OursContent: string
+            [<Id(3u)>]
+            TheirsContent: string
+        }
 
     /// Represents conflict analysis.
     [<GenerateSerializer>]
     type ConflictAnalysis =
         {
+            [<Id(0u)>]
             FilePath: string
+            [<Id(1u)>]
             OriginalHunks: ConflictHunk list
+            [<Id(2u)>]
             ProposedResolution: ConflictResolutionOutcome option
+            [<Id(3u)>]
             ResolutionMethod: ConflictResolutionMethod
         }
 
     /// Represents the conflict resolution decision contract.
     [<GenerateSerializer>]
-    type ConflictResolutionDecision = { FilePath: string; Accepted: bool; OverrideContentArtifactId: ArtifactId option }
+    type ConflictResolutionDecision =
+        {
+            [<Id(0u)>]
+            FilePath: string
+            [<Id(1u)>]
+            Accepted: bool
+            [<Id(2u)>]
+            OverrideContentArtifactId: ArtifactId option
+        }
 
     /// Represents the promotion pointer contract.
     [<GenerateSerializer>]
-    type PromotionPointer = { BranchId: BranchId; ReferenceId: ReferenceId; DirectoryVersionId: DirectoryVersionId }
+    type PromotionPointer =
+        {
+            [<Id(0u)>]
+            BranchId: BranchId
+            [<Id(1u)>]
+            ReferenceId: ReferenceId
+            [<Id(2u)>]
+            DirectoryVersionId: DirectoryVersionId
+        }
 
     /// Represents promotion set approval policy snapshot.
     [<CLIMutable; GenerateSerializer>]
     type PromotionSetApprovalPolicySnapshot =
         {
+            [<Id(0u)>]
             ApprovalPolicyId: Guid
+            [<Id(1u)>]
             Version: int
+            [<Id(2u)>]
             Subject: string
+            [<Id(3u)>]
             OwnerId: OwnerId
+            [<Id(4u)>]
             OrganizationId: OrganizationId
+            [<Id(5u)>]
             RepositoryId: RepositoryId
+            [<Id(6u)>]
             TargetBranchId: BranchId
+            [<Id(7u)>]
             RequiredResponder: string
+            [<Id(8u)>]
             TimeoutSeconds: int option
         }
 
@@ -122,14 +169,23 @@ module PromotionSet =
     [<GenerateSerializer>]
     type PromotionSetStep =
         {
+            [<Id(0u)>]
             StepId: PromotionSetStepId
+            [<Id(1u)>]
             Order: int
+            [<Id(2u)>]
             OriginalPromotion: PromotionPointer
+            [<Id(3u)>]
             OriginalBasePromotionReferenceId: ReferenceId
+            [<Id(4u)>]
             OriginalBaseDirectoryVersionId: DirectoryVersionId
+            [<Id(5u)>]
             ComputedAgainstBaseDirectoryVersionId: DirectoryVersionId
+            [<Id(6u)>]
             AppliedDirectoryVersionId: DirectoryVersionId
+            [<Id(7u)>]
             ConflictSummaryArtifactId: ArtifactId option
+            [<Id(8u)>]
             ConflictStatus: StepConflictStatus
         }
 
@@ -137,27 +193,49 @@ module PromotionSet =
     [<GenerateSerializer>]
     type PromotionSetDto =
         {
+            [<Id(0u)>]
             Class: string
+            [<Id(1u)>]
             PromotionSetId: PromotionSetId
+            [<Id(2u)>]
             OwnerId: OwnerId
+            [<Id(3u)>]
             OrganizationId: OrganizationId
+            [<Id(4u)>]
             RepositoryId: RepositoryId
+            [<Id(5u)>]
             TargetBranchId: BranchId
+            [<Id(6u)>]
             Visibility: ResourceVisibility
+            [<Id(7u)>]
             Ownership: ResourceOwnership
+            [<Id(8u)>]
             CreatorUserId: UserId option
+            [<Id(9u)>]
             OnBehalfOf: UserId list
+            [<Id(10u)>]
             Steps: PromotionSetStep list
+            [<Id(11u)>]
             ComputedAgainstParentTerminalPromotionReferenceId: ReferenceId option
+            [<Id(12u)>]
             StepsComputationStatus: StepsComputationStatus
+            [<Id(13u)>]
             StepsComputationAttempt: int
+            [<Id(14u)>]
             StepsComputationError: string option
+            [<Id(15u)>]
             StepsComputationUpdatedAt: Instant option
+            [<Id(16u)>]
             Status: PromotionSetStatus
+            [<Id(17u)>]
             CreatedBy: UserId
+            [<Id(18u)>]
             CreatedAt: Instant
+            [<Id(19u)>]
             UpdatedAt: Instant option
+            [<Id(20u)>]
             DeletedAt: Instant option
+            [<Id(21u)>]
             DeleteReason: DeleteReason
         }
 
@@ -239,20 +317,56 @@ module PromotionSet =
 
     /// Contains promotion set dto helpers.
     module PromotionSetDto =
+        /// Reads a non-empty Guid metadata property, falling back when the property is missing or invalid.
+        let private metadataGuidOr fallback propertyName (metadata: EventMetadata) =
+            match metadata.Properties.TryGetValue propertyName with
+            | true, value ->
+                match Guid.TryParse value with
+                | true, parsed when parsed <> Guid.Empty -> parsed
+                | _ -> fallback
+            | _ -> fallback
+
+        /// Reads resource visibility from metadata when older create payloads default the field.
+        let private metadataVisibilityOr fallback (metadata: EventMetadata) =
+            match metadata.Properties.TryGetValue "Visibility" with
+            | true, value ->
+                ResourceVisibility.TryParsePublicInput value
+                |> Option.defaultValue fallback
+            | _ -> fallback
+
+        /// Reads resource ownership from metadata when older create payloads default the field.
+        let private metadataOwnershipOr fallback (metadata: EventMetadata) =
+            match metadata.Properties.TryGetValue "Ownership" with
+            | true, value ->
+                ResourceOwnership.TryParsePublicInput value
+                |> Option.defaultValue fallback
+            | _ -> fallback
+
+        /// Reads creator identity from metadata when older create payloads default the field.
+        let private metadataCreatorOr fallback (metadata: EventMetadata) =
+            match fallback with
+            | Some _ -> fallback
+            | Option.None ->
+                match metadata.Properties.TryGetValue "CreatorUserId" with
+                | true, value when String.IsNullOrWhiteSpace value |> not -> Some(UserId value)
+                | _ -> Option.None
+
         /// Carries optional promotion-set fields that can be patched without replacing the full promotion set.
         let UpdateDto (promotionSetEvent: PromotionSetEvent) (currentDto: PromotionSetDto) =
             let updatedDto, shouldUpdateComputationTimestamp =
                 match promotionSetEvent.Event with
                 | Created (promotionSetId, ownerId, organizationId, repositoryId, targetBranchId, visibility, ownership, creatorUserId) ->
+                    let metadata = promotionSetEvent.Metadata
+
                     { PromotionSetDto.Default with
-                        PromotionSetId = promotionSetId
-                        OwnerId = ownerId
-                        OrganizationId = organizationId
-                        RepositoryId = repositoryId
-                        TargetBranchId = targetBranchId
-                        Visibility = visibility
-                        Ownership = ownership
-                        CreatorUserId = creatorUserId
+                        PromotionSetId = metadataGuidOr promotionSetId (nameof PromotionSetId) metadata
+                        OwnerId = metadataGuidOr ownerId (nameof OwnerId) metadata
+                        OrganizationId = metadataGuidOr organizationId (nameof OrganizationId) metadata
+                        RepositoryId = metadataGuidOr repositoryId (nameof RepositoryId) metadata
+                        TargetBranchId = metadataGuidOr targetBranchId "TargetBranchId" metadata
+                        Visibility = metadataVisibilityOr visibility metadata
+                        Ownership = metadataOwnershipOr ownership metadata
+                        CreatorUserId = metadataCreatorOr creatorUserId metadata
                         CreatedBy = UserId promotionSetEvent.Metadata.Principal
                         CreatedAt = promotionSetEvent.Metadata.Timestamp
                     },

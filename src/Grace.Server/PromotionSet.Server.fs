@@ -344,7 +344,52 @@ module PromotionSet =
 
                     return! context |> result400BadRequest graceError
                 else
-                    match! actorProxy.Handle command metadata with
+                    match command with
+                    | PromotionSetCommand.CreatePromotionSet (createdPromotionSetId,
+                                                              ownerId,
+                                                              organizationId,
+                                                              repositoryId,
+                                                              targetBranchId,
+                                                              visibility,
+                                                              ownership,
+                                                              creatorUserId) ->
+                        metadata.Properties[ nameof PromotionSetId ] <- $"{createdPromotionSetId}"
+                        metadata.Properties[ nameof OwnerId ] <- $"{ownerId}"
+                        metadata.Properties[ nameof OrganizationId ] <- $"{organizationId}"
+                        metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                        metadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                        metadata.Properties[ "TargetBranchId" ] <- $"{targetBranchId}"
+                        metadata.Properties[ "Visibility" ] <- $"{visibility}"
+                        metadata.Properties[ "Ownership" ] <- $"{ownership}"
+
+                        creatorUserId
+                        |> Option.iter (fun creator -> metadata.Properties[ "CreatorUserId" ] <- $"{creator}")
+                    | _ -> ()
+
+                    let! commandResult =
+                        match command with
+                        | PromotionSetCommand.CreatePromotionSet (createdPromotionSetId,
+                                                                  ownerId,
+                                                                  organizationId,
+                                                                  repositoryId,
+                                                                  targetBranchId,
+                                                                  visibility,
+                                                                  ownership,
+                                                                  creatorUserId) ->
+                            actorProxy.CreatePromotionSet(
+                                createdPromotionSetId,
+                                ownerId,
+                                organizationId,
+                                repositoryId,
+                                targetBranchId,
+                                visibility,
+                                ownership,
+                                creatorUserId,
+                                metadata
+                            )
+                        | _ -> actorProxy.Handle command metadata
+
+                    match commandResult with
                     | Ok graceReturnValue ->
                         graceReturnValue
                             .enhance(parameterDictionary)
@@ -484,7 +529,21 @@ module PromotionSet =
                                 creatorUserId
                             )
 
-                        return! processCommand context parameters validations promotionSetId false command
+                        let correlationId = getCorrelationId context
+                        let actorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
+                        let! existingPromotionSet = actorProxy.Get correlationId
+
+                        if existingPromotionSet.PromotionSetId = PromotionSetId.Empty then
+                            return! processCommand context parameters validations promotionSetId false command
+                        else
+                            let! isObservable = canObservePromotionSet context existingPromotionSet
+
+                            if isObservable then
+                                return! processCommand context parameters validations promotionSetId false command
+                            else
+                                return!
+                                    context
+                                    |> result200Ok (hiddenPromotionSetReturnValue promotionSetId correlationId)
             }
 
     /// Gets a promotion set.

@@ -35,6 +35,30 @@ module Queue =
 
     let activitySource = new ActivitySource("Queue")
 
+    /// Loads a PromotionSet only when the current caller may observe its private workflow state.
+    let private tryGetObservablePromotionSet (context: HttpContext) repositoryId correlationId promotionSetId =
+        task {
+            let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId repositoryId correlationId
+            let! promotionSet = promotionSetActorProxy.Get correlationId
+
+            if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                return None
+            else
+                let! canObserve = Grace.Server.PromotionSet.canObservePromotionSet context promotionSet
+
+                if canObserve then return Some promotionSet else return None
+        }
+
+    /// Copies private PromotionSet visibility facts onto queue automation metadata.
+    let private inheritPromotionSetVisibilityMetadata (metadata: EventMetadata) (promotionSet: Grace.Types.PromotionSet.PromotionSetDto) =
+        metadata.Properties[ "InheritedVisibility" ] <- $"{promotionSet.Visibility}"
+        metadata.Properties[ "InheritedOwnership" ] <- $"{promotionSet.Ownership}"
+
+        promotionSet.CreatorUserId
+        |> Option.iter (fun creatorUserId -> metadata.Properties[ "InheritedCreatorUserId" ] <- $"{creatorUserId}")
+
+        metadata
+
     /// Implements requires policy snapshot for initialization for the server request pipeline.
     let internal requiresPolicySnapshotForInitialization (queueExists: bool) (policySnapshotId: string) =
         not queueExists
@@ -306,15 +330,33 @@ module Queue =
                     task {
                         let! queueJson = actorProxy.GetForRoute(getCorrelationId context)
                         let queue = deserialize<PromotionQueue> queueJson
+                        let promotionSetIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+                        let observablePromotionSetIds = ResizeArray<PromotionSetId>()
+
+                        for promotionSetId in promotionSetIds do
+                            let! promotionSet = tryGetObservablePromotionSet context graceIds.RepositoryId (getCorrelationId context) promotionSetId
+
+                            if promotionSet.IsSome then observablePromotionSetIds.Add promotionSetId
+
+                        let! observableRunningPromotionSetId =
+                            if isNull (box queue.RunningPromotionSetId) then
+                                Task.FromResult None
+                            else
+                                match queue.RunningPromotionSetId with
+                                | Some promotionSetId ->
+                                    task {
+                                        let! promotionSet = tryGetObservablePromotionSet context graceIds.RepositoryId (getCorrelationId context) promotionSetId
+
+                                        return
+                                            promotionSet
+                                            |> Option.map (fun _ -> promotionSetId)
+                                    }
+                                | None -> Task.FromResult None
 
                         return
                             { queue with
-                                PromotionSetIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
-                                RunningPromotionSetId =
-                                    if isNull (box queue.RunningPromotionSetId) then
-                                        None
-                                    else
-                                        queue.RunningPromotionSetId
+                                PromotionSetIds = observablePromotionSetIds |> Seq.toList
+                                RunningPromotionSetId = observableRunningPromotionSetId
                                 State = if isNull (box queue.State) then QueueState.Idle else queue.State
                                 UpdatedAt = if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
                             }
@@ -421,7 +463,6 @@ module Queue =
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                     let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
                     let policyActorProxy = Policy.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
-                    let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
                     let metadata = createMetadata context
 
                     /// Implements run enqueue for the server request pipeline.
@@ -482,12 +523,16 @@ module Queue =
                                 return! runEnqueue ()
                         }
 
-                    let! promotionSetExists = promotionSetActorProxy.Exists correlationId
+                    let! promotionSet = tryGetObservablePromotionSet context graceIds.RepositoryId correlationId promotionSetId
 
-                    if not promotionSetExists then
+                    match promotionSet with
+                    | None ->
                         let graceError = GraceError.Create "The specified promotion set does not exist." correlationId
                         return! context |> result400BadRequest graceError
-                    else
+                    | Some observablePromotionSet ->
+                        inheritPromotionSetVisibilityMetadata metadata observablePromotionSet
+                        |> ignore
+
                         return! continueEnqueue ()
                 else
                     let! error = validationResults |> getFirstError
@@ -519,10 +564,19 @@ module Queue =
                     let targetBranchId = Guid.Parse(parameters.TargetBranchId)
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
                     let actorProxy = PromotionQueue.CreateActorProxy targetBranchId graceIds.RepositoryId correlationId
+                    let! promotionSet = tryGetObservablePromotionSet context graceIds.RepositoryId correlationId promotionSetId
 
-                    match! actorProxy.DequeueForRoute promotionSetId (createMetadata context) with
-                    | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
-                    | Error graceError -> return! context |> result400BadRequest graceError
+                    match promotionSet with
+                    | None ->
+                        return!
+                            context
+                            |> result400BadRequest (GraceError.Create "The specified promotion set does not exist." correlationId)
+                    | Some observablePromotionSet ->
+                        let metadata = inheritPromotionSetVisibilityMetadata (createMetadata context) observablePromotionSet
+
+                        match! actorProxy.DequeueForRoute promotionSetId metadata with
+                        | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
+                        | Error graceError -> return! context |> result400BadRequest graceError
                 else
                     let! error = validationResults |> getFirstError
 

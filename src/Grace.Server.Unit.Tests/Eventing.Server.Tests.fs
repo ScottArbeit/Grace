@@ -2,12 +2,14 @@ namespace Grace.Server.Tests
 
 open Grace.Server
 open Grace.Shared.Utilities
+open Grace.Types.Artifact
 open Grace.Types.Automation
 open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Validation
 open Grace.Types.Visibility
 open Grace.Types.WorkItem
 open NodaTime
@@ -196,6 +198,22 @@ type AutomationEventingTests() =
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.PromotionSetDequeued))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
 
+    /// Verifies that private queue workflow events do not emit public automation events.
+    [<Test>]
+    member _.PrivateQueuePromotionSetEventDoesNotMapToAutomationEvent() =
+        let repositoryId = Guid.NewGuid()
+
+        let queueEvent: PromotionQueueEvent =
+            {
+                Event = PromotionQueueEventType.PromotionSetEnqueued(Guid.NewGuid())
+                Metadata =
+                    metadata "corr-private-queue" repositoryId
+                    |> markPrivateInheritedReference
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.QueueEvent queueEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
     /// Verifies that promotion Set Recompute Started Maps To Automation Event.
     [<Test>]
     member _.PromotionSetRecomputeStartedMapsToAutomationEvent() =
@@ -279,6 +297,63 @@ type AutomationEventingTests() =
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.PromotionSetEvent promotionSetEvent)
         Assert.That(envelope.IsNone, Is.True)
 
+    /// Verifies that private validation results do not emit public automation events.
+    [<Test>]
+    member _.PrivateValidationResultDoesNotMapToAutomationEvent() =
+        let repositoryId = Guid.NewGuid()
+
+        let validationResultEvent: ValidationResultEvent =
+            {
+                Event =
+                    ValidationResultEventType.Recorded
+                        { ValidationResultDto.Default with
+                            ValidationResultId = Guid.NewGuid()
+                            RepositoryId = repositoryId
+                            PromotionSetId = Some(Guid.NewGuid())
+                            StepsComputationAttempt = Some 1
+                            ValidationName = "private-check"
+                        }
+                Metadata =
+                    metadata "corr-private-validation-result" repositoryId
+                    |> markPrivateInheritedReference
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ValidationResultEvent validationResultEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
+    /// Verifies that private conflict artifacts do not emit public automation events.
+    [<Test>]
+    member _.PrivateArtifactDoesNotMapToAutomationEvent() =
+        let ownerId = Guid.NewGuid()
+        let organizationId = Guid.NewGuid()
+        let repositoryId = Guid.NewGuid()
+
+        let artifact =
+            { ArtifactCreated.FromMetadata
+                  { ArtifactMetadata.Default with
+                      ArtifactId = Guid.NewGuid()
+                      OwnerId = ownerId
+                      OrganizationId = organizationId
+                      RepositoryId = repositoryId
+                      ArtifactType = ArtifactType.ConflictReport
+                      BlobPath = "private/conflict.json"
+                      CreatedAt = Instant.FromUtc(2026, 2, 18, 2, 0)
+                      CreatedBy = UserId "creator@example.test"
+                  } with
+                ArtifactType = "ConflictReport"
+            }
+
+        let artifactEvent =
+            ArtifactEvent.FromCreated(
+                "Created",
+                artifact,
+                metadata "corr-private-artifact" repositoryId
+                |> markPrivateInheritedReference
+            )
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ArtifactEvent artifactEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
     /// Verifies that work Item Artifact Linked Maps To Agent Summary Added.
     [<Test>]
     member _.WorkItemArtifactLinkedMapsToAgentSummaryAdded() =
@@ -291,6 +366,22 @@ type AutomationEventingTests() =
         Assert.That(envelope.IsSome, Is.True)
         Assert.That(envelope.Value.EventType, Is.EqualTo(AutomationEventType.AgentSummaryAdded))
         Assert.That(envelope.Value.RepositoryId, Is.EqualTo(repositoryId))
+
+    /// Verifies that private work-item PromotionSet link events do not emit public automation events.
+    [<Test>]
+    member _.PrivateWorkItemPromotionSetLinkDoesNotMapToAutomationEvent() =
+        let repositoryId = Guid.NewGuid()
+
+        let workItemEvent: WorkItemEvent =
+            {
+                Event = WorkItemEventType.PromotionSetLinked(Guid.NewGuid())
+                Metadata =
+                    metadata "corr-private-work-item-promotion-set" repositoryId
+                    |> markPrivateInheritedReference
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.WorkItemEvent workItemEvent)
+        Assert.That(envelope.IsNone, Is.True)
 
     /// Verifies that agent Session Envelope Retains Correlation And Identity Metadata.
     [<Test>]

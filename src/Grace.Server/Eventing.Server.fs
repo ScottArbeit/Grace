@@ -165,27 +165,33 @@ module EventingPublisher =
                 (serialize validationSetEvent)
             |> Some
         | ValidationResultEvent validationResultEvent ->
-            envelope
-                AutomationEventType.ValidationResultRecorded
-                validationResultEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId validationResultEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId validationResultEvent.Metadata "ValidationResult")
-                (serialize validationResultEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection validationResultEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    AutomationEventType.ValidationResultRecorded
+                    validationResultEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId validationResultEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId validationResultEvent.Metadata "ValidationResult")
+                    (serialize validationResultEvent)
+                |> Some
         | ArtifactEvent artifactEvent ->
-            envelope
-                AutomationEventType.ArtifactCreated
-                artifactEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId artifactEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId artifactEvent.Metadata "Artifact")
-                (serialize artifactEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection artifactEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    AutomationEventType.ArtifactCreated
+                    artifactEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId artifactEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId artifactEvent.Metadata "Artifact")
+                    (serialize artifactEvent)
+                |> Some
         | QueueEvent queueEvent ->
             let eventType =
                 match queueEvent.Event with
@@ -193,17 +199,20 @@ module EventingPublisher =
                 | PromotionQueueEventType.PromotionSetDequeued _ -> Some AutomationEventType.PromotionSetDequeued
                 | _ -> Option.None
 
-            eventType
-            |> Option.map (fun mappedType ->
-                envelope
-                    mappedType
-                    queueEvent.Metadata
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    (tryGetRepositoryId queueEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
-                    (tryGetActorId queueEvent.Metadata "PromotionQueue")
-                    (serialize queueEvent))
+            if not (metadataAllowsPublicProjection queueEvent.Metadata) then
+                Option.None
+            else
+                eventType
+                |> Option.map (fun mappedType ->
+                    envelope
+                        mappedType
+                        queueEvent.Metadata
+                        OwnerId.Empty
+                        OrganizationId.Empty
+                        (tryGetRepositoryId queueEvent.Metadata
+                         |> Option.defaultValue RepositoryId.Empty)
+                        (tryGetActorId queueEvent.Metadata "PromotionQueue")
+                        (serialize queueEvent))
         | ReviewEvent reviewEvent ->
             let ownerId, organizationId, repositoryId, eventType =
                 match reviewEvent.Event with
@@ -251,16 +260,19 @@ module EventingPublisher =
                 | WorkItemEventType.ArtifactLinked _ -> AutomationEventType.AgentSummaryAdded
                 | _ -> AutomationEventType.ReviewNotesUpdated
 
-            envelope
-                eventType
-                workItemEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId workItemEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId workItemEvent.Metadata "WorkItem")
-                (serialize workItemEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection workItemEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    eventType
+                    workItemEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId workItemEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId workItemEvent.Metadata "WorkItem")
+                    (serialize workItemEvent)
+                |> Some
         | PolicyEvent _
         | ApprovalRequestEvent _
         | OwnerEvent _
