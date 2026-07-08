@@ -3185,8 +3185,27 @@ module Watch =
         payload.RepositoryId = current.RepositoryId
         && payload.BranchId = current.BranchId
 
-    /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
-    let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+    /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
+    let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+        let current = Current()
+
+        let parameters =
+            GetBranchParameters(
+                OwnerId = $"{current.OwnerId}",
+                OwnerName = current.OwnerName,
+                OrganizationId = $"{current.OrganizationId}",
+                OrganizationName = current.OrganizationName,
+                RepositoryId = $"{current.RepositoryId}",
+                RepositoryName = current.RepositoryName,
+                BranchId = $"{current.BranchId}",
+                BranchName = current.BranchName,
+                CorrelationId = payload.CorrelationId
+            )
+
+        Grace.SDK.Branch.Get parameters
+
+    /// Handles same-branch Reference notifications with injectable readers for focused Watch tests.
+    let private handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus (payload: CurrentBranchReferenceNotification) =
         task {
             try
                 if not
@@ -3194,31 +3213,73 @@ module Watch =
                     logToAnsiConsole
                         Colors.Verbose
                         $"Skipped current-branch reference notification {payload.ReferenceId} because it targets repository {payload.RepositoryId}, branch {payload.BranchId}, not current branch {Current().BranchId}."
+
+                    return None
                 else
                     let current = Current()
-                    let! localStatus = getGraceWatchStatus ()
 
-                    let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus [| payload |]
-
-                    match decision.Reason with
-                    | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
+                    match currentBranchReferenceProtocolValidationDecision current.RepositoryId current.BranchId payload with
+                    | Some decision ->
                         logToAnsiConsole
                             Colors.Verbose
-                            $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
-                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
-                        logToAnsiConsole
-                            Colors.Highlighted
-                            $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
-                    | reason ->
-                        logToAnsiConsole
-                            Colors.Verbose
-                            $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
+                            $"Skipped current-branch reference notification {payload.ReferenceId} because protocol validation was {decision.Reason}."
+
+                        return Some decision
+                    | None ->
+                        match! getCurrentBranch () with
+                        | Error error ->
+                            let errorText = Markup.Escape(error.ToString())
+
+                            logToAnsiConsole
+                                Colors.Error
+                                $"Failed to refresh BranchDto for current-branch reference notification {payload.ReferenceId}: {errorText}."
+
+                            return None
+                        | Ok branchReturnValue ->
+                            let branchDto = branchReturnValue.ReturnValue
+                            let! localStatus = readLocalStatus ()
+
+                            let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus branchDto payload
+
+                            match decision.Reason with
+                            | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
+                            | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                                logToAnsiConsole
+                                    Colors.Highlighted
+                                    $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
+                            | reason ->
+                                logToAnsiConsole
+                                    Colors.Verbose
+                                    $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
+
+                            return Some decision
             with
-            | ex -> logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
+            | ex ->
+                logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
+                return None
+        }
+
+    /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
+    let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
+        task {
+            let! _ =
+                handleCurrentBranchReferenceNotificationWithClients
+                    (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                    getGraceWatchStatus
+                    payload
+
+            return ()
         }
 
     /// Exposes same-branch Reference notification identity matching to Watch tests without opening a HubConnection.
     let internal currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests payload = currentBranchReferenceNotificationTargetsCurrentBranch payload
+
+    /// Exposes same-branch Reference notification handling to Watch tests without opening a HubConnection.
+    let internal handleCurrentBranchReferenceNotificationWithClientsForWatchTests getCurrentBranch readLocalStatus payload =
+        handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus payload
 
     /// Registers SignalR branch groups only after the local refresh still has authority for the active branch.
     let private registerCurrentSignalRParentBranchWithClients

@@ -13578,6 +13578,124 @@ module WatchTests =
             Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests { payload with BranchId = Guid.NewGuid() }
             |> should equal false)
 
+    let private referenceDtoForCurrentBranchNotification (payload: CurrentBranchReferenceNotification) =
+        { ReferenceDto.Default with
+            ReferenceId = payload.ReferenceId
+            OwnerId = payload.OwnerId
+            OrganizationId = payload.OrganizationId
+            RepositoryId = payload.RepositoryId
+            BranchId = payload.BranchId
+            DirectoryId = payload.DirectoryId
+            Sha256Hash = payload.Sha256Hash
+            Blake3Hash = payload.Blake3Hash
+            ReferenceType = payload.ReferenceType
+            ReferenceText = payload.ReferenceText
+        }
+
+    let private branchDtoWithLatestCurrentBranchReference (payload: CurrentBranchReferenceNotification) =
+        let referenceDto = referenceDtoForCurrentBranchNotification payload
+        let branchDto = { Grace.Types.Branch.BranchDto.Default with RepositoryId = payload.RepositoryId; BranchId = payload.BranchId }
+
+        match payload.ReferenceType with
+        | ReferenceType.Save -> { branchDto with LatestSave = referenceDto; LatestReference = referenceDto }
+        | ReferenceType.Checkpoint -> { branchDto with LatestCheckpoint = referenceDto; LatestReference = referenceDto }
+        | ReferenceType.Commit -> { branchDto with LatestCommit = referenceDto; LatestReference = referenceDto }
+        | _ -> branchDto
+
+    let private validCurrentBranchReferenceNotification repositoryId branchId referenceType rootDirectoryId rootSha256Hash rootBlake3Hash =
+        { CurrentBranchReferenceNotification.Default with
+            RepositoryId = repositoryId
+            BranchId = branchId
+            BranchName = BranchName "current-branch"
+            ReferenceId = Guid.NewGuid()
+            DirectoryId = rootDirectoryId
+            Sha256Hash = rootSha256Hash
+            Blake3Hash = rootBlake3Hash
+            ReferenceType = referenceType
+        }
+
+    /// Verifies that protocol-invalid current-branch notifications are rejected before BranchDto latest authority.
+    [<Test>]
+    let ``current branch reference decision rejects missing root identity and empty reference id`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let validPayload =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let branchDto = branchDtoWithLatestCurrentBranchReference validPayload
+
+            let assertRejected expectedReason payload =
+                let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto payload
+
+                decision.NeedsMaterialization
+                |> should equal false
+
+                decision.Reason |> should equal expectedReason
+
+            assertRejected
+                Services.LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable
+                { validPayload with DirectoryId = DirectoryVersionId.Empty }
+
+            assertRejected
+                Services.LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable
+                { validPayload with Sha256Hash = Sha256Hash String.Empty }
+
+            assertRejected
+                Services.LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable
+                { validPayload with Blake3Hash = Blake3Hash String.Empty }
+
+            assertRejected Services.LatestCurrentBranchReferenceDecisionReason.ReferenceIdUnavailable { validPayload with ReferenceId = ReferenceId.Empty })
+
+    /// Verifies that current-branch notification handling reads BranchDto before local status for concrete payloads.
+    [<Test>]
+    let ``current branch reference handler fetches BranchDto before local status for valid notifications`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let payload =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let calls = ResizeArray<string>()
+            let branchDto = branchDtoWithLatestCurrentBranchReference payload
+
+            let getBranch () =
+                task {
+                    calls.Add("branch")
+                    return Ok(GraceReturnValue.Create branchDto "branch-fetch-before-status")
+                }
+
+            let readLocalStatus () =
+                task {
+                    calls.Add("status")
+                    return Some status
+                }
+
+            let decision =
+                (Watch.handleCurrentBranchReferenceNotificationWithClientsForWatchTests getBranch readLocalStatus payload)
+                    .Result
+
+            decision
+            |> Option.map (fun result -> result.Reason)
+            |> should equal (Some Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
+
+            calls.ToArray()
+            |> should equal [| "branch"; "status" |])
+
     /// Verifies that same-root same-branch References do not schedule remote materialization.
     [<Test>]
     let ``latest current branch decision no-ops when remote root matches local status`` () =
@@ -13597,7 +13715,9 @@ module WatchTests =
                     ReferenceType = ReferenceType.Save
                 }
 
-            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) [| payload |]
+            let branchDto = branchDtoWithLatestCurrentBranchReference payload
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto payload
 
             decision.NeedsMaterialization
             |> should equal false
@@ -13609,60 +13729,106 @@ module WatchTests =
             |> Option.map (fun reference -> reference.ReferenceId)
             |> should equal (Some payload.ReferenceId))
 
-    /// Verifies that the helper chooses the latest applicable current-branch Reference without scans or remote lookups.
+    /// Verifies that BranchDto latest authority, not notification arrival order, selects the materializable Reference.
     [<Test>]
-    let ``latest current branch decision collapses notifications to latest applicable reference`` () =
+    let ``latest current branch decision drops older notification even when it arrives last`` () =
         withTempRepo (fun root ->
             let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
             let status = liveWatchStatus (Guid.NewGuid())
 
-            let olderApplicable =
-                { CurrentBranchReferenceNotification.Default with
-                    RepositoryId = currentRepositoryId
-                    BranchId = currentBranchId
-                    ReferenceId = Guid.NewGuid()
-                    DirectoryId = Guid.NewGuid()
-                    Sha256Hash = Sha256Hash "older-root"
-                    Blake3Hash = Blake3Hash "older-root-blake3"
-                    ReferenceType = ReferenceType.Save
-                }
-
-            let staleBranch =
-                { olderApplicable with
-                    ReferenceId = Guid.NewGuid()
-                    BranchId = Guid.NewGuid()
-                    DirectoryId = Guid.NewGuid()
-                    Sha256Hash = Sha256Hash "stale-branch-root"
-                    Blake3Hash = Blake3Hash "stale-branch-root-blake3"
-                }
-
-            let latestApplicable =
-                { olderApplicable with
-                    ReferenceId = Guid.NewGuid()
-                    DirectoryId = Guid.NewGuid()
-                    Sha256Hash = Sha256Hash "latest-root"
-                    Blake3Hash = Blake3Hash "latest-root-blake3"
-                }
-
-            let decision =
-                Services.decideLatestCurrentBranchReferenceMaterialization
+            let olderNotification =
+                validCurrentBranchReferenceNotification
                     currentRepositoryId
                     currentBranchId
-                    (Some status)
-                    [|
-                        olderApplicable
-                        staleBranch
-                        latestApplicable
-                    |]
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "older-root")
+                    (Blake3Hash "older-root-blake3")
 
-            decision.NeedsMaterialization |> should equal true
+            let newerNotification =
+                { olderNotification with
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "newer-root"
+                    Blake3Hash = Blake3Hash "newer-root-blake3"
+                }
+
+            let branchDto = branchDtoWithLatestCurrentBranchReference newerNotification
+
+            let decision =
+                Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto olderNotification
+
+            decision.NeedsMaterialization
+            |> should equal false
 
             decision.Reason
-            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
 
             decision.Reference
             |> Option.map (fun reference -> reference.ReferenceId)
-            |> should equal (Some latestApplicable.ReferenceId))
+            |> should equal (Some olderNotification.ReferenceId))
+
+    /// Verifies that a BranchDto latest mismatch drops the notification even when root values appear materializable.
+    [<Test>]
+    let ``latest current branch decision drops BranchDto latest mismatch as stale`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Checkpoint
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let branchDto = branchDtoWithLatestCurrentBranchReference { notification with ReferenceId = Guid.NewGuid() }
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto notification
+
+            decision.NeedsMaterialization
+            |> should equal false
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference)
+
+    /// Verifies that returning to an older root value is accepted only through the newer BranchDto latest Reference id.
+    [<Test>]
+    let ``latest current branch decision accepts newer reference that returns to older root value`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let olderRootId = Guid.NewGuid()
+            let olderRootSha256 = Sha256Hash "older-returned-root"
+            let olderRootBlake3 = Blake3Hash "older-returned-root-blake3"
+
+            let olderNotification =
+                validCurrentBranchReferenceNotification currentRepositoryId currentBranchId ReferenceType.Commit olderRootId olderRootSha256 olderRootBlake3
+
+            let newerNotification = { olderNotification with ReferenceId = Guid.NewGuid() }
+
+            let branchDto = branchDtoWithLatestCurrentBranchReference newerNotification
+
+            let staleDecision =
+                Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto olderNotification
+
+            staleDecision.NeedsMaterialization
+            |> should equal false
+
+            staleDecision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
+
+            let acceptedDecision =
+                Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto newerNotification
+
+            acceptedDecision.NeedsMaterialization
+            |> should equal true
+
+            acceptedDecision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired)
 
     /// Verifies that root-hash equality is enough to make a deterministic no-op decision.
     [<Test>]
@@ -13682,7 +13848,9 @@ module WatchTests =
                     ReferenceType = ReferenceType.Checkpoint
                 }
 
-            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) [| payload |]
+            let branchDto = branchDtoWithLatestCurrentBranchReference payload
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto payload
 
             decision.NeedsMaterialization
             |> should equal false
@@ -13712,7 +13880,9 @@ module WatchTests =
                     ReferenceType = ReferenceType.Commit
                 }
 
-            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) [| payload |]
+            let branchDto = branchDtoWithLatestCurrentBranchReference payload
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto payload
 
             decision.NeedsMaterialization
             |> should equal false
