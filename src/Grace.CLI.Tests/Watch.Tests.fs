@@ -14387,6 +14387,71 @@ module WatchTests =
             outcome.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied)
 
+    /// Verifies that a failed apply cannot republish clean IPC from pre-apply status evidence.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator keeps ipc dirty when apply fails`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            writeWatchStatusJsonWithRuntimeSurface status
+            |> ignore
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () =
+                Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "dirty-ipc-after-apply-failure-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync _ = Assert.Fail("Clean IPC must not request degraded resync before apply.")
+            let waitForSafePoint _ _ = Task.FromResult(())
+            let reestablishIpc _ _ = Task.FromResult(())
+
+            let applyReference _ _ =
+                task {
+                    File.WriteAllText(Path.Combine(root, "partially-materialized.txt"), "partial remote materialization")
+                    raise (InvalidOperationException("apply failed after mutating the working tree"))
+                }
+
+            let operation =
+                Func<Task> (fun () ->
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        notification)
+                    :> Task)
+
+            Assert.ThrowsAsync<InvalidOperationException>(operation)
+            |> ignore
+
+            let inspection =
+                Services
+                    .inspectGraceWatchStatus()
+                    .GetAwaiter()
+                    .GetResult()
+
+            match inspection.Status with
+            | Some publishedStatus ->
+                publishedStatus.HasPendingWatchWork
+                |> should equal true
+
+                publishedStatus.IsWorkingTreeClean
+                |> should equal false
+
+                inspection.IsUsable |> should equal false
+            | None -> Assert.Fail("Expected failed materialization to preserve dirty Watch IPC."))
+
     /// Verifies that durable journal pending rows block materialization even when IPC status is otherwise clean.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator blocks clean ipc with durable journal pending rows`` () =
@@ -14621,6 +14686,61 @@ module WatchTests =
                     notification.ReferenceId
                     newerNotification.ReferenceId
                 |])
+
+    /// Verifies that stale branch evidence is dropped before a mismatch safe-point wait can hold the lane.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator drops branch switch before mismatch safe point wait`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "branch-a"
+            let branchBId = Guid.NewGuid()
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () =
+                Task.FromResult(
+                    Ok(
+                        GraceReturnValue.Create
+                            (branchDtoWithLatestCurrentBranchReference { notification with DirectoryId = Guid.NewGuid() })
+                            "stale-mismatch-safe-point-test"
+                    )
+                )
+
+            let dirtyStatus = { liveWatchStatus (Guid.NewGuid()) with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+            let inspectStatus () =
+                let current = Current()
+                current.BranchId <- branchBId
+                current.BranchName <- "branch-b"
+
+                Task.FromResult(watchStatusInspection dirtyStatus)
+
+            let requestDegradedResync _ = Assert.Fail("Stale notification must be dropped before degraded resync.")
+
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not wait for a safe point"))
+
+            let reestablishIpc _ _ = Task.FromResult(())
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("stale notification must not apply"))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
 
     /// Verifies that rootless notifications never enter a materialization apply or multi-reference optimization path.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]

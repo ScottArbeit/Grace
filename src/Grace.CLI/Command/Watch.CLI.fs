@@ -3349,15 +3349,20 @@ module Watch =
                                 try
                                     do! clients.ApplyReference payload status
 
+                                    setGraceWatchPendingWorkStatusFlag false
+                                    publishPendingWatchWorkTransitionIfNeeded ()
+
                                     terminalOutcome <-
                                         {
                                             ReferenceId = payload.ReferenceId
                                             Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
                                             Decision = Some decision
                                         }
-                                finally
-                                    setGraceWatchPendingWorkStatusFlag false
+                                with
+                                | ex ->
+                                    setGraceWatchPendingWorkStatusFlag true
                                     publishPendingWatchWorkTransitionIfNeeded ()
+                                    raise ex
 
                             terminal <- true
                         | Blocked reason as gate ->
@@ -3365,7 +3370,16 @@ module Watch =
                                 Colors.Verbose
                                 $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
 
-                            if canRetry () then
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
                                 do! clients.WaitForSafePoint payload gate
                             else
                                 terminalOutcome <-
@@ -3436,7 +3450,16 @@ module Watch =
                                 Colors.Verbose
                                 $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
 
-                            if canRetry () then
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
                                 do! clients.WaitForSafePoint payload gate
                             else
                                 terminalOutcome <-
