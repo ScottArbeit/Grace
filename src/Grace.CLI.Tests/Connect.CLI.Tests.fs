@@ -4,14 +4,18 @@ open FsUnit
 open Grace.CLI
 open Grace.CLI.Command
 open Grace.Shared
+open Grace.Shared.Utilities
+open Grace.Types.Branch
 open Grace.Types.MaterializationPlan
 open Grace.Types.Common
 open Grace.Types.DirectoryVersion
+open MessagePack
 open NUnit.Framework
 open Spectre.Console
 open System
 open System.Collections.Generic
 open System.IO
+open System.Security.Cryptography
 
 /// Groups connect coverage for the CLI test project.
 [<NonParallelizable>]
@@ -102,6 +106,12 @@ module ConnectTests =
     let private sha256Hash = Sha256Hash(String.replicate 64 "a")
     let private blake3Hash = Blake3Hash(String.replicate 64 "b")
 
+    /// Computes the SHA-256 descriptor hash for artifact validation tests.
+    let private computeSha256Hash (bytes: byte array) = Sha256Hash(byteArrayToString (SHA256.HashData(bytes).AsSpan()))
+
+    /// Computes the BLAKE3 descriptor hash for artifact validation tests.
+    let private computeBlake3Hash (bytes: byte array) = Blake3Hash(ContentAddress.computeBlake3Hex bytes)
+
     /// Builds a root DirectoryVersionDto for Direct plan execution tests.
     let private rootDirectoryDto (files: FileVersion array) =
         { DirectoryVersionDto.Default with
@@ -125,8 +135,61 @@ module ConnectTests =
     /// Builds a Direct plan descriptor for the target-root recursive metadata artifact.
     let private metadataArtifact source = MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(rootId, 64L, Some sha256Hash, Some blake3Hash, source)
 
+    /// Builds a Direct plan descriptor whose integrity fields match the supplied payload.
+    let private zipArtifactForBytes source (bytes: byte array) =
+        MaterializationArtifactDescriptor.DirectoryVersionZip(
+            rootId,
+            int64 bytes.LongLength,
+            Some(computeSha256Hash bytes),
+            Some(computeBlake3Hash bytes),
+            source
+        )
+
+    /// Builds a recursive metadata descriptor whose integrity fields match the supplied payload.
+    let private metadataArtifactForBytes source (bytes: byte array) =
+        MaterializationArtifactDescriptor.RecursiveDirectoryMetadata(
+            rootId,
+            int64 bytes.LongLength,
+            Some(computeSha256Hash bytes),
+            Some(computeBlake3Hash bytes),
+            source
+        )
+
     /// Builds a Direct Materialization Plan for connect execution tests.
     let private directPlan artifacts = MaterializationPlan.Create(rootId, MaterializationExecutionMode.Direct, MaterializationCacheSelection.Bypass, artifacts)
+
+    /// Verifies that Direct plan requests preserve a moving reference selector for final server resolution.
+    [<Test>]
+    let ``connect direct plan request preserves reference selector intent`` () =
+        let referenceId = Guid.Parse("66666666-6666-6666-6666-666666666666")
+        let branchDto = { BranchDto.Default with BranchName = BranchName "main" }
+
+        let request = Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector (Connect.UseReferenceId referenceId) branchDto rootId)
+
+        request.TargetSelector.SelectorKind
+        |> should equal MaterializationTargetSelectorKind.ReferenceId
+
+        request.TargetSelector.ReferenceId
+        |> should equal (Some referenceId)
+
+        request.TargetSelector.DirectoryVersionId
+        |> should equal None
+
+    /// Verifies that Direct plan requests preserve default branch selection as a moving branch selector.
+    [<Test>]
+    let ``connect direct plan request preserves default branch selector intent`` () =
+        let branchDto = { BranchDto.Default with BranchName = BranchName "trunk" }
+
+        let request = Connect.createDirectPlanRequest (Connect.createDirectPlanTargetSelector Connect.UseDefault branchDto rootId)
+
+        request.TargetSelector.SelectorKind
+        |> should equal MaterializationTargetSelectorKind.BranchName
+
+        request.TargetSelector.BranchName
+        |> should equal (Some(BranchName "trunk"))
+
+        request.TargetSelector.DirectoryVersionId
+        |> should equal None
 
     /// Verifies that Direct plan execution preparation preserves recursive metadata file versions and planned zip source.
     [<Test>]
@@ -148,6 +211,9 @@ module ConnectTests =
 
             artifacts.ZipUri
             |> should equal "https://example.test/root.zip"
+
+            artifacts.ZipArtifact.ArtifactKind
+            |> should equal MaterializationArtifactKind.DirectoryVersionZip
 
             artifacts.DirectoryVersionDtos
             |> should haveLength 1
@@ -214,3 +280,50 @@ module ConnectTests =
         match Connect.prepareDirectPlanExecutionArtifacts "correlation-id" plan directoryVersions with
         | Ok _ -> Assert.Fail("Expected missing recursive metadata artifact source to fail before extraction.")
         | Error error -> error.Error |> should contain "missing a source"
+
+    /// Verifies that planned artifact validation rejects stale or truncated bytes before extraction.
+    [<Test>]
+    let ``connect direct plan artifact validation rejects size mismatch`` () =
+        let bytes = [| 1uy; 2uy; 3uy |]
+
+        let artifact =
+            { zipArtifactForBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))) bytes with
+                SizeInBytes = Some(int64 bytes.Length + 1L)
+            }
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact bytes with
+        | Ok _ -> Assert.Fail("Expected artifact size mismatch to fail before extraction.")
+        | Error error -> error.Error |> should contain "size mismatch"
+
+    /// Verifies that planned artifact validation rejects bytes whose SHA-256 evidence no longer matches the plan.
+    [<Test>]
+    let ``connect direct plan artifact validation rejects sha mismatch`` () =
+        let plannedBytes = [| 1uy; 2uy; 3uy |]
+        let downloadedBytes = [| 1uy; 2uy; 4uy |]
+        let artifact = zipArtifactForBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.zip"))) plannedBytes
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "DirectoryVersionZip" artifact downloadedBytes with
+        | Ok _ -> Assert.Fail("Expected artifact hash mismatch to fail before extraction.")
+        | Error error -> error.Error |> should contain "SHA-256 mismatch"
+
+    /// Verifies that connect executes recursive metadata from the planned artifact payload.
+    [<Test>]
+    let ``connect direct plan decodes planned recursive metadata artifact`` () =
+        let directoryVersions =
+            [|
+                rootDirectoryDto Array.empty<FileVersion>
+            |]
+
+        let bytes = MessagePackSerializer.Serialize(directoryVersions, Constants.messagePackSerializerOptions)
+        let artifact = metadataArtifactForBytes (Some(MaterializationArtifactSource.Direct("https://example.test/root.msgpack"))) bytes
+
+        match Connect.validatePlannedArtifactBytes "correlation-id" "RecursiveDirectoryMetadata" artifact bytes with
+        | Error error -> Assert.Fail($"Unexpected metadata integrity error: {error.Error}")
+        | Ok () ->
+            match Connect.decodeRecursiveMetadataArtifact "correlation-id" bytes with
+            | Error error -> Assert.Fail($"Unexpected metadata decode error: {error.Error}")
+            | Ok decoded ->
+                decoded |> should haveLength 1
+
+                decoded[0].DirectoryVersion.DirectoryVersionId
+                |> should equal rootId
