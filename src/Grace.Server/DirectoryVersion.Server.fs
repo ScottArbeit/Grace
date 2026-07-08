@@ -146,7 +146,9 @@ module DirectoryVersion =
             for branchDto in branches do
                 let! branchReferences = getReferences repositoryId branchDto.BranchId Int32.MaxValue correlationId
 
-                for referenceDto in branchReferences do
+                for referenceDto in
+                    branchReferences
+                    |> Seq.filter (fun referenceDto -> referenceDto.DeletedAt.IsNone) do
                     let! canObserve = canObserveReferenceInBranch context branchDto referenceDto
 
                     if canObserve then visibleReferences.Add(referenceDto)

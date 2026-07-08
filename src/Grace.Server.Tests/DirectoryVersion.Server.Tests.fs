@@ -180,6 +180,23 @@ module DirectoryVersionServerTestHelpers =
             do! BranchServerTestHelpers.assertOk referenceResponse
         }
 
+    /// Marks a saved reference as logically deleted through the actor state used by repository reference queries.
+    let deleteReferenceAsync (repositoryId: string) (referenceId: ReferenceId) =
+        task {
+            let correlationId = generateCorrelationId ()
+
+            let actorProxy = Grace.Actors.Extensions.ActorProxy.Reference.CreateActorProxy referenceId (Guid.Parse repositoryId) correlationId
+
+            let! result =
+                actorProxy.Handle
+                    (Grace.Types.Reference.ReferenceCommand.DeleteLogical(false, "Directory version reachability regression."))
+                    (EventMetadata.New correlationId "directory-version-server-tests")
+
+            match result with
+            | Ok returnValue -> Assert.That(returnValue.ReturnValue.DeletedAt.IsSome, Is.True)
+            | Error graceError -> Assert.Fail($"{graceError}")
+        }
+
     /// Posts a directory get route through the supplied authenticated client.
     let getDirectoryVersionResponseAsync (client: HttpClient) repositoryId directoryVersionId =
         client.PostAsync("/directory/get", createJsonContent (getParameters repositoryId directoryVersionId))
@@ -536,6 +553,61 @@ type DirectoryVersionServer() =
             let! zipResponse = DirectoryVersionServerTestHelpers.getZipFileResponseAsync observerClient repositoryId hiddenRoot.DirectoryVersionId
 
             do! DirectoryVersionServerTestHelpers.assertBadRequestGraceError expectedMissing zipResponse
+        }
+
+    /// Verifies deleted references do not authorize directory id, hash, recursive, or zip reads.
+    [<Test>]
+    member _.DeletedReferenceDirectoryReadsBehaveAsAbsentForRepositoryReader() =
+        task {
+            let! repositoryId, branch = DirectoryVersionServerTestHelpers.createPublicRepositoryBranchAsync "DirectoryDeletedReferenceReads"
+            let child = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId $"/deleted/{Guid.NewGuid():N}/" []
+
+            let root = DirectoryVersionServerTestHelpers.createDirectoryVersion (Guid.NewGuid()) repositoryId "/" [ child ]
+
+            do! DirectoryVersionServerTestHelpers.saveDirectoryVersionsAndReferenceAsync repositoryId branch root [ child; root ]
+
+            let! activeGetResponse = DirectoryVersionServerTestHelpers.getDirectoryVersionResponseAsync Client repositoryId root.DirectoryVersionId
+            do! DirectoryVersionServerTestHelpers.assertOk activeGetResponse
+
+            let! activeHashResponse = DirectoryVersionServerTestHelpers.getBySha256HashResponseAsync Client repositoryId root.DirectoryVersionId root.Sha256Hash
+
+            do! DirectoryVersionServerTestHelpers.assertOk activeHashResponse
+
+            let! branchAfterSave = BranchServerTestHelpers.getBranchAsync repositoryId $"{branch.BranchId}"
+            do! DirectoryVersionServerTestHelpers.deleteReferenceAsync repositoryId branchAfterSave.LatestSave.ReferenceId
+
+            let expectedMissing = DirectoryVersionError.getErrorMessage DirectoryVersionError.DirectoryDoesNotExist
+
+            let! getResponse = DirectoryVersionServerTestHelpers.getDirectoryVersionResponseAsync Client repositoryId root.DirectoryVersionId
+
+            do! DirectoryVersionServerTestHelpers.assertBadRequestGraceError expectedMissing getResponse
+
+            let! recursiveResponse = DirectoryVersionServerTestHelpers.getDirectoryVersionsRecursiveResponseAsync Client repositoryId root.DirectoryVersionId
+
+            do! DirectoryVersionServerTestHelpers.assertBadRequestGraceError expectedMissing recursiveResponse
+
+            let! batchResponse = DirectoryVersionServerTestHelpers.getByDirectoryIdsResponseAsync Client repositoryId [ root.DirectoryVersionId ]
+
+            do! DirectoryVersionServerTestHelpers.assertBadRequestGraceError expectedMissing batchResponse
+
+            let! zipResponse = DirectoryVersionServerTestHelpers.getZipFileResponseAsync Client repositoryId root.DirectoryVersionId
+
+            do! DirectoryVersionServerTestHelpers.assertBadRequestGraceError expectedMissing zipResponse
+
+            let! deletedShaResponse = DirectoryVersionServerTestHelpers.getBySha256HashResponseAsync Client repositoryId root.DirectoryVersionId root.Sha256Hash
+
+            do! DirectoryVersionServerTestHelpers.assertOk deletedShaResponse
+            let! deletedSha = deserializeContent<GraceReturnValue<DirectoryVersionServerTestHelpers.DirectoryVersionModel>> deletedShaResponse
+            Assert.That(deletedSha.ReturnValue.DirectoryVersionId, Is.EqualTo(DirectoryVersion.Default.DirectoryVersionId))
+
+            let deletedBlakeLookup = $"{root.Blake3Hash}"
+
+            let! deletedBlakeResponse = DirectoryVersionServerTestHelpers.getByBlake3HashResponseAsync Client repositoryId (Blake3Hash deletedBlakeLookup)
+
+            do!
+                DirectoryVersionServerTestHelpers.assertBadRequestGraceError
+                    $"No DirectoryVersion matched the supplied BLAKE3 hash prefix '{deletedBlakeLookup}' in repository scope."
+                    deletedBlakeResponse
         }
 
     /// Verifies hidden directory hashes are no-match-equivalent and hidden same-prefix roots do not create ambiguity.
