@@ -658,12 +658,11 @@ type OperationsUsageRehydrationProcessor
                         }
 
                     logger.LogInformation(
-                        "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ExpiresAtUtc: {ExpiresAtUtc}; ExpiryPersisted: {ExpiryPersisted}; RequestedBy: {RequestedBy}.",
+                        "Temporarily rehydrated archived operational UsageFact. UsageFactId: {UsageFactId}; BlobName: {BlobName}; ExpiresAtUtc: {ExpiresAtUtc}; ExpiryPersisted: {ExpiryPersisted}.",
                         item.UsageFactId,
                         item.Pointer.BlobName,
                         request.ExpiresAt,
-                        changedSet.Contains item.UsageFactId,
-                        request.RequestedBy
+                        changedSet.Contains item.UsageFactId
                     )
 
                     auditIndex <- auditIndex + 1

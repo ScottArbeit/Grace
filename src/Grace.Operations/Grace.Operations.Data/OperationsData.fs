@@ -561,11 +561,17 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
 
         builder.ToString()
 
-    /// Executes one bounded rehydration batch and returns rows whose expiry was durably refreshed.
-    let executeRehydrationPayloadBatchAsync (items: RawUsageFactRehydrationItem array) expiresAt cancellationToken =
+    /// Executes one bounded rehydration batch inside the request transaction and returns refreshed expiry rows.
+    let executeRehydrationPayloadBatchAsync
+        (connection: SqlConnection)
+        (transaction: SqlTransaction)
+        (items: RawUsageFactRehydrationItem array)
+        (expiresAt: Instant)
+        (cancellationToken: CancellationToken)
+        =
         task {
-            use! connection = openConnectionAsync cancellationToken
             use command = connection.CreateCommand()
+            command.Transaction <- transaction
             command.CommandType <- CommandType.Text
             command.CommandText <- rehydrationBatchInsertSql items
             addArchiveStateParameters command
@@ -598,6 +604,15 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
                 if hasRow then changed.Add(reader.GetGuid 0) else reading <- false
 
             return changed |> Seq.toList
+        }
+
+    /// Rolls back a failed rehydration request while preserving the original SQL or cancellation failure.
+    let rollbackRehydrationIgnoringFailuresAsync (transaction: SqlTransaction) =
+        task {
+            try
+                do! transaction.RollbackAsync CancellationToken.None
+            with
+            | _ -> ()
         }
 
     /// Clears one bounded batch of expired temporary payloads and returns the rows recovered from durable expiry state.
@@ -795,18 +810,28 @@ type SqlOperationsUsageArchiveStore(connectionString: string) =
 
                         index <- index + 1
 
-                    let changed = ResizeArray<UsageFactId>()
-                    let mutable offset = 0
+                    use! connection = openConnectionAsync cancellationToken
+                    let! dbTransaction = connection.BeginTransactionAsync cancellationToken
+                    use transaction = dbTransaction :?> SqlTransaction
 
-                    while offset < itemArray.Length do
-                        let count = Math.Min(OperationsUsageSql.RehydrationPayloadBatchSize, itemArray.Length - offset)
-                        let batch = Array.zeroCreate<RawUsageFactRehydrationItem> count
-                        Array.Copy(itemArray, offset, batch, 0, count)
-                        let! batchChanged = executeRehydrationPayloadBatchAsync batch expiresAt cancellationToken
-                        changed.AddRange batchChanged
-                        offset <- offset + count
+                    try
+                        let changed = ResizeArray<UsageFactId>()
+                        let mutable offset = 0
 
-                    return changed |> Seq.toList
+                        while offset < itemArray.Length do
+                            let count = Math.Min(OperationsUsageSql.RehydrationPayloadBatchSize, itemArray.Length - offset)
+                            let batch = Array.zeroCreate<RawUsageFactRehydrationItem> count
+                            Array.Copy(itemArray, offset, batch, 0, count)
+                            let! batchChanged = executeRehydrationPayloadBatchAsync connection transaction batch expiresAt cancellationToken
+                            changed.AddRange batchChanged
+                            offset <- offset + count
+
+                        do! transaction.CommitAsync cancellationToken
+                        return changed |> Seq.toList
+                    with
+                    | ex ->
+                        do! rollbackRehydrationIgnoringFailuresAsync transaction
+                        return raise ex
             }
 
         member _.CleanupExpiredRehydratedPayloadsAsync(expiresBefore, batchSize, cancellationToken) =

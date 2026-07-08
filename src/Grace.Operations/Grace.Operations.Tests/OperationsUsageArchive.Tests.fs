@@ -10,8 +10,10 @@ open Microsoft.EntityFrameworkCore
 open Microsoft.EntityFrameworkCore.Infrastructure
 open Microsoft.EntityFrameworkCore.Migrations
 open Microsoft.EntityFrameworkCore.Metadata
+open Microsoft.Extensions.DependencyInjection
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.Hosting
+open Microsoft.Extensions.Logging
 open Microsoft.Extensions.Logging.Abstractions
 open NodaTime
 open NUnit.Framework
@@ -19,6 +21,7 @@ open System
 open System.Collections.Generic
 open System.IO
 open System.IO.Compression
+open System.Linq
 open System.Text
 open System.Text.Json
 open System.Threading
@@ -326,6 +329,33 @@ type private FixedClock(now: Instant) =
 
         member _.GetCurrentInstant() = now
 
+/// Captures structured log messages so redaction tests can inspect rendered and property values.
+type private ArchiveRecordingLogger<'T>() =
+    let entries = ResizeArray<string>()
+
+    /// Returns formatted log messages and structured property values captured by this logger.
+    member _.Entries = entries |> Seq.toList
+
+    interface ILogger<'T> with
+
+        member _.BeginScope<'TState>(_state: 'TState) =
+            { new IDisposable with
+                member _.Dispose() = ()
+            }
+
+        member _.IsEnabled(_logLevel: LogLevel) = true
+
+        member _.Log<'TState>(logLevel: LogLevel, _eventId: EventId, state: 'TState, ``exception``: exn, formatter: Func<'TState, exn, string>) =
+            let formatted = formatter.Invoke(state, ``exception``)
+            entries.Add($"{logLevel}: {formatted}")
+
+            match box state with
+            | :? IEnumerable<KeyValuePair<string, obj>> as properties ->
+                for property in properties do
+                    if property.Key <> "{OriginalFormat}" then
+                        entries.Add($"{property.Key}={property.Value}")
+            | _ -> ()
+
 /// Records archive schema initialization attempts without opening SQL connections.
 type private RecordingSchemaInitializer(events: List<string>, ?failure: exn) =
     let invoked = TaskCompletionSource<unit>(TaskCreationOptions.RunContinuationsAsynchronously)
@@ -376,6 +406,22 @@ type OperationsUsageArchiveTests() =
                 .Instance
         )
 
+    /// Reads repository source text for last-resort SQL-shape regression tests.
+    let sourceText relativePath =
+        let rec findRepoRoot (directory: DirectoryInfo) =
+            if isNull directory then
+                failwith "Could not locate Grace repository root for source-shape test."
+            elif
+                File.Exists(Path.Combine(directory.FullName, "AGENTS.md"))
+                && Directory.Exists(Path.Combine(directory.FullName, "src"))
+            then
+                directory.FullName
+            else
+                findRepoRoot directory.Parent
+
+        let root = findRepoRoot (DirectoryInfo(TestContext.CurrentContext.TestDirectory))
+        File.ReadAllText(Path.Combine(root, relativePath))
+
     /// Creates archive worker configuration from exact setting names so startup validation paths can be tested.
     let archiveConfiguration (settings: KeyValuePair<string, string> seq) =
         ConfigurationBuilder()
@@ -415,6 +461,19 @@ type OperationsUsageArchiveTests() =
             PollInterval = TimeSpan.FromSeconds(30.0)
         }
 
+    /// Creates ingestion worker settings for service-registration tests without opening external resources.
+    let operationsWorkerSettings () =
+        {
+            TopicName = "operational-facts"
+            SubscriptionName = OperationsWorkerSettings.DefaultProcessorSubscriptionName
+            SqlConnectionString = "Server=tcp:sql.example.net;Database=GraceOperations;Authentication=Active Directory Default;"
+            ServiceBusConnectionString = Some "Endpoint=sb://operations.example.test/;SharedAccessKeyName=RootManageSharedAccessKey;SharedAccessKey=fake"
+            ServiceBusFullyQualifiedNamespace = None
+            SchemaBootstrapMode = OperationsUsageSchemaBootstrapMode.TargetDatabaseOnly
+            MaxConcurrentCalls = 1
+            PrefetchCount = 0
+        }
+
     /// Verifies the cleanup processor drains expired temporary rehydration payloads in bounded batches.
     [<Test>]
     member _.TemporaryHotCleanupProcessorDrainsExpiredRehydrationsInBoundedBatches() =
@@ -440,6 +499,26 @@ type OperationsUsageArchiveTests() =
                     Assert.That(String.Join("|", events), Is.EqualTo("cleanup-expired-rehydrated|cleanup-expired-rehydrated|cleanup-expired-rehydrated")))
             )
         }
+
+    /// Verifies SQL-owned temporary-hot cleanup is registered even when Blob archive settings are absent.
+    [<Test>]
+    member _.TemporaryHotCleanupRegistrationDoesNotRequireArchiveBlobSettings() =
+        let services = ServiceCollection()
+
+        Grace.Operations.Worker.Program.configureServices services (operationsWorkerSettings ()) None
+
+        let hostedServiceTypes =
+            services
+                .Where(fun descriptor -> descriptor.ServiceType = typeof<IHostedService>)
+                .Select(fun descriptor -> descriptor.ImplementationType)
+            |> Seq.toList
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(hostedServiceTypes, Does.Contain(typeof<OperationsUsageTemporaryHotCleanupWorkerService>))
+
+                Assert.That(hostedServiceTypes, Does.Not.Contain(typeof<OperationsUsageArchiveWorkerService>)))
+        )
 
     /// Verifies the archive hosted service does not query archive state before schema migrations succeed.
     [<Test>]
@@ -852,6 +931,27 @@ type OperationsUsageArchiveTests() =
                 Assert.That(OperationsUsageSql.CompleteRawUsageFactArchive, Does.Contain("RawPayload IS NULL OR RehydrationExpiresAtUtc IS NOT NULL")))
         )
 
+    /// Verifies chunked rehydration uses one SQL transaction instead of committing each batch independently.
+    [<Test>]
+    member _.RehydrationDataLayerRunsChunkedBatchesInOneTransaction() =
+        let source = sourceText "src/Grace.Operations/Grace.Operations.Data/OperationsData.fs"
+        let rehydrateIndex = source.IndexOf("member _.RehydrateArchivedPayloadsAsync", StringComparison.Ordinal)
+        let cleanupIndex = source.IndexOf("member _.CleanupExpiredRehydratedPayloadsAsync", StringComparison.Ordinal)
+
+        Assert.That(rehydrateIndex, Is.GreaterThanOrEqualTo(0))
+        Assert.That(cleanupIndex, Is.GreaterThan(rehydrateIndex))
+
+        let rehydrateSection = source.Substring(rehydrateIndex, cleanupIndex - rehydrateIndex)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(rehydrateSection, Does.Contain("BeginTransactionAsync"))
+                Assert.That(rehydrateSection, Does.Contain("CommitAsync"))
+                Assert.That(rehydrateSection, Does.Contain("rollbackRehydrationIgnoringFailuresAsync transaction"))
+                Assert.That(rehydrateSection, Does.Contain("executeRehydrationPayloadBatchAsync connection transaction"))
+                Assert.That(source, Does.Contain("do! transaction.RollbackAsync CancellationToken.None")))
+        )
+
     /// Verifies support rehydration requires scope, quota, local audit proof, and durable expiry persistence.
     [<Test>]
     member _.RehydrationIsScopedQuotaLimitedAuditedAndPersistsExpiry() =
@@ -911,6 +1011,58 @@ type OperationsUsageArchiveTests() =
                     Assert.That(result.AuditEntries[0].RestoredByteLength, Is.GreaterThan(0))
                     Assert.That(result.AuditEntries[0].ChangedSqlState, Is.True)
                     Assert.That(archiveStore.RehydratedPointers |> List.length, Is.EqualTo(1)))
+            )
+        }
+
+    /// Verifies general rehydration logs omit human requester identity while local audit evidence keeps it.
+    [<Test>]
+    member _.RehydrationLogsRedactRequestedByButAuditKeepsRequester() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("48484848-4848-4848-8848-484848484856")
+            let fact = OperationsUsageArchiveTestData.usageFact usageFactId
+            let rawPayload = OperationsUsageArchiveTestData.usageFactPayload fact
+            let hotCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+            let archiveBlob = OperationsUsageArchiveFormat.createArchiveBlob hotCandidate rawPayload
+            let replayCandidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Archived None (Some archiveBlob.Pointer)
+            let archiveStore = RecordingArchiveStore([ replayCandidate ], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(archiveBlob.Pointer.BlobName, archiveBlob.Content)
+            let logger = ArchiveRecordingLogger<OperationsUsageRehydrationProcessor>()
+
+            let now = Instant.FromUtc(2026, 7, 7, 10, 0, 0)
+
+            let processor = OperationsUsageRehydrationProcessor(archiveStore, blobStore, FixedClock now, logger)
+
+            let request: OperationsUsageRehydrationRequest =
+                {
+                    Scope =
+                        {
+                            OwnerId = Some OperationsUsageArchiveTestData.ownerId
+                            OrganizationId = Some OperationsUsageArchiveTestData.organizationId
+                            RepositoryId = Some OperationsUsageArchiveTestData.repositoryId
+                        }
+                    MaxFacts = 1
+                    RequestedBy = "support@example.test"
+                    Reason = "Investigate archived customer support case"
+                    ExpiresAt = now + Duration.FromHours 1.0
+                }
+
+            let! rehydrated = processor.RehydrateAsync(request, CancellationToken.None)
+
+            let result =
+                match rehydrated with
+                | Ok value -> value
+                | Error errors -> failwith (String.Join("; ", errors))
+
+            let logText = String.Join("\n", logger.Entries)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(result.AuditEntries[0].RequestedBy, Is.EqualTo(request.RequestedBy))
+                    Assert.That(logText, Does.Not.Contain(request.RequestedBy))
+                    Assert.That(logText, Does.Not.Contain("@example.test"))
+                    Assert.That(logText, Does.Not.Contain("RequestedBy")))
             )
         }
 

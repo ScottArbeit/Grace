@@ -13,6 +13,91 @@ open System
 /// Starts the Grace operations worker host.
 module Program =
 
+    /// Registers Operations ingestion, SQL cleanup, and optional Blob archive services for the worker host.
+    let configureServices (services: IServiceCollection) (settings: OperationsWorkerSettings) (archiveSettings: OperationsUsageArchiveSettings option) =
+        services.AddSingleton(settings) |> ignore
+
+        services.AddSingleton(OperationsUsageSchema(settings.SqlConnectionString, settings.SchemaBootstrapMode))
+        |> ignore
+
+        services.AddSingleton<IOperationsUsageSchemaInitializer> (fun serviceProvider ->
+            OperationsUsageSchemaInitializationBarrier(serviceProvider.GetRequiredService<OperationsUsageSchema>()) :> IOperationsUsageSchemaInitializer)
+        |> ignore
+
+        services.AddSingleton<OperationsUsageReadinessState>()
+        |> ignore
+
+        services.AddSingleton<IOperationsUsageReadinessProbe> (fun serviceProvider ->
+            serviceProvider.GetRequiredService<OperationsUsageReadinessState>() :> IOperationsUsageReadinessProbe)
+        |> ignore
+
+        services.AddSingleton<IOperationsUsageReadinessRecorder> (fun serviceProvider ->
+            serviceProvider.GetRequiredService<OperationsUsageReadinessState>() :> IOperationsUsageReadinessRecorder)
+        |> ignore
+
+        services
+            .AddHealthChecks()
+            .AddCheck<OperationsUsageReadinessHealthCheck>("operations-usage-ingestion")
+        |> ignore
+
+        services.Configure<HealthCheckPublisherOptions> (fun (options: HealthCheckPublisherOptions) ->
+            options.Delay <- TimeSpan.Zero
+            options.Period <- TimeSpan.FromSeconds(30.0))
+        |> ignore
+
+        services.AddSingleton<IHealthCheckPublisher, OperationsUsageReadinessHealthCheckPublisher>()
+        |> ignore
+
+        services.AddSingleton<IOperationsUsageFactStore> (fun _ ->
+            let transactionScope = SqlOperationsUsageTransactionScope(settings.SqlConnectionString)
+            let store = OperationsUsageStore transactionScope
+            OperationsUsageFactStoreAdapter(store) :> IOperationsUsageFactStore)
+        |> ignore
+
+        services.AddSingleton<IOperationsUsageArchiveStore> (fun _ ->
+            SqlOperationsUsageArchiveStore(settings.SqlConnectionString) :> IOperationsUsageArchiveStore)
+        |> ignore
+
+        services.AddSingleton<OperationsUsageIngestionProcessor>()
+        |> ignore
+
+        services.AddSingleton<OperationsUsageTemporaryHotCleanupProcessor> (fun serviceProvider ->
+            OperationsUsageTemporaryHotCleanupProcessor(
+                serviceProvider.GetRequiredService<IOperationsUsageArchiveStore>(),
+                SystemClock.Instance,
+                serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<OperationsUsageTemporaryHotCleanupProcessor>>()
+            ))
+        |> ignore
+
+        services.AddHostedService<OperationsUsageWorkerService>()
+        |> ignore
+
+        services.AddHostedService<OperationsUsageTemporaryHotCleanupWorkerService>()
+        |> ignore
+
+        match archiveSettings with
+        | Some archiveSettings ->
+            services.AddSingleton(archiveSettings) |> ignore
+
+            services.AddSingleton<IOperationsUsageArchiveBlobStore> (fun _ ->
+                let containerClient =
+                    match archiveSettings.BlobConnectionString, archiveSettings.BlobServiceUri with
+                    | Some connectionString, _ -> BlobContainerClient(connectionString, archiveSettings.BlobContainerName)
+                    | None, Some serviceUri ->
+                        BlobServiceClient(Uri serviceUri, DefaultAzureCredential() :> TokenCredential)
+                            .GetBlobContainerClient(archiveSettings.BlobContainerName)
+                    | None, None -> invalidOp "Operations archive Blob storage must be configured."
+
+                AzureOperationsUsageArchiveBlobStore(containerClient) :> IOperationsUsageArchiveBlobStore)
+            |> ignore
+
+            services.AddSingleton<OperationsUsageArchiveProcessor>()
+            |> ignore
+
+            services.AddHostedService<OperationsUsageArchiveWorkerService>()
+            |> ignore
+        | None -> ()
+
     /// Configures and runs the operational usage ingestion worker process.
     [<EntryPoint>]
     let main args =
@@ -30,89 +115,7 @@ module Program =
                         | Ok value -> value
                         | Error errors -> invalidOp (String.Join("; ", errors))
 
-                    services.AddSingleton(settings) |> ignore
-
-                    services.AddSingleton(OperationsUsageSchema(settings.SqlConnectionString, settings.SchemaBootstrapMode))
-                    |> ignore
-
-                    services.AddSingleton<IOperationsUsageSchemaInitializer> (fun serviceProvider ->
-                        OperationsUsageSchemaInitializationBarrier(serviceProvider.GetRequiredService<OperationsUsageSchema>())
-                        :> IOperationsUsageSchemaInitializer)
-                    |> ignore
-
-                    services.AddSingleton<OperationsUsageReadinessState>()
-                    |> ignore
-
-                    services.AddSingleton<IOperationsUsageReadinessProbe> (fun serviceProvider ->
-                        serviceProvider.GetRequiredService<OperationsUsageReadinessState>() :> IOperationsUsageReadinessProbe)
-                    |> ignore
-
-                    services.AddSingleton<IOperationsUsageReadinessRecorder> (fun serviceProvider ->
-                        serviceProvider.GetRequiredService<OperationsUsageReadinessState>() :> IOperationsUsageReadinessRecorder)
-                    |> ignore
-
-                    services
-                        .AddHealthChecks()
-                        .AddCheck<OperationsUsageReadinessHealthCheck>("operations-usage-ingestion")
-                    |> ignore
-
-                    services.Configure<HealthCheckPublisherOptions> (fun (options: HealthCheckPublisherOptions) ->
-                        options.Delay <- TimeSpan.Zero
-                        options.Period <- TimeSpan.FromSeconds(30.0))
-                    |> ignore
-
-                    services.AddSingleton<IHealthCheckPublisher, OperationsUsageReadinessHealthCheckPublisher>()
-                    |> ignore
-
-                    services.AddSingleton<IOperationsUsageFactStore> (fun _ ->
-                        let transactionScope = SqlOperationsUsageTransactionScope(settings.SqlConnectionString)
-                        let store = OperationsUsageStore transactionScope
-                        OperationsUsageFactStoreAdapter(store) :> IOperationsUsageFactStore)
-                    |> ignore
-
-                    services.AddSingleton<OperationsUsageIngestionProcessor>()
-                    |> ignore
-
-                    services.AddHostedService<OperationsUsageWorkerService>()
-                    |> ignore
-
-                    match archiveSettings with
-                    | Some archiveSettings ->
-                        services.AddSingleton(archiveSettings) |> ignore
-
-                        services.AddSingleton<IOperationsUsageArchiveStore> (fun _ ->
-                            SqlOperationsUsageArchiveStore(settings.SqlConnectionString) :> IOperationsUsageArchiveStore)
-                        |> ignore
-
-                        services.AddSingleton<IOperationsUsageArchiveBlobStore> (fun _ ->
-                            let containerClient =
-                                match archiveSettings.BlobConnectionString, archiveSettings.BlobServiceUri with
-                                | Some connectionString, _ -> BlobContainerClient(connectionString, archiveSettings.BlobContainerName)
-                                | None, Some serviceUri ->
-                                    BlobServiceClient(Uri serviceUri, DefaultAzureCredential() :> TokenCredential)
-                                        .GetBlobContainerClient(archiveSettings.BlobContainerName)
-                                | None, None -> invalidOp "Operations archive Blob storage must be configured."
-
-                            AzureOperationsUsageArchiveBlobStore(containerClient) :> IOperationsUsageArchiveBlobStore)
-                        |> ignore
-
-                        services.AddSingleton<OperationsUsageArchiveProcessor>()
-                        |> ignore
-
-                        services.AddSingleton<OperationsUsageTemporaryHotCleanupProcessor> (fun serviceProvider ->
-                            OperationsUsageTemporaryHotCleanupProcessor(
-                                serviceProvider.GetRequiredService<IOperationsUsageArchiveStore>(),
-                                SystemClock.Instance,
-                                serviceProvider.GetRequiredService<Microsoft.Extensions.Logging.ILogger<OperationsUsageTemporaryHotCleanupProcessor>>()
-                            ))
-                        |> ignore
-
-                        services.AddHostedService<OperationsUsageArchiveWorkerService>()
-                        |> ignore
-
-                        services.AddHostedService<OperationsUsageTemporaryHotCleanupWorkerService>()
-                        |> ignore
-                    | None -> ())
+                    configureServices services settings archiveSettings)
                 .Build()
                 .Run()
 
