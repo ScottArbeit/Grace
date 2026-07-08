@@ -33,6 +33,7 @@ open System.Collections.Generic
 open System.Linq
 open System.Threading.Tasks
 open System.IO
+open System.Text.Json
 open System.Net
 open System.Text
 open Azure.Storage
@@ -1657,6 +1658,10 @@ module Storage =
                                 //log.LogTrace("fileVersion: {fileVersion.RelativePath}; downloadUri: {downloadUri}", [| fileVersion.RelativePath, downloadUri |])
                                 return! context.WriteStringAsync $"{downloadUri}"
                 with
+                | :? JsonException as ex ->
+                    return!
+                        context
+                        |> result400BadRequest (GraceError.Create $"Malformed getDownloadUri request body: {ex.Message}" correlationId)
                 | ex ->
                     context.SetStatusCode StatusCodes.Status500InternalServerError
                     return! context.WriteTextAsync $"Error in {context.Request.Path} at {DateTime.Now.ToLongTimeString()}."

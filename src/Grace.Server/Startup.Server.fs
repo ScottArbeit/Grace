@@ -216,12 +216,24 @@ module Application =
         let downloadPathResourceFromContext (context: HttpContext) =
             task {
                 context.Request.EnableBuffering()
-                let! parameters = context.BindJsonAsync<Storage.GetDownloadUriParameters>()
+                use! document = JsonDocument.ParseAsync(context.Request.Body, cancellationToken = context.RequestAborted)
 
                 context.Request.Body.Seek(0L, IO.SeekOrigin.Begin)
                 |> ignore
 
                 let graceIds = Services.getGraceIds context
+                let mutable relativePath = String.Empty
+
+                if document.RootElement.ValueKind = JsonValueKind.Object then
+                    let mutable property = Unchecked.defaultof<JsonElement>
+
+                    if
+                        document.RootElement.TryGetProperty("RelativePath", &property)
+                        && property.ValueKind = JsonValueKind.String
+                    then
+                        relativePath <- property.GetString()
+
+                let parameters = Storage.GetDownloadUriParameters(RelativePath = relativePath)
 
                 return StorageAuthorizationResources.downloadUriResource graceIds.OwnerId graceIds.OrganizationId graceIds.RepositoryId parameters
             }

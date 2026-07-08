@@ -54,10 +54,14 @@ GetDownloadUriParameters:
   description: >
     Parameters for /storage/getDownloadUri. The request identifies an observable reference, file path, and file hash
     proof; the server derives the FileVersion from that reachable reference tree before issuing a read-only object SAS.
-    Supplying a FileVersion body is not accepted as authorization.
+    Supplying a FileVersion body is not accepted as authorization. At least one of Sha256Hash or Blake3Hash is required;
+    the server enforces that proof requirement as request validation.
   allOf:
     - $ref: '#/StorageParameters'
   type: object
+  x-grace-required-one-of:
+    - Sha256Hash
+    - Blake3Hash
   properties:
     ReferenceId:
       $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
@@ -70,11 +74,6 @@ GetDownloadUriParameters:
   required:
     - ReferenceId
     - RelativePath
-  anyOf:
-    - required:
-        - Sha256Hash
-    - required:
-        - Blake3Hash
 
 GetContentBlockUploadUriParameters:
   description: Parameters for /storage/getContentBlockUploadUri.

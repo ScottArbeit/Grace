@@ -11,19 +11,8 @@
 use crate::models;
 use serde::{Deserialize, Serialize};
 
-/// GetDownloadUriParameters : Parameters for /storage/getDownloadUri. The request identifies an observable reference, file path, and file hash proof; the server derives the FileVersion from that reachable reference tree before issuing a read-only object SAS. Supplying a FileVersion body is not accepted as authorization. 
 #[derive(Clone, Default, Debug, PartialEq, Serialize, Deserialize)]
 pub struct GetDownloadUriParameters {
-    #[serde(rename = "ReferenceId")]
-    pub reference_id: uuid::Uuid,
-    #[serde(rename = "RelativePath")]
-    pub relative_path: String,
-    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
-    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
-    pub sha256_hash: Option<String>,
-    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
-    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
-    pub blake3_hash: Option<String>,
     /// Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
     #[serde(rename = "CorrelationId", skip_serializing_if = "Option::is_none")]
     pub correlation_id: Option<String>,
@@ -42,16 +31,21 @@ pub struct GetDownloadUriParameters {
     pub repository_id: Option<String>,
     #[serde(rename = "RepositoryName", skip_serializing_if = "Option::is_none")]
     pub repository_name: Option<String>,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
+    #[serde(rename = "RelativePath")]
+    pub relative_path: String,
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
 }
 
 impl GetDownloadUriParameters {
-    /// Parameters for /storage/getDownloadUri. The request identifies an observable reference, file path, and file hash proof; the server derives the FileVersion from that reachable reference tree before issuing a read-only object SAS. Supplying a FileVersion body is not accepted as authorization. 
     pub fn new(reference_id: uuid::Uuid, relative_path: String) -> GetDownloadUriParameters {
         GetDownloadUriParameters {
-            reference_id,
-            relative_path,
-            sha256_hash: None,
-            blake3_hash: None,
             correlation_id: None,
             principal: None,
             owner_id: None,
@@ -60,6 +54,10 @@ impl GetDownloadUriParameters {
             organization_name: None,
             repository_id: None,
             repository_name: None,
+            reference_id,
+            relative_path,
+            sha256_hash: None,
+            blake3_hash: None,
         }
     }
 }

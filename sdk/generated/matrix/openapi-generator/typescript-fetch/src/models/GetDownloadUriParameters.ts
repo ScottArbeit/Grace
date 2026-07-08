@@ -14,36 +14,11 @@
 
 import { mapValues } from '../runtime';
 /**
- * Parameters for /storage/getDownloadUri. The request identifies an observable reference, file path, and file hash proof; the server derives the FileVersion from that reachable reference tree before issuing a read-only object SAS. Supplying a FileVersion body is not accepted as authorization.
  * 
  * @export
  * @interface GetDownloadUriParameters
  */
 export interface GetDownloadUriParameters {
-    /**
-     * 
-     * @type {string}
-     * @memberof GetDownloadUriParameters
-     */
-    referenceId: string;
-    /**
-     * 
-     * @type {string}
-     * @memberof GetDownloadUriParameters
-     */
-    relativePath: string;
-    /**
-     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
-     * @type {string}
-     * @memberof GetDownloadUriParameters
-     */
-    sha256Hash?: string;
-    /**
-     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
-     * @type {string}
-     * @memberof GetDownloadUriParameters
-     */
-    blake3Hash?: string;
     /**
      * Body DTO correlation id copied into Grace command/event metadata after request parsing. This field is distinct from the X-Correlation-Id transport header.
      * @type {string}
@@ -92,6 +67,30 @@ export interface GetDownloadUriParameters {
      * @memberof GetDownloadUriParameters
      */
     repositoryName?: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof GetDownloadUriParameters
+     */
+    referenceId: string;
+    /**
+     * 
+     * @type {string}
+     * @memberof GetDownloadUriParameters
+     */
+    relativePath: string;
+    /**
+     * Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+     * @type {string}
+     * @memberof GetDownloadUriParameters
+     */
+    sha256Hash?: string;
+    /**
+     * Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+     * @type {string}
+     * @memberof GetDownloadUriParameters
+     */
+    blake3Hash?: string;
 }
 
 /**
@@ -113,10 +112,6 @@ export function GetDownloadUriParametersFromJSONTyped(json: any, ignoreDiscrimin
     }
     return {
         
-        'referenceId': json['ReferenceId'],
-        'relativePath': json['RelativePath'],
-        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
-        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
         'correlationId': json['CorrelationId'] == null ? undefined : json['CorrelationId'],
         'principal': json['Principal'] == null ? undefined : json['Principal'],
         'ownerId': json['OwnerId'] == null ? undefined : json['OwnerId'],
@@ -125,6 +120,10 @@ export function GetDownloadUriParametersFromJSONTyped(json: any, ignoreDiscrimin
         'organizationName': json['OrganizationName'] == null ? undefined : json['OrganizationName'],
         'repositoryId': json['RepositoryId'] == null ? undefined : json['RepositoryId'],
         'repositoryName': json['RepositoryName'] == null ? undefined : json['RepositoryName'],
+        'referenceId': json['ReferenceId'],
+        'relativePath': json['RelativePath'],
+        'sha256Hash': json['Sha256Hash'] == null ? undefined : json['Sha256Hash'],
+        'blake3Hash': json['Blake3Hash'] == null ? undefined : json['Blake3Hash'],
     };
 }
 
@@ -139,10 +138,6 @@ export function GetDownloadUriParametersToJSONTyped(value?: GetDownloadUriParame
 
     return {
         
-        'ReferenceId': value['referenceId'],
-        'RelativePath': value['relativePath'],
-        'Sha256Hash': value['sha256Hash'],
-        'Blake3Hash': value['blake3Hash'],
         'CorrelationId': value['correlationId'],
         'Principal': value['principal'],
         'OwnerId': value['ownerId'],
@@ -151,6 +146,10 @@ export function GetDownloadUriParametersToJSONTyped(value?: GetDownloadUriParame
         'OrganizationName': value['organizationName'],
         'RepositoryId': value['repositoryId'],
         'RepositoryName': value['repositoryName'],
+        'ReferenceId': value['referenceId'],
+        'RelativePath': value['relativePath'],
+        'Sha256Hash': value['sha256Hash'],
+        'Blake3Hash': value['blake3Hash'],
     };
 }
 

@@ -210,6 +210,34 @@ type StorageWholeFileCompatibility() =
         parameters.CorrelationId <- generateCorrelationId ()
         parameters
 
+    /// Verifies malformed download ReferenceId values are returned as request validation failures.
+    [<Test>]
+    member _.WholeFileDownloadUriRejectsMalformedReferenceIdAsBadRequest() =
+        task {
+            let repositoryId = repositoryIds[0]
+            let correlationId = generateCorrelationId ()
+
+            let body =
+                JsonSerializer.Serialize(
+                    {|
+                        OwnerId = ownerId
+                        OrganizationId = organizationId
+                        RepositoryId = repositoryId
+                        ReferenceId = "not-a-reference-guid"
+                        RelativePath = "malformed-reference-proof/file.txt"
+                        Sha256Hash = "aaaabbbbccccddddeeeeffff0000111122223333444455556666777788889999"
+                        CorrelationId = correlationId
+                    |}
+                )
+
+            use content = new StringContent(body, Encoding.UTF8, "application/json")
+            let! response = Client.PostAsync("/storage/getDownloadUri", content)
+            let! responseBody = response.Content.ReadAsStringAsync()
+
+            Assert.That(response.StatusCode, Is.EqualTo(HttpStatusCode.BadRequest), responseBody)
+            Assert.That(responseBody, Does.Contain("Malformed getDownloadUri request body"))
+        }
+
     /// Verifies the small whole file content rejects missing BLAKE3 hash before publishing upload metadata scenario.
     [<Test>]
     member _.SmallWholeFileContentRejectsMissingBlake3HashBeforePublishingUploadMetadata() =

@@ -146,27 +146,70 @@ module BranchCommandTests =
     /// Builds reference metadata with the supplied identity for branch-switch download authority tests.
     let private referenceDto referenceId = { ReferenceDto.Default with ReferenceId = referenceId }
 
-    /// Verifies that branch switch downloads use the resolved branch latest reference when the caller switches by branch.
+    /// Verifies that branch switch downloads use the visible reference whose root owns the selected directory version.
     [<Test>]
-    let ``branch switch download reference uses resolved branch latest reference for branch targets`` () =
-        let latestReferenceId = ReferenceId.NewGuid()
-        let targetBranch = { BranchDto.Default with LatestReference = referenceDto latestReferenceId }
-        let parameters = Branch.SwitchParameters(ToBranchName = "feature")
+    let ``branch switch download reference uses visible reference that owns selected root`` () =
+        let selectedRootId = DirectoryVersionId.NewGuid()
+        let olderReferenceId = ReferenceId.NewGuid()
+        let selectedReferenceId = ReferenceId.NewGuid()
+        let otherReferenceId = ReferenceId.NewGuid()
 
-        Branch.switchDownloadReferenceIdForResolvedTarget parameters ReferenceDto.Default targetBranch
-        |> should equal latestReferenceId
+        let references =
+            [|
+                { referenceDto olderReferenceId with DirectoryId = DirectoryVersionId.NewGuid() }
+                { referenceDto selectedReferenceId with DirectoryId = selectedRootId }
+                { referenceDto otherReferenceId with DirectoryId = DirectoryVersionId.NewGuid() }
+            |]
 
-    /// Verifies that branch switch downloads keep the exact resolved reference when a reference locator is supplied.
+        Branch.trySelectSwitchDownloadReference [| selectedRootId |] references
+        |> should equal (Some selectedReferenceId)
+
+    /// Verifies that branch switch downloads prefer the latest visible reference that owns the selected root.
     [<Test>]
-    let ``branch switch download reference uses resolved reference locator when supplied`` () =
+    let ``branch switch download reference prefers latest visible owner for selected root`` () =
+        let selectedRootId = DirectoryVersionId.NewGuid()
+        let earlierReferenceId = ReferenceId.NewGuid()
         let latestReferenceId = ReferenceId.NewGuid()
-        let resolvedReferenceId = ReferenceId.NewGuid()
-        let targetBranch = { BranchDto.Default with LatestReference = referenceDto latestReferenceId }
-        let targetReference = referenceDto resolvedReferenceId
-        let parameters = Branch.SwitchParameters(ReferenceId = $"{resolvedReferenceId}")
 
-        Branch.switchDownloadReferenceIdForResolvedTarget parameters targetReference targetBranch
-        |> should equal resolvedReferenceId
+        let references =
+            [|
+                { referenceDto earlierReferenceId with DirectoryId = selectedRootId }
+                { referenceDto latestReferenceId with DirectoryId = selectedRootId }
+            |]
+
+        Branch.trySelectSwitchDownloadReference [| selectedRootId |] references
+        |> should equal (Some latestReferenceId)
+
+    /// Verifies that branch switch downloads do not authorize against a reference that owns only a child directory.
+    [<Test>]
+    let ``branch switch download reference ignores child directory owners`` () =
+        let selectedRootId = DirectoryVersionId.NewGuid()
+        let childDirectoryId = DirectoryVersionId.NewGuid()
+        let rootReferenceId = ReferenceId.NewGuid()
+        let childReferenceId = ReferenceId.NewGuid()
+
+        let references =
+            [|
+                { referenceDto rootReferenceId with DirectoryId = selectedRootId }
+                { referenceDto childReferenceId with DirectoryId = childDirectoryId }
+            |]
+
+        Branch.trySelectSwitchDownloadReference [| selectedRootId; childDirectoryId |] references
+        |> should equal (Some rootReferenceId)
+
+    /// Verifies that branch switch downloads fail closed when no visible reference owns the selected root.
+    [<Test>]
+    let ``branch switch download reference fails closed without visible selected root owner`` () =
+        let selectedRootId = DirectoryVersionId.NewGuid()
+        let visibleReferenceId = ReferenceId.NewGuid()
+
+        let references =
+            [|
+                { referenceDto visibleReferenceId with DirectoryId = DirectoryVersionId.NewGuid() }
+            |]
+
+        Branch.trySelectSwitchDownloadReference [| selectedRootId |] references
+        |> should equal None
 
     /// Builds branch directory with file test data used to exercise CLI branch behavior.
     let private branchDirectoryWithFile () =
