@@ -13578,6 +13578,7 @@ module WatchTests =
             Watch.currentBranchReferenceNotificationTargetsCurrentBranchForWatchTests { payload with BranchId = Guid.NewGuid() }
             |> should equal false)
 
+    /// Builds the ReferenceDto authority shape that BranchDto latest fields expose for Watch notification decisions.
     let private referenceDtoForCurrentBranchNotification (payload: CurrentBranchReferenceNotification) =
         { ReferenceDto.Default with
             ReferenceId = payload.ReferenceId
@@ -13592,6 +13593,7 @@ module WatchTests =
             ReferenceText = payload.ReferenceText
         }
 
+    /// Builds a BranchDto whose overall and per-type latest Reference authorities agree on the supplied notification.
     let private branchDtoWithLatestCurrentBranchReference (payload: CurrentBranchReferenceNotification) =
         let referenceDto = referenceDtoForCurrentBranchNotification payload
         let branchDto = { Grace.Types.Branch.BranchDto.Default with RepositoryId = payload.RepositoryId; BranchId = payload.BranchId }
@@ -13602,6 +13604,21 @@ module WatchTests =
         | ReferenceType.Commit -> { branchDto with LatestCommit = referenceDto; LatestReference = referenceDto }
         | _ -> branchDto
 
+    /// Builds a BranchDto where a delayed per-type notification is older than the branch's overall latest Reference.
+    let private branchDtoWithPerTypeLatestAndOverallLatest
+        (perTypePayload: CurrentBranchReferenceNotification)
+        (overallLatestPayload: CurrentBranchReferenceNotification)
+        =
+        let perTypeReferenceDto = referenceDtoForCurrentBranchNotification perTypePayload
+        let branchDto = branchDtoWithLatestCurrentBranchReference overallLatestPayload
+
+        match perTypePayload.ReferenceType with
+        | ReferenceType.Save -> { branchDto with LatestSave = perTypeReferenceDto }
+        | ReferenceType.Checkpoint -> { branchDto with LatestCheckpoint = perTypeReferenceDto }
+        | ReferenceType.Commit -> { branchDto with LatestCommit = perTypeReferenceDto }
+        | _ -> branchDto
+
+    /// Creates a concrete current-branch Reference notification with complete remote root identity.
     let private validCurrentBranchReferenceNotification repositoryId branchId referenceType rootDirectoryId rootSha256Hash rootBlake3Hash =
         { CurrentBranchReferenceNotification.Default with
             RepositoryId = repositoryId
@@ -13768,6 +13785,91 @@ module WatchTests =
             |> Option.map (fun reference -> reference.ReferenceId)
             |> should equal (Some olderNotification.ReferenceId))
 
+    /// Verifies that an older Save is stale when the branch head has advanced to a newer Checkpoint.
+    [<Test>]
+    let ``latest current branch decision drops older save after newer checkpoint overall latest`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let olderSaveNotification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "older-save-root")
+                    (Blake3Hash "older-save-root-blake3")
+
+            let newerCheckpointNotification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Checkpoint
+                    (Guid.NewGuid())
+                    (Sha256Hash "newer-checkpoint-root")
+                    (Blake3Hash "newer-checkpoint-root-blake3")
+
+            let branchDto = branchDtoWithPerTypeLatestAndOverallLatest olderSaveNotification newerCheckpointNotification
+
+            let decision =
+                Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto olderSaveNotification
+
+            decision.NeedsMaterialization
+            |> should equal false
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
+
+            decision.Reference
+            |> Option.map (fun reference -> reference.ReferenceId)
+            |> should equal (Some olderSaveNotification.ReferenceId))
+
+    /// Verifies that an older Checkpoint is stale when the branch head has advanced to a newer Commit.
+    [<Test>]
+    let ``latest current branch decision drops older checkpoint after newer commit overall latest`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let olderCheckpointNotification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Checkpoint
+                    (Guid.NewGuid())
+                    (Sha256Hash "older-checkpoint-root")
+                    (Blake3Hash "older-checkpoint-root-blake3")
+
+            let newerCommitNotification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Commit
+                    (Guid.NewGuid())
+                    (Sha256Hash "newer-commit-root")
+                    (Blake3Hash "newer-commit-root-blake3")
+
+            let branchDto = branchDtoWithPerTypeLatestAndOverallLatest olderCheckpointNotification newerCommitNotification
+
+            let decision =
+                Services.decideLatestCurrentBranchReferenceMaterialization
+                    currentRepositoryId
+                    currentBranchId
+                    (Some status)
+                    branchDto
+                    olderCheckpointNotification
+
+            decision.NeedsMaterialization
+            |> should equal false
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference
+
+            decision.Reference
+            |> Option.map (fun reference -> reference.ReferenceId)
+            |> should equal (Some olderCheckpointNotification.ReferenceId))
+
     /// Verifies that a BranchDto latest mismatch drops the notification even when root values appear materializable.
     [<Test>]
     let ``latest current branch decision drops BranchDto latest mismatch as stale`` () =
@@ -13793,6 +13895,35 @@ module WatchTests =
 
             decision.Reason
             |> should equal Services.LatestCurrentBranchReferenceDecisionReason.StaleLatestReference)
+
+    /// Verifies that BranchDto overall latest and per-type latest agreement allows a complete notification to proceed.
+    [<Test>]
+    let ``latest current branch decision proceeds when overall latest matches notification reference`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Checkpoint
+                    (Guid.NewGuid())
+                    (Sha256Hash "matching-overall-root")
+                    (Blake3Hash "matching-overall-root-blake3")
+
+            let branchDto = branchDtoWithLatestCurrentBranchReference notification
+
+            let decision = Services.decideLatestCurrentBranchReferenceMaterialization currentRepositoryId currentBranchId (Some status) branchDto notification
+
+            decision.NeedsMaterialization |> should equal true
+
+            decision.Reason
+            |> should equal Services.LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired
+
+            decision.Reference
+            |> Option.map (fun reference -> reference.ReferenceId)
+            |> should equal (Some notification.ReferenceId))
 
     /// Verifies that returning to an older root value is accepted only through the newer BranchDto latest Reference id.
     [<Test>]

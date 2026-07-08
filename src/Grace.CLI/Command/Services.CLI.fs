@@ -520,7 +520,7 @@ module Services =
         | RemoteMaterializationRequired = 6
         /// The supplied Reference notification did not include a concrete Reference id.
         | ReferenceIdUnavailable = 7
-        /// The server BranchDto no longer names the notification Reference as latest for its Reference type.
+        /// The server BranchDto no longer names the notification Reference as both overall and per-type latest.
         | StaleLatestReference = 8
 
     /// Carries the Watch decision for the latest applicable current-branch Reference notification.
@@ -556,13 +556,19 @@ module Services =
         || (status.RootDirectorySha256Hash = payload.Sha256Hash
             && status.RootDirectoryBlake3Hash = payload.Blake3Hash)
 
-    /// Selects the BranchDto latest-reference authority that must match a current-branch notification.
-    let private latestReferenceForCurrentBranchNotification (branchDto: Grace.Types.Branch.BranchDto) referenceType =
+    /// Selects the BranchDto per-type latest-reference authority that must agree with a current-branch notification.
+    let private latestTypedReferenceForCurrentBranchNotification (branchDto: Grace.Types.Branch.BranchDto) referenceType =
         match referenceType with
         | ReferenceType.Save -> Some branchDto.LatestSave
         | ReferenceType.Checkpoint -> Some branchDto.LatestCheckpoint
         | ReferenceType.Commit -> Some branchDto.LatestCommit
         | _ -> None
+
+    /// Reports whether BranchDto latest-reference authority still names the notification as the branch head.
+    let private currentBranchNotificationMatchesLatestReferenceAuthority (branchDto: Grace.Types.Branch.BranchDto) payload =
+        branchDto.LatestReference.ReferenceId = payload.ReferenceId
+        && (latestTypedReferenceForCurrentBranchNotification branchDto payload.ReferenceType
+            |> Option.exists (fun latestTypedReference -> latestTypedReference.ReferenceId = payload.ReferenceId))
 
     /// Rejects current-branch notifications that cannot safely wake same-branch materialization.
     let currentBranchReferenceProtocolValidationDecision repositoryId branchId (payload: CurrentBranchReferenceNotification) =
@@ -586,13 +592,9 @@ module Services =
         match currentBranchReferenceProtocolValidationDecision repositoryId branchId payload with
         | Some decision -> decision
         | None ->
-            let latestReference = latestReferenceForCurrentBranchNotification branchDto payload.ReferenceType
-
-            match latestReference with
-            | None -> LatestCurrentBranchReferenceDecision.NoApplicableReference
-            | Some latestReference when latestReference.ReferenceId <> payload.ReferenceId ->
+            if not (currentBranchNotificationMatchesLatestReferenceAuthority branchDto payload) then
                 LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.StaleLatestReference, payload)
-            | Some _ ->
+            else
                 match localStatus with
                 | None -> LatestCurrentBranchReferenceDecision.Rejected(LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable, payload)
                 | Some status when
