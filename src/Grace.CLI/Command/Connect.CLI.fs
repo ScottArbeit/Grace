@@ -10,6 +10,7 @@ open Grace.Shared.Client.Configuration
 open Grace.Shared.Utilities
 open Grace.Types.Owner
 open Grace.Types.Branch
+open Grace.Types.MaterializationPlan
 open Grace.Types.Organization
 open Grace.Types.Reference
 open Grace.Types.Repository
@@ -178,6 +179,15 @@ module Connect =
         | UseReferenceId of ReferenceId
         | UseReferenceType of ReferenceType
         | UseDefault
+
+    /// Carries the verified plan artifacts that Direct connect can execute without reusing legacy zip selection.
+    type internal DirectPlanExecutionArtifacts =
+        {
+            TargetRootDirectoryVersionId: DirectoryVersionId
+            ZipUri: string
+            DirectoryVersionDtos: Grace.Types.DirectoryVersion.DirectoryVersionDto array
+            FileVersions: FileVersion array
+        }
 
     /// Tries to map get explicit value and returns a GraceError instead of throwing on unsupported input.
     let private tryGetExplicitValue<'T> (parseResult: ParseResult) (option: Option<'T>) =
@@ -664,6 +674,126 @@ module Connect =
             RetrievedDefaultBranch = retrievedDefaultBranch
         }
 
+    /// Builds the Direct Materialization Plan request for the immutable root selected by connect.
+    let private createDirectPlanRequest directoryVersionId =
+        MaterializationPlanRequest.Create(
+            MaterializationTargetSelector.ForDirectoryVersion(directoryVersionId),
+            MaterializationExecutionMode.Direct,
+            MaterializationCacheSelection.Bypass,
+            [
+                MaterializationArtifactKind.DirectoryVersionZip
+                MaterializationArtifactKind.RecursiveDirectoryMetadata
+            ]
+        )
+
+    /// Requests the one-time Direct Materialization Plan used by connect to fetch root artifacts.
+    let private requestDirectMaterializationPlan
+        (graceIds: GraceIds)
+        (ownerDto: OwnerDto)
+        (organizationDto: OrganizationDto)
+        (repositoryDto: RepositoryDto)
+        directoryVersionId
+        =
+        let planParameters =
+            Parameters.Materialization.PlanParameters(
+                OwnerId = $"{ownerDto.OwnerId}",
+                OwnerName = ownerDto.OwnerName,
+                OrganizationId = $"{organizationDto.OrganizationId}",
+                OrganizationName = organizationDto.OrganizationName,
+                RepositoryId = $"{repositoryDto.RepositoryId}",
+                RepositoryName = repositoryDto.RepositoryName,
+                Request = createDirectPlanRequest directoryVersionId,
+                CorrelationId = graceIds.CorrelationId
+            )
+
+        Materialization.Plan(planParameters)
+
+    /// Returns the required root artifact descriptor from a Direct Materialization Plan.
+    let private tryFindRequiredRootArtifact artifactKind (plan: MaterializationPlan) =
+        plan.RequiredArtifacts
+        |> Seq.filter (fun artifact ->
+            artifact.ArtifactKind = artifactKind
+            && artifact.TargetRootDirectoryVersionId = plan.TargetRootDirectoryVersionId)
+        |> Seq.tryExactlyOne
+
+    /// Reads the DirectUri source required to execute one planned root artifact.
+    let private tryGetDirectArtifactSourceUri artifactName correlationId (artifact: MaterializationArtifactDescriptor) =
+        match artifact.Source with
+        | Some source when
+            not (isNull (box source))
+            && source.SourceKind = MaterializationArtifactSourceKind.DirectUri
+            ->
+            match source.DirectUri with
+            | Some uri when not (String.IsNullOrWhiteSpace(uri)) -> Ok uri
+            | _ -> Error(GraceError.Create $"Materialization Plan {artifactName} artifact is missing a DirectUri source." correlationId)
+        | Some source when not (isNull (box source)) ->
+            Error(GraceError.Create $"Materialization Plan {artifactName} artifact source must be DirectUri for Direct connect." correlationId)
+        | _ -> Error(GraceError.Create $"Materialization Plan {artifactName} artifact is missing a source." correlationId)
+
+    /// Verifies the plan and recursive metadata describe the same target root before Direct connect writes local state.
+    let internal prepareDirectPlanExecutionArtifacts
+        correlationId
+        (plan: MaterializationPlan)
+        (directoryVersionDtos: Grace.Types.DirectoryVersion.DirectoryVersionDto array)
+        =
+        match Validation.validatePlan plan with
+        | Error errors ->
+            let errorMessage = String.Join("; ", errors)
+            Error(GraceError.Create $"Materialization Plan is invalid: {errorMessage}" correlationId)
+        | Ok () ->
+            if plan.ExecutionMode
+               <> MaterializationExecutionMode.Direct then
+                Error(GraceError.Create "Materialization Plan execution mode must be Direct for grace connect Direct execution." correlationId)
+            elif plan.CacheSelection.SelectionKind
+                 <> MaterializationCacheSelectionKind.BypassCache then
+                Error(GraceError.Create "Materialization Plan cache selection must bypass cache for grace connect Direct execution." correlationId)
+            else
+                match tryFindRequiredRootArtifact MaterializationArtifactKind.DirectoryVersionZip plan,
+                      tryFindRequiredRootArtifact MaterializationArtifactKind.RecursiveDirectoryMetadata plan
+                    with
+                | None, _ -> Error(GraceError.Create "Materialization Plan is missing the target root DirectoryVersionZip artifact." correlationId)
+                | _, None -> Error(GraceError.Create "Materialization Plan is missing the target root RecursiveDirectoryMetadata artifact." correlationId)
+                | Some zipArtifact, Some metadataArtifact ->
+                    match zipArtifact.RepresentedRootDirectoryVersionId, metadataArtifact.RepresentedRootDirectoryVersionId with
+                    | Some zipRoot, Some metadataRoot when
+                        zipRoot = plan.TargetRootDirectoryVersionId
+                        && metadataRoot = plan.TargetRootDirectoryVersionId
+                        ->
+                        let recursiveMetadataRootMatches =
+                            directoryVersionDtos
+                            |> Seq.exists (fun dto ->
+                                dto.DirectoryVersion.DirectoryVersionId = plan.TargetRootDirectoryVersionId
+                                && dto.DirectoryVersion.RelativePath = Constants.RootDirectoryPath)
+
+                        if not recursiveMetadataRootMatches then
+                            Error(GraceError.Create "Recursive DirectoryVersion metadata did not include the Materialization Plan target root." correlationId)
+                        else
+                            match tryGetDirectArtifactSourceUri "DirectoryVersionZip" correlationId zipArtifact with
+                            | Error error -> Error error
+                            | Ok zipUri ->
+                                match tryGetDirectArtifactSourceUri "RecursiveDirectoryMetadata" correlationId metadataArtifact with
+                                | Error error -> Error error
+                                | Ok _ ->
+                                    let fileVersions =
+                                        directoryVersionDtos
+                                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
+                                        |> Seq.collect (fun directoryVersion -> directoryVersion.Files)
+                                        |> Seq.toArray
+
+                                    Ok
+                                        {
+                                            TargetRootDirectoryVersionId = plan.TargetRootDirectoryVersionId
+                                            ZipUri = zipUri
+                                            DirectoryVersionDtos = directoryVersionDtos
+                                            FileVersions = fileVersions
+                                        }
+                    | _ ->
+                        Error(
+                            GraceError.Create
+                                "Materialization Plan target root, zip represented root, and recursive metadata represented root must match."
+                                correlationId
+                        )
+
     /// Coordinates extract zip entries behavior for this CLI command path.
     let private extractZipEntries
         (parseResult: ParseResult)
@@ -743,80 +873,71 @@ module Connect =
             match directoryVersionResult with
             | Error error -> return (Error error |> renderOutput parseResult)
             | Ok directoryVersionId ->
-                let getDirectoryContentsParameters =
-                    Parameters.DirectoryVersion.GetParameters(
-                        OwnerId = $"{ownerDto.OwnerId}",
-                        OrganizationId = $"{organizationDto.OrganizationId}",
-                        RepositoryId = $"{repositoryDto.RepositoryId}",
-                        DirectoryVersionId = $"{directoryVersionId}",
-                        CorrelationId = graceIds.CorrelationId
-                    )
+                writeHumanLine parseResult $"[{Colors.Important}]Requesting Direct Materialization Plan.[/]"
+                let! materializationPlanResult = requestDirectMaterializationPlan graceIds ownerDto organizationDto repositoryDto directoryVersionId
+                writeHumanLine parseResult $"[{Colors.Important}]Finished requesting Direct Materialization Plan.[/]"
 
-                writeHumanLine parseResult $"[{Colors.Important}]Retrieving all DirectoryVersions.[/]"
+                match materializationPlanResult with
+                | Error error -> return (Error error |> renderOutput parseResult)
+                | Ok materializationPlanReturnValue ->
+                    let getDirectoryContentsParameters =
+                        Parameters.DirectoryVersion.GetParameters(
+                            OwnerId = $"{ownerDto.OwnerId}",
+                            OrganizationId = $"{organizationDto.OrganizationId}",
+                            RepositoryId = $"{repositoryDto.RepositoryId}",
+                            DirectoryVersionId = $"{materializationPlanReturnValue.ReturnValue.TargetRootDirectoryVersionId}",
+                            CorrelationId = graceIds.CorrelationId
+                        )
 
-                let! directoryVersionsResult = DirectoryVersion.GetDirectoryVersionsRecursive(getDirectoryContentsParameters)
+                    writeHumanLine parseResult $"[{Colors.Important}]Retrieving planned recursive DirectoryVersions.[/]"
 
-                let getZipFileParameters =
-                    Parameters.DirectoryVersion.GetZipFileParameters(
-                        OwnerId = $"{ownerDto.OwnerId}",
-                        OrganizationId = $"{organizationDto.OrganizationId}",
-                        RepositoryId = $"{repositoryDto.RepositoryId}",
-                        DirectoryVersionId = $"{directoryVersionId}",
-                        CorrelationId = graceIds.CorrelationId
-                    )
+                    let! directoryVersionsResult = DirectoryVersion.GetDirectoryVersionsRecursive(getDirectoryContentsParameters)
 
-                writeHumanLine parseResult $"[{Colors.Important}]Retrieving zip file download uri.[/]"
-                let! getZipFileResult = DirectoryVersion.GetZipFile(getZipFileParameters)
-                writeHumanLine parseResult $"[{Colors.Important}]Finished getting zip file download uri.[/]"
+                    match directoryVersionsResult with
+                    | Error error -> return (Error error |> renderOutput parseResult)
+                    | Ok directoryVerionsReturnValue ->
+                        writeHumanLine parseResult $"[{Colors.Important}]Retrieved planned recursive DirectoryVersions.[/]"
 
-                match (directoryVersionsResult, getZipFileResult) with
-                | (Ok directoryVerionsReturnValue, Ok getZipFileReturnValue) ->
-                    writeHumanLine parseResult $"[{Colors.Important}]Retrieved all DirectoryVersions.[/]"
+                        match
+                            prepareDirectPlanExecutionArtifacts
+                                graceIds.CorrelationId
+                                materializationPlanReturnValue.ReturnValue
+                                (directoryVerionsReturnValue.ReturnValue
+                                 |> Seq.toArray)
+                            with
+                        | Error error -> return (Error error |> renderOutput parseResult)
+                        | Ok executionArtifacts ->
+                            let force = parseResult.GetValue(Options.force)
 
-                    let directoryVersionDtos = directoryVerionsReturnValue.ReturnValue
+                            let! conflicts, filesToSkip = collectFileConflicts executionArtifacts.FileVersions force
 
-                    let fileVersions =
-                        directoryVersionDtos
-                        |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion)
-                        |> Seq.collect (fun dv -> dv.Files)
-                        |> Seq.toArray
+                            if conflicts.Count > 0 then
+                                writeHumanLine parseResult $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
 
-                    let force = parseResult.GetValue(Options.force)
+                                if parseResult |> verbose then
+                                    conflicts
+                                    |> Seq.sort
+                                    |> Seq.iter (fun conflict -> writeHumanLine parseResult $"[{Colors.Error}]{conflict}[/]")
 
-                    let! conflicts, filesToSkip = collectFileConflicts fileVersions force
+                                return
+                                    (Error(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
+                                     |> renderOutput parseResult)
+                            else
+                                let fileVersionsByRelativePath = buildFileVersionsByRelativePath executionArtifacts.FileVersions
 
-                    if conflicts.Count > 0 then
-                        writeHumanLine parseResult $"[{Colors.Error}]Found {conflicts.Count} conflicting file(s). Use --force to overwrite.[/]"
+                                let blobClient = BlobClient(Uri(executionArtifacts.ZipUri))
 
-                        if parseResult |> verbose then
-                            conflicts
-                            |> Seq.sort
-                            |> Seq.iter (fun conflict -> writeHumanLine parseResult $"[{Colors.Error}]{conflict}[/]")
+                                let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024)
+                                extractZipEntries parseResult fileVersionsByRelativePath filesToSkip zipFile
 
-                        return
-                            (Error(GraceError.Create "Conflicting files exist in the working directory." graceIds.CorrelationId)
-                             |> renderOutput parseResult)
-                    else
-                        let fileVersionsByRelativePath = buildFileVersionsByRelativePath fileVersions
+                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
+                                let! previousGraceStatus = readGraceStatusFile ()
+                                let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
+                                do! writeGraceStatusFile graceStatus
 
-                        let uriWithSharedAccessSignature = getZipFileReturnValue.ReturnValue
-
-                        // Download the .zip file to temp directory.
-                        let blobClient = BlobClient(uriWithSharedAccessSignature)
-
-                        let! zipFile = blobClient.OpenReadAsync(bufferSize = 64 * 1024)
-                        extractZipEntries parseResult fileVersionsByRelativePath filesToSkip zipFile
-
-                        writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Index file.[/]"
-                        let! previousGraceStatus = readGraceStatusFile ()
-                        let! graceStatus = createNewGraceStatusFile previousGraceStatus parseResult
-                        do! writeGraceStatusFile graceStatus
-
-                        writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
-                        do! upsertObjectCache graceStatus.Index.Values
-                        return 0
-                | (Error error, _) -> return (Error error |> renderOutput parseResult)
-                | (_, Error error) -> return (Error error |> renderOutput parseResult)
+                                writeHumanLine parseResult $"[{Colors.Important}]Creating Grace Object Cache Index file.[/]"
+                                do! upsertObjectCache graceStatus.Index.Values
+                                return 0
         }
 
     /// Routes the connect command from parsed options through validation, the SDK call, and result rendering.
