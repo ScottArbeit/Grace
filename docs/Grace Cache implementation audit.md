@@ -84,15 +84,21 @@ docs-only classification with current evidence for the behavior they own.
 
 ### Direct Materialization
 
-- Implementation seam: client and server path that bypasses Grace Cache and reads from Grace Server
-  or storage through the existing authorized materialization flow.
-- Proof seam: focused tests or validation that show Direct mode does not require Grace Cache
-  registration, cache rows, or ContentAccessGrant validation.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; the owning implementation issue or PR must add
-  the current proof before claiming Direct support.
-- Residual risk or rationale: Direct must remain a first-class non-cache path, not an accidental
-  fallback from failed CacheRequired behavior.
+- Implementation seam: `grace connect` requests `MaterializationExecutionMode.Direct` with
+  `MaterializationCacheSelection.Bypass`, downloads the planned DirectUri recursive metadata and
+  DirectoryVersion zip artifacts, validates descriptor/root/integrity evidence, stages extraction,
+  then writes the working tree, local status, and object-cache rows only after validation passes.
+- Proof seam: `Grace.CLI.Tests.ConnectTests` covers Direct plan shape, root consistency rejection,
+  delivered-artifact integrity, staged extraction before local state writes, retry-once behavior for
+  retryable artifact-source failures, no retry for permanent root mismatch, and byte equality for
+  manifest-backed plus whole-file materialization.
+- Status classification: `implemented and proven`.
+- Issue or PR evidence: #616 adds the Direct retry, negative consistency, manifest-backed byte
+  equivalence, object-cache regression, and `pwsh ./scripts/validate.ps1 -Fast` evidence for the
+  tracer branch.
+- Residual risk or rationale: OpenAPI/static contract propagation for the previous Runtime
+  `ReferenceType` decision is deferred to #687; this row only claims the Direct tracer behavior and
+  does not claim CachePreferred or CacheRequired support.
 
 ### CachePreferred Materialization
 

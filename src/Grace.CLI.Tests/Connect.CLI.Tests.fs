@@ -247,6 +247,218 @@ module ConnectTests =
 
         override _.Dispose(disposing: bool) = ()
 
+    /// Extracts the Grace error carried by DirectUri copy failure classifiers.
+    let private directUriCopyFailureError =
+        function
+        | Connect.DirectUriDeliveredSizeValidationFailure error
+        | Connect.DirectUriTransferFailure error -> error
+
+    /// Runs a DirectUri copy failure through the production retry-boundary classifiers.
+    let private executeDirectRetryAfterCopyFailure copyFailure =
+        let requestedPlans = ResizeArray<int>()
+
+        let requestPlan () =
+            task {
+                let planId = requestedPlans.Count + 1
+                requestedPlans.Add(planId)
+                return Ok planId
+            }
+
+        let executePlan _ =
+            task {
+                return
+                    Error(
+                        copyFailure
+                        |> Connect.directUriCopyFailureToFetchFailure
+                        |> Connect.directUriFetchFailureToExecutionError
+                    )
+            }
+
+        let result =
+            Connect.executeDirectPlanWithRetryOnce "correlation-id" requestPlan executePlan
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        result, requestedPlans
+
+    /// Builds a manifest-backed FileVersion whose bytes are delivered through the Direct zip projection.
+    let private manifestBackedFileVersion relativePath (payload: byte array) =
+        let block = ContentBlock.Create(ContentBlockAddress(String.replicate 64 "c"), 0L, int64 payload.Length)
+
+        let manifest =
+            FileManifest.Create(
+                ManifestAddress(String.replicate 64 "d"),
+                ChunkingSuiteId "grace-test-fixed",
+                FileContentHash(String.replicate 64 "e"),
+                int64 payload.Length,
+                [ block ]
+            )
+
+        let fileVersion =
+            FileVersion.CreateWithHashes relativePath (computeSha256Hash payload) (computeBlake3Hash payload) String.Empty false (int64 payload.Length)
+
+        fileVersion.ContentReference <- FileContentReference.FileManifest manifest
+        fileVersion
+
+    /// Verifies that a retryable artifact-source failure requests exactly one fresh Direct plan.
+    [<Test>]
+    let ``connect direct plan retry re-requests once after retryable artifact source failure`` () =
+        let requestedPlans = ResizeArray<int>()
+        let executedPlans = ResizeArray<int>()
+
+        let requestPlan () =
+            task {
+                let planId = requestedPlans.Count + 1
+                requestedPlans.Add(planId)
+                return Ok planId
+            }
+
+        let executePlan planId =
+            task {
+                executedPlans.Add(planId)
+
+                if planId = 1 then
+                    return Error(Connect.RetryableArtifactSourceFailure(GraceError.Create "temporary DirectUri source failure" "correlation-id"))
+                else
+                    return Ok "materialized"
+            }
+
+        let result =
+            Connect.executeDirectPlanWithRetryOnce "correlation-id" requestPlan executePlan
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match result with
+        | Error error -> Assert.Fail($"Expected second fresh Direct plan to succeed, got {error.Error}.")
+        | Ok value ->
+            Assert.Multiple(
+                Action (fun () ->
+                    value |> should equal "materialized"
+                    requestedPlans |> should equal [ 1; 2 ]
+                    executedPlans |> should equal [ 1; 2 ])
+            )
+
+    /// Verifies that a second retryable artifact-source failure returns an error without broad retry looping.
+    [<Test>]
+    let ``connect direct plan retry stops after second retryable artifact source failure`` () =
+        let requestedPlans = ResizeArray<int>()
+
+        let requestPlan () =
+            task {
+                let planId = requestedPlans.Count + 1
+                requestedPlans.Add(planId)
+                return Ok planId
+            }
+
+        let executePlan planId =
+            task { return Error(Connect.RetryableArtifactSourceFailure(GraceError.Create $"temporary DirectUri source failure {planId}" "correlation-id")) }
+
+        let result =
+            Connect.executeDirectPlanWithRetryOnce "correlation-id" requestPlan executePlan
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match result with
+        | Ok value -> Assert.Fail($"Expected retryable Direct plan failures to surface after one retry, got {value}.")
+        | Error error ->
+            Assert.Multiple(
+                Action (fun () ->
+                    error.Error |> should contain "failure 2"
+                    requestedPlans |> should equal [ 1; 2 ])
+            )
+
+    /// Verifies that permanent consistency failures do not request a replacement plan that could mask root mismatches.
+    [<Test>]
+    let ``connect direct plan retry does not mask permanent root mismatch`` () =
+        let requestedPlans = ResizeArray<int>()
+
+        let requestPlan () =
+            task {
+                let planId = requestedPlans.Count + 1
+                requestedPlans.Add(planId)
+                return Ok planId
+            }
+
+        let executePlan _ =
+            task {
+                return
+                    Error(
+                        Connect.PermanentPlanFailure(
+                            GraceError.Create
+                                "Materialization Plan target root, zip represented root, and recursive metadata represented root must match."
+                                "correlation-id"
+                        )
+                    )
+            }
+
+        let result =
+            Connect.executeDirectPlanWithRetryOnce "correlation-id" requestPlan executePlan
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match result with
+        | Ok value -> Assert.Fail($"Expected permanent root mismatch to fail without retry, got {value}.")
+        | Error error ->
+            Assert.Multiple(
+                Action (fun () ->
+                    error.Error |> should contain "target root"
+                    requestedPlans |> should equal [ 1 ])
+            )
+
+    /// Verifies that an oversized DirectUri Content-Length is a permanent delivered-artifact failure, not a retry trigger.
+    [<Test>]
+    let ``connect direct plan retry does not re-request after oversized content length`` () =
+        let mutable opened = false
+
+        let copyResult =
+            Connect.copyDirectUriArtifactToTempStream "correlation-id" "DirectoryVersionZip" (Some 3L) (Some 4L) (fun () ->
+                opened <- true
+                Task.FromResult<Stream>(new MemoryStream([| 1uy; 2uy; 3uy; 4uy |])))
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match copyResult with
+        | Ok stream ->
+            stream.Dispose()
+            Assert.Fail("Expected oversized Content-Length to fail before success-looking local status could be recorded.")
+        | Error copyFailure ->
+            let result, requestedPlans = executeDirectRetryAfterCopyFailure copyFailure
+
+            match result with
+            | Ok value -> Assert.Fail($"Expected oversized Content-Length to fail permanently without retry, got {value}.")
+            | Error error ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        opened |> should equal false
+
+                        error.Error
+                        |> should contain "Content-Length exceeds planned size"
+
+                        requestedPlans |> should equal [ 1 ])
+                )
+
+    /// Verifies that a DirectUri stream exceeding the planned size is permanent and cannot be masked by a fresh plan.
+    [<Test>]
+    let ``connect direct plan retry does not re-request after streamed artifact exceeds planned size`` () =
+        let payload = [| 0uy .. 9uy |]
+        let source = new NonDisposingMemoryStream(payload)
+
+        let copyResult =
+            Connect.copyDirectUriArtifactToTempStream "correlation-id" "DirectoryVersionZip" (Some 3L) None (fun () -> Task.FromResult<Stream>(source))
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match copyResult with
+        | Ok stream ->
+            stream.Dispose()
+            Assert.Fail("Expected over-limit DirectUri body to fail before success-looking local status could be recorded.")
+        | Error copyFailure ->
+            let result, requestedPlans = executeDirectRetryAfterCopyFailure copyFailure
+
+            match result with
+            | Ok value -> Assert.Fail($"Expected over-limit DirectUri body to fail permanently without retry, got {value}.")
+            | Error error ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        source.Position |> should equal 4L
+                        error.Error |> should contain "size mismatch"
+                        requestedPlans |> should equal [ 1 ])
+                )
+
     /// Verifies that Direct plan requests preserve a moving reference selector for final server resolution.
     [<Test>]
     let ``connect direct plan request preserves reference selector intent`` () =
@@ -680,7 +892,8 @@ module ConnectTests =
         | Ok stream ->
             stream.Dispose()
             Assert.Fail("Expected oversized Content-Length to fail before transfer.")
-        | Error error ->
+        | Error copyFailure ->
+            let error = directUriCopyFailureError copyFailure
             opened |> should equal false
 
             error.Error
@@ -700,7 +913,8 @@ module ConnectTests =
         | Ok stream ->
             stream.Dispose()
             Assert.Fail("Expected over-limit DirectUri body to fail during transfer.")
-        | Error error ->
+        | Error copyFailure ->
+            let error = directUriCopyFailureError copyFailure
             source.Position |> should equal 4L
             error.Error |> should contain "size mismatch"
 
@@ -747,9 +961,7 @@ module ConnectTests =
     let ``connect staged direct zip validation preserves existing worktree file on mismatch`` () =
         withTempDir (fun root ->
             Grace.Shared.Client.Configuration.resetConfiguration ()
-
-            Grace.Shared.Client.Configuration.Current()
-            |> ignore
+            let configuration = Grace.Shared.Client.Configuration.Current()
 
             let expectedPayload = Encoding.UTF8.GetBytes("expected materialized text")
             let stalePayload = Encoding.UTF8.GetBytes("stale materialized text")
@@ -792,7 +1004,10 @@ module ConnectTests =
                         error.Error |> should contain "mismatch"
 
                         File.ReadAllText(filePath)
-                        |> should equal sentinel)
+                        |> should equal sentinel
+
+                        File.Exists(configuration.GraceStatusFile)
+                        |> should equal false)
                 ))
 
     /// Verifies that staged Direct zip validation extracts files skipped only for final worktree writes.
@@ -911,6 +1126,82 @@ module ConnectTests =
 
                         File.ReadAllBytes(objectFiles[0])
                         |> should equal payload)
+                ))
+
+    /// Verifies that Direct zip materialization writes manifest-backed and whole-file bytes exactly.
+    [<Test>]
+    let ``connect staged direct zip validation materializes manifest backed and whole file bytes`` () =
+        withTempDir (fun root ->
+            Grace.Shared.Client.Configuration.resetConfiguration ()
+            let configuration = Grace.Shared.Client.Configuration.Current()
+
+            let manifestPayload = Encoding.UTF8.GetBytes("manifest-backed materialized text")
+            let wholeFilePayload = Encoding.UTF8.GetBytes("whole-file materialized text")
+            let manifestRelativePath = RelativePath "src/manifest-backed.fs"
+            let wholeFileRelativePath = RelativePath "src/whole-file.fs"
+            let manifestPath = Path.Combine(root, string manifestRelativePath)
+            let wholeFilePath = Path.Combine(root, string wholeFileRelativePath)
+
+            let manifestFileVersion = manifestBackedFileVersion manifestRelativePath manifestPayload
+
+            let wholeFileVersion =
+                FileVersion.CreateWithHashes
+                    wholeFileRelativePath
+                    (computeSha256Hash wholeFilePayload)
+                    (computeBlake3Hash wholeFilePayload)
+                    String.Empty
+                    false
+                    (int64 wholeFilePayload.Length)
+
+            let fileVersions =
+                [|
+                    manifestFileVersion
+                    wholeFileVersion
+                |]
+
+            use zipStream =
+                new MemoryStream(
+                    zipBytesForTextEntries [ string manifestRelativePath, manifestPayload
+                                             string wholeFileRelativePath, wholeFilePayload ]
+                )
+
+            let parseResult = GraceCommand.rootCommand.Parse([| "connect" |])
+
+            let result =
+                Connect.extractValidatedZipEntries
+                    parseResult
+                    "correlation-id"
+                    (fileVersionLookup fileVersions)
+                    (HashSet<RelativePath>())
+                    fileVersions
+                    zipStream
+                |> fun task -> task.GetAwaiter().GetResult()
+
+            match result with
+            | Error error -> Assert.Fail($"Unexpected manifest-backed Direct zip materialization error: {error.Error}")
+            | Ok () ->
+                let objectFiles = Directory.GetFiles(string configuration.ObjectDirectory, "*", SearchOption.AllDirectories)
+
+                Assert.Multiple(
+                    Action (fun () ->
+                        manifestFileVersion.ContentReference.ReferenceType
+                        |> should equal FileContentReferenceType.FileManifest
+
+                        File.ReadAllBytes(manifestPath)
+                        |> should equal manifestPayload
+
+                        File.ReadAllBytes(wholeFilePath)
+                        |> should equal wholeFilePayload
+
+                        objectFiles |> should haveLength 2
+
+                        objectFiles
+                        |> Array.map File.ReadAllBytes
+                        |> should contain manifestPayload
+
+                        objectFiles
+                        |> Array.map File.ReadAllBytes
+                        |> should contain wholeFilePayload)
                 ))
 
     /// Verifies that connect executes recursive metadata from the planned artifact payload.
