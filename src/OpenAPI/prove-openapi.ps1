@@ -1301,7 +1301,12 @@ function Test-OpenApiMaterializationContractDetails {
     $materializationText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Materialization.Components.OpenAPI.yaml') -Raw
 
     Assert-MaterializationStringEnumSchema $materializationText 'MaterializationExecutionMode' @('direct', 'cachePreferred', 'cacheRequired')
-    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationTargetSelectorKind' @('directoryVersionId', 'referenceId', 'branchName')
+    Assert-MaterializationStringEnumSchema $materializationText 'MaterializationTargetSelectorKind' @(
+        'directoryVersionId',
+        'referenceId',
+        'branchName',
+        'referenceType'
+    )
     Assert-MaterializationStringEnumSchema $materializationText 'MaterializationCacheSelectionKind' @('bypassCache', 'preferCache', 'requireCache')
     Assert-MaterializationStringEnumSchema $materializationText 'MaterializationArtifactKind' @(
         'directoryVersionZip',
@@ -1322,6 +1327,25 @@ function Test-OpenApiMaterializationContractDetails {
         $materializationText `
         'Repository authority accepts the same ID-or-name pairs resolved by ValidateIdsMiddleware' `
         'PlanParameters must document the ID-or-name repository authority contract accepted by the server.'
+
+    $targetSelectorBlock = Get-OpenApiNamedBlock $materializationText 'MaterializationTargetSelector'
+    if ($null -eq $targetSelectorBlock) {
+        Add-Failure 'MaterializationTargetSelector schema is missing.'
+    }
+    else {
+        $targetSelectorText = [string] $targetSelectorBlock.Text
+        foreach ($requiredSelectorNeedle in @(
+                'BranchId:',
+                'BranchName:',
+                'ReferenceType:',
+                '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/BranchId''',
+                '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/BranchName''',
+                '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType''',
+                'ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.'
+            )) {
+            Assert-TextContains $targetSelectorText $requiredSelectorNeedle "MaterializationTargetSelector schema must publish ReferenceType selector contract member '$requiredSelectorNeedle'."
+        }
+    }
 
     foreach ($requiredExampleValue in @(
             'SelectorKind: directoryVersionId',
@@ -1694,8 +1718,18 @@ function Test-GeneratedClientMatrixProof {
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationTargetSelectorKind.ts'
-            required = @("DirectoryVersionId: 'directoryVersionId'", "ReferenceId: 'referenceId'", "BranchName: 'branchName'")
-            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3')
+            required = @("DirectoryVersionId: 'directoryVersionId'", "ReferenceId: 'referenceId'", "BranchName: 'branchName'", "ReferenceType: 'referenceType'")
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_target_selector_kind.py'
+            required = @('directoryVersionId', 'referenceId', 'branchName', 'referenceType')
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_target_selector_kind.rs'
+            required = @('directoryVersionId', 'referenceId', 'branchName', 'referenceType')
+            forbidden = @('Number1', 'Number2', 'Number3', 'Number4')
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationCacheSelectionKind.ts'
@@ -1746,6 +1780,21 @@ function Test-GeneratedClientMatrixProof {
             path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/PlanParameters.ts'
             required = @('ownerId?: string;', 'ownerName?: string;', 'organizationId?: string;', 'organizationName?: string;', 'repositoryId?: string;', 'repositoryName?: string;', "if (!('request' in value)")
             forbidden = @('ownerId: string;', 'organizationId: string;', 'repositoryId: string;', "if (!('ownerId' in value)", "if (!('organizationId' in value)", "if (!('repositoryId' in value)")
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationTargetSelector.ts'
+            required = @('branchId?: string;', 'branchName?: string;', 'referenceType?: ReferenceType;', "'BranchId': value['branchId']", "'ReferenceType': ReferenceTypeToJSON(value['referenceType'])")
+            forbidden = @('branchId: string;', 'referenceType: ReferenceType;')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_target_selector.py'
+            required = @('branch_id: Optional[UUID]', 'branch_name: Optional[StrictStr]', 'reference_type: Optional[ReferenceType]', '"BranchId"', '"BranchName"', '"ReferenceType"')
+            forbidden = @('branch_id: UUID', 'reference_type: ReferenceType = Field(alias="ReferenceType")')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_target_selector.rs'
+            required = @('pub branch_id: Option<uuid::Uuid>', 'pub branch_name: Option<String>', 'pub reference_type: Option<models::ReferenceType>')
+            forbidden = @('pub branch_id: uuid::Uuid', 'pub reference_type: models::ReferenceType')
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/plan_parameters.py'

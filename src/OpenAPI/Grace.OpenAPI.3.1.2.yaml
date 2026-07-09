@@ -3820,10 +3820,12 @@ components:
         - directoryVersionId
         - referenceId
         - branchName
+        - referenceType
       x-enumNames:
         - DirectoryVersionId
         - ReferenceId
         - BranchName
+        - ReferenceType
       example: directoryVersionId
     MaterializationCacheSelectionKind:
       description: Cache behavior requested for artifact source selection.
@@ -3866,7 +3868,7 @@ components:
         - Deferred
       example: directUri
     MaterializationTargetSelector:
-      description: Public selector that the server resolves to one immutable root DirectoryVersionId.
+      description: Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
       type: object
       properties:
         Class:
@@ -3880,8 +3882,14 @@ components:
         ReferenceId:
           $ref: '#/components/schemas/ReferenceId'
           nullable: true
+        BranchId:
+          $ref: '#/components/schemas/BranchId'
+          nullable: true
         BranchName:
           $ref: '#/components/schemas/BranchName'
+          nullable: true
+        ReferenceType:
+          $ref: '#/components/schemas/ReferenceType'
           nullable: true
       required:
         - Class
@@ -3931,7 +3939,9 @@ components:
           SelectorKind: directoryVersionId
           DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
           ReferenceId: null
+          BranchId: null
           BranchName: null
+          ReferenceType: null
         ExecutionMode: direct
         CacheSelection:
           Class: MaterializationCacheSelection
@@ -3978,7 +3988,9 @@ components:
             SelectorKind: directoryVersionId
             DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
             ReferenceId: null
+            BranchId: null
             BranchName: null
+            ReferenceType: null
           ExecutionMode: direct
           CacheSelection:
             Class: MaterializationCacheSelection

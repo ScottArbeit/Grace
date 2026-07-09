@@ -21,6 +21,8 @@ pub enum MaterializationTargetSelectorKind {
     ReferenceId,
     #[serde(rename = "branchName")]
     BranchName,
+    #[serde(rename = "referenceType")]
+    ReferenceType,
 
 }
 
@@ -30,6 +32,7 @@ impl std::fmt::Display for MaterializationTargetSelectorKind {
             Self::DirectoryVersionId => write!(f, "directoryVersionId"),
             Self::ReferenceId => write!(f, "referenceId"),
             Self::BranchName => write!(f, "branchName"),
+            Self::ReferenceType => write!(f, "referenceType"),
         }
     }
 }

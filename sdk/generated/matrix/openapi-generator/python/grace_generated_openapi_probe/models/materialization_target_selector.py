@@ -22,20 +22,23 @@ from pydantic import BaseModel, ConfigDict, Field, StrictStr
 from typing import Any, ClassVar, Dict, List, Optional
 from uuid import UUID
 from grace_generated_openapi_probe.models.materialization_target_selector_kind import MaterializationTargetSelectorKind
+from grace_generated_openapi_probe.models.reference_type import ReferenceType
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
 
 class MaterializationTargetSelector(BaseModel):
     """
-    Public selector that the server resolves to one immutable root DirectoryVersionId.
+    Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
     """ # noqa: E501
     var_class: StrictStr = Field(alias="Class")
     selector_kind: MaterializationTargetSelectorKind = Field(alias="SelectorKind")
     directory_version_id: Optional[UUID] = Field(default=None, alias="DirectoryVersionId")
     reference_id: Optional[UUID] = Field(default=None, alias="ReferenceId")
+    branch_id: Optional[UUID] = Field(default=None, alias="BranchId")
     branch_name: Optional[StrictStr] = Field(default=None, alias="BranchName")
-    __properties: ClassVar[List[str]] = ["Class", "SelectorKind", "DirectoryVersionId", "ReferenceId", "BranchName"]
+    reference_type: Optional[ReferenceType] = Field(default=None, alias="ReferenceType")
+    __properties: ClassVar[List[str]] = ["Class", "SelectorKind", "DirectoryVersionId", "ReferenceId", "BranchId", "BranchName", "ReferenceType"]
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -92,7 +95,9 @@ class MaterializationTargetSelector(BaseModel):
             "SelectorKind": obj.get("SelectorKind"),
             "DirectoryVersionId": obj.get("DirectoryVersionId"),
             "ReferenceId": obj.get("ReferenceId"),
-            "BranchName": obj.get("BranchName")
+            "BranchId": obj.get("BranchId"),
+            "BranchName": obj.get("BranchName"),
+            "ReferenceType": obj.get("ReferenceType")
         })
         return _obj
 
