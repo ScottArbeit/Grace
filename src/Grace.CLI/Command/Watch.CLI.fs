@@ -2111,20 +2111,28 @@ module Watch =
         Volatile.Read(&manualPendingWatchWorkStatusFlag)
         <> 0
 
-    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
-    let private hasPendingDurableWatchJournalEvidence () =
+    /// Reads whether unresolved durable journal rows still need local Watch processing.
+    let private inspectDurableWatchJournalPendingEvidence () =
         try
-            readWatchJournalPendingWorkSummaryForWatch()
-                .GetAwaiter()
-                .GetResult()
-                .HasPendingRows
+            let summary =
+                readWatchJournalPendingWorkSummaryForWatch()
+                    .GetAwaiter()
+                    .GetResult()
+
+            Ok summary.HasPendingRows
         with
         | ex ->
             logToAnsiConsole
                 Colors.Error
                 $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
 
-            true
+            Error ex.Message
+
+    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
+    let private hasPendingDurableWatchJournalEvidence () =
+        match inspectDurableWatchJournalPendingEvidence () with
+        | Ok hasPendingRows -> hasPendingRows
+        | Error _ -> true
 
     /// Describes pending Watch work without merging process-local queues and durable journal evidence.
     type private PendingWatchWorkEvidence =
@@ -3287,10 +3295,11 @@ module Watch =
         elif inspection.IsUsable then
             if not (hasReadableLocalStateDbAuthority ()) then
                 Degraded "missing local-state DB authority"
-            elif hasPendingDurableWatchJournalEvidence () then
-                Blocked "durable Watch journal has pending local observations"
             else
-                Clean inspection.Status.Value
+                match inspectDurableWatchJournalPendingEvidence () with
+                | Error _ -> Degraded "unreadable durable Watch journal authority"
+                | Ok true -> Blocked "durable Watch journal has pending local observations"
+                | Ok false -> Clean inspection.Status.Value
         elif inspection.ReadError.IsSome then
             Degraded "unreadable Watch IPC/status authority"
         elif not inspection.Exists then
@@ -3386,117 +3395,85 @@ module Watch =
 
                             terminal <- true
                         | Clean _ ->
+                            let acceptedDecision = decision
                             let mutable postLeaseRetryGate: CurrentBranchMaterializationStatusGate option = None
 
                             let! cleanOutcome =
                                 WorkingDirectoryMaterialization.runWithLease (fun () ->
                                     task {
-                                        match! currentBranchMaterializationDecision clients current payload with
-                                        | Error _ ->
+                                        let! leaseInspection = clients.InspectLocalStatus()
+
+                                        match currentBranchMaterializationStatusGate payload leaseInspection with
+                                        | NotCurrentBranch ->
                                             return
                                                 {
                                                     ReferenceId = payload.ReferenceId
-                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-                                                    Decision = None
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                    Decision = Some acceptedDecision
                                                 }
-                                        | Ok leaseDecision ->
-                                            match leaseDecision.Reason with
-                                            | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
-                                                let! leaseInspection = clients.InspectLocalStatus()
-
-                                                match currentBranchMaterializationStatusGate payload leaseInspection with
-                                                | NotCurrentBranch ->
-                                                    return
-                                                        {
-                                                            ReferenceId = payload.ReferenceId
-                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                                            Decision = Some leaseDecision
-                                                        }
-                                                | Clean leaseStatus ->
-                                                    if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
-                                                        return
-                                                            {
-                                                                ReferenceId = payload.ReferenceId
-                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                                                Decision = Some leaseDecision
-                                                            }
-                                                    else
-                                                        setGraceWatchPendingWorkStatusFlag true
-                                                        publishPendingWatchWorkTransitionIfNeeded ()
-
-                                                        if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
-                                                            return
-                                                                {
-                                                                    ReferenceId = payload.ReferenceId
-                                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                                                    Decision = Some leaseDecision
-                                                                }
-                                                        else
-                                                            try
-                                                                do! clients.ApplyReference payload leaseStatus
-
-                                                                setGraceWatchPendingWorkStatusFlag false
-                                                                publishPendingWatchWorkTransitionIfNeeded ()
-
-                                                                return
-                                                                    {
-                                                                        ReferenceId = payload.ReferenceId
-                                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
-                                                                        Decision = Some leaseDecision
-                                                                    }
-                                                            with
-                                                            | ex ->
-                                                                setGraceWatchPendingWorkStatusFlag true
-                                                                publishPendingWatchWorkTransitionIfNeeded ()
-                                                                return raise ex
-                                                | Blocked reason ->
-                                                    logToAnsiConsole
-                                                        Colors.Verbose
-                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point after lease acquisition: {reason}."
-
-                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
-
-                                                    return
-                                                        {
-                                                            ReferenceId = payload.ReferenceId
-                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
-                                                            Decision = Some leaseDecision
-                                                        }
-                                                | Degraded reason ->
-                                                    logToAnsiConsole
-                                                        Colors.Important
-                                                        $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync after lease acquisition: {reason}."
-
-                                                    postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
-
-                                                    return
-                                                        {
-                                                            ReferenceId = payload.ReferenceId
-                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
-                                                            Decision = Some leaseDecision
-                                                        }
-                                            | LatestCurrentBranchReferenceDecisionReason.NoApplicableReference ->
+                                        | Clean leaseStatus ->
+                                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
                                                 return
                                                     {
                                                         ReferenceId = payload.ReferenceId
                                                         Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
-                                                        Decision = Some leaseDecision
+                                                        Decision = Some acceptedDecision
                                                     }
-                                            | LatestCurrentBranchReferenceDecisionReason.ReferenceIdUnavailable
-                                            | LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable ->
-                                                return
-                                                    {
-                                                        ReferenceId = payload.ReferenceId
-                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.ProtocolRejected
-                                                        Decision = Some leaseDecision
-                                                    }
-                                            | _ ->
-                                                return
-                                                    {
-                                                        ReferenceId = payload.ReferenceId
-                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
-                                                        Decision = Some leaseDecision
-                                                    }
+                                            else
+                                                setGraceWatchPendingWorkStatusFlag true
+                                                publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                                    return
+                                                        {
+                                                            ReferenceId = payload.ReferenceId
+                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                            Decision = Some acceptedDecision
+                                                        }
+                                                else
+                                                    try
+                                                        do! clients.ApplyReference payload leaseStatus
+
+                                                        setGraceWatchPendingWorkStatusFlag false
+                                                        publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                        return
+                                                            {
+                                                                ReferenceId = payload.ReferenceId
+                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                                Decision = Some acceptedDecision
+                                                            }
+                                                    with
+                                                    | ex ->
+                                                        setGraceWatchPendingWorkStatusFlag true
+                                                        publishPendingWatchWorkTransitionIfNeeded ()
+                                                        return raise ex
+                                        | Blocked reason ->
+                                            logToAnsiConsole
+                                                Colors.Verbose
+                                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point after lease acquisition: {reason}."
+
+                                            postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+
+                                            return
+                                                {
+                                                    ReferenceId = payload.ReferenceId
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                                    Decision = Some acceptedDecision
+                                                }
+                                        | Degraded reason ->
+                                            logToAnsiConsole
+                                                Colors.Important
+                                                $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync after lease acquisition: {reason}."
+
+                                            postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+
+                                            return
+                                                {
+                                                    ReferenceId = payload.ReferenceId
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                    Decision = Some acceptedDecision
+                                                }
                                     })
 
                             match postLeaseRetryGate with
