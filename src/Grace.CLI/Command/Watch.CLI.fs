@@ -2104,40 +2104,58 @@ module Watch =
     /// Clears a specific resync attempt without losing a newer confidence-loss request.
     let private tryClearGraceWatchResyncAttempt attempt = Interlocked.CompareExchange(&graceWatchResyncGeneration, 0L, attempt) = attempt
 
-    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
-    let private hasPendingDurableWatchJournalEvidence () =
+    let mutable private manualPendingWatchWorkStatusFlag = 0
+
+    /// Reports whether a coordinator-owned side effect must keep Watch IPC dirty before normal queues can observe it.
+    let private hasManualPendingWatchWorkStatusFlag () =
+        Volatile.Read(&manualPendingWatchWorkStatusFlag)
+        <> 0
+
+    /// Reads whether unresolved durable journal rows still need local Watch processing.
+    let private inspectDurableWatchJournalPendingEvidence () =
         try
-            readWatchJournalPendingWorkSummaryForWatch()
-                .GetAwaiter()
-                .GetResult()
-                .HasPendingRows
+            let summary =
+                readWatchJournalPendingWorkSummaryForWatch()
+                    .GetAwaiter()
+                    .GetResult()
+
+            Ok summary.HasPendingRows
         with
         | ex ->
             logToAnsiConsole
                 Colors.Error
                 $"Grace Watch could not inspect durable journal pending work; treating status as dirty until local state can be read: {Markup.Escape(ex.Message)}."
 
-            true
+            Error ex.Message
+
+    /// Reports whether unresolved durable journal rows must keep Watch status dirty.
+    let private hasPendingDurableWatchJournalEvidence () =
+        match inspectDurableWatchJournalPendingEvidence () with
+        | Ok hasPendingRows -> hasPendingRows
+        | Error _ -> true
 
     /// Describes pending Watch work without merging process-local queues and durable journal evidence.
     type private PendingWatchWorkEvidence =
         {
             HasProcessablePendingWork: bool
+            HasManualPendingStatusEvidence: bool
             HasDurableWatchJournalEvidence: bool
         }
 
         /// Reports whether any Watch work or durable journal evidence must keep IPC dirty.
         member this.HasPendingWork =
             this.HasProcessablePendingWork
+            || this.HasManualPendingStatusEvidence
             || this.HasDurableWatchJournalEvidence
 
         /// Reports whether durable journal evidence is the only reason IPC must be dirty.
         member this.HasDurableOnlyPendingWork =
             this.HasDurableWatchJournalEvidence
             && not this.HasProcessablePendingWork
+            && not this.HasManualPendingStatusEvidence
 
-    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
-    let private hasProcessablePendingWatchWork () =
+    /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
+    let private hasProcessablePendingWatchWorkExceptManual () =
         isGraceWatchResyncPending ()
         || graceStatusHasChanged
         || not (
@@ -2147,16 +2165,35 @@ module Watch =
             && not (hasPendingStatusDifferences ())
         )
 
+    /// Evaluates pending Watch work without counting the startup catch-up marker against its own clean publication.
+    let private hasPendingWatchWorkExceptManual () =
+        hasProcessablePendingWatchWorkExceptManual ()
+        || hasPendingDurableWatchJournalEvidence ()
+
+    /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
+    let private hasProcessablePendingWatchWork () = hasProcessablePendingWatchWorkExceptManual ()
+
     /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
     let private hasPendingWatchWork () =
-        hasProcessablePendingWatchWork ()
+        hasManualPendingWatchWorkStatusFlag ()
+        || hasProcessablePendingWatchWork ()
         || hasPendingDurableWatchJournalEvidence ()
 
     /// Reads process-local and durable pending-work facts once for a single status publication decision.
     let private readPendingWatchWorkEvidence () =
         let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
 
-        { HasProcessablePendingWork = hasProcessablePendingWork; HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence () }
+        {
+            HasProcessablePendingWork = hasProcessablePendingWork
+            HasManualPendingStatusEvidence = hasManualPendingWatchWorkStatusFlag ()
+            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+        }
+
+    /// Exposes pending Watch work checks to tests without running the foreground timer loop.
+    let internal pendingWatchWorkEvidenceForWatchTests () =
+        let evidence = readPendingWatchWorkEvidence ()
+
+        evidence.HasProcessablePendingWork, evidence.HasPendingWork
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -2178,7 +2215,18 @@ module Watch =
             false
 
     /// Records the pending-work flag that the next Watch IPC snapshot should publish.
-    let private setGraceWatchPendingWorkStatusFlag hasPendingWork = lock watchStatusPublishLock (fun () -> setGraceWatchHasPendingWorkForStatus hasPendingWork)
+    let private setGraceWatchPendingWorkStatusFlag hasPendingWork =
+        lock watchStatusPublishLock (fun () ->
+            Interlocked.Exchange(&manualPendingWatchWorkStatusFlag, (if hasPendingWork then 1 else 0))
+            |> ignore
+
+            setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+    /// Sets the materialization pending status marker for focused Watch tests.
+    let internal setGraceWatchPendingWorkStatusFlagForWatchTests hasPendingWork = setGraceWatchPendingWorkStatusFlag hasPendingWork
+
+    /// Reports whether focused Watch tests still have the manual materialization pending marker set.
+    let internal hasManualPendingWatchWorkStatusFlagForWatchTests () = hasManualPendingWatchWorkStatusFlag ()
 
     /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
     let private pendingWatchWorkTransitionNeedsPublication () =
@@ -2741,6 +2789,7 @@ module Watch =
         uploadedFileVersions.Clear()
         lock processedFileRelativePathsPendingStatusLock (fun () -> processedFileRelativePathsPendingStatus.Clear())
         lock canceledFileUploadDeleteRelativePathsLock (fun () -> canceledFileUploadDeleteRelativePaths.Clear())
+        setGraceWatchPendingWorkStatusFlag false
         clearPendingStatusDifferencesForTests ()
         lock pendingStatusDifferencesLock (fun () -> pendingStatusDifferenceReplaySequences.Clear())
         clearGraceWatchResyncPending ()
@@ -3178,12 +3227,508 @@ module Watch =
     let internal handleSignalRAutomationEventForWatchTests readStatus rebaseCurrentBranch envelope =
         handleSignalRAutomationEvent readStatus rebaseCurrentBranch envelope
 
+    /// Names the coordinator result for one exact same-branch Reference notification.
+    type internal CurrentBranchMaterializationCoordinatorOutcomeReason =
+        /// The notification was ignored because it did not target the current Watch branch.
+        | NotCurrentBranch = 0
+        /// The notification failed the concrete Reference and root-identity protocol checks.
+        | ProtocolRejected = 1
+        /// BranchDto latest-reference authority made the notification stale or otherwise non-materializable.
+        | LatestAuthorityRejected = 2
+        /// Local Watch status is clean and trusted, so the apply seam completed for this exact Reference.
+        | Applied = 3
+        /// Local Watch status is trustworthy but currently blocks remote materialization until a later safe point.
+        | WaitingForSafePoint = 4
+        /// Watch could not trust local IPC/status authority even after degraded resync revalidation.
+        | WaitingForDegradedResync = 5
+
+    /// Carries the terminal coordinator result for one exact same-branch Reference notification.
+    type internal CurrentBranchMaterializationCoordinatorOutcome =
+        {
+            ReferenceId: ReferenceId
+            Reason: CurrentBranchMaterializationCoordinatorOutcomeReason
+            Decision: LatestCurrentBranchReferenceDecision option
+        }
+
+    /// Names the local status gate that decides whether a BranchDto-latest Reference may reach apply.
+    type internal CurrentBranchMaterializationStatusGate =
+        | NotCurrentBranch
+        | Clean of GraceWatchStatus
+        | Blocked of string
+        | Degraded of string
+
+    /// Coordinates a same-branch Reference once clean IPC and BranchDto latest authority have both been proven.
+    type private CurrentBranchMaterializationCoordinatorClients =
+        {
+            GetCurrentBranch: unit -> Task<Result<GraceReturnValue<Grace.Types.Branch.BranchDto>, GraceError>>
+            InspectLocalStatus: unit -> Task<GraceWatchStatusInspection>
+            RequestDegradedResync: string -> unit
+            WaitForSafePoint: CurrentBranchReferenceNotification -> CurrentBranchMaterializationStatusGate -> Task<unit>
+            ReestablishIpc: CurrentBranchReferenceNotification -> string -> Task<unit>
+            ApplyReference: CurrentBranchReferenceNotification -> GraceWatchStatus -> Task<unit>
+            MaxAttempts: int option
+        }
+
     /// Reports whether a same-branch Reference notification still matches the repository identity Watch has loaded.
     let private currentBranchReferenceNotificationTargetsCurrentBranch (payload: CurrentBranchReferenceNotification) =
         let current = Current()
 
         payload.RepositoryId = current.RepositoryId
         && payload.BranchId = current.BranchId
+
+    /// Reports whether a same-branch Reference notification still matches the repository identity persisted on disk.
+    let private currentBranchReferenceNotificationTargetsPersistedCurrentBranch (payload: CurrentBranchReferenceNotification) =
+        match tryInspectCurrentDirectoryConfiguration () with
+        | Ok inspection ->
+            payload.RepositoryId = inspection.Configuration.RepositoryId
+            && payload.BranchId = inspection.Configuration.BranchId
+        | Error _ -> false
+
+    /// Reports whether cached Watch identity and persisted repository identity both still match the notification.
+    let private currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch (payload: CurrentBranchReferenceNotification) =
+        currentBranchReferenceNotificationTargetsCurrentBranch payload
+        && currentBranchReferenceNotificationTargetsPersistedCurrentBranch payload
+
+    /// Reports whether the local-state database can be opened as durable Watch authority before materialization side effects.
+    let private hasReadableLocalStateDbAuthority () =
+        let inspection = Grace.CLI.LocalStateDb.inspectReadOnly (Current().GraceStatusFile)
+
+        inspection.ParentDirectoryExists
+        && inspection.DbFileExists
+        && not inspection.DbPathIsDirectory
+        && inspection.OpenedReadOnly
+
+    /// Converts current target, local queues, durable DB authority, and inspected IPC into the private materialization gate.
+    let private currentBranchMaterializationStatusGate payload (inspection: GraceWatchStatusInspection) =
+        if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+            NotCurrentBranch
+        elif updateInProgress () then
+            Blocked "Grace update marker is present"
+        elif hasManualPendingWatchWorkStatusFlag () then
+            Blocked "materialization pending status has not reached IPC"
+        elif hasProcessablePendingWatchWork () then
+            Blocked "process-local Watch queues have pending local observations"
+        elif inspection.IsUsable then
+            if not (hasReadableLocalStateDbAuthority ()) then
+                Degraded "missing local-state DB authority"
+            else
+                match inspectDurableWatchJournalPendingEvidence () with
+                | Error _ -> Degraded "unreadable durable Watch journal authority"
+                | Ok true -> Blocked "durable Watch journal has pending local observations"
+                | Ok false -> Clean inspection.Status.Value
+        elif inspection.ReadError.IsSome then
+            Degraded "unreadable Watch IPC/status authority"
+        elif not inspection.Exists then
+            Degraded "missing Watch IPC/status authority"
+        elif not inspection.IsFresh then
+            Degraded "stale Watch IPC/status authority"
+        elif not inspection.HasCurrentRepositoryIdentity then
+            Degraded "ambiguous Watch IPC/status authority"
+        else
+            match inspection.Status, inspection.EffectiveMode with
+            | Some status, Some GraceWatchRuntimeMode.HealthyIncremental when
+                status.HasPendingWatchWork
+                || not status.IsWorkingTreeClean
+                ->
+                Blocked "local Watch status has dirty or pending work"
+            | _, Some GraceWatchRuntimeMode.StartingUp -> Blocked "Watch startup catch-up is still in progress"
+            | _, Some GraceWatchRuntimeMode.Resynchronizing -> Blocked "Watch resync is still in progress"
+            | _, Some GraceWatchRuntimeMode.Suspended -> Degraded "Watch is suspended"
+            | _, Some GraceWatchRuntimeMode.Stopping -> Degraded "Watch IPC/status authority is stopping"
+            | _ -> Degraded "ambiguous Watch IPC/status authority"
+
+    /// Runs #678 protocol and BranchDto latest checks before the coordinator consults the local IPC gate.
+    let private currentBranchMaterializationDecision
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (current: Grace.Shared.Client.Configuration.GraceConfiguration)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        task {
+            match currentBranchReferenceProtocolValidationDecision current.RepositoryId current.BranchId payload with
+            | Some decision -> return Ok decision
+            | None ->
+                match! clients.GetCurrentBranch() with
+                | Error error ->
+                    let errorText = Markup.Escape(error.ToString())
+
+                    logToAnsiConsole Colors.Error $"Failed to refresh BranchDto for current-branch reference notification {payload.ReferenceId}: {errorText}."
+
+                    return Error error
+                | Ok branchReturnValue ->
+                    let branchDto = branchReturnValue.ReturnValue
+                    let! inspection = clients.InspectLocalStatus()
+
+                    let localStatus =
+                        match inspection.Status with
+                        | Some status when inspection.HasCurrentRepositoryIdentity -> Some status
+                        | _ -> None
+
+                    return Ok(decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus branchDto payload)
+        }
+
+    /// Processes one exact same-branch Reference notification behind the serialized materialization lane.
+    let private processCurrentBranchMaterializationNotification
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        task {
+            let current = Current()
+            let mutable terminalOutcome = Unchecked.defaultof<CurrentBranchMaterializationCoordinatorOutcome>
+            let mutable terminal = false
+            let mutable attempts = 0
+            let mutable degradedResyncRequestedForReason: string option = None
+            let mutable acceptedMaterializationDecision: LatestCurrentBranchReferenceDecision option = None
+            let mutable retriedAfterRecoveredLocalStatus = false
+
+            let canRetry () =
+                clients.MaxAttempts
+                |> Option.forall (fun maxAttempts -> attempts < maxAttempts)
+
+            while not terminal && canRetry () do
+                attempts <- attempts + 1
+
+                let! decisionResult =
+                    match acceptedMaterializationDecision with
+                    | Some decision -> Task.FromResult(Ok decision)
+                    | None -> currentBranchMaterializationDecision clients current payload
+
+                match decisionResult with
+                | Error _ ->
+                    terminalOutcome <-
+                        {
+                            ReferenceId = payload.ReferenceId
+                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                            Decision = None
+                        }
+
+                    terminal <- true
+                | Ok decision ->
+                    match decision.Reason with
+                    | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                        let! inspection = clients.InspectLocalStatus()
+
+                        match currentBranchMaterializationStatusGate payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Clean _ ->
+                            let acceptedDecision = decision
+                            acceptedMaterializationDecision <- Some acceptedDecision
+                            let mutable postLeaseRetryGate: CurrentBranchMaterializationStatusGate option = None
+
+                            let! cleanOutcome =
+                                WorkingDirectoryMaterialization.runWithLease (fun () ->
+                                    task {
+                                        let! leaseInspection = clients.InspectLocalStatus()
+
+                                        if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                            return
+                                                {
+                                                    ReferenceId = payload.ReferenceId
+                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                    Decision = Some acceptedDecision
+                                                }
+                                        else
+                                            match currentBranchMaterializationStatusGate payload leaseInspection with
+                                            | NotCurrentBranch ->
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                            | Clean leaseStatus ->
+                                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                    return
+                                                        {
+                                                            ReferenceId = payload.ReferenceId
+                                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                            Decision = Some acceptedDecision
+                                                        }
+                                                else
+                                                    setGraceWatchPendingWorkStatusFlag true
+                                                    publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                    if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                                        setGraceWatchPendingWorkStatusFlag false
+                                                        publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                        return
+                                                            {
+                                                                ReferenceId = payload.ReferenceId
+                                                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                                                Decision = Some acceptedDecision
+                                                            }
+                                                    else
+                                                        try
+                                                            do! clients.ApplyReference payload leaseStatus
+
+                                                            setGraceWatchPendingWorkStatusFlag false
+                                                            publishPendingWatchWorkTransitionIfNeeded ()
+
+                                                            return
+                                                                {
+                                                                    ReferenceId = payload.ReferenceId
+                                                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+                                                                    Decision = Some acceptedDecision
+                                                                }
+                                                        with
+                                                        | ex ->
+                                                            setGraceWatchPendingWorkStatusFlag true
+                                                            publishPendingWatchWorkTransitionIfNeeded ()
+                                                            return raise ex
+                                            | Blocked reason ->
+                                                logToAnsiConsole
+                                                    Colors.Verbose
+                                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point after lease acquisition: {reason}."
+
+                                                postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Blocked reason)
+
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                            | Degraded reason ->
+                                                logToAnsiConsole
+                                                    Colors.Important
+                                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync after lease acquisition: {reason}."
+
+                                                postLeaseRetryGate <- Some(CurrentBranchMaterializationStatusGate.Degraded reason)
+
+                                                return
+                                                    {
+                                                        ReferenceId = payload.ReferenceId
+                                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                                        Decision = Some acceptedDecision
+                                                    }
+                                    })
+
+                            match postLeaseRetryGate with
+                            | Some (CurrentBranchMaterializationStatusGate.Blocked reason as gate) ->
+                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                            Decision = cleanOutcome.Decision
+                                        }
+
+                                    terminal <- true
+                                elif canRetry () then
+                                    do! clients.WaitForSafePoint payload gate
+                                else
+                                    terminalOutcome <- cleanOutcome
+                                    terminal <- true
+                            | Some (CurrentBranchMaterializationStatusGate.Degraded reason) ->
+                                if not (currentBranchReferenceNotificationTargetsCurrentAndPersistedBranch payload) then
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                            Decision = cleanOutcome.Decision
+                                        }
+
+                                    terminal <- true
+                                elif degradedResyncRequestedForReason <> Some reason then
+                                    clients.RequestDegradedResync reason
+                                    degradedResyncRequestedForReason <- Some reason
+
+                                if not terminal then
+                                    if canRetry () then
+                                        do! clients.ReestablishIpc payload reason
+                                    else
+                                        terminalOutcome <- cleanOutcome
+                                        terminal <- true
+                            | _ ->
+                                terminalOutcome <- cleanOutcome
+                                terminal <- true
+                        | Blocked reason as gate ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
+                                do! clients.WaitForSafePoint payload gate
+                            else
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                        | Degraded reason ->
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.NoApplicableReference ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.ReferenceIdUnavailable
+                    | LatestCurrentBranchReferenceDecisionReason.ReferenceRootIdentityUnavailable ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.ProtocolRejected
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusUnavailable
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
+                    | LatestCurrentBranchReferenceDecisionReason.LocalStatusRequiresResync ->
+                        let! inspection = clients.InspectLocalStatus()
+
+                        match currentBranchMaterializationStatusGate payload inspection with
+                        | NotCurrentBranch ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Clean _ when
+                            not retriedAfterRecoveredLocalStatus
+                            && decision.Reason
+                               <> LatestCurrentBranchReferenceDecisionReason.LocalStatusIdentityMismatch
+                            && canRetry ()
+                            ->
+                            retriedAfterRecoveredLocalStatus <- true
+                        | Clean _ ->
+                            terminalOutcome <-
+                                {
+                                    ReferenceId = payload.ReferenceId
+                                    Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+                                    Decision = Some decision
+                                }
+
+                            terminal <- true
+                        | Blocked reason as gate ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Current-branch reference notification {payload.ReferenceId} is waiting for a safe local Watch point: {reason}."
+
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif canRetry () then
+                                do! clients.WaitForSafePoint payload gate
+                            else
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                        | Degraded reason ->
+                            if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
+                                terminalOutcome <-
+                                    {
+                                        ReferenceId = payload.ReferenceId
+                                        Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch
+                                        Decision = Some decision
+                                    }
+
+                                terminal <- true
+                            elif degradedResyncRequestedForReason <> Some reason then
+                                clients.RequestDegradedResync reason
+                                degradedResyncRequestedForReason <- Some reason
+
+                            if not terminal then
+                                logToAnsiConsole
+                                    Colors.Important
+                                    $"Current-branch reference notification {payload.ReferenceId} is waiting for degraded Watch IPC resync: {reason}."
+
+                                if canRetry () then
+                                    do! clients.ReestablishIpc payload reason
+                                else
+                                    terminalOutcome <-
+                                        {
+                                            ReferenceId = payload.ReferenceId
+                                            Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForDegradedResync
+                                            Decision = Some decision
+                                        }
+
+                                    terminal <- true
+                    | _ ->
+                        terminalOutcome <-
+                            {
+                                ReferenceId = payload.ReferenceId
+                                Reason = CurrentBranchMaterializationCoordinatorOutcomeReason.LatestAuthorityRejected
+                                Decision = Some decision
+                            }
+
+                        terminal <- true
+
+            return terminalOutcome
+        }
+
+    /// Serializes current-branch materialization so queued References revalidate only when they own the lane.
+    let private runCurrentBranchMaterializationCoordinator
+        (clients: CurrentBranchMaterializationCoordinatorClients)
+        (payload: CurrentBranchReferenceNotification)
+        =
+        WorkingDirectoryMaterialization.runSerializedLane (fun () -> processCurrentBranchMaterializationNotification clients payload)
 
     /// Reads the current BranchDto so same-branch notifications are checked against server latest-reference authority.
     let private getCurrentBranchForCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
@@ -3204,8 +3749,8 @@ module Watch =
 
         Grace.SDK.Branch.Get parameters
 
-    /// Handles same-branch Reference notifications with injectable readers for focused Watch tests.
-    let private handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus (payload: CurrentBranchReferenceNotification) =
+    /// Handles same-branch Reference notifications with injectable coordinator clients for focused Watch tests.
+    let private handleCurrentBranchReferenceNotificationWithCoordinatorClients clients (payload: CurrentBranchReferenceNotification) =
         task {
             try
                 if not
@@ -3216,59 +3761,82 @@ module Watch =
 
                     return None
                 else
-                    let current = Current()
+                    let! outcome = runCurrentBranchMaterializationCoordinator clients payload
 
-                    match currentBranchReferenceProtocolValidationDecision current.RepositoryId current.BranchId payload with
+                    match outcome.Decision with
                     | Some decision ->
-                        logToAnsiConsole
-                            Colors.Verbose
-                            $"Skipped current-branch reference notification {payload.ReferenceId} because protocol validation was {decision.Reason}."
+                        match decision.Reason with
+                        | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
+                        | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
+                            logToAnsiConsole
+                                Colors.Highlighted
+                                $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
+                        | reason ->
+                            logToAnsiConsole
+                                Colors.Verbose
+                                $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
 
                         return Some decision
-                    | None ->
-                        match! getCurrentBranch () with
-                        | Error error ->
-                            let errorText = Markup.Escape(error.ToString())
-
-                            logToAnsiConsole
-                                Colors.Error
-                                $"Failed to refresh BranchDto for current-branch reference notification {payload.ReferenceId}: {errorText}."
-
-                            return None
-                        | Ok branchReturnValue ->
-                            let branchDto = branchReturnValue.ReturnValue
-                            let! localStatus = readLocalStatus ()
-
-                            let decision = decideLatestCurrentBranchReferenceMaterialization current.RepositoryId current.BranchId localStatus branchDto payload
-
-                            match decision.Reason with
-                            | LatestCurrentBranchReferenceDecisionReason.SameRoot ->
-                                logToAnsiConsole
-                                    Colors.Verbose
-                                    $"Skipped current-branch reference notification {payload.ReferenceId} because local Watch status already has root {payload.DirectoryId}."
-                            | LatestCurrentBranchReferenceDecisionReason.RemoteMaterializationRequired ->
-                                logToAnsiConsole
-                                    Colors.Highlighted
-                                    $"Current-branch reference notification {payload.ReferenceId} requires remote materialization for root {payload.DirectoryId}."
-                            | reason ->
-                                logToAnsiConsole
-                                    Colors.Verbose
-                                    $"Skipped current-branch reference notification {payload.ReferenceId} because latest-current-branch decision was {reason}."
-
-                            return Some decision
+                    | None -> return None
             with
             | ex ->
                 logToAnsiConsole Colors.Error $"Failed to process current-branch reference notification {payload.ReferenceId}: {Markup.Escape(ex.Message)}."
                 return None
         }
 
+    /// Handles same-branch Reference notifications with injectable readers for focused Watch tests.
+    let private handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus (payload: CurrentBranchReferenceNotification) =
+        let inspectLocalStatus () =
+            task {
+                let! status = readLocalStatus ()
+
+                return
+                    match status with
+                    | Some status ->
+                        { Exists = true; Status = Some status; PersistedMode = Some status.Mode; SafetyFlags = status.SafetyFlags; ReadError = None }
+                    | None ->
+                        {
+                            Exists = false
+                            Status = None
+                            PersistedMode = None
+                            SafetyFlags =
+                                [|
+                                    "missingStatus"
+                                    "requiresExplicitResync"
+                                |]
+                            ReadError = None
+                        }
+            }
+
+        handleCurrentBranchReferenceNotificationWithCoordinatorClients
+            {
+                GetCurrentBranch = getCurrentBranch
+                InspectLocalStatus = inspectLocalStatus
+                RequestDegradedResync = ignore
+                WaitForSafePoint = fun _ _ -> Task.FromResult(())
+                ReestablishIpc = fun _ _ -> Task.FromResult(())
+                ApplyReference = fun _ _ -> Task.FromResult(())
+                MaxAttempts = Some 3
+            }
+            payload
+
     /// Handles same-branch Reference notifications that later WS7 slices can use for remote materialization.
     let private handleCurrentBranchReferenceNotification (payload: CurrentBranchReferenceNotification) =
         task {
             let! _ =
-                handleCurrentBranchReferenceNotificationWithClients
-                    (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
-                    getGraceWatchStatus
+                handleCurrentBranchReferenceNotificationWithCoordinatorClients
+                    {
+                        GetCurrentBranch = (fun () -> getCurrentBranchForCurrentBranchReferenceNotification payload)
+                        InspectLocalStatus = inspectGraceWatchStatus
+                        RequestDegradedResync = requestGraceWatchExplicitResync
+                        WaitForSafePoint = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
+                        ReestablishIpc = fun _ _ -> task { do! Task.Delay(TimeSpan.FromSeconds(1.0)) }
+                        ApplyReference = fun _ _ -> Task.FromResult(())
+                        MaxAttempts = None
+                    }
                     payload
 
             return ()
@@ -3280,6 +3848,36 @@ module Watch =
     /// Exposes same-branch Reference notification handling to Watch tests without opening a HubConnection.
     let internal handleCurrentBranchReferenceNotificationWithClientsForWatchTests getCurrentBranch readLocalStatus payload =
         handleCurrentBranchReferenceNotificationWithClients getCurrentBranch readLocalStatus payload
+
+    /// Exposes serialized current-branch materialization coordination to Watch tests without opening a HubConnection.
+    let internal handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+        getCurrentBranch
+        inspectLocalStatus
+        requestDegradedResync
+        waitForSafePoint
+        reestablishIpc
+        applyReference
+        payload
+        =
+        task {
+            if currentBranchReferenceNotificationTargetsCurrentBranch payload then
+                let! outcome =
+                    runCurrentBranchMaterializationCoordinator
+                        {
+                            GetCurrentBranch = getCurrentBranch
+                            InspectLocalStatus = inspectLocalStatus
+                            RequestDegradedResync = requestDegradedResync
+                            WaitForSafePoint = waitForSafePoint
+                            ReestablishIpc = reestablishIpc
+                            ApplyReference = applyReference
+                            MaxAttempts = Some 3
+                        }
+                        payload
+
+                return Some outcome
+            else
+                return None
+        }
 
     /// Registers SignalR branch groups only after the local refresh still has authority for the active branch.
     let private registerCurrentSignalRParentBranchWithClients
@@ -4877,7 +5475,7 @@ module Watch =
             let mutable attemptedStartupCompletion = false
 
             if
-                not (hasProcessablePendingWatchWork ())
+                not (hasProcessablePendingWatchWorkExceptManual ())
                 && currentGraceWatchRuntimeMode () = GraceWatchRuntimeMode.StartingUp
             then
                 attemptedStartupCompletion <- true
@@ -4892,23 +5490,27 @@ module Watch =
 
             if
                 attemptedStartupCompletion
-                && not (hasPendingWatchWork ())
+                && not (hasPendingWatchWorkExceptManual ())
             then
                 promoteStartupModeIfRecoverySucceeded ()
 
             if
                 attemptedStartupCompletion
-                && not (hasPendingWatchWork ())
+                && not (hasPendingWatchWorkExceptManual ())
             then
                 let! startupCatchUpStatus = readGraceStatusFileClient ()
                 updateGraceStatusDirectoryIds startupCatchUpStatus
 
-                do!
-                    publishGraceWatchInterprocessFileForCurrentConfidence
+                setGraceWatchPendingWorkStatusFlag false
+
+                let! cleanStartupStatusPublished =
+                    tryPublishGraceWatchInterprocessFileForCurrentConfidence
                         startupCatchUpStatus
                         graceStatusDirectoryIds
                         updateGraceWatchInterprocessFileClient
                         "startup catch-up"
+
+                if not cleanStartupStatusPublished then setGraceWatchPendingWorkStatusFlag true
         }
 
     /// Exposes delayed startup replay completion to tests without starting the foreground watcher loop.
