@@ -3116,8 +3116,17 @@ module Branch =
                     match! runBranchSwitchWatchCleanPreflight operations correlationId with
                     | Error error -> return Error error
                     | Ok () ->
-                        let! result = WorkingDirectoryMaterialization.runWithLease workflow
-                        return Ok result
+                        let! result =
+                            WorkingDirectoryMaterialization.runWithLease (fun () ->
+                                task {
+                                    match! runBranchSwitchWatchCleanPreflight operations correlationId with
+                                    | Error error -> return Error error
+                                    | Ok () ->
+                                        let! workflowResult = workflow ()
+                                        return Ok workflowResult
+                                })
+
+                        return result
                 finally
                     if leaseCreatedByThisInvocation then
                         deleteBranchSwitchWorkflowLeaseIfOwned switchLeaseFileName leaseText
