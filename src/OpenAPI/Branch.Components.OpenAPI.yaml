@@ -634,8 +634,8 @@
           TargetReferenceId: c8f9bac8-d489-46c7-917f-b36b7d9efa9a
           Path: src/App.fs
           ReferenceTypeFilter:
-            - Commit
-            - Save
+            - commit
+            - save
           MaxReferences: 1000
           IncludeLineText: true
           Lines:

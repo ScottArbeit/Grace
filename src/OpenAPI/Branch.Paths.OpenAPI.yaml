@@ -423,8 +423,8 @@
                   StartLine: 1
                   EndLine: 1
                   ReferenceTypes:
-                    - Commit
-                    - Save
+                    - commit
+                    - save
                   MaxReferences: 1000
                   IncludeLineText: true
       responses:

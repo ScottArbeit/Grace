@@ -2,7 +2,7 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "79268af410411d440fc9c472f97c2ef0894d570c32958015df3ac7af6cf64a68",
+  "sourceProjectionSha256": "f9bbbb158a5a0c7158069d4889f37e0d60343546cf8fa4772b38876c971a8a36",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
     "pwsh": "PowerShell 7.6.3",
@@ -48,7 +48,7 @@
         "OpenAPI warning: #/components/schemas/ScopedOutboundUrl/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UploadMetadata/properties/BlobUriWithSasToken - The format uri is not supported by Kiota and the string type will be used.",
         "OpenAPI warning: #/components/schemas/UriString - The format uri is not supported by Kiota and the string type will be used.",
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
       ],
       "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
       "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
@@ -62,7 +62,7 @@
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
       "evidence": [
-        "error generating the client: One or more errors occurred. (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
       ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
@@ -180,11 +180,11 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "1818874cd76937f70fd657258948f029af55b17269d5a61ef817da982efeeff0"
+      "manifestSha256": "f06a080b7837aeb3aa1265a6ddbc8630e1c0f81d2f92814f1777e7da0cf8330a"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "46d4e022f124cc7977cdf1d7dcb7b47a349d40da9d6d3f85cfbdb91f631b6921"
+      "manifestSha256": "05342655c99916a2482d83661e6f3d88edf0d4f3cdaf83e55a282a63988a45f0"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",

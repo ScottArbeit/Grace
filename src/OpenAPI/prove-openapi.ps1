@@ -1087,6 +1087,31 @@ function Test-OpenApiBranchReferenceDiffDetails {
         Add-Failure 'Reference OpenAPI components must expose public selector fields, not internal actor command/event shapes or stale RepositoryText naming.'
     }
 
+    $branchComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Components.OpenAPI.yaml') -Raw
+    foreach ($requiredAnnotationReferenceTypeContract in @(
+            '$ref: ''Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType''',
+            'ReferenceTypeFilter:',
+            '- commit',
+            '- save'
+        )) {
+        Assert-TextContains $branchComponentsText $requiredAnnotationReferenceTypeContract "Branch annotation OpenAPI contract must publish ReferenceType wire values and shared ReferenceType references; missing '$requiredAnnotationReferenceTypeContract'."
+    }
+
+    foreach ($staleAnnotationReferenceType in @('- Commit', '- Save')) {
+        if ($branchComponentsText.Contains($staleAnnotationReferenceType, [StringComparison]::Ordinal)) {
+            Add-Failure "Branch annotation OpenAPI examples must use ReferenceType JSON wire values, not F# case-name item '$staleAnnotationReferenceType'."
+        }
+    }
+
+    $branchPathsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Branch.Paths.OpenAPI.yaml') -Raw
+    foreach ($requiredAnnotatePathReferenceTypeContract in @(
+            'ReferenceTypes:',
+            '- commit',
+            '- save'
+        )) {
+        Assert-TextContains $branchPathsText $requiredAnnotatePathReferenceTypeContract "Branch annotate OpenAPI path example must publish ReferenceType wire values; missing '$requiredAnnotatePathReferenceTypeContract'."
+    }
+
     $sharedComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
     $referenceTypeSchemaMatch = [regex]::Match($sharedComponentsText, '(?m)^    ReferenceType:\r?\n      type:\s*string\r?\n      enum:\s*\[(?<values>[^\]]+)\]')
     if (-not $referenceTypeSchemaMatch.Success) {
@@ -1608,6 +1633,96 @@ function Get-RequiredJsonProperty {
     return $property.Value
 }
 
+function Get-ProjectionHashFromManifest {
+    param(
+        [string] $RepoRoot,
+        [string] $ProjectionRelativePath
+    )
+
+    $openApiRoot = Get-OpenApiRoot $RepoRoot
+    $manifest = Get-OpenApiManifest $openApiRoot
+    if ($null -eq $manifest) {
+        return $null
+    }
+
+    $projectionArtifact =
+        @($manifest.generatedArtifacts) |
+        Where-Object { $_.path -eq ([IO.Path]::GetFileName($ProjectionRelativePath)) } |
+        Select-Object -First 1
+
+    if ($null -eq $projectionArtifact) {
+        Add-Failure "OpenAPI proof manifest is missing generated artifact '$ProjectionRelativePath'."
+        return $null
+    }
+
+    $manifestHash = [string] (Get-RequiredJsonProperty $projectionArtifact 'sha256' "OpenAPI proof manifest artifact '$ProjectionRelativePath'")
+    if ([string]::IsNullOrWhiteSpace($manifestHash)) {
+        Add-Failure "OpenAPI proof manifest artifact '$ProjectionRelativePath' is missing sha256."
+        return $null
+    }
+
+    return $manifestHash.ToLowerInvariant()
+}
+
+function Test-SdkGeneratedHarnessFreshness {
+    param(
+        [string] $RepoRoot,
+        [string] $ProjectionRelativePath,
+        [string] $ActualProjectionHash,
+        [string] $ManifestProjectionHash
+    )
+
+    $reportPath = Join-Path $RepoRoot 'sdk/generated/generator-report.json'
+    if (-not (Test-Path -LiteralPath $reportPath -PathType Leaf)) {
+        Add-Failure "Missing SDK generator report: $reportPath"
+        return
+    }
+
+    $report = Get-Content -LiteralPath $reportPath -Raw | ConvertFrom-Json
+    $reportedProjection = [string] (Get-RequiredJsonProperty $report 'sourceProjection' 'SDK generator report')
+    $reportedProjectionHash = [string] (Get-RequiredJsonProperty $report 'sourceProjectionSha256' 'SDK generator report')
+
+    if ($reportedProjection -ne $ProjectionRelativePath) {
+        Add-Failure "SDK generator report sourceProjection must be '$ProjectionRelativePath'; actual '$reportedProjection'."
+    }
+
+    if ($reportedProjectionHash.ToLowerInvariant() -ne $ActualProjectionHash) {
+        Add-Failure "SDK generator report is stale for $ProjectionRelativePath. Expected final projection hash $ActualProjectionHash, actual $reportedProjectionHash."
+    }
+
+    if ($null -ne $ManifestProjectionHash -and $reportedProjectionHash.ToLowerInvariant() -ne $ManifestProjectionHash) {
+        Add-Failure "SDK generator report hash must match OpenAPI proof manifest for $ProjectionRelativePath. Manifest $ManifestProjectionHash, report $reportedProjectionHash."
+    }
+
+    foreach ($generatedFile in @($report.generatedFiles)) {
+        $kind = [string] $generatedFile.kind
+        if (-not $kind.EndsWith('-generated-metadata', [StringComparison]::Ordinal)) {
+            continue
+        }
+
+        $relativePath = [string] (Get-RequiredJsonProperty $generatedFile 'path' 'SDK generator report generated file')
+        if ([string]::IsNullOrWhiteSpace($relativePath)) {
+            continue
+        }
+
+        $metadataPath = Join-Path $RepoRoot $relativePath
+        if (-not (Test-Path -LiteralPath $metadataPath -PathType Leaf)) {
+            Add-Failure "SDK generated metadata file is missing: $relativePath"
+            continue
+        }
+
+        $metadataText = Get-Content -LiteralPath $metadataPath -Raw
+        Assert-TextContains $metadataText $ProjectionRelativePath "SDK generated metadata file $relativePath must name source projection '$ProjectionRelativePath'."
+        Assert-TextContains $metadataText $ActualProjectionHash "SDK generated metadata file $relativePath must carry final projection hash '$ActualProjectionHash'."
+
+        if ($null -ne $ManifestProjectionHash -and -not $metadataText.Contains($ManifestProjectionHash, [StringComparison]::Ordinal)) {
+            Add-Failure "SDK generated metadata file $relativePath must match OpenAPI proof manifest projection hash '$ManifestProjectionHash'."
+        }
+    }
+
+    Add-Pass 'SDK generator report and generated language metadata match the final OpenAPI projection and proof manifest hash.'
+}
+
 function Test-GeneratedClientMatrixProof {
     param([string] $RepoRoot)
 
@@ -1626,6 +1741,7 @@ function Test-GeneratedClientMatrixProof {
     }
 
     $projectionPath = Join-Path $RepoRoot ([string] $projectionRelativePath)
+    $actualProjectionHash = $null
     if (-not (Test-Path -LiteralPath $projectionPath -PathType Leaf)) {
         Add-Failure "Generator matrix source projection is missing: $projectionRelativePath"
     }
@@ -1635,6 +1751,15 @@ function Test-GeneratedClientMatrixProof {
         if ($actualProjectionHash -ne $recordedProjectionHash.ToLowerInvariant()) {
             Add-Failure "Generator matrix evidence is stale for $projectionRelativePath. Expected $recordedProjectionHash, actual $actualProjectionHash."
         }
+    }
+
+    $manifestProjectionHash = Get-ProjectionHashFromManifest $RepoRoot ([string] $projectionRelativePath)
+    if ($null -ne $actualProjectionHash -and $null -ne $manifestProjectionHash -and $actualProjectionHash -ne $manifestProjectionHash) {
+        Add-Failure "OpenAPI proof manifest is stale for $projectionRelativePath. Manifest $manifestProjectionHash, actual $actualProjectionHash."
+    }
+
+    if ($null -ne $actualProjectionHash) {
+        Test-SdkGeneratedHarnessFreshness $RepoRoot ([string] $projectionRelativePath) $actualProjectionHash $manifestProjectionHash
     }
 
     $acceptedTier = [string] (Get-RequiredJsonProperty $evidence 'acceptedTier' 'Generator matrix evidence')

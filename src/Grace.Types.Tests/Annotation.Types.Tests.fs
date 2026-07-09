@@ -64,7 +64,7 @@ type AnnotationContractTests() =
                 {
                     SourceReferenceId = "source-reference-1"
                     ReferenceId = sourceReferenceId
-                    ReferenceType = "Commit"
+                    ReferenceType = "commit"
                     ReferenceText = "previous commit"
                     DirectoryVersionId = directoryVersionId
                     CreatedAt = None
@@ -99,6 +99,15 @@ type AnnotationContractTests() =
 
                 Assert.That(root.GetProperty("Path").GetString(), Is.EqualTo("src/App.fs"))
                 Assert.That(root.GetProperty("ReferenceTypeFilter").ValueKind, Is.EqualTo(JsonValueKind.Array))
+
+                let serializedReferenceTypeFilter =
+                    root
+                        .GetProperty("ReferenceTypeFilter")
+                        .EnumerateArray()
+                    |> Seq.head
+
+                Assert.That(serializedReferenceTypeFilter.GetString(), Is.EqualTo("commit"))
+
                 Assert.That(root.GetProperty("SourceReferences").ValueKind, Is.EqualTo(JsonValueKind.Array))
 
                 let serializedSourceReference =
@@ -112,6 +121,13 @@ type AnnotationContractTests() =
                         .GetProperty("SourceReferences")
                         .GetArrayLength(),
                     Is.EqualTo(1)
+                )
+
+                Assert.That(
+                    serializedSourceReference
+                        .GetProperty("ReferenceType")
+                        .GetString(),
+                    Is.EqualTo("commit")
                 )
 
                 Assert.That(
@@ -169,20 +185,20 @@ type AnnotationContractTests() =
             { validAnnotation true with
                 SourceReferences =
                     [|
-                        { (validAnnotation true).SourceReferences[0] with ReferenceType = "Bogus" }
+                        { (validAnnotation true).SourceReferences[0] with ReferenceType = "bogus" }
                     |]
             }
 
         validate annotation
-        |> assertErrorContains "unknown ReferenceType 'Bogus'"
+        |> assertErrorContains "unknown ReferenceType 'bogus'"
 
     /// Verifies that annotation validation rejects unknown reference type filter.
     [<Test>]
     member _.AnnotationValidationRejectsUnknownReferenceTypeFilter() =
-        let annotation = { validAnnotation true with ReferenceTypeFilter = [| "Bogus" |] }
+        let annotation = { validAnnotation true with ReferenceTypeFilter = [| "bogus" |] }
 
         validate annotation
-        |> assertErrorContains "unknown ReferenceType 'Bogus'"
+        |> assertErrorContains "unknown ReferenceType 'bogus'"
 
     /// Verifies that annotate parameters default reference budget is one thousand.
     [<Test>]

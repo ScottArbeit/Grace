@@ -112,7 +112,10 @@ module Branch =
         { AnnotationSourceReference.Default with
             SourceReferenceId = $"{referenceDto.ReferenceId}"
             ReferenceId = referenceDto.ReferenceId
-            ReferenceType = getDiscriminatedUnionCaseName referenceDto.ReferenceType
+            ReferenceType =
+                JsonSerializer
+                    .Serialize(referenceDto.ReferenceType, Constants.JsonSerializerOptions)
+                    .Trim('"')
             ReferenceText = referenceDto.ReferenceText
             DirectoryVersionId = referenceDto.DirectoryId
             CreatedAt = Some referenceDto.CreatedAt

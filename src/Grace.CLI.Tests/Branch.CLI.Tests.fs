@@ -113,21 +113,21 @@ module BranchCommandTests =
                 { AnnotationSourceReference.Default with
                     SourceReferenceId = "source-last"
                     ReferenceId = lastChangedReferenceId
-                    ReferenceType = "Commit"
+                    ReferenceType = "commit"
                     ReferenceText = "Change line constants"
                     CreatedBy = Some "alice"
                 }
                 { AnnotationSourceReference.Default with
                     SourceReferenceId = "source-introduced"
                     ReferenceId = introducedReferenceId
-                    ReferenceType = "Promotion"
+                    ReferenceType = "promotion"
                     ReferenceText = "Introduce file"
                     CreatedBy = Some "bob"
                 }
                 { AnnotationSourceReference.Default with
                     SourceReferenceId = "source-boundary"
                     ReferenceId = lastChangedReferenceId
-                    ReferenceType = "Commit"
+                    ReferenceType = "commit"
                     ReferenceText = "Boundary row"
                     CreatedBy = None
                 }

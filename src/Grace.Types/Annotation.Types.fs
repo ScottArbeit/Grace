@@ -28,13 +28,21 @@ module Annotation =
     /// Represents annotation source row id.
     type AnnotationSourceRowId = string
 
-    /// Represents reference type name.
+    /// Represents reference type wire value.
     type ReferenceTypeName = string
 
-    /// Names the public reference type carried in annotation filters and source rows.
-    let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
+    /// Converts a reference type union case to the JSON wire value published by the shared ReferenceType schema.
+    let private referenceTypeWireValue (referenceType: ReferenceType) =
+        let caseName = getDiscriminatedUnionCaseName referenceType
+        $"{caseName.Substring(0, 1).ToLowerInvariant()}{caseName.Substring(1)}"
 
-    let private referenceTypeNames = listCases<ReferenceType> () |> Set.ofArray
+    let private referenceTypeWireValues =
+        listCases<ReferenceType> ()
+        |> Array.choose (
+            ReferenceType.FromString
+            >> Option.map referenceTypeWireValue
+        )
+        |> Set.ofArray
 
     /// Represents annotation line range.
     [<MessagePackObject; GenerateSerializer>]
@@ -87,7 +95,7 @@ module Annotation =
             {
                 SourceReferenceId = String.Empty
                 ReferenceId = ReferenceId.Empty
-                ReferenceType = referenceTypeName ReferenceType.Commit
+                ReferenceType = referenceTypeWireValue ReferenceType.Commit
                 ReferenceText = String.Empty
                 DirectoryVersionId = DirectoryVersionId.Empty
                 CreatedAt = None
@@ -211,7 +219,9 @@ module Annotation =
                 RequestedLineRange = requestedLineRange
                 TargetReferenceId = targetReferenceId
                 Path = path
-                ReferenceTypeFilter = referenceTypeFilter |> Array.map referenceTypeName
+                ReferenceTypeFilter =
+                    referenceTypeFilter
+                    |> Array.map referenceTypeWireValue
                 MaxReferences = maxReferences
                 IncludeLineText = includeLineText
                 Lines = if includeLineText then lines else Array.empty
@@ -243,8 +253,8 @@ module Annotation =
             | [] -> Ok()
             | errors -> Error(List.rev errors)
 
-    /// Checks whether a reference type name is outside the known annotation contract.
-    let private isUnknownReferenceTypeName referenceTypeName = not (referenceTypeNames.Contains referenceTypeName)
+    /// Checks whether a reference type wire value is outside the known annotation contract.
+    let private isUnknownReferenceTypeName referenceTypeName = not (referenceTypeWireValues.Contains referenceTypeName)
 
     /// Detects duplicate non-empty values in validation input.
     let private hasDuplicates values =

@@ -57,7 +57,7 @@ async function example() {
 
   const body = {
     // AnnotateParameters
-    annotateParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"TargetReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","Path":"src/App.fs","StartLine":1,"EndLine":1,"ReferenceTypes":["Commit","Save"],"MaxReferences":1000,"IncludeLineText":true},
+    annotateParameters: {"CorrelationId":"cli-20260604T181500Z-0001","Principal":"user:alice","OwnerId":"9dd5f81f-dc43-4839-9173-85d09394f30f","OrganizationId":"e35d64a9-b990-44f5-bf02-32ad7d15630c","RepositoryId":"ab6f35ef-6e01-440b-8f9b-c343a5272095","BranchId":"de7bf47d-23ae-4599-af68-68a317ea390d","IncludeDeleted":false,"TargetReferenceId":"c8f9bac8-d489-46c7-917f-b36b7d9efa9a","Path":"src/App.fs","StartLine":1,"EndLine":1,"ReferenceTypes":["commit","save"],"MaxReferences":1000,"IncludeLineText":true},
   } satisfies AnnotateBranchRequest;
 
   try {

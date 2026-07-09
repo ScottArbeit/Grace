@@ -36,12 +36,12 @@ type AnnotationLineCoreTests() =
 
     /// Builds source Reference test data for the server unit annotation Line Core scenarios in this file.
     let sourceReference sourceReferenceId referenceId referenceText directoryVersionId =
-        sourceReferenceWithType sourceReferenceId referenceId "Commit" referenceText directoryVersionId
+        sourceReferenceWithType sourceReferenceId referenceId "commit" referenceText directoryVersionId
 
     let oldReference = sourceReference "source-reference-old" oldReferenceId "old" oldDirectoryVersionId
     let newReference = sourceReference "source-reference-new" newReferenceId "new" newDirectoryVersionId
-    let saveReference = sourceReferenceWithType "source-reference-save" saveReferenceId "Save" "save" saveDirectoryVersionId
-    let tagReference = sourceReferenceWithType "source-reference-tag" tagReferenceId "Tag" "tag" tagDirectoryVersionId
+    let saveReference = sourceReferenceWithType "source-reference-save" saveReferenceId "save" "save" saveDirectoryVersionId
+    let tagReference = sourceReferenceWithType "source-reference-tag" tagReferenceId "tag" "tag" tagDirectoryVersionId
 
     let historyDocument sourceReference content = { SourceReference = sourceReference; Path = "src/App.fs"; Content = bytes content }
 
@@ -660,7 +660,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1))
                 Assert.That(annotation.SourceReferences[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
-                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
+                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("commit")))
         )
 
     /// Verifies that build Annotation Traverses Filtered Save Without Severing Continuity To Earlier Commit.
@@ -684,7 +684,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
                 Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-new"))
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1))
-                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
+                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("commit")))
         )
 
     /// Verifies that build Annotation Rejects Filtered Reference At Different Path Because V1 Does Not Follow Renames.
@@ -708,7 +708,7 @@ type AnnotationLineCoreTests() =
     /// Verifies that build Annotation Keeps Unchanged Rebase From Becoming Last Changed Reference.
     [<Test>]
     member _.BuildAnnotationKeepsUnchangedRebaseFromBecomingLastChangedReference() =
-        let rebaseReference = sourceReferenceWithType "source-reference-rebase" targetReferenceId "Rebase" "rebase" newDirectoryVersionId
+        let rebaseReference = sourceReferenceWithType "source-reference-rebase" targetReferenceId "rebase" "rebase" newDirectoryVersionId
 
         let annotation =
             buildAnnotation (
@@ -732,13 +732,13 @@ type AnnotationLineCoreTests() =
             Action (fun () ->
                 Assert.That(annotation.SourceRows, Has.Length.EqualTo(1))
                 Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-old"))
-                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Commit")))
+                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("commit")))
         )
 
     /// Verifies that build Annotation Projects Changed Rebase To Explicit Boundary When Filtered Out.
     [<Test>]
     member _.BuildAnnotationProjectsChangedRebaseToExplicitBoundaryWhenFilteredOut() =
-        let rebaseReference = sourceReferenceWithType "source-reference-rebase" targetReferenceId "Rebase" "rebase" newDirectoryVersionId
+        let rebaseReference = sourceReferenceWithType "source-reference-rebase" targetReferenceId "rebase" "rebase" newDirectoryVersionId
 
         let annotation =
             buildAnnotation (
@@ -764,7 +764,7 @@ type AnnotationLineCoreTests() =
                 Assert.That(annotation.Spans[0].BoundaryId, Is.EqualTo(annotation.Boundaries[0].BoundaryId))
                 Assert.That(annotation.SourceRows[0].SourceReferenceId, Is.EqualTo("source-reference-rebase"))
                 Assert.That(annotation.SourceReferences, Has.Length.EqualTo(1))
-                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("Rebase")))
+                Assert.That(annotation.SourceReferences[0].ReferenceType, Is.EqualTo("rebase")))
         )
 
     /// Verifies that build Annotation Treats Tag As Eligible Without Filter And When Selected.
@@ -795,8 +795,8 @@ type AnnotationLineCoreTests() =
             Action (fun () ->
                 assertValid withoutFilter
                 assertValid tagOnly
-                Assert.That(withoutFilter.SourceReferences[0].ReferenceType, Is.EqualTo("Tag"))
-                Assert.That(tagOnly.SourceReferences[0].ReferenceType, Is.EqualTo("Tag")))
+                Assert.That(withoutFilter.SourceReferences[0].ReferenceType, Is.EqualTo("tag"))
+                Assert.That(tagOnly.SourceReferences[0].ReferenceType, Is.EqualTo("tag")))
         )
 
     /// Verifies that build Annotation Bounds Unauthorized Ancestor When History Starts Mid Span.
@@ -927,7 +927,7 @@ type AnnotationLineCoreTests() =
     /// Verifies that build Annotation Bounds Traversal Budget Reached Mid Span.
     [<Test>]
     member _.BuildAnnotationBoundsTraversalBudgetReachedMidSpan() =
-        let middleReference = sourceReferenceWithType "source-reference-middle" saveReferenceId "Commit" "middle" saveDirectoryVersionId
+        let middleReference = sourceReferenceWithType "source-reference-middle" saveReferenceId "commit" "middle" saveDirectoryVersionId
 
         let annotation =
             buildWithMaxReferences
@@ -956,7 +956,7 @@ type AnnotationLineCoreTests() =
     /// Verifies that build Annotation Ignores Pruned Different Path Ancestor When Budget Bounded.
     [<Test>]
     member _.BuildAnnotationIgnoresPrunedDifferentPathAncestorWhenBudgetBounded() =
-        let middleReference = sourceReferenceWithType "source-reference-middle" saveReferenceId "Commit" "middle" saveDirectoryVersionId
+        let middleReference = sourceReferenceWithType "source-reference-middle" saveReferenceId "commit" "middle" saveDirectoryVersionId
 
         let annotation =
             buildWithMaxReferences
@@ -985,7 +985,7 @@ type AnnotationLineCoreTests() =
     /// Verifies that build Annotation Rejects Unknown Target Reference Type Without Filter.
     [<Test>]
     member _.BuildAnnotationRejectsUnknownTargetReferenceTypeWithoutFilter() =
-        let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "Unknown" "unknown" newDirectoryVersionId
+        let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "bogus" "unknown" newDirectoryVersionId
 
         let result =
             buildWithoutReferenceTypeFilter
@@ -998,12 +998,12 @@ type AnnotationLineCoreTests() =
         | Ok annotation ->
             assertValid annotation
             Assert.Fail("Unknown target reference types should be rejected.")
-        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
+        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'bogus'"))
 
     /// Verifies that build Annotation Rejects Unknown Target Reference Type Past End Of File Without Filter.
     [<Test>]
     member _.BuildAnnotationRejectsUnknownTargetReferenceTypePastEndOfFileWithoutFilter() =
-        let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "Unknown" "unknown" newDirectoryVersionId
+        let unknownReference = sourceReferenceWithType "source-reference-unknown" targetReferenceId "bogus" "unknown" newDirectoryVersionId
 
         let result =
             buildWithoutReferenceTypeFilter
@@ -1016,12 +1016,12 @@ type AnnotationLineCoreTests() =
         | Ok annotation ->
             assertValid annotation
             Assert.Fail("Unknown target reference types should be rejected even when requested lines are missing.")
-        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
+        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'bogus'"))
 
     /// Verifies that build Annotation Rejects Unknown Source Reference Type Without Filter.
     [<Test>]
     member _.BuildAnnotationRejectsUnknownSourceReferenceTypeWithoutFilter() =
-        let unknownReference = sourceReferenceWithType "source-reference-unknown" oldReferenceId "Unknown" "unknown" oldDirectoryVersionId
+        let unknownReference = sourceReferenceWithType "source-reference-unknown" oldReferenceId "bogus" "unknown" oldDirectoryVersionId
 
         let result =
             buildWithoutReferenceTypeFilter
@@ -1035,7 +1035,7 @@ type AnnotationLineCoreTests() =
         | Ok annotation ->
             assertValid annotation
             Assert.Fail("Unknown source reference types should be rejected.")
-        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'Unknown'"))
+        | Error errors -> Assert.That(errors, Has.Some.Contains("unknown ReferenceType 'bogus'"))
 
     /// Verifies that build Annotation Rejects Blank Used Source Reference Id.
     [<Test>]
