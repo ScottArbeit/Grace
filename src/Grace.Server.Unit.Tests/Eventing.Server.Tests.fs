@@ -410,6 +410,36 @@ type AutomationEventingTests() =
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.PromotionSetEvent promotionSetEvent)
         Assert.That(envelope.IsNone, Is.True)
 
+    /// Verifies that current source visibility can suppress stale public event metadata before automation fanout.
+    [<Test>]
+    member _.CurrentHiddenPromotionSetSuppressesPublicAutomationProjection() =
+        let repositoryId = Guid.NewGuid()
+        let metadata = metadata "corr-current-hidden-apply" repositoryId
+        metadata.Properties[ "ActorId" ] <- $"{Guid.NewGuid()}"
+
+        let promotionSetEvent: PromotionSetEvent = { Event = PromotionSetEventType.Applied(Guid.NewGuid()); Metadata = metadata }
+
+        let envelope = EventingPublisher.tryCreateEnvelopeWithCurrentVisibility (Some false) (GraceEvent.PromotionSetEvent promotionSetEvent)
+
+        Assert.That(envelope.IsNone, Is.True)
+
+    /// Verifies that current public visibility never replays old private PromotionSet apply metadata.
+    [<Test>]
+    member _.CurrentPublicPromotionSetDoesNotReplayPrivateAutomationProjection() =
+        let repositoryId = Guid.NewGuid()
+
+        let promotionSetEvent: PromotionSetEvent =
+            {
+                Event = PromotionSetEventType.Applied(Guid.NewGuid())
+                Metadata =
+                    metadata "corr-current-public-private-apply" repositoryId
+                    |> markPrivateContributorOwned
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelopeWithCurrentVisibility (Some true) (GraceEvent.PromotionSetEvent promotionSetEvent)
+
+        Assert.That(envelope.IsNone, Is.True)
+
     /// Verifies that private validation results do not emit public automation events.
     [<Test>]
     member _.PrivateValidationResultDoesNotMapToAutomationEvent() =

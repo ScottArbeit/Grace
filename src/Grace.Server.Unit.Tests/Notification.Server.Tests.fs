@@ -19,3 +19,11 @@ type NotificationServerTests() =
     member _.BranchNameGlobMatchingIsCaseInsensitiveAndSupportsWildcard(branchName: string, glob: string, expected: bool) =
         let actual = Subscriber.matchesBranchGlob (BranchName branchName) glob
         Assert.That(actual, Is.EqualTo(expected))
+
+    /// Verifies that SignalR reference notification fanout is suppressed for currently hidden references.
+    [<Test>]
+    member _.ReferenceNotificationProjectionSuppressesCurrentHiddenReference() = Assert.That(Subscriber.shouldNotifyReferenceProjection (Some false), Is.False)
+
+    /// Verifies that SignalR reference notification fanout remains enabled when no current source override is available.
+    [<Test>]
+    member _.ReferenceNotificationProjectionAllowsUnscopedLegacyReference() = Assert.That(Subscriber.shouldNotifyReferenceProjection None, Is.True)
