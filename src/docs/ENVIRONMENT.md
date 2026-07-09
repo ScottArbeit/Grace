@@ -248,6 +248,16 @@ Messages are completed only after SQL processing succeeds or the durable usage f
 - `grace__auth__pat__max_lifetime_days`
 - `grace__auth__pat__allow_no_expiry`
 
+### Grace Cache Registration
+
+- `grace__cache__registration__enabled`: enables server-side cache registration configuration validation. Default:
+  disabled.
+- `grace__cache__registration__service_principal_ids`: semicolon-delimited OIDC service principal IDs that may register
+  cache services. Do not store client secrets here.
+- `grace__cache__registration__allowed_scopes`: semicolon-delimited server-approved cache registration scopes.
+- `grace__cache__registration__allowed_capabilities`: semicolon-delimited server-approved cache registration
+  capabilities.
+
 ### Authorization (Bootstrap)
 
 - `grace__authz__bootstrap__system_admin_users`: semicolon-delimited user IDs to seed SystemAdmin at system
