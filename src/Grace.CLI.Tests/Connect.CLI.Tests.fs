@@ -247,6 +247,39 @@ module ConnectTests =
 
         override _.Dispose(disposing: bool) = ()
 
+    /// Extracts the Grace error carried by DirectUri copy failure classifiers.
+    let private directUriCopyFailureError =
+        function
+        | Connect.DirectUriDeliveredSizeValidationFailure error
+        | Connect.DirectUriTransferFailure error -> error
+
+    /// Runs a DirectUri copy failure through the production retry-boundary classifiers.
+    let private executeDirectRetryAfterCopyFailure copyFailure =
+        let requestedPlans = ResizeArray<int>()
+
+        let requestPlan () =
+            task {
+                let planId = requestedPlans.Count + 1
+                requestedPlans.Add(planId)
+                return Ok planId
+            }
+
+        let executePlan _ =
+            task {
+                return
+                    Error(
+                        copyFailure
+                        |> Connect.directUriCopyFailureToFetchFailure
+                        |> Connect.directUriFetchFailureToExecutionError
+                    )
+            }
+
+        let result =
+            Connect.executeDirectPlanWithRetryOnce "correlation-id" requestPlan executePlan
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        result, requestedPlans
+
     /// Builds a manifest-backed FileVersion whose bytes are delivered through the Direct zip projection.
     let private manifestBackedFileVersion relativePath (payload: byte array) =
         let block = ContentBlock.Create(ContentBlockAddress(String.replicate 64 "c"), 0L, int64 payload.Length)
@@ -367,6 +400,64 @@ module ConnectTests =
                     error.Error |> should contain "target root"
                     requestedPlans |> should equal [ 1 ])
             )
+
+    /// Verifies that an oversized DirectUri Content-Length is a permanent delivered-artifact failure, not a retry trigger.
+    [<Test>]
+    let ``connect direct plan retry does not re-request after oversized content length`` () =
+        let mutable opened = false
+
+        let copyResult =
+            Connect.copyDirectUriArtifactToTempStream "correlation-id" "DirectoryVersionZip" (Some 3L) (Some 4L) (fun () ->
+                opened <- true
+                Task.FromResult<Stream>(new MemoryStream([| 1uy; 2uy; 3uy; 4uy |])))
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match copyResult with
+        | Ok stream ->
+            stream.Dispose()
+            Assert.Fail("Expected oversized Content-Length to fail before success-looking local status could be recorded.")
+        | Error copyFailure ->
+            let result, requestedPlans = executeDirectRetryAfterCopyFailure copyFailure
+
+            match result with
+            | Ok value -> Assert.Fail($"Expected oversized Content-Length to fail permanently without retry, got {value}.")
+            | Error error ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        opened |> should equal false
+
+                        error.Error
+                        |> should contain "Content-Length exceeds planned size"
+
+                        requestedPlans |> should equal [ 1 ])
+                )
+
+    /// Verifies that a DirectUri stream exceeding the planned size is permanent and cannot be masked by a fresh plan.
+    [<Test>]
+    let ``connect direct plan retry does not re-request after streamed artifact exceeds planned size`` () =
+        let payload = [| 0uy .. 9uy |]
+        let source = new NonDisposingMemoryStream(payload)
+
+        let copyResult =
+            Connect.copyDirectUriArtifactToTempStream "correlation-id" "DirectoryVersionZip" (Some 3L) None (fun () -> Task.FromResult<Stream>(source))
+            |> fun task -> task.GetAwaiter().GetResult()
+
+        match copyResult with
+        | Ok stream ->
+            stream.Dispose()
+            Assert.Fail("Expected over-limit DirectUri body to fail before success-looking local status could be recorded.")
+        | Error copyFailure ->
+            let result, requestedPlans = executeDirectRetryAfterCopyFailure copyFailure
+
+            match result with
+            | Ok value -> Assert.Fail($"Expected over-limit DirectUri body to fail permanently without retry, got {value}.")
+            | Error error ->
+                Assert.Multiple(
+                    Action (fun () ->
+                        source.Position |> should equal 4L
+                        error.Error |> should contain "size mismatch"
+                        requestedPlans |> should equal [ 1 ])
+                )
 
     /// Verifies that Direct plan requests preserve a moving reference selector for final server resolution.
     [<Test>]
@@ -801,7 +892,8 @@ module ConnectTests =
         | Ok stream ->
             stream.Dispose()
             Assert.Fail("Expected oversized Content-Length to fail before transfer.")
-        | Error error ->
+        | Error copyFailure ->
+            let error = directUriCopyFailureError copyFailure
             opened |> should equal false
 
             error.Error
@@ -821,7 +913,8 @@ module ConnectTests =
         | Ok stream ->
             stream.Dispose()
             Assert.Fail("Expected over-limit DirectUri body to fail during transfer.")
-        | Error error ->
+        | Error copyFailure ->
+            let error = directUriCopyFailureError copyFailure
             source.Position |> should equal 4L
             error.Error |> should contain "size mismatch"
 

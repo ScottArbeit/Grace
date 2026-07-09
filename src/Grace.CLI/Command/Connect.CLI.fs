@@ -969,17 +969,33 @@ module Connect =
         use stream = new MemoryStream(bytes, false)
         decodeRecursiveMetadataArtifactStream correlationId stream
 
+    /// Classifies DirectUri copy failures before the plan retry gate decides whether to request a replacement plan.
+    type internal DirectUriArtifactCopyFailure =
+        | DirectUriDeliveredSizeValidationFailure of GraceError
+        | DirectUriTransferFailure of GraceError
+
+    /// Classifies DirectUri fetch failures as retryable source failures or permanent delivered-artifact validation failures.
+    type internal DirectUriArtifactFetchFailure =
+        | RetryableDirectUriArtifactSourceFailure of GraceError
+        | PermanentDirectUriDeliveredArtifactFailure of GraceError
+
+    /// Preserves delivered-size validation failures as permanent after a DirectUri response begins producing bytes.
+    let internal directUriCopyFailureToFetchFailure =
+        function
+        | DirectUriDeliveredSizeValidationFailure error -> PermanentDirectUriDeliveredArtifactFailure error
+        | DirectUriTransferFailure error -> RetryableDirectUriArtifactSourceFailure error
+
     /// Copies DirectUri artifact bytes into a temporary stream while enforcing the planned delivered-byte limit.
     let internal copyDirectUriArtifactToTempStream correlationId artifactName expectedSize contentLength (openContentStream: unit -> Task<Stream>) =
         task {
             match expectedSize, contentLength with
             | Some expectedSize, Some contentLength when contentLength > expectedSize ->
                 return
-                    Error(
-                        GraceError.Create
-                            $"Materialization Plan {artifactName} artifact Content-Length exceeds planned size. Expected at most {expectedSize} bytes, response declared {contentLength} bytes."
-                            correlationId
-                    )
+                    GraceError.Create
+                        $"Materialization Plan {artifactName} artifact Content-Length exceeds planned size. Expected at most {expectedSize} bytes, response declared {contentLength} bytes."
+                        correlationId
+                    |> DirectUriDeliveredSizeValidationFailure
+                    |> Error
             | _ ->
                 let tempFilePath = Path.Combine(Path.GetTempPath(), $"grace-direct-artifact-{Guid.NewGuid():N}.tmp")
 
@@ -1030,6 +1046,7 @@ module Connect =
                                         GraceError.Create
                                             $"Materialization Plan {artifactName} artifact size mismatch. Expected {expectedSize} bytes, received more than {expectedSize} bytes."
                                             correlationId
+                                        |> DirectUriDeliveredSizeValidationFailure
                                     )
                             | _ ->
                                 do!
@@ -1051,12 +1068,12 @@ module Connect =
                     tempFile.Dispose()
 
                     return
-                        Error(
-                            GraceError.CreateWithException
-                                ex
-                                $"Materialization Plan {artifactName} artifact download failed while writing the temporary artifact stream."
-                                correlationId
-                        )
+                        GraceError.CreateWithException
+                            ex
+                            $"Materialization Plan {artifactName} artifact download failed while writing the temporary artifact stream."
+                            correlationId
+                        |> DirectUriTransferFailure
+                        |> Error
         }
 
     /// Fetches DirectUri artifact bytes to a temporary stream without assuming a backing blob provider.
@@ -1065,10 +1082,16 @@ module Connect =
             let mutable artifactUri = Unchecked.defaultof<Uri>
 
             if not (Uri.TryCreate(uri, UriKind.Absolute, &artifactUri)) then
-                return Error(GraceError.Create $"Materialization Plan {artifactName} artifact DirectUri is not an absolute URI." correlationId)
+                return
+                    GraceError.Create $"Materialization Plan {artifactName} artifact DirectUri is not an absolute URI." correlationId
+                    |> RetryableDirectUriArtifactSourceFailure
+                    |> Error
             elif artifactUri.Scheme <> Uri.UriSchemeHttps
                  && artifactUri.Scheme <> Uri.UriSchemeHttp then
-                return Error(GraceError.Create $"Materialization Plan {artifactName} artifact DirectUri must use HTTP or HTTPS." correlationId)
+                return
+                    GraceError.Create $"Materialization Plan {artifactName} artifact DirectUri must use HTTP or HTTPS." correlationId
+                    |> RetryableDirectUriArtifactSourceFailure
+                    |> Error
             else
                 try
                     use request = new HttpRequestMessage(HttpMethod.Get, artifactUri)
@@ -1081,24 +1104,33 @@ module Connect =
                                 GraceError.Create
                                     $"Materialization Plan {artifactName} artifact download failed with HTTP status {(int response.StatusCode)}."
                                     correlationId
+                                |> RetryableDirectUriArtifactSourceFailure
                             )
                     else
                         let contentLength =
                             response.Content.Headers.ContentLength
                             |> Option.ofNullable
 
-                        return!
+                        match!
                             copyDirectUriArtifactToTempStream correlationId artifactName artifact.SizeInBytes contentLength (fun () ->
                                 response.Content.ReadAsStreamAsync())
+                            with
+                        | Ok stream -> return Ok stream
+                        | Error error -> return Error(directUriCopyFailureToFetchFailure error)
                 with
-                | ex -> return Error(GraceError.CreateWithException ex $"Materialization Plan {artifactName} artifact download failed." correlationId)
+                | ex ->
+                    return
+                        GraceError.CreateWithException ex $"Materialization Plan {artifactName} artifact download failed." correlationId
+                        |> RetryableDirectUriArtifactSourceFailure
+                        |> Error
         }
 
     /// Downloads and verifies a planned DirectUri artifact before connect extracts or writes local state.
     let private downloadPlannedDirectUriArtifact correlationId artifactName uri artifact =
         task {
             match! fetchDirectUriArtifactStream correlationId artifactName uri artifact with
-            | Error error -> return Error error
+            | Error (RetryableDirectUriArtifactSourceFailure error)
+            | Error (PermanentDirectUriDeliveredArtifactFailure error) -> return Error error
             | Ok stream ->
                 match! validatePlannedArtifactStream correlationId artifactName artifact stream with
                 | Error error ->
@@ -1291,6 +1323,12 @@ module Connect =
         | RetryableArtifactSourceFailure of GraceError
         | PermanentPlanFailure of GraceError
 
+    /// Maps DirectUri fetch failures onto the plan execution retry boundary.
+    let internal directUriFetchFailureToExecutionError =
+        function
+        | RetryableDirectUriArtifactSourceFailure error -> RetryableArtifactSourceFailure error
+        | PermanentDirectUriDeliveredArtifactFailure error -> PermanentPlanFailure error
+
     /// Requests one fresh Direct plan after a retryable artifact-source failure without retrying permanent consistency failures.
     let internal executeDirectPlanWithRetryOnce
         correlationId
@@ -1334,7 +1372,7 @@ module Connect =
                         artifactSources.MetadataUri
                         artifactSources.MetadataArtifact
                     with
-                | Error error -> return Error(RetryableArtifactSourceFailure error)
+                | Error error -> return Error(directUriFetchFailureToExecutionError error)
                 | Ok metadataStream ->
                     use metadataStream = metadataStream
 
@@ -1377,7 +1415,7 @@ module Connect =
                                             executionArtifacts.ZipUri
                                             executionArtifacts.ZipArtifact
                                         with
-                                    | Error error -> return Error(RetryableArtifactSourceFailure error)
+                                    | Error error -> return Error(directUriFetchFailureToExecutionError error)
                                     | Ok zipFile ->
                                         use zipFile = zipFile
 
