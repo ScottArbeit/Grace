@@ -405,6 +405,27 @@ type OperationsUsageArchiveProcessor
         else
             message.Substring(0, OperationsUsageSql.ArchiveFailureReasonMaxLength)
 
+    /// Keeps an exact missing archive Blob pointer row-scoped while service-level Blob failures abort the batch.
+    let isExactCandidateBlobFailure (ex: RequestFailedException) = String.Equals(ex.ErrorCode, "BlobNotFound", StringComparison.OrdinalIgnoreCase)
+
+    /// Classifies Blob and network dependency failures that affect the archive service instead of one candidate row.
+    let rec isArchiveDependencyFailure (ex: exn) =
+        match ex with
+        | :? RequestFailedException as requestFailure when isExactCandidateBlobFailure requestFailure -> false
+        | :? RequestFailedException -> true
+        | :? AuthenticationFailedException -> true
+        | :? TimeoutException -> true
+        | :? System.Net.Http.HttpRequestException -> true
+        | :? IOException -> true
+        | :? AggregateException as aggregate ->
+            aggregate.InnerExceptions
+            |> Seq.exists isArchiveDependencyFailure
+        | _ ->
+            if isNull ex.InnerException then
+                false
+            else
+                isArchiveDependencyFailure ex.InnerException
+
     /// Archives one hot candidate or resumes cleanup for an already verified candidate.
     let archiveCandidateAsync (candidate: RawUsageFactArchiveCandidate) cancellationToken =
         task {
@@ -453,6 +474,16 @@ type OperationsUsageArchiveProcessor
                     archived <- archived + 1
                 with
                 | :? OperationCanceledException when cancellationToken.IsCancellationRequested -> cancellationToken.ThrowIfCancellationRequested()
+                | ex when isArchiveDependencyFailure ex ->
+                    logger.LogWarning(
+                        ex,
+                        "Operations usage archive dependency failed; row-scoped failure evidence was not recorded and the batch will retry after dependency recovery. UsageFactId: {UsageFactId}; ArchiveState: {ArchiveState}; FailureType: {FailureType}.",
+                        candidate.UsageFactId,
+                        candidate.ArchiveState,
+                        ex.GetType().Name
+                    )
+
+                    raise ex
                 | ex ->
                     let failureReason = archiveFailureReason ex
                     do! archiveStore.RecordArchiveFailureAsync(candidate.UsageFactId, failureReason, cancellationToken)

@@ -1,5 +1,6 @@
 namespace Grace.Operations.Tests
 
+open Azure
 open Grace.Operations.Data
 open Grace.Operations.Data.Migrations
 open Grace.Operations.Worker
@@ -288,8 +289,10 @@ type private RecordingArchiveStore
             Task.FromResult cleaned
 
 /// Stores archive blobs in memory while preserving checksum and length verification semantics.
-type private RecordingArchiveBlobStore(events: List<string>) =
+type private RecordingArchiveBlobStore(events: List<string>, ?writeVerifyFailures: exn list, ?verifyFailures: exn list) =
     let blobs = Dictionary<string, byte array>()
+    let writeVerifyFailures = Queue<exn>(defaultArg writeVerifyFailures [])
+    let verifyFailures = Queue<exn>(defaultArg verifyFailures [])
 
     /// Inserts an existing blob for resume and corruption tests.
     member _.Put(blobName, content: byte array) = blobs[blobName] <- Array.copy content
@@ -319,25 +322,31 @@ type private RecordingArchiveBlobStore(events: List<string>) =
         member this.WriteAndVerifyAsync(archiveBlob, _cancellationToken) =
             events.Add("write-verify-blob")
 
-            match blobs.TryGetValue archiveBlob.Pointer.BlobName with
-            | true, existing when
-                Convert.ToBase64String(existing)
-                <> Convert.ToBase64String(archiveBlob.Content)
-                ->
-                Task.FromException(InvalidOperationException("Archive Blob already exists with different content."))
-            | _ ->
-                blobs[archiveBlob.Pointer.BlobName] <- Array.copy archiveBlob.Content
-                this.VerifyPointer archiveBlob.Pointer
-                Task.CompletedTask
+            if writeVerifyFailures.Count > 0 then
+                Task.FromException(writeVerifyFailures.Dequeue())
+            else
+                match blobs.TryGetValue archiveBlob.Pointer.BlobName with
+                | true, existing when
+                    Convert.ToBase64String(existing)
+                    <> Convert.ToBase64String(archiveBlob.Content)
+                    ->
+                    Task.FromException(InvalidOperationException("Archive Blob already exists with different content."))
+                | _ ->
+                    blobs[archiveBlob.Pointer.BlobName] <- Array.copy archiveBlob.Content
+                    this.VerifyPointer archiveBlob.Pointer
+                    Task.CompletedTask
 
         member this.VerifyAsync(pointer, _cancellationToken) =
             events.Add("verify-blob")
 
-            try
-                this.VerifyPointer pointer
-                Task.CompletedTask
-            with
-            | ex -> Task.FromException ex
+            if verifyFailures.Count > 0 then
+                Task.FromException(verifyFailures.Dequeue())
+            else
+                try
+                    this.VerifyPointer pointer
+                    Task.CompletedTask
+                with
+                | ex -> Task.FromException ex
 
         member this.DownloadVerifiedAsync(pointer, _cancellationToken) =
             events.Add("download-verified")
@@ -811,7 +820,16 @@ type OperationsUsageArchiveTests() =
             let safeCandidate = OperationsUsageArchiveTestData.candidate safeUsageFactId RawUsageFactArchiveState.Hot (Some safeRawPayload) None
             let safeArchiveBlob = OperationsUsageArchiveFormat.createArchiveBlob safeCandidate safeRawPayload
             let archiveStore = RecordingArchiveStore([ verifiedCandidate; safeCandidate ], events)
-            let blobStore = RecordingArchiveBlobStore(events)
+
+            let blobStore =
+                RecordingArchiveBlobStore(
+                    events,
+                    verifyFailures =
+                        [
+                            RequestFailedException(404, $"Archive Blob '{badArchiveBlob.Pointer.BlobName}' is missing.", "BlobNotFound", null)
+                        ]
+                )
+
             blobStore.Put(safeArchiveBlob.Pointer.BlobName, safeArchiveBlob.Content)
             let processor = createProcessor archiveStore blobStore
 
@@ -831,6 +849,115 @@ type OperationsUsageArchiveTests() =
                     Assert.That(snd archiveStore.RecordedFailures[0], Does.Contain("is missing"))
                     Assert.That(archiveStore.CompletedPointers |> List.length, Is.EqualTo(1))
                     Assert.That(archiveStore.CompletedPointers[0], Is.EqualTo(safeArchiveBlob.Pointer)))
+            )
+        }
+
+    /// Verifies Blob dependency outages abort the archive batch without poisoning otherwise healthy rows.
+    [<Test>]
+    member _.ArchiveBatchTreatsBlobDependencyFailureAsBatchFailureWithoutRecordingRowFailure() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("63636363-6363-6363-8636-636363636363")
+            let rawPayload = OperationsUsageArchiveTestData.payload usageFactId
+            let candidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+            let archiveStore = RecordingArchiveStore([ candidate ], events)
+
+            let blobStore =
+                RecordingArchiveBlobStore(
+                    events,
+                    writeVerifyFailures =
+                        [
+                            RequestFailedException(503, "Blob service unavailable.", "ServiceUnavailable", null)
+                        ]
+                )
+
+            let processor = createProcessor archiveStore blobStore
+            let mutable message = None
+
+            try
+                let! _ = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+                Assert.Fail("Blob dependency failure should abort the archive batch for worker retry.")
+            with
+            | :? RequestFailedException as ex -> message <- Some ex.Message
+
+            let! recovered = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(message.Value, Does.Contain("Blob service unavailable"))
+                    Assert.That(archiveStore.RecordedFailures, Is.Empty)
+                    Assert.That(recovered, Is.EqualTo(1))
+                    Assert.That(archiveStore.CompletedPointers |> List.length, Is.EqualTo(1))
+
+                    Assert.That(
+                        String.Join("|", events),
+                        Is.EqualTo("list-candidates|write-verify-blob|list-candidates|write-verify-blob|mark-verified|verify-blob|complete-archive")
+                    ))
+            )
+        }
+
+    /// Verifies archive worker readiness reports dependency evidence when Blob archive retention is unavailable.
+    [<Test>]
+    member _.ArchiveWorkerRecordsBlobDependencyFailureEvidenceWithoutRowFailure() =
+        task {
+            let events = List<string>()
+            let usageFactId = Guid.Parse("64646464-6464-6464-8646-646464646464")
+            let rawPayload = OperationsUsageArchiveTestData.payload usageFactId
+            let candidate = OperationsUsageArchiveTestData.candidate usageFactId RawUsageFactArchiveState.Hot (Some rawPayload) None
+            let schema = RecordingSchemaInitializer(events)
+            let archiveStore = RecordingArchiveStore([ candidate ], events)
+
+            let blobStore =
+                RecordingArchiveBlobStore(
+                    events,
+                    writeVerifyFailures =
+                        [
+                            RequestFailedException(503, "Blob service unavailable.", "ServiceUnavailable", null)
+                        ]
+                )
+
+            let processor = createProcessor archiveStore blobStore
+            let readiness = OperationsUsageReadinessState()
+
+            let service =
+                new OperationsUsageArchiveWorkerService(
+                    { archiveWorkerSettings () with PollInterval = TimeSpan.FromSeconds(30.0) },
+                    schema,
+                    processor,
+                    readiness :> IOperationsUsageReadinessRecorder,
+                    NullLogger<OperationsUsageArchiveWorkerService>
+                        .Instance
+                )
+
+            do!
+                (service :> IHostedService)
+                    .StartAsync(CancellationToken.None)
+
+            do! schema.Invoked.WaitAsync(TimeSpan.FromSeconds(5.0))
+
+            let probe = readiness :> IOperationsUsageReadinessProbe
+            let deadline = DateTime.UtcNow.AddSeconds(5.0)
+            let mutable snapshot = probe.GetSnapshot()
+
+            while not (
+                      snapshot.DependencyFailure
+                      |> Option.exists (fun failure -> failure.Contains("Archive retention failed", StringComparison.Ordinal))
+                  )
+                  && DateTime.UtcNow < deadline do
+                do! Task.Delay(TimeSpan.FromMilliseconds(20.0), CancellationToken.None)
+                snapshot <- probe.GetSnapshot()
+
+            use stopCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5.0))
+
+            do!
+                (service :> IHostedService)
+                    .StopAsync(stopCancellation.Token)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(archiveStore.RecordedFailures, Is.Empty)
+                    Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(snapshot.DependencyFailure.Value, Does.Contain("Archive retention failed (RequestFailedException).")))
             )
         }
 
@@ -1026,9 +1153,14 @@ type OperationsUsageArchiveTests() =
                 Assert.That(OperationsUsageSql.DeclareRehydratedRawUsageFactBatch, Does.Contain("@RehydrationRows table"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("RehydrationExpiresAtUtc ="))
 
-                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("RehydrationExpiresAtUtc = @RehydrationExpiresAtUtc"))
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("WHEN target.RehydrationExpiresAtUtc IS NOT NULL"))
 
-                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Not.Contain("THEN target.RehydrationExpiresAtUtc"))
+                Assert.That(
+                    OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch,
+                    Does.Contain("AND target.RehydrationExpiresAtUtc > @RehydrationExpiresAtUtc THEN target.RehydrationExpiresAtUtc")
+                )
+
+                Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("ELSE @RehydrationExpiresAtUtc"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("OUTPUT inserted.UsageFactId"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Contain("INNER JOIN @RehydrationRows AS source"))
                 Assert.That(OperationsUsageSql.RehydrateArchivedRawUsageFactPayloadBatch, Does.Not.Contain("RehydrationLeaseId"))
