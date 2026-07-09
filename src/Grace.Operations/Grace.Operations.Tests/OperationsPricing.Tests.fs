@@ -136,7 +136,9 @@ type OperationsPricingTests() =
     let entityType (entityClrType: Type) : IEntityType =
         use context = OperationsDbContextFactory.create "Server=(localdb)\\MSSQLLocalDB;Database=GraceOperationsPricingMigrationModel;Integrated Security=true;"
 
-        context.Model.FindEntityType(entityClrType)
+        context
+            .GetService<IDesignTimeModel>()
+            .Model.FindEntityType(entityClrType)
 
     /// Resolves the Operations root from the compiled test assembly.
     let operationsRoot () =
@@ -151,6 +153,11 @@ type OperationsPricingTests() =
                 find directory.Parent
 
         find (DirectoryInfo(TestContext.CurrentContext.TestDirectory))
+
+    /// Reads the reviewed pricing migration source so frozen historical boundaries can be asserted directly.
+    let pricingMigrationSource () =
+        Path.Combine(operationsRoot (), "Grace.Operations.Data", "Migrations", "20260709110000_AddPricingPlanRateAssignment.fs")
+        |> File.ReadAllText
 
     /// Verifies effective-rate selection requires customer assignment, mapping, and rate rows.
     [<Test>]
@@ -224,6 +231,7 @@ type OperationsPricingTests() =
         let mapping = entityType typeof<BillableUsageKindMappingEntity>
         let rate = entityType typeof<PricingRateEntity>
         let assignment = entityType typeof<CustomerPricingAssignmentEntity>
+        let currencyCode = rate.FindProperty("CurrencyCode")
 
         let hasRateIndex =
             rate.GetIndexes()
@@ -240,6 +248,7 @@ type OperationsPricingTests() =
                 Assert.That(mapping.GetTableName(), Is.EqualTo(OperationsPricingSql.BillableUsageKindMappingTableName))
                 Assert.That(rate.GetTableName(), Is.EqualTo(OperationsPricingSql.PricingRateTableName))
                 Assert.That(assignment.GetTableName(), Is.EqualTo(OperationsPricingSql.CustomerPricingAssignmentTableName))
+                Assert.That(currencyCode.GetCollation(), Is.EqualTo("Latin1_General_100_BIN2"))
                 Assert.That(hasRateIndex, Is.True)
                 Assert.That(hasAssignmentIndex, Is.True))
         )
@@ -262,6 +271,26 @@ type OperationsPricingTests() =
     member _.PricingMigrationScriptContainsEffectiveDatingTablesAndOverlapRejection() =
         let script = migrationScript ()
 
+        let lockHintCount =
+            script
+                .Split(
+                    [| "WITH (UPDLOCK, HOLDLOCK)" |],
+                    StringSplitOptions.None
+                )
+                .Length
+            - 1
+
+        let dynamicTriggerCount =
+            script
+                .Split(
+                    [|
+                        "EXEC(N'CREATE OR ALTER TRIGGER ops."
+                    |],
+                    StringSplitOptions.None
+                )
+                .Length
+            - 1
+
         Assert.Multiple(
             Action (fun () ->
                 Assert.That(script, Does.Contain("CREATE TABLE ops.PricingPlan"))
@@ -269,9 +298,30 @@ type OperationsPricingTests() =
                 Assert.That(script, Does.Contain("CREATE TABLE ops.PricingRate"))
                 Assert.That(script, Does.Contain("CREATE TABLE ops.CustomerPricingAssignment"))
                 Assert.That(script, Does.Contain("CK_ops_PricingRate_EffectiveRange"))
+                Assert.That(script, Does.Contain("CurrencyCode char(3) COLLATE Latin1_General_100_BIN2 NOT NULL"))
+                Assert.That(script, Does.Contain("CurrencyCode COLLATE Latin1_General_100_BIN2 = UPPER(CurrencyCode)"))
+                Assert.That(script, Does.Contain("CurrencyCode COLLATE Latin1_General_100_BIN2 NOT LIKE"))
                 Assert.That(script, Does.Contain(OperationsPricingSql.PricingRateOverlapTriggerName))
                 Assert.That(script, Does.Contain(OperationsPricingSql.CustomerPricingAssignmentOverlapTriggerName))
+                Assert.That(lockHintCount, Is.EqualTo(4))
+                Assert.That(dynamicTriggerCount, Is.EqualTo(4))
                 Assert.That(script, Does.Contain("effective windows cannot overlap")))
+        )
+
+    /// Verifies the reviewed pricing migration no longer delegates its historical target model to runtime configuration.
+    [<Test>]
+    member _.PricingMigrationTargetModelIsFrozenFromRuntimeConfigurator() =
+        let source = pricingMigrationSource ()
+        let targetModelStart = source.IndexOf("override _.BuildTargetModel(modelBuilder: ModelBuilder) =", StringComparison.Ordinal)
+        Assert.That(targetModelStart, Is.GreaterThanOrEqualTo(0))
+        let targetModelSource = source.Substring(targetModelStart)
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(targetModelSource, Does.Not.Contain("OperationsModel.configure"))
+                Assert.That(targetModelSource, Does.Contain("modelBuilder.HasDefaultSchema(\"ops\")"))
+                Assert.That(targetModelSource, Does.Contain("let pricingRate = modelBuilder.Entity<PricingRateEntity>()"))
+                Assert.That(targetModelSource, Does.Contain(".UseCollation(\"Latin1_General_100_BIN2\")")))
         )
 
     /// Verifies the SQL selector cannot return a customer rate through missing mapping or loose scope matching.

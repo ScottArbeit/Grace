@@ -397,6 +397,7 @@ module OperationsModel =
             .HasMaxLength(OperationsPricingSql.CurrencyCodeLength)
             .IsFixedLength()
             .IsUnicode(false)
+            .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
         |> ignore
 

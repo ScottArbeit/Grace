@@ -398,6 +398,7 @@ type OperationsDbContextModelSnapshot() =
             .HasMaxLength(3)
             .IsFixedLength()
             .IsUnicode(false)
+            .UseCollation("Latin1_General_100_BIN2")
             .IsRequired()
         |> ignore
 
