@@ -160,7 +160,7 @@ module CacheRegistration =
 
                 try
                     let keyRing = context.RequestServices.GetRequiredService<ArtifactGrantKeys.ArtifactGrantKeyRing>()
-                    let keySet = keyRing.PublishValidationKeys(getCurrentInstant ())
+                    let! keySet = keyRing.PublishValidationKeys(getCurrentInstant ())
                     return! context |> result200Ok keySet
                 with
                 | ex ->

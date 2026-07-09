@@ -445,6 +445,20 @@ components:
       $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKey'
     ArtifactGrantValidationKeySet:
       $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantValidationKeySet'
+    ArtifactGrantRequesterPrincipalType:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantRequesterPrincipalType'
+    ArtifactGrantHolderPublicKey:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantHolderPublicKey'
+    ArtifactGrantHeader:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantHeader'
+    ArtifactGrantPayload:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactGrantPayload'
+    SignedArtifactGrant:
+      $ref: 'Cache.Components.OpenAPI.yaml#/SignedArtifactGrant'
+    ArtifactRequestProofPayload:
+      $ref: 'Cache.Components.OpenAPI.yaml#/ArtifactRequestProofPayload'
+    SignedArtifactRequestProof:
+      $ref: 'Cache.Components.OpenAPI.yaml#/SignedArtifactRequestProof'
 
     BranchDto:
       $ref: 'Dto.Components.OpenAPI.yaml#/BranchDto'

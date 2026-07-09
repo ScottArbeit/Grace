@@ -80,7 +80,7 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
      * Publish artifact grant validation keys.
      */
     async getArtifactGrantValidationKeysRaw(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<runtime.ApiResponse<ArtifactGrantValidationKeySet>> {
@@ -91,7 +91,7 @@ export class CacheApi extends runtime.BaseAPI {
     }
 
     /**
-     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+     * Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
      * Publish artifact grant validation keys.
      */
     async getArtifactGrantValidationKeys(initOverrides?: RequestInit | runtime.InitOverrideFunction): Promise<ArtifactGrantValidationKeySet> {

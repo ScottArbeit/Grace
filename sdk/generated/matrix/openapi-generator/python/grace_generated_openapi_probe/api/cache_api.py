@@ -57,7 +57,7 @@ class CacheApi:
     ) -> ArtifactGrantValidationKeySet:
         """Publish artifact grant validation keys.
 
-        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -123,7 +123,7 @@ class CacheApi:
     ) -> ApiResponse[ArtifactGrantValidationKeySet]:
         """Publish artifact grant validation keys.
 
-        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request
@@ -189,7 +189,7 @@ class CacheApi:
     ) -> RESTResponseType:
         """Publish artifact grant validation keys.
 
-        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+        Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 
         :param _request_timeout: timeout setting for this request. If one
                                  number provided, it will be total request

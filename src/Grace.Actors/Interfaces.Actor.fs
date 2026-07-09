@@ -21,6 +21,7 @@ open Grace.Types.Review
 open Grace.Types.Queue
 open Grace.Types.Validation
 open Grace.Types.Artifact
+open Grace.Types.ArtifactGrant
 open Grace.Types.UploadSession
 open Grace.Types.Webhooks
 open Grace.Types.WorkItem
@@ -625,6 +626,17 @@ module Interfaces =
 
         /// Returns all current registrations without granting artifact access or generating a plan.
         abstract member Current: now: Instant * correlationId: CorrelationId -> Task<CacheRegistration array>
+
+    /// Defines the single deployment-wide owner of artifact-grant signing keys.
+    [<Interface>]
+    type IArtifactGrantSigningKeyActor =
+        inherit IGrainWithStringKey
+
+        /// Issues one requester- and holder-bound grant after durable key rotation completes.
+        abstract member IssueGrant: request: ArtifactGrantSigningRequest * now: Instant -> Task<Result<SignedArtifactGrant, ArtifactGrantIssueError>>
+
+        /// Publishes current and overlap public validation keys after durable rotation completes.
+        abstract member PublishValidationKeys: now: Instant -> Task<ArtifactGrantValidationKeySet>
 
     /// Defines the operations for the StoragePool-scoped ContentBlock metadata actor.
     [<Interface>]

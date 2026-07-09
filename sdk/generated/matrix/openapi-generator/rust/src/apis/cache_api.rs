@@ -46,7 +46,7 @@ pub enum RegisterCacheServiceError {
 }
 
 
-/// Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. The response contains no private signing material and advertises a 15-minute cache TTL.
+/// Returns current and overlap public validation keys that Grace Cache uses to verify signed artifact grants locally. One deployment-wide durable Orleans actor owns the keys used by every Grace Server instance. The response contains no private signing material and advertises a 15-minute cache TTL.
 pub async fn get_artifact_grant_validation_keys(configuration: &configuration::Configuration, ) -> Result<models::ArtifactGrantValidationKeySet, Error<GetArtifactGrantValidationKeysError>> {
 
     let uri_str = format!("{}/cache/validation-keys", configuration.base_path);

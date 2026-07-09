@@ -21,8 +21,13 @@ docs/ApprovalScope.md
 docs/ApprovalTimeoutAction.md
 docs/ApprovalsApi.md
 docs/ApproveApprovalRequestParameters.md
+docs/ArtifactGrantHeader.md
+docs/ArtifactGrantHolderPublicKey.md
+docs/ArtifactGrantPayload.md
+docs/ArtifactGrantRequesterPrincipalType.md
 docs/ArtifactGrantValidationKey.md
 docs/ArtifactGrantValidationKeySet.md
+docs/ArtifactRequestProofPayload.md
 docs/BlockUploadIntent.md
 docs/BranchAnnotationApiDto.md
 docs/BranchAnnotationReturnValue.md
@@ -216,6 +221,8 @@ docs/SetRepositoryNameParameters.md
 docs/SetRepositoryStatusParameters.md
 docs/SetRepositoryVisibilityParameters.md
 docs/SetSaveDaysParameters.md
+docs/SignedArtifactGrant.md
+docs/SignedArtifactRequestProof.md
 docs/StartManifestUploadSessionParameters.md
 docs/StartUploadSession.md
 docs/StorageParameters.md
@@ -288,8 +295,13 @@ src/models/ApprovalRequestStatus.ts
 src/models/ApprovalScope.ts
 src/models/ApprovalTimeoutAction.ts
 src/models/ApproveApprovalRequestParameters.ts
+src/models/ArtifactGrantHeader.ts
+src/models/ArtifactGrantHolderPublicKey.ts
+src/models/ArtifactGrantPayload.ts
+src/models/ArtifactGrantRequesterPrincipalType.ts
 src/models/ArtifactGrantValidationKey.ts
 src/models/ArtifactGrantValidationKeySet.ts
+src/models/ArtifactRequestProofPayload.ts
 src/models/BlockUploadIntent.ts
 src/models/BranchAnnotationApiDto.ts
 src/models/BranchAnnotationReturnValue.ts
@@ -474,6 +486,8 @@ src/models/SetRepositoryNameParameters.ts
 src/models/SetRepositoryStatusParameters.ts
 src/models/SetRepositoryVisibilityParameters.ts
 src/models/SetSaveDaysParameters.ts
+src/models/SignedArtifactGrant.ts
+src/models/SignedArtifactRequestProof.ts
 src/models/StartManifestUploadSessionParameters.ts
 src/models/StartUploadSession.ts
 src/models/StorageParameters.ts

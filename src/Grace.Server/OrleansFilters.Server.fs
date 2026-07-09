@@ -73,6 +73,7 @@ module Orleans =
                             | StateName.Artifact -> repositoryId ()
                             | StateName.ApprovalRequest -> repositoryId ()
                             | StateName.ApprovalRequestIndex -> repositoryId ()
+                            | StateName.ArtifactGrantSigningKey -> StateName.ArtifactGrantSigningKey
                             | StateName.ContentBlockMetadata -> firstGrainKeySegment ()
                             | StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()
                             | StateName.Reference -> repositoryId ()
