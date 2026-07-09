@@ -13,6 +13,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Utilities
 open Grace.Shared.Validation.Errors
 open Grace.Types.Events
+open Grace.Types.ContentOwnershipLedger
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Reference
 open Grace.Types.Reminder
@@ -45,6 +46,14 @@ module Reference =
     let private manifestContributionOperationId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         RepositoryContentCounterOperationId $"reference:{referenceId:N}:{storagePoolId}:{manifestAddress}"
 
+    /// Coordinates content ownership ledger operation id logic for reference reachability changes.
+    let private contentOwnershipOperationId prefix (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        ContentOwnershipLedgerOperationId $"{prefix}:{referenceId:N}:{storagePoolId}:{manifestAddress}"
+
+    /// Coordinates active usage id logic for one reference to one manifest-backed file.
+    let private contentOwnershipActiveUsageId (referenceId: ReferenceId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
+        ContentOwnershipLedgerActiveUsageId $"reference:{referenceId:N}:{storagePoolId}:{manifestAddress}"
+
     /// Coordinates repository content counter primary key logic for the Reference actor.
     let private repositoryContentCounterPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
@@ -52,6 +61,9 @@ module Reference =
     /// Coordinates manifest contribution workflow primary key logic for the Reference actor.
     let private manifestContributionWorkflowPrimaryKey (repositoryId: RepositoryId) (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) =
         $"{repositoryId:N}|{storagePoolId}|{manifestAddress}"
+
+    /// Coordinates content ownership ledger primary key logic for the Reference actor.
+    let private contentOwnershipLedgerPrimaryKey (storagePoolId: StoragePoolId) (manifestAddress: ManifestAddress) = $"{storagePoolId}|{manifestAddress}"
 
     /// Coordinates counter command direction logic for the Reference actor.
     let private counterCommandDirection command =
@@ -475,6 +487,75 @@ module Reference =
         memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
         grain
 
+    /// Builds content ownership ledger actor data needed by the Reference actor.
+    let private createContentOwnershipLedgerActor storagePoolId manifestAddress correlationId =
+        let grain =
+            orleansClient.CreateActorProxyWithCorrelationId<IContentOwnershipLedgerActor>(
+                contentOwnershipLedgerPrimaryKey storagePoolId manifestAddress,
+                correlationId
+            )
+
+        let orleansContext = Dictionary<string, obj>()
+        orleansContext.Add(nameof StoragePoolId, storagePoolId)
+        orleansContext.Add(Constants.ActorNameProperty, ActorName.ContentOwnershipLedger)
+        memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+        grain
+
+    /// Applies content ownership ledger changes for reference reachability.
+    let private applyContentOwnershipBoundary
+        (plans: ManifestSaveContributionPlan list)
+        (ownerScope: ContentOwnershipOwnerScope)
+        (isRemoval: bool)
+        (metadata: EventMetadata)
+        =
+        task {
+            let planArray = plans |> List.toArray
+            let mutable planIndex = 0
+            let mutable error: GraceError option = None
+
+            while planIndex < planArray.Length && error.IsNone do
+                let plan = planArray[planIndex]
+                let activeUsageId = contentOwnershipActiveUsageId plan.ReferenceId plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress
+
+                let operationId =
+                    contentOwnershipOperationId
+                        (if isRemoval then "reference-expiry" else "reference")
+                        plan.ReferenceId
+                        plan.Manifest.StoragePoolId
+                        plan.Manifest.ManifestAddress
+
+                let command =
+                    if isRemoval then
+                        ContentOwnershipLedgerCommand.RemoveActiveUsage(
+                            operationId,
+                            plan.RepositoryId,
+                            plan.Manifest.StoragePoolId,
+                            plan.Manifest.ManifestAddress,
+                            activeUsageId
+                        )
+                    else
+                        ContentOwnershipLedgerCommand.AddActiveUsage(
+                            operationId,
+                            plan.RepositoryId,
+                            plan.Manifest.StoragePoolId,
+                            plan.Manifest.ManifestAddress,
+                            activeUsageId,
+                            ownerScope
+                        )
+
+                let ledgerActor = createContentOwnershipLedgerActor plan.Manifest.StoragePoolId plan.Manifest.ManifestAddress metadata.CorrelationId
+
+                match! ledgerActor.Handle command metadata with
+                | Ok _ -> ()
+                | Error graceError -> error <- Some graceError
+
+                planIndex <- planIndex + 1
+
+            match error with
+            | Some graceError -> return Error graceError
+            | None -> return Ok()
+        }
+
     /// Applies manifest contribution boundary changes to the Reference actor state.
     let private applyManifestContributionBoundary (plans: ManifestSaveContributionPlan list) (metadata: EventMetadata) =
         task {
@@ -860,13 +941,44 @@ module Reference =
 
                 /// Runs Reference command decisions, applies emitted events, and persists the result.
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
-                    /// Coordinates applies manifest boundary logic for the Reference actor.
-                    let appliesManifestBoundary referenceType = referenceType = ReferenceType.Save
+                    /// Coordinates repository-counter manifest boundary logic for the Reference actor.
+                    let appliesRepositoryManifestBoundary referenceType = referenceType = ReferenceType.Save
+
+                    /// Coordinates ownership-ledger manifest boundary logic for the Reference actor.
+                    let appliesOwnershipManifestBoundary referenceType =
+                        referenceType = ReferenceType.Save
+                        || referenceType = ReferenceType.Promotion
+
+                    /// Reads the reference owner scope supplied by create metadata.
+                    let ownerScopeFromMetadata repositoryId =
+                        match metadata.Properties.TryGetValue("InheritedOwnership") with
+                        | true, value ->
+                            match ResourceOwnership.TryParsePublicInput value with
+                            | Some ResourceOwnership.ContributorOwned ->
+                                match metadata.Properties.TryGetValue("InheritedCreatorUserId") with
+                                | true, creatorUserId when not (String.IsNullOrWhiteSpace creatorUserId) ->
+                                    ContentOwnershipOwnerScope.ContributorOwned(repositoryId, UserId creatorUserId)
+                                | _ -> ContentOwnershipOwnerScope.RepositoryOwned repositoryId
+                            | _ -> ContentOwnershipOwnerScope.RepositoryOwned repositoryId
+                        | _ -> ContentOwnershipOwnerScope.RepositoryOwned repositoryId
+
+                    /// Reads the reference owner scope from durable reference state.
+                    let ownerScopeFromReference () =
+                        match referenceDto.Ownership, referenceDto.CreatorUserId with
+                        | ResourceOwnership.ContributorOwned, Some creatorUserId ->
+                            ContentOwnershipOwnerScope.ContributorOwned(referenceDto.RepositoryId, creatorUserId)
+                        | _ -> ContentOwnershipOwnerScope.RepositoryOwned referenceDto.RepositoryId
 
                     /// Applies reference manifest boundary changes to the Reference actor state.
                     let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType =
                         task {
-                            if not (appliesManifestBoundary referenceType) then
+                            if
+                                not
+                                    (
+                                        appliesRepositoryManifestBoundary referenceType
+                                        || appliesOwnershipManifestBoundary referenceType
+                                    )
+                            then
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
@@ -882,13 +994,35 @@ module Reference =
                                         metadata.CorrelationId
                                     with
                                 | Error graceError -> return Error graceError
-                                | Ok plans -> return! applyManifestContributionBoundary plans metadata
+                                | Ok plans ->
+                                    let mutable boundaryError: GraceError option = None
+
+                                    if appliesRepositoryManifestBoundary referenceType then
+                                        match! applyManifestContributionBoundary plans metadata with
+                                        | Ok () -> ()
+                                        | Error graceError -> boundaryError <- Some graceError
+
+                                    if boundaryError.IsNone
+                                       && appliesOwnershipManifestBoundary referenceType then
+                                        match! applyContentOwnershipBoundary plans (ownerScopeFromMetadata repositoryId) false metadata with
+                                        | Ok () -> ()
+                                        | Error graceError -> boundaryError <- Some graceError
+
+                                    match boundaryError with
+                                    | Some graceError -> return Error graceError
+                                    | None -> return Ok()
                         }
 
                     /// Applies reference manifest expiry boundary changes to the Reference actor state.
                     let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType =
                         task {
-                            if not (appliesManifestBoundary referenceType) then
+                            if
+                                not
+                                    (
+                                        appliesRepositoryManifestBoundary referenceType
+                                        || appliesOwnershipManifestBoundary referenceType
+                                    )
+                            then
                                 return Ok()
                             else
                                 let directoryVersionActorProxy = DirectoryVersion.CreateActorProxy directoryId repositoryId metadata.CorrelationId
@@ -904,7 +1038,23 @@ module Reference =
                                         metadata.CorrelationId
                                     with
                                 | Error graceError -> return Error graceError
-                                | Ok plans -> return! applyManifestContributionBoundary plans metadata
+                                | Ok plans ->
+                                    let mutable boundaryError: GraceError option = None
+
+                                    if appliesRepositoryManifestBoundary referenceType then
+                                        match! applyManifestContributionBoundary plans metadata with
+                                        | Ok () -> ()
+                                        | Error graceError -> boundaryError <- Some graceError
+
+                                    if boundaryError.IsNone
+                                       && appliesOwnershipManifestBoundary referenceType then
+                                        match! applyContentOwnershipBoundary plans (ownerScopeFromReference ()) true metadata with
+                                        | Ok () -> ()
+                                        | Error graceError -> boundaryError <- Some graceError
+
+                                    match boundaryError with
+                                    | Some graceError -> return Error graceError
+                                    | None -> return Ok()
                         }
 
                     /// Coordinates existing reference return value logic for the Reference actor.

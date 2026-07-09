@@ -11,6 +11,7 @@ open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Repository
 open Grace.Types.RepositoryContentCounter
+open Grace.Types.ContentOwnershipLedger
 open Grace.Types.ManifestContributionWorkflow
 open Grace.Types.Organization
 open Grace.Types.Owner
@@ -775,6 +776,23 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to persisted events and zero-crossing intents.
         abstract member Handle: command: RepositoryContentCounterCommand -> eventMetadata: EventMetadata -> Task<GraceResult<RepositoryContentCounterDecision>>
+
+    /// Defines the operations for the ContentOwnershipLedger actor.
+    [<Interface>]
+    type IContentOwnershipLedgerActor =
+        inherit IGrainWithStringKey
+
+        /// Returns true if this content ownership ledger has been initialized.
+        abstract member Exists: correlationId: CorrelationId -> Task<bool>
+
+        /// Returns the current active ownership state for this manifest-backed content.
+        abstract member Get: correlationId: CorrelationId -> Task<ContentOwnershipLedgerDto>
+
+        /// Returns the events handled by this content ownership ledger.
+        abstract member GetEvents: correlationId: CorrelationId -> Task<IReadOnlyList<ContentOwnershipLedgerEvent>>
+
+        /// Validates incoming commands and converts them to persisted ownership events.
+        abstract member Handle: command: ContentOwnershipLedgerCommand -> eventMetadata: EventMetadata -> Task<GraceResult<ContentOwnershipLedgerDecision>>
 
     /// Defines the operations for the ManifestContributionWorkflow actor.
     [<Interface>]

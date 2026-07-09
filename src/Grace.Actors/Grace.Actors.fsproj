@@ -57,6 +57,7 @@
         <Compile Include="ContentBlockMetadata.Actor.fs" />
         <Compile Include="UploadSession.Actor.fs" />
         <Compile Include="RepositoryContentCounter.Actor.fs" />
+        <Compile Include="ContentOwnershipLedger.Actor.fs" />
         <Compile Include="ManifestContributionWorkflow.Actor.fs" />
         <Compile Include="PromotionQueue.Actor.fs" />
         <Compile Include="Repository.Actor.fs" />

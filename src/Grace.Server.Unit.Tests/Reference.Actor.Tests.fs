@@ -398,22 +398,34 @@ type ReferenceActorHashValidationTests() =
         Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Checkpoint), Is.False)
         Assert.That(shouldApplyManifestExpiryBoundary ReferenceDto.Default, Is.False)
 
-    /// Verifies that manifest Contribution Boundary Predicate Keeps Commit Checkpoint Out Of Unwired Workflow.
+    /// Verifies that manifest contribution boundary predicates keep range retention scoped while ownership tracks promotion refs.
     [<Test>]
     member _.ManifestContributionBoundaryPredicateKeepsCommitCheckpointOutOfUnwiredWorkflow() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
-        let predicateStart = actorSource.IndexOf("let appliesManifestBoundary referenceType =", StringComparison.Ordinal)
+        let predicateStart = actorSource.IndexOf("let appliesRepositoryManifestBoundary referenceType =", StringComparison.Ordinal)
         let boundaryStart = actorSource.IndexOf("let applyReferenceManifestBoundary", predicateStart, StringComparison.Ordinal)
 
-        Assert.That(predicateStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor manifest-boundary predicate must be present.")
+        Assert.That(predicateStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor repository manifest-boundary predicate must be present.")
         Assert.That(boundaryStart, Is.GreaterThan(predicateStart), "The manifest-boundary predicate slice must be bounded.")
 
         let predicateSource = actorSource.Substring(predicateStart, boundaryStart - predicateStart)
 
         Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Save"))
+        Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Promotion"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
+
+        let repositoryPredicateStart = predicateSource.IndexOf("let appliesRepositoryManifestBoundary", StringComparison.Ordinal)
+        let ownershipPredicateStart = predicateSource.IndexOf("let appliesOwnershipManifestBoundary", StringComparison.Ordinal)
+
+        Assert.That(repositoryPredicateStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(ownershipPredicateStart, Is.GreaterThan(repositoryPredicateStart))
+
+        let repositoryPredicateSource = predicateSource.Substring(repositoryPredicateStart, ownershipPredicateStart - repositoryPredicateStart)
+
+        Assert.That(repositoryPredicateSource, Does.Contain("referenceType = ReferenceType.Save"))
+        Assert.That(repositoryPredicateSource, Does.Not.Contain("ReferenceType.Promotion"))
 
     /// Verifies that manifest Contribution Boundary Traversals Force Regeneration Instead Of Cached Recursive Results.
     [<Test>]

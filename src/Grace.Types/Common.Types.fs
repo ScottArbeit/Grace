@@ -161,6 +161,12 @@ module Common =
     /// Caller-supplied retry identity for manifest-contribution workflow commands.
     type ManifestContributionWorkflowOperationId = string
 
+    /// Stable retry identity for manifest-backed content ownership ledger commands.
+    type ContentOwnershipLedgerOperationId = string
+
+    /// Stable identity for one active manifest-backed usage entry in the content ownership ledger.
+    type ContentOwnershipLedgerActiveUsageId = string
+
     /// Repository-local count of live references to a manifest-backed file.
     type ReferenceCount = int64
 

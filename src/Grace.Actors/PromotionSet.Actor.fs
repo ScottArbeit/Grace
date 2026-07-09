@@ -5,6 +5,7 @@ open Azure.Storage.Blobs.Specialized
 open Grace.Actors.Constants
 open Grace.Actors.Context
 open Grace.Actors.Extensions.ActorProxy
+open Grace.Actors.Extensions.MemoryCache
 open Grace.Actors.Interfaces
 open Grace.Actors.Services
 open Grace.Actors.Types
@@ -13,6 +14,7 @@ open Grace.Shared.Constants
 open Grace.Shared.Services
 open Grace.Shared.Utilities
 open Grace.Types.Artifact
+open Grace.Types.ContentOwnershipLedger
 open Grace.Types.Events
 open Grace.Types.PromotionSetConflictModel
 open Grace.Types.PromotionSet
@@ -1908,6 +1910,94 @@ module PromotionSet =
                     | Error graceError -> return Error graceError
             }
 
+        /// Builds content ownership ledger actor data needed by the PromotionSet actor.
+        member private this.CreateContentOwnershipLedgerActor storagePoolId manifestAddress correlationId =
+            let grain = orleansClient.CreateActorProxyWithCorrelationId<IContentOwnershipLedgerActor>($"{storagePoolId}|{manifestAddress}", correlationId)
+
+            let orleansContext = Dictionary<string, obj>()
+            orleansContext.Add(nameof StoragePoolId, storagePoolId)
+            orleansContext.Add(Constants.ActorNameProperty, ActorName.ContentOwnershipLedger)
+            memoryCache.CreateOrleansContextEntry(grain.GetGrainId(), orleansContext)
+            grain
+
+        /// Transfers accepted manifest-backed contributor usage to repository-owned usage for one applied step.
+        member private this.TransferAcceptedContentOwnership(step: PromotionSetStep, metadata: EventMetadata) =
+            task {
+                match promotionSetDto.Ownership, promotionSetDto.CreatorUserId with
+                | ResourceOwnership.ContributorOwned, Some creatorUserId ->
+                    let directoryVersionActorProxy =
+                        DirectoryVersion.CreateActorProxy step.AppliedDirectoryVersionId promotionSetDto.RepositoryId metadata.CorrelationId
+
+                    let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions true metadata.CorrelationId
+
+                    match
+                        Grace.Actors.Reference.planManifestSaveBoundaryForRecursiveDirectoryVersions
+                            promotionSetDto.RepositoryId
+                            ReferenceId.Empty
+                            step.AppliedDirectoryVersionId
+                            (directoryVersionDtos
+                             |> Seq.map (fun directoryVersionDto -> directoryVersionDto.DirectoryVersion))
+                            metadata.CorrelationId
+                        with
+                    | Error graceError -> return Error graceError
+                    | Ok plans ->
+                        let sourceOwnerScope = ContentOwnershipOwnerScope.ContributorOwned(promotionSetDto.RepositoryId, creatorUserId)
+                        let targetOwnerScope = ContentOwnershipOwnerScope.RepositoryOwned promotionSetDto.RepositoryId
+
+                        let evidence =
+                            {
+                                PromotionSetId = promotionSetDto.PromotionSetId
+                                PromotionSetStepId = step.StepId
+                                StepsComputationAttempt = promotionSetDto.StepsComputationAttempt
+                                AppliedDirectoryVersionId = step.AppliedDirectoryVersionId
+                            }
+
+                        let planArray = plans |> List.toArray
+                        let mutable planIndex = 0
+                        let mutable transferError: GraceError option = Option.None
+
+                        while planIndex < planArray.Length
+                              && transferError.IsNone do
+                            let plan = planArray[planIndex]
+                            let storagePoolId = plan.Manifest.StoragePoolId
+                            let manifestAddress = plan.Manifest.ManifestAddress
+
+                            let operationId =
+                                ContentOwnershipLedgerOperationId
+                                    $"promotion-transfer:{promotionSetDto.PromotionSetId:N}:{step.StepId:N}:{promotionSetDto.StepsComputationAttempt}:{storagePoolId}:{manifestAddress}"
+
+                            let command =
+                                ContentOwnershipLedgerCommand.TransferAcceptedContent(
+                                    operationId,
+                                    promotionSetDto.RepositoryId,
+                                    storagePoolId,
+                                    manifestAddress,
+                                    sourceOwnerScope,
+                                    targetOwnerScope,
+                                    evidence
+                                )
+
+                            let ledgerActor = this.CreateContentOwnershipLedgerActor storagePoolId manifestAddress metadata.CorrelationId
+
+                            match! ledgerActor.Handle command metadata with
+                            | Ok _ -> ()
+                            | Error graceError -> transferError <- Some graceError
+
+                            planIndex <- planIndex + 1
+
+                        match transferError with
+                        | Option.Some graceError -> return Error graceError
+                        | Option.None -> return Ok()
+                | ResourceOwnership.ContributorOwned, Option.None ->
+                    return
+                        Error(
+                            GraceError.Create
+                                "Contributor-owned PromotionSet cannot transfer content ownership without a creator user id."
+                                metadata.CorrelationId
+                        )
+                | _ -> return Ok()
+            }
+
         /// Returns required validations for apply data from the PromotionSet actor state or related storage.
         member private this.GetRequiredValidationsForApply() =
             task {
@@ -2211,6 +2301,16 @@ module PromotionSet =
                         | Ok _ -> ()
                         | Error graceError -> preconditionError <- Option.Some graceError
 
+                    if preconditionError.IsNone
+                       && promotionSetDto.Ownership = ResourceOwnership.ContributorOwned
+                       && promotionSetDto.CreatorUserId.IsNone then
+                        preconditionError <-
+                            Option.Some(
+                                GraceError.Create
+                                    "Contributor-owned PromotionSet cannot transfer content ownership without a creator user id."
+                                    metadata.CorrelationId
+                            )
+
                     if preconditionError.IsSome then
                         return Error preconditionError.Value
                     else
@@ -2232,7 +2332,12 @@ module PromotionSet =
                                 let! createReferenceResult = this.CreatePromotionReference(step, isTerminal, metadata)
 
                                 match createReferenceResult with
-                                | Ok referenceId -> createdReferenceIds.Add(referenceId)
+                                | Ok referenceId ->
+                                    createdReferenceIds.Add(referenceId)
+
+                                    match! this.TransferAcceptedContentOwnership(step, metadata) with
+                                    | Ok () -> ()
+                                    | Error graceError -> applyError <- Option.Some graceError
                                 | Error graceError -> applyError <- Option.Some graceError
 
                                 index <- index + 1
