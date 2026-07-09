@@ -5118,6 +5118,8 @@ components:
         - Checkpoint
         - Save
         - Tag
+        - External
+        - Rebase
       example: Commit
     CommonParameters:
       description: Common parameters that are used across (almost) every endpoint in Grace.

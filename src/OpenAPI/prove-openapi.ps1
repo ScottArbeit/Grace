@@ -1086,6 +1086,24 @@ function Test-OpenApiBranchReferenceDiffDetails {
     if ($referenceComponentsText -match '(RepositoryText|ReferenceCommand|ReferenceEvent|Actor)') {
         Add-Failure 'Reference OpenAPI components must expose public selector fields, not internal actor command/event shapes or stale RepositoryText naming.'
     }
+
+    $sharedComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Shared.Components.OpenAPI.yaml') -Raw
+    $referenceTypeSchemaMatch = [regex]::Match($sharedComponentsText, '(?s)ReferenceType:\s*type:\s*string\s*enum:\s*\[(?<values>[^\]]+)\]')
+    if (-not $referenceTypeSchemaMatch.Success) {
+        Add-Failure 'Shared ReferenceType OpenAPI schema must declare a string enum.'
+    }
+    else {
+        $referenceTypeValues =
+            $referenceTypeSchemaMatch.Groups['values'].Value.Split(',') |
+            ForEach-Object { $_.Trim() } |
+            Where-Object { -not [string]::IsNullOrWhiteSpace($_) }
+
+        foreach ($requiredReferenceType in @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')) {
+            if ($requiredReferenceType -notin $referenceTypeValues) {
+                Add-Failure "Shared ReferenceType OpenAPI enum is missing server-supported value '$requiredReferenceType'."
+            }
+        }
+    }
 }
 
 function Test-OpenApiOwnerOrganizationRepositoryDirectoryDetails {
@@ -1722,14 +1740,29 @@ function Test-GeneratedClientMatrixProof {
             forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4')
         },
         @{
+            path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/ReferenceType.ts'
+            required = @("Promotion: 'Promotion'", "Commit: 'Commit'", "Checkpoint: 'Checkpoint'", "Save: 'Save'", "Tag: 'Tag'", "External: 'External'", "Rebase: 'Rebase'")
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
+        },
+        @{
             path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/materialization_target_selector_kind.py'
             required = @('directoryVersionId', 'referenceId', 'branchName', 'referenceType')
             forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4')
         },
         @{
+            path = 'sdk/generated/matrix/openapi-generator/python/grace_generated_openapi_probe/models/reference_type.py'
+            required = @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')
+            forbidden = @('NUMBER_1', 'NUMBER_2', 'NUMBER_3', 'NUMBER_4', 'NUMBER_5', 'NUMBER_6', 'NUMBER_7')
+        },
+        @{
             path = 'sdk/generated/matrix/openapi-generator/rust/src/models/materialization_target_selector_kind.rs'
             required = @('directoryVersionId', 'referenceId', 'branchName', 'referenceType')
             forbidden = @('Number1', 'Number2', 'Number3', 'Number4')
+        },
+        @{
+            path = 'sdk/generated/matrix/openapi-generator/rust/src/models/reference_type.rs'
+            required = @('Promotion', 'Commit', 'Checkpoint', 'Save', 'Tag', 'External', 'Rebase')
+            forbidden = @('Number1', 'Number2', 'Number3', 'Number4', 'Number5', 'Number6', 'Number7')
         },
         @{
             path = 'sdk/generated/matrix/openapi-generator/typescript-fetch/src/models/MaterializationCacheSelectionKind.ts'

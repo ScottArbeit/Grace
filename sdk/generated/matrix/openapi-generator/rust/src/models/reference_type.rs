@@ -24,6 +24,10 @@ pub enum ReferenceType {
     Save,
     #[serde(rename = "Tag")]
     Tag,
+    #[serde(rename = "External")]
+    External,
+    #[serde(rename = "Rebase")]
+    Rebase,
 
 }
 
@@ -35,6 +39,8 @@ impl std::fmt::Display for ReferenceType {
             Self::Checkpoint => write!(f, "Checkpoint"),
             Self::Save => write!(f, "Save"),
             Self::Tag => write!(f, "Tag"),
+            Self::External => write!(f, "External"),
+            Self::Rebase => write!(f, "Rebase"),
         }
     }
 }
