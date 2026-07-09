@@ -13,6 +13,7 @@
   <ItemGroup>
     <Compile Include="AssemblyInfo.fs" />
     <Compile Include="OperationsUsageSql.fs" />
+    <Compile Include="OperationsPricingSql.fs" />
     <Compile Include="OperationsUsagePartitioningSql.fs" />
     <Compile Include="OperationsEntities.fs" />
     <Compile Include="OperationsDbContext.fs" />
@@ -23,6 +24,7 @@
     <Compile Include="Migrations\20260707140000_AddRawUsageFactRehydrationExpiry.fs" />
     <Compile Include="Migrations\20260708170000_AddRawUsageFactArchiveFailureState.fs" />
     <Compile Include="Migrations\20260709090000_AddRawUsageFactRehydrationExpiryIndex.fs" />
+    <Compile Include="Migrations\20260709110000_AddPricingPlanRateAssignment.fs" />
     <Compile Include="Migrations\OperationsDbContextModelSnapshot.fs" />
     <Compile Include="OperationsData.fs" />
   </ItemGroup>
