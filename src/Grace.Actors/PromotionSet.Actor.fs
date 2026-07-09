@@ -108,8 +108,6 @@ module PromotionSet =
             | PromotionSetCommand.CreatePromotionSet _ -> Ok promotionSetCommand
             | _ when currentPromotionSetDto.PromotionSetId = PromotionSetId.Empty ->
                 Error(GraceError.Create "PromotionSet does not exist." eventMetadata.CorrelationId)
-            | PromotionSetCommand.Apply _ when currentPromotionSetDto.Status = PromotionSetStatus.Succeeded ->
-                Error(GraceError.Create "PromotionSet has already been applied successfully." eventMetadata.CorrelationId)
             | PromotionSetCommand.Apply _ when currentPromotionSetDto.Status = PromotionSetStatus.Running ->
                 Error(GraceError.Create "PromotionSet is already running." eventMetadata.CorrelationId)
             | PromotionSetCommand.RecomputeStepsIfStale _ when currentPromotionSetDto.StepsComputationStatus = StepsComputationStatus.Computing ->
@@ -1998,6 +1996,26 @@ module PromotionSet =
                 | _ -> return Ok()
             }
 
+        /// Transfers accepted content ownership for all applied steps after the PromotionSet apply decision is durable.
+        member private this.TransferAcceptedContentOwnershipForSteps(steps: PromotionSetStep list, metadata: EventMetadata) =
+            task {
+                let orderedSteps = steps |> List.sortBy (fun step -> step.Order)
+                let mutable transferError: GraceError option = Option.None
+                let mutable index = 0
+
+                while index < orderedSteps.Length
+                      && transferError.IsNone do
+                    match! this.TransferAcceptedContentOwnership(orderedSteps[index], metadata) with
+                    | Ok () -> ()
+                    | Error graceError -> transferError <- Option.Some graceError
+
+                    index <- index + 1
+
+                match transferError with
+                | Option.Some graceError -> return Error graceError
+                | Option.None -> return Ok()
+            }
+
         /// Returns required validations for apply data from the PromotionSet actor state or related storage.
         member private this.GetRequiredValidationsForApply() =
             task {
@@ -2259,7 +2277,9 @@ module PromotionSet =
         member private this.ApplyPromotionSet(approvalPolicies: PromotionSetApprovalPolicySnapshot list, metadata: EventMetadata) =
             task {
                 if promotionSetDto.Status = PromotionSetStatus.Succeeded then
-                    return this.BuildError("PromotionSet has already been applied successfully.", metadata.CorrelationId)
+                    match! this.TransferAcceptedContentOwnershipForSteps(promotionSetDto.Steps, metadata) with
+                    | Ok () -> return this.BuildSuccess("PromotionSet has already been applied successfully.", metadata.CorrelationId)
+                    | Error graceError -> return Error graceError
                 elif promotionSetDto.DeletedAt.IsSome then
                     return this.BuildError("PromotionSet has been deleted and cannot be applied.", metadata.CorrelationId)
                 else
@@ -2332,12 +2352,7 @@ module PromotionSet =
                                 let! createReferenceResult = this.CreatePromotionReference(step, isTerminal, metadata)
 
                                 match createReferenceResult with
-                                | Ok referenceId ->
-                                    createdReferenceIds.Add(referenceId)
-
-                                    match! this.TransferAcceptedContentOwnership(step, metadata) with
-                                    | Ok () -> ()
-                                    | Error graceError -> applyError <- Option.Some graceError
+                                | Ok referenceId -> createdReferenceIds.Add(referenceId)
                                 | Error graceError -> applyError <- Option.Some graceError
 
                                 index <- index + 1
@@ -2375,7 +2390,9 @@ module PromotionSet =
                                                 graceError
                                             )
 
-                                    return Ok graceReturnValue
+                                    match! this.TransferAcceptedContentOwnershipForSteps(orderedSteps, metadata) with
+                                    | Ok () -> return Ok graceReturnValue
+                                    | Error graceError -> return Error graceError
                             | Option.Some graceError ->
                                 do!
                                     this.RollbackCreatedPromotions(

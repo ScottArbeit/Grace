@@ -155,6 +155,11 @@ module Repository =
 
                                     logToConsole $"In Repository.Actor.handleEvent: Successfully created the empty directory version."
 
+                                    let initialPromotionMetadata =
+                                        { repositoryEvent.Metadata with Properties = Dictionary<string, string>(repositoryEvent.Metadata.Properties) }
+
+                                    initialPromotionMetadata.Properties[ "SkipContentOwnershipBoundary" ] <- "RepositoryBootstrap"
+
                                     let! promotionResult =
                                         branchActor.Handle
                                             (BranchCommand.Promote(
@@ -163,7 +168,7 @@ module Repository =
                                                 emptyBlake3Hash,
                                                 (getLocalizedString StringResourceName.InitialPromotionMessage)
                                             ))
-                                            repositoryEvent.Metadata
+                                            initialPromotionMetadata
 
                                     logToConsole $"In Repository.Actor.handleEvent: After trying to create the first promotion."
 

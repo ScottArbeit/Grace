@@ -233,7 +233,11 @@ module ContentOwnershipLedger =
 
                                 if ledger.ActiveUsageOwners.TryGetValue(activeUsageId, &existingOwnerScope) then
                                     if existingOwnerScope = ownerScope then
-                                        okDecision ledger operationId [] true "Content ownership active usage was already present."
+                                        Error(
+                                            graceError
+                                                metadata.CorrelationId
+                                                "ContentOwnershipLedger active usage id is already present for a different operation id."
+                                        )
                                     else
                                         Error(
                                             graceError
@@ -269,7 +273,7 @@ module ContentOwnershipLedger =
 
                                 okDecision ledger operationId [ ledgerEvent ] false "Content ownership active usage removed."
                             else
-                                okDecision ledger operationId [] true "Content ownership active usage was already absent."
+                                Error(graceError metadata.CorrelationId "ContentOwnershipLedger active usage id is not present.")
                     | ContentOwnershipLedgerCommand.TransferAcceptedContent (operationId,
                                                                              repositoryId,
                                                                              storagePoolId,

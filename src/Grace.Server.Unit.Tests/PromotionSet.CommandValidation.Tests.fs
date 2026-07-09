@@ -165,15 +165,15 @@ type PromotionSetCommandValidationTests() =
 
         Assert.That(allowed.IsNone, Is.True)
 
-    /// Verifies that apply Rejected When Promotion Set Already Succeeded.
+    /// Verifies that apply remains valid after success so post-commit ownership transfer can be retried idempotently.
     [<Test>]
-    member _.ApplyRejectedWhenPromotionSetAlreadySucceeded() =
+    member _.ApplyAllowedWhenPromotionSetAlreadySucceededForTransferRetry() =
         let dto = existingPromotionSet PromotionSetStatus.Succeeded StepsComputationStatus.Computed
         let metadata = createMetadata "corr-apply-succeeded"
 
         match PromotionSet.validateCommandForState [] dto (PromotionSetCommand.Apply []) metadata with
-        | Ok _ -> Assert.Fail("Expected apply validation to fail for succeeded PromotionSet.")
-        | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet has already been applied successfully."))
+        | Ok _ -> Assert.Pass()
+        | Error graceError -> Assert.Fail($"Expected apply validation to allow succeeded PromotionSet transfer retry, got {graceError.Error}.")
 
     /// Verifies that apply Rejected When Promotion Set Already Running.
     [<Test>]

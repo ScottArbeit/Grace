@@ -30,6 +30,7 @@ type ContentOwnershipLedgerActorTests() =
     let repositoryScope = ContentOwnershipOwnerScope.RepositoryOwned repositoryId
     let activeUsageId = ContentOwnershipLedgerActiveUsageId "reference:private-save:pool-main:ownership-alpha"
     let secondActiveUsageId = ContentOwnershipLedgerActiveUsageId "reference:accepted-promotion:pool-main:ownership-alpha"
+    let thirdActiveUsageId = ContentOwnershipLedgerActiveUsageId "reference:private-reuse:pool-main:ownership-alpha"
 
     /// Constructs metadata fixtures used by content ownership ledger assertions.
     let metadata correlationId =
@@ -241,6 +242,74 @@ type ContentOwnershipLedgerActorTests() =
         Assert.That(replay.WasIdempotentReplay, Is.True)
         Assert.That(replay.Events, Is.Empty)
         Assert.That(replay.Ledger.ActiveUsageByOwner[repositoryScope], Is.EqualTo(1L))
+
+    /// Verifies active usage duplicate commands with new operation ids are rejected rather than persisted as replay.
+    [<Test>]
+    member _.AlreadyPresentAddWithNewOperationIdIsRejected() =
+        let first =
+            ContentOwnershipLedgerActor.decideCommand
+                []
+                ContentOwnershipLedgerDto.Default
+                (addContributor "reference:add-private" activeUsageId)
+                (metadata "corr-add-private")
+            |> expectOk
+
+        match
+            ContentOwnershipLedgerActor.decideCommand
+                first.Events
+                (applyEvents first.Events ContentOwnershipLedgerDto.Default)
+                (addContributor "reference:add-private-duplicate" activeUsageId)
+                (metadata "corr-add-private-duplicate")
+            with
+        | Ok _ -> Assert.Fail("Expected duplicate active usage with a new operation id to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ContentOwnershipLedger active usage id is already present for a different operation id."))
+
+    /// Verifies absent active usage removes are rejected rather than accepted as replay without durable evidence.
+    [<Test>]
+    member _.AbsentRemoveWithNewOperationIdIsRejected() =
+        match
+            ContentOwnershipLedgerActor.decideCommand
+                []
+                ContentOwnershipLedgerDto.Default
+                (remove "reference-expiry:absent" activeUsageId)
+                (metadata "corr-remove-absent")
+            with
+        | Ok _ -> Assert.Fail("Expected absent active usage remove to reject.")
+        | Error error -> Assert.That(error.Error, Is.EqualTo("ContentOwnershipLedger active usage id is not present."))
+
+    /// Verifies contributor reuse after accepted repository ownership remains repository-owned for accounting.
+    [<Test>]
+    member _.ContributorReuseAfterAcceptedTransferKeepsRepositoryOwnership() =
+        let added =
+            ContentOwnershipLedgerActor.decideCommand
+                []
+                ContentOwnershipLedgerDto.Default
+                (addContributor "reference:add-private" activeUsageId)
+                (metadata "corr-add-private")
+            |> expectOk
+
+        let transferred =
+            ContentOwnershipLedgerActor.decideCommand
+                added.Events
+                (applyEvents added.Events ContentOwnershipLedgerDto.Default)
+                (transfer "promotion-transfer:accepted" contributorScope)
+                (metadata "corr-transfer")
+            |> expectOk
+
+        let events = added.Events @ transferred.Events
+
+        let reused =
+            ContentOwnershipLedgerActor.decideCommand
+                events
+                transferred.Ledger
+                (addContributor "reference:add-reuse" thirdActiveUsageId)
+                (metadata "corr-add-reuse")
+            |> expectOk
+
+        Assert.That(reused.Ledger.ActiveUsageOwners[activeUsageId], Is.EqualTo(repositoryScope))
+        Assert.That(reused.Ledger.ActiveUsageOwners[thirdActiveUsageId], Is.EqualTo(repositoryScope))
+        Assert.That(reused.Ledger.ActiveUsageByOwner[repositoryScope], Is.EqualTo(2L))
+        Assert.That(reused.Ledger.ActiveUsageByOwner.ContainsKey contributorScope, Is.False)
 
     /// Verifies rejected or abandoned private work has no repository transfer without accepted evidence.
     [<Test>]

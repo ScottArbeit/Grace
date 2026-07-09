@@ -200,7 +200,19 @@ module ContentOwnershipLedger =
             match ledgerEvent.Event with
             | ContentOwnershipLedgerEventType.ActiveUsageAdded added ->
                 let activeUsageOwners = ContentOwnershipLedgerDto.CloneActiveUsageOwners current.ActiveUsageOwners
-                activeUsageOwners[added.ActiveUsageId] <- added.OwnerScope
+
+                let repositoryOwnerScope = ContentOwnershipOwnerScope.RepositoryOwned added.RepositoryId
+
+                let effectiveOwnerScope =
+                    match added.OwnerScope with
+                    | ContentOwnershipOwnerScope.ContributorOwned _ when
+                        activeUsageOwners.Values
+                        |> Seq.contains repositoryOwnerScope
+                        ->
+                        repositoryOwnerScope
+                    | _ -> added.OwnerScope
+
+                activeUsageOwners[added.ActiveUsageId] <- effectiveOwnerScope
 
                 { current with
                     StoragePoolId =

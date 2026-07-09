@@ -398,6 +398,11 @@ type ReferenceActorHashValidationTests() =
         Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Checkpoint), Is.False)
         Assert.That(shouldApplyManifestExpiryBoundary ReferenceDto.Default, Is.False)
 
+        Assert.That(shouldApplyOwnershipManifestBoundary ReferenceType.Save, Is.True)
+        Assert.That(shouldApplyOwnershipManifestBoundary ReferenceType.Promotion, Is.True)
+        Assert.That(shouldApplyOwnershipManifestBoundary ReferenceType.Commit, Is.False)
+        Assert.That(shouldApplyOwnershipManifestBoundary ReferenceType.Checkpoint, Is.False)
+
     /// Verifies that manifest contribution boundary predicates keep range retention scoped while ownership tracks promotion refs.
     [<Test>]
     member _.ManifestContributionBoundaryPredicateKeepsCommitCheckpointOutOfUnwiredWorkflow() =
@@ -405,27 +410,97 @@ type ReferenceActorHashValidationTests() =
         let actorSource = File.ReadAllText actorPath
         let predicateStart = actorSource.IndexOf("let appliesRepositoryManifestBoundary referenceType =", StringComparison.Ordinal)
         let boundaryStart = actorSource.IndexOf("let applyReferenceManifestBoundary", predicateStart, StringComparison.Ordinal)
+        let ownershipPredicateStart = actorSource.IndexOf("let shouldApplyOwnershipManifestBoundary referenceType =", StringComparison.Ordinal)
+        let ownershipPredicateEnd = actorSource.IndexOf("let private shouldSkipContentOwnershipBoundary", ownershipPredicateStart, StringComparison.Ordinal)
 
         Assert.That(predicateStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor repository manifest-boundary predicate must be present.")
         Assert.That(boundaryStart, Is.GreaterThan(predicateStart), "The manifest-boundary predicate slice must be bounded.")
+        Assert.That(ownershipPredicateStart, Is.GreaterThanOrEqualTo(0), "The ReferenceActor ownership manifest-boundary predicate must be present.")
+        Assert.That(ownershipPredicateEnd, Is.GreaterThan(ownershipPredicateStart), "The ownership predicate slice must be bounded.")
 
         let predicateSource = actorSource.Substring(predicateStart, boundaryStart - predicateStart)
+        let ownershipPredicateSource = actorSource.Substring(ownershipPredicateStart, ownershipPredicateEnd - ownershipPredicateStart)
 
         Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Save"))
-        Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Promotion"))
+        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Promotion"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
 
-        let repositoryPredicateStart = predicateSource.IndexOf("let appliesRepositoryManifestBoundary", StringComparison.Ordinal)
-        let ownershipPredicateStart = predicateSource.IndexOf("let appliesOwnershipManifestBoundary", StringComparison.Ordinal)
+        Assert.That(ownershipPredicateSource, Does.Contain("referenceType = ReferenceType.Save"))
+        Assert.That(ownershipPredicateSource, Does.Contain("referenceType = ReferenceType.Promotion"))
+        Assert.That(ownershipPredicateSource, Does.Not.Contain("ReferenceType.Commit"))
+        Assert.That(ownershipPredicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
 
-        Assert.That(repositoryPredicateStart, Is.GreaterThanOrEqualTo(0))
-        Assert.That(ownershipPredicateStart, Is.GreaterThan(repositoryPredicateStart))
+    /// Verifies repository bootstrap skips promotion ownership traversal while normal promotion references remain covered.
+    [<Test>]
+    member _.RepositoryBootstrapPromotionSkipsOwnershipBoundaryToAvoidRepositoryActorReentry() =
+        let repositoryPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Repository.Actor.fs"))
+        let referencePath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
+        let repositorySource = File.ReadAllText repositoryPath
+        let referenceSource = File.ReadAllText referencePath
 
-        let repositoryPredicateSource = predicateSource.Substring(repositoryPredicateStart, ownershipPredicateStart - repositoryPredicateStart)
+        Assert.That(repositorySource, Does.Contain("SkipContentOwnershipBoundary"))
+        Assert.That(repositorySource, Does.Contain("RepositoryBootstrap"))
+        Assert.That(referenceSource, Does.Contain("shouldSkipContentOwnershipBoundary metadata"))
+        Assert.That(referenceSource, Does.Contain("&& not (shouldSkipContentOwnershipBoundary metadata)"))
 
-        Assert.That(repositoryPredicateSource, Does.Contain("referenceType = ReferenceType.Save"))
-        Assert.That(repositoryPredicateSource, Does.Not.Contain("ReferenceType.Promotion"))
+    /// Verifies promotion physical deletion removes content ownership entries even though repository counters remain save-only.
+    [<Test>]
+    member _.PhysicalDeletionRemovesPromotionOwnershipWithoutEnablingPromotionRepositoryCounters() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+        let reminderStart = actorSource.IndexOf("| ReminderTypes.PhysicalDeletion", StringComparison.Ordinal)
+        let reminderEnd = actorSource.IndexOf("Branch.CreateActorProxy", reminderStart, StringComparison.Ordinal)
+        let expiryBoundaryStart = actorSource.IndexOf("let applyReferenceManifestExpiryBoundary", StringComparison.Ordinal)
+        let expiryBoundaryEnd = actorSource.IndexOf("let existingReferenceReturnValue () =", expiryBoundaryStart, StringComparison.Ordinal)
+        let deletePhysicalStart = actorSource.IndexOf("| DeletePhysical ->", expiryBoundaryEnd, StringComparison.Ordinal)
+        let deletePhysicalEnd = actorSource.IndexOf("| Reveal (operationId, reason) ->", deletePhysicalStart, StringComparison.Ordinal)
+
+        Assert.That(reminderStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(reminderEnd, Is.GreaterThan(reminderStart))
+        Assert.That(expiryBoundaryStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(expiryBoundaryEnd, Is.GreaterThan(expiryBoundaryStart))
+        Assert.That(deletePhysicalStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(deletePhysicalEnd, Is.GreaterThan(deletePhysicalStart))
+
+        let reminderSource = actorSource.Substring(reminderStart, reminderEnd - reminderStart)
+        let expiryBoundarySource = actorSource.Substring(expiryBoundaryStart, expiryBoundaryEnd - expiryBoundaryStart)
+        let deletePhysicalSource = actorSource.Substring(deletePhysicalStart, deletePhysicalEnd - deletePhysicalStart)
+
+        Assert.That(reminderSource, Does.Contain("shouldApplyOwnershipManifestBoundary referenceDto.ReferenceType"))
+        Assert.That(reminderSource, Does.Contain("applyContentOwnershipBoundary plans (ownershipOwnerScopeFromReferenceDto referenceDto) true"))
+        Assert.That(expiryBoundarySource, Does.Contain("let appliesOwnershipBoundary = shouldApplyOwnershipManifestBoundary referenceType"))
+        Assert.That(expiryBoundarySource, Does.Contain("applyContentOwnershipBoundary plans (ownerScopeFromReference ()) true"))
+        Assert.That(deletePhysicalSource, Does.Contain("applyReferenceManifestExpiryBoundary"))
+
+    /// Verifies PromotionSet apply transfers accepted ownership only after the Applied event has persisted.
+    [<Test>]
+    member _.PromotionSetApplyTransfersOwnershipAfterAppliedEventPersists() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "PromotionSet.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+        let applyStart = actorSource.IndexOf("member private this.ApplyPromotionSet", StringComparison.Ordinal)
+
+        let applyEventIndex =
+            actorSource.IndexOf(
+                "match! this.ApplyEvent { Event = PromotionSetEventType.Applied terminalReferenceId; Metadata = metadata }",
+                applyStart,
+                StringComparison.Ordinal
+            )
+
+        let transferIndex =
+            actorSource.IndexOf("this.TransferAcceptedContentOwnershipForSteps(orderedSteps, metadata)", applyEventIndex, StringComparison.Ordinal)
+
+        let createLoopStart = actorSource.IndexOf("while index < orderedSteps.Length && applyError.IsNone do", applyStart, StringComparison.Ordinal)
+        let createLoopEnd = actorSource.IndexOf("match applyError with", createLoopStart, StringComparison.Ordinal)
+
+        Assert.That(applyEventIndex, Is.GreaterThan(applyStart))
+        Assert.That(transferIndex, Is.GreaterThan(applyEventIndex))
+        Assert.That(createLoopStart, Is.GreaterThan(applyStart))
+        Assert.That(createLoopEnd, Is.GreaterThan(createLoopStart))
+
+        let createLoopSource = actorSource.Substring(createLoopStart, createLoopEnd - createLoopStart)
+
+        Assert.That(createLoopSource, Does.Not.Contain("TransferAcceptedContentOwnership("))
 
     /// Verifies that manifest Contribution Boundary Traversals Force Regeneration Instead Of Cached Recursive Results.
     [<Test>]
