@@ -68,8 +68,8 @@ module Review =
                     return Error graceError
         }
 
-    /// Resolves resolve promotion set by id data from request or repository state.
-    let private resolvePromotionSetById (context: HttpContext) (promotionSetId: Guid) =
+    /// Resolves a PromotionSet only when the caller can observe its durable visibility scope.
+    let private resolveObservablePromotionSetById (context: HttpContext) (promotionSetId: Guid) =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
@@ -78,7 +78,13 @@ module Review =
 
             if exists then
                 let! promotionSet = actorProxy.Get correlationId
-                return Option.Some promotionSet
+
+                if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                    return Option.None
+                else
+                    let! isObservable = Grace.Server.PromotionSet.canObservePromotionSet context promotionSet
+
+                    if isObservable then return Option.Some promotionSet else return Option.None
             else
                 return Option.None
         }
@@ -86,7 +92,7 @@ module Review =
     /// Resolves resolve candidate projection context data from request or repository state.
     let private resolveCandidateProjectionContext (context: HttpContext) (parameters: CandidateProjectionParameters) =
         task {
-            match! resolveCandidatePromotionSetWith (resolvePromotionSetById context) parameters with
+            match! resolveCandidatePromotionSetWith (resolveObservablePromotionSetById context) parameters with
             | Error error -> return Error error
             | Ok (_, normalizedCandidateId, promotionSet) ->
                 let identity =
@@ -113,6 +119,106 @@ module Review =
                 return Option.Some queue
             else
                 return Option.None
+        }
+
+    /// Copies PromotionSet visibility facts onto review and queue event metadata created from that PromotionSet.
+    let internal inheritPromotionSetVisibilityMetadata (metadata: EventMetadata) (promotionSet: PromotionSetDto) =
+        metadata.Properties[ "InheritedVisibility" ] <- $"{promotionSet.Visibility}"
+        metadata.Properties[ "InheritedOwnership" ] <- $"{promotionSet.Ownership}"
+
+        promotionSet.CreatorUserId
+        |> Option.iter (fun creatorUserId -> metadata.Properties[ "InheritedCreatorUserId" ] <- $"{creatorUserId}")
+
+        metadata
+
+    /// Applies the queue route's caller-visible projection before review snapshots serialize queue fields.
+    let internal projectQueueForReviewSnapshot
+        (queue: PromotionQueue)
+        (observablePromotionSetIds: PromotionSetId list)
+        (observableRunningPromotionSetId: PromotionSetId option)
+        =
+        let allAffectedWorkVisible =
+            let queuedIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+
+            let queuedWorkVisible =
+                queuedIds.Length = observablePromotionSetIds.Length
+                && queuedIds
+                   |> List.forall (fun promotionSetId ->
+                       observablePromotionSetIds
+                       |> List.contains promotionSetId)
+
+            let runningWorkVisible =
+                match queue.RunningPromotionSetId with
+                | Option.Some promotionSetId -> observableRunningPromotionSetId = Option.Some promotionSetId
+                | Option.None -> true
+
+            queuedWorkVisible && runningWorkVisible
+
+        let visibleState =
+            match observableRunningPromotionSetId with
+            | Option.Some _ -> QueueState.Running
+            | Option.None when observablePromotionSetIds.IsEmpty -> QueueState.Idle
+            | Option.None when allAffectedWorkVisible ->
+                match queue.State with
+                | QueueState.Paused -> QueueState.Paused
+                | QueueState.Degraded -> QueueState.Degraded
+                | _ -> QueueState.Idle
+            | Option.None -> QueueState.Idle
+
+        let visibleUpdatedAt =
+            match visibleState with
+            | QueueState.Idle when observableRunningPromotionSetId.IsNone -> Option.None
+            | QueueState.Paused
+            | QueueState.Degraded when allAffectedWorkVisible -> if isNull (box queue.UpdatedAt) then Option.None else queue.UpdatedAt
+            | QueueState.Running -> if isNull (box queue.UpdatedAt) then Option.None else queue.UpdatedAt
+            | _ -> Option.None
+
+        if observablePromotionSetIds.IsEmpty
+           && observableRunningPromotionSetId.IsNone then
+            PromotionQueue.Default
+        else
+            { queue with
+                PromotionSetIds = observablePromotionSetIds
+                RunningPromotionSetId = observableRunningPromotionSetId
+                State = visibleState
+                UpdatedAt = visibleUpdatedAt
+            }
+
+    /// Loads the target queue and removes private PromotionSet work the current caller cannot observe.
+    let private getCallerVisibleQueueForPromotionSet (context: HttpContext) (promotionSet: PromotionSetDto) =
+        task {
+            match! tryGetQueueForPromotionSet context promotionSet with
+            | Option.None -> return Option.None
+            | Option.Some queue ->
+                let queuedPromotionSetIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+                let observablePromotionSetIds = ResizeArray<PromotionSetId>()
+                let queuedPromotionSetIdArray = queuedPromotionSetIds |> List.toArray
+                let mutable index = 0
+
+                while index < queuedPromotionSetIdArray.Length do
+                    let queuedPromotionSetId = queuedPromotionSetIdArray[index]
+                    let! observablePromotionSet = resolveObservablePromotionSetById context queuedPromotionSetId
+
+                    if observablePromotionSet.IsSome then
+                        observablePromotionSetIds.Add queuedPromotionSetId
+
+                    index <- index + 1
+
+                let! observableRunningPromotionSetId =
+                    match queue.RunningPromotionSetId with
+                    | Option.Some runningPromotionSetId ->
+                        task {
+                            let! observablePromotionSet = resolveObservablePromotionSetById context runningPromotionSetId
+
+                            return
+                                observablePromotionSet
+                                |> Option.map (fun _ -> runningPromotionSetId)
+                        }
+                    | Option.None -> Task.FromResult Option.None
+
+                return
+                    projectQueueForReviewSnapshot queue (observablePromotionSetIds |> Seq.toList) observableRunningPromotionSetId
+                    |> Option.Some
         }
 
     /// Loads review notes and checkpoints associated with a candidate promotion set.
@@ -819,7 +925,24 @@ module Review =
 
     /// Resolves resolve candidate identity projection data from request or repository state.
     let internal resolveCandidateIdentityProjection (context: HttpContext) (parameters: ResolveCandidateIdentityParameters) =
-        resolveCandidateIdentityProjectionWith (resolvePromotionSetById context) parameters
+        resolveCandidateIdentityProjectionWith (resolveObservablePromotionSetById context) parameters
+
+    /// Loads the PromotionSet named by review parameters before review-note reads or mutations touch private state.
+    let private requireObservableReviewPromotionSet (context: HttpContext) (parameters: #ReviewParameters) =
+        task {
+            let correlationId = getCorrelationId context
+            let promotionSetId = Guid.Parse(parameters.PromotionSetId)
+            let! promotionSet = resolveObservablePromotionSetById context promotionSetId
+
+            match promotionSet with
+            | Option.Some promotionSet -> return Ok promotionSet
+            | Option.None ->
+                return
+                    Error(
+                        (GraceError.Create "PromotionSet does not exist." correlationId)
+                            .enhance (nameof PromotionSetId, promotionSetId)
+                    )
+        }
 
     /// Coordinates process command processing for Grace Server.
     let processCommand<'T when 'T :> ReviewParameters> (context: HttpContext) (validations: Validations<'T>) (command: 'T -> ValueTask<ReviewCommand>) =
@@ -839,10 +962,10 @@ module Review =
                 parameters.RepositoryId <- graceIds.RepositoryIdString
 
                 /// Coordinates handle command processing for Grace Server.
-                let handleCommand promotionSetId cmd =
+                let handleCommand promotionSetId promotionSet cmd =
                     task {
                         let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
-                        let metadata = createMetadata context
+                        let metadata = inheritPromotionSetVisibilityMetadata (createMetadata context) promotionSet
 
                         match! actorProxy.Handle cmd metadata with
                         | Ok graceReturnValue ->
@@ -877,7 +1000,20 @@ module Review =
                 if validationsPassed then
                     let! cmd = command parameters
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
-                    return! handleCommand promotionSetId cmd
+
+                    match! requireObservableReviewPromotionSet context parameters with
+                    | Ok promotionSet -> return! handleCommand promotionSetId promotionSet cmd
+                    | Error graceError ->
+                        graceError
+                            .enhance(parameterDictionary)
+                            .enhance(nameof OwnerId, graceIds.OwnerId)
+                            .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                            .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                            .enhance("Command", commandName)
+                            .enhance ("Path", context.Request.Path.Value)
+                        |> ignore
+
+                        return! context |> result400BadRequest graceError
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = ReviewError.getErrorMessage error
@@ -931,19 +1067,32 @@ module Review =
 
                 if validationsPassed then
                     let promotionSetId = Guid.Parse(parameters.PromotionSetId)
-                    let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
-                    let! queryResult = query context 0 actorProxy
 
-                    let graceReturnValue =
-                        (GraceReturnValue.Create queryResult correlationId)
+                    match! requireObservableReviewPromotionSet context parameters with
+                    | Error graceError ->
+                        graceError
                             .enhance(parameterDictionary)
                             .enhance(nameof OwnerId, graceIds.OwnerId)
                             .enhance(nameof OrganizationId, graceIds.OrganizationId)
                             .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                            .enhance(nameof PromotionSetId, promotionSetId)
                             .enhance ("Path", context.Request.Path.Value)
+                        |> ignore
 
-                    return! context |> result200Ok graceReturnValue
+                        return! context |> result400BadRequest graceError
+                    | Ok _ ->
+                        let actorProxy = Review.CreateActorProxy promotionSetId graceIds.RepositoryId correlationId
+                        let! queryResult = query context 0 actorProxy
+
+                        let graceReturnValue =
+                            (GraceReturnValue.Create queryResult correlationId)
+                                .enhance(parameterDictionary)
+                                .enhance(nameof OwnerId, graceIds.OwnerId)
+                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                .enhance(nameof PromotionSetId, promotionSetId)
+                                .enhance ("Path", context.Request.Path.Value)
+
+                        return! context |> result200Ok graceReturnValue
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = ReviewError.getErrorMessage error
@@ -999,7 +1148,7 @@ module Review =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let metadata = createMetadata context
+            let metadata = inheritPromotionSetVisibilityMetadata (createMetadata context) promotionSet
 
             let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSet.PromotionSetId graceIds.RepositoryId correlationId
 
@@ -1054,7 +1203,7 @@ module Review =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let metadata = createMetadata context
+            let metadata = inheritPromotionSetVisibilityMetadata (createMetadata context) promotionSet
             let queueActorProxy = PromotionQueue.CreateActorProxy promotionSet.TargetBranchId graceIds.RepositoryId correlationId
             let! queueExists = queueActorProxy.Exists correlationId
 
@@ -1073,7 +1222,7 @@ module Review =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let metadata = createMetadata context
+            let metadata = inheritPromotionSetVisibilityMetadata (createMetadata context) promotionSet
             let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSet.PromotionSetId graceIds.RepositoryId correlationId
 
             let gateReason = $"candidate gate rerun ({gateName.Trim()})"
@@ -1148,7 +1297,7 @@ module Review =
                         let candidateError = enrichCandidateError context parameters error
                         return! context |> result400BadRequest candidateError
                     | Ok (identity, promotionSet) ->
-                        let! queue = tryGetQueueForPromotionSet context promotionSet
+                        let! queue = getCallerVisibleQueueForPromotionSet context promotionSet
                         let! reviewNotes, _ = getReviewStateForPromotionSet context promotionSet.PromotionSetId
                         let projection = buildCandidateProjectionSnapshot identity promotionSet queue reviewNotes
 
@@ -1185,7 +1334,7 @@ module Review =
                         let candidateError = enrichCandidateError context parameters error
                         return! context |> result400BadRequest candidateError
                     | Ok (identity, promotionSet) ->
-                        let! queue = tryGetQueueForPromotionSet context promotionSet
+                        let! queue = getCallerVisibleQueueForPromotionSet context promotionSet
                         let! reviewNotes, _ = getReviewStateForPromotionSet context promotionSet.PromotionSetId
                         let snapshot = buildCandidateProjectionSnapshot identity promotionSet queue reviewNotes
 
@@ -1287,7 +1436,7 @@ module Review =
                         let candidateError = enrichCandidateError context parameters error
                         return! context |> result400BadRequest candidateError
                     | Ok (identity, promotionSet) ->
-                        let! queue = tryGetQueueForPromotionSet context promotionSet
+                        let! queue = getCallerVisibleQueueForPromotionSet context promotionSet
                         let! reviewNotes, checkpoints = getReviewStateForPromotionSet context promotionSet.PromotionSetId
                         let snapshot = buildCandidateProjectionSnapshot identity promotionSet queue reviewNotes
                         let report = buildReviewReport identity promotionSet snapshot reviewNotes checkpoints

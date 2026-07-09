@@ -114,6 +114,34 @@ type BranchAnnotationServerTests() =
 
         Assert.That(Grace.Server.Branch.tryGetBasedOnReferenceId referenceDto, Is.EqualTo(Some basedOnReferenceId))
 
+    /// Verifies that terminal PromotionSet references are revealable while generic review metadata remains protected.
+    [<Test>]
+    member _.``PromotionSet terminal reveal allows terminal metadata but protects generic links``() =
+        let promotionSetId = System.Guid.Parse("22222222-2222-2222-2222-222222222222")
+        let otherPromotionSetId = System.Guid.Parse("33333333-3333-3333-3333-333333333333")
+
+        let terminalReference =
+            { ReferenceDto.Default with
+                Links =
+                    [|
+                        ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                        ReferenceLinkType.PromotionSetTerminal promotionSetId
+                    |]
+            }
+
+        let nonTerminalReference =
+            { ReferenceDto.Default with
+                Links =
+                    [|
+                        ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                    |]
+            }
+
+        Assert.That(Grace.Server.Branch.isRevealablePromotionSetMetadataLink terminalReference promotionSetId, Is.True)
+        Assert.That(Grace.Server.Branch.tryGetTerminalPromotionSetForReveal terminalReference, Is.EqualTo(Some promotionSetId))
+        Assert.That(Grace.Server.Branch.isRevealablePromotionSetMetadataLink nonTerminalReference promotionSetId, Is.False)
+        Assert.That(Grace.Server.Branch.isRevealablePromotionSetMetadataLink terminalReference otherPromotionSetId, Is.False)
+
     /// Verifies that ordered History Window preserves boundary link when local history is truncated.
     [<Test>]
     member _.``orderedHistoryWindow preserves boundary link when local history is truncated``() =

@@ -21,6 +21,7 @@ open Grace.Types.Reference
 open Grace.Types.Reminder
 open Grace.Types.Common
 open Grace.Types.Validation
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Logging
 open NodaTime
@@ -332,6 +333,12 @@ module PromotionSet =
         /// Stores the correlation id used by this actor while reporting timings and errors.
         member val private correlationId: CorrelationId = String.Empty with get, set
 
+        /// Rebuilds the materialized PromotionSet projection from the persisted event stream before read decisions.
+        member private this.RefreshPromotionSetDto() =
+            promotionSetDto <-
+                state.State
+                |> Seq.fold (fun dto event -> PromotionSetDto.UpdateDto event dto) PromotionSetDto.Default
+
         /// Coordinates with actor metadata logic for the PromotionSet actor.
         member private this.WithActorMetadata(metadata: EventMetadata) =
             let properties = Dictionary<string, string>(StringComparer.OrdinalIgnoreCase)
@@ -341,6 +348,15 @@ module PromotionSet =
 
             if promotionSetDto.RepositoryId <> RepositoryId.Empty then
                 properties[nameof RepositoryId] <- $"{promotionSetDto.RepositoryId}"
+                properties[nameof OwnerId] <- $"{promotionSetDto.OwnerId}"
+                properties[nameof OrganizationId] <- $"{promotionSetDto.OrganizationId}"
+                properties[nameof BranchId] <- $"{promotionSetDto.TargetBranchId}"
+                properties["TargetBranchId"] <- $"{promotionSetDto.TargetBranchId}"
+                properties["Visibility"] <- $"{promotionSetDto.Visibility}"
+                properties["Ownership"] <- $"{promotionSetDto.Ownership}"
+
+                promotionSetDto.CreatorUserId
+                |> Option.iter (fun creatorUserId -> properties["CreatorUserId"] <- $"{creatorUserId}")
 
             let actorId =
                 if promotionSetDto.PromotionSetId
@@ -380,7 +396,7 @@ module PromotionSet =
         /// Returns current terminal promotion data from the PromotionSet actor state or related storage.
         member private this.GetCurrentTerminalPromotion() =
             task {
-                let! latestPromotion = getLatestPromotion promotionSetDto.RepositoryId promotionSetDto.TargetBranchId
+                let! latestPromotion = getLatestPromotionForPromotionSet promotionSetDto
 
                 match latestPromotion with
                 | Option.Some promotion -> return promotion.ReferenceId, promotion.DirectoryId
@@ -1863,6 +1879,12 @@ module PromotionSet =
                     let referenceMetadata = this.WithActorMetadata metadata
                     referenceMetadata.Properties[ "ActorId" ] <- $"{referenceId}"
                     referenceMetadata.Properties[ nameof BranchId ] <- $"{promotionSetDto.TargetBranchId}"
+                    referenceMetadata.Properties[ "InheritedVisibility" ] <- $"{promotionSetDto.Visibility}"
+                    referenceMetadata.Properties[ "InheritedOwnership" ] <- $"{promotionSetDto.Ownership}"
+
+                    promotionSetDto.CreatorUserId
+                    |> Option.iter (fun creatorUserId -> referenceMetadata.Properties[ "InheritedCreatorUserId" ] <- $"{creatorUserId}")
+
                     let referenceActorProxy = Reference.CreateActorProxy referenceId promotionSetDto.RepositoryId this.correlationId
                     let referenceText = ReferenceText $"PromotionSet {promotionSetDto.PromotionSetId} Step {step.Order}"
 
@@ -2217,8 +2239,12 @@ module PromotionSet =
 
                             match applyError with
                             | Option.None ->
-                                let branchActorProxy = Branch.CreateActorProxy promotionSetDto.TargetBranchId promotionSetDto.RepositoryId this.correlationId
-                                do! branchActorProxy.MarkForRecompute metadata.CorrelationId
+                                if promotionSetDto.Visibility = ResourceVisibility.Public then
+                                    let branchActorProxy =
+                                        Branch.CreateActorProxy promotionSetDto.TargetBranchId promotionSetDto.RepositoryId this.correlationId
+
+                                    do! branchActorProxy.MarkForRecompute metadata.CorrelationId
+
                                 let terminalReferenceId = createdReferenceIds[createdReferenceIds.Count - 1]
 
                                 match! this.ApplyEvent { Event = PromotionSetEventType.Applied terminalReferenceId; Metadata = metadata } with
@@ -2266,6 +2292,7 @@ module PromotionSet =
             /// Reports whether this PromotionSet actor has persisted state.
             member this.Exists correlationId =
                 this.correlationId <- correlationId
+                this.RefreshPromotionSetDto()
 
                 not
                 <| promotionSetDto.PromotionSetId.Equals(PromotionSetId.Empty)
@@ -2274,11 +2301,13 @@ module PromotionSet =
             /// Reports whether this PromotionSet actor state is marked logically deleted.
             member this.IsDeleted correlationId =
                 this.correlationId <- correlationId
+                this.RefreshPromotionSetDto()
                 promotionSetDto.DeletedAt.IsSome |> returnTask
 
             /// Returns the current PromotionSet actor state snapshot.
             member this.Get correlationId =
                 this.correlationId <- correlationId
+                this.RefreshPromotionSetDto()
                 promotionSetDto |> returnTask
 
             /// Returns the persisted PromotionSet event stream for replay or audit.
@@ -2288,22 +2317,117 @@ module PromotionSet =
                 state.State :> IReadOnlyList<PromotionSetEvent>
                 |> returnTask
 
+            member this.CreatePromotionSet
+                (
+                    promotionSetId,
+                    ownerId,
+                    organizationId,
+                    repositoryId,
+                    targetBranchId,
+                    visibility,
+                    ownership,
+                    creatorUserId,
+                    metadata
+                ) =
+                task {
+                    let command =
+                        PromotionSetCommand.CreatePromotionSet(
+                            promotionSetId,
+                            ownerId,
+                            organizationId,
+                            repositoryId,
+                            targetBranchId,
+                            visibility,
+                            ownership,
+                            creatorUserId
+                        )
+
+                    currentCommand <- getDiscriminatedUnionCaseName command
+                    this.correlationId <- metadata.CorrelationId
+                    RequestContext.Set(Constants.CurrentCommandProperty, getDiscriminatedUnionCaseName command)
+                    this.RefreshPromotionSetDto()
+
+                    match validateCommandForState state.State promotionSetDto command metadata with
+                    | Error validationError -> return Error validationError
+                    | Ok _ ->
+                        let createdMetadata = this.WithActorMetadata metadata
+                        createdMetadata.Properties[ nameof OwnerId ] <- $"{ownerId}"
+                        createdMetadata.Properties[ nameof OrganizationId ] <- $"{organizationId}"
+                        createdMetadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                        createdMetadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                        createdMetadata.Properties[ "TargetBranchId" ] <- $"{targetBranchId}"
+                        createdMetadata.Properties[ "Visibility" ] <- $"{visibility}"
+                        createdMetadata.Properties[ "Ownership" ] <- $"{ownership}"
+
+                        creatorUserId
+                        |> Option.iter (fun creator -> createdMetadata.Properties[ "CreatorUserId" ] <- $"{creator}")
+
+                        return!
+                            this.ApplyEvent
+                                {
+                                    Event =
+                                        PromotionSetEventType.Created(
+                                            promotionSetId,
+                                            ownerId,
+                                            organizationId,
+                                            repositoryId,
+                                            targetBranchId,
+                                            visibility,
+                                            ownership,
+                                            creatorUserId
+                                        )
+                                    Metadata = createdMetadata
+                                }
+                }
+
             /// Routes a public actor command to the domain operation that validates and persists it.
             member this.Handle command metadata =
                 /// Checks whether command validation succeeded before emitting the domain event.
                 let isValid (promotionSetCommand: PromotionSetCommand) (eventMetadata: EventMetadata) =
-                    task { return validateCommandForState state.State promotionSetDto promotionSetCommand eventMetadata }
+                    task {
+                        this.RefreshPromotionSetDto()
+                        return validateCommandForState state.State promotionSetDto promotionSetCommand eventMetadata
+                    }
 
                 /// Runs PromotionSet command decisions, applies emitted events, and persists the result.
                 let processCommand (promotionSetCommand: PromotionSetCommand) (eventMetadata: EventMetadata) =
                     task {
                         match promotionSetCommand with
-                        | PromotionSetCommand.CreatePromotionSet (promotionSetId, ownerId, organizationId, repositoryId, targetBranchId) ->
+                        | PromotionSetCommand.CreatePromotionSet (promotionSetId,
+                                                                  ownerId,
+                                                                  organizationId,
+                                                                  repositoryId,
+                                                                  targetBranchId,
+                                                                  visibility,
+                                                                  ownership,
+                                                                  creatorUserId) ->
+                            let createdMetadata = this.WithActorMetadata eventMetadata
+                            createdMetadata.Properties[ nameof OwnerId ] <- $"{ownerId}"
+                            createdMetadata.Properties[ nameof OrganizationId ] <- $"{organizationId}"
+                            createdMetadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                            createdMetadata.Properties[ nameof BranchId ] <- $"{targetBranchId}"
+                            createdMetadata.Properties[ "TargetBranchId" ] <- $"{targetBranchId}"
+                            createdMetadata.Properties[ "Visibility" ] <- $"{visibility}"
+                            createdMetadata.Properties[ "Ownership" ] <- $"{ownership}"
+
+                            creatorUserId
+                            |> Option.iter (fun creator -> createdMetadata.Properties[ "CreatorUserId" ] <- $"{creator}")
+
                             return!
                                 this.ApplyEvent
                                     {
-                                        Event = PromotionSetEventType.Created(promotionSetId, ownerId, organizationId, repositoryId, targetBranchId)
-                                        Metadata = eventMetadata
+                                        Event =
+                                            PromotionSetEventType.Created(
+                                                promotionSetId,
+                                                ownerId,
+                                                organizationId,
+                                                repositoryId,
+                                                targetBranchId,
+                                                visibility,
+                                                ownership,
+                                                creatorUserId
+                                            )
+                                        Metadata = createdMetadata
                                     }
                         | PromotionSetCommand.UpdateInputPromotions promotionPointers ->
                             match! this.ApplyEvent { Event = PromotionSetEventType.InputPromotionsUpdated promotionPointers; Metadata = eventMetadata } with

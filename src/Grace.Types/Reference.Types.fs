@@ -207,7 +207,7 @@ module Reference =
                             | true, value ->
                                 ResourceVisibility.TryParsePublicInput value
                                 |> Option.defaultValue ResourceVisibility.Private
-                            | _ -> ResourceVisibility.Private
+                            | _ -> ResourceVisibility.Public
                         Ownership =
                             match referenceEvent.Metadata.Properties.TryGetValue("InheritedOwnership") with
                             | true, value ->

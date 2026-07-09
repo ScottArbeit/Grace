@@ -232,6 +232,28 @@ module Branch =
                 return VisibilityAuthorization.canObserveBranchReference caller (fun _ -> branchAudience) resource
         }
 
+    /// Checks private-reference audience without treating branch administration alone as terminal reveal authority.
+    let private canObserveReferenceForReveal (context: HttpContext) (branchDto: BranchDto) (referenceDto: Reference.ReferenceDto) =
+        task {
+            let! caller = getVisibilityCallerAudience context branchDto
+            let resource = referenceVisibilityResource referenceDto
+            return VisibilityAuthorization.canObserveReference caller (fun _ -> VisibilityResourceAudience.None) resource
+        }
+
+    /// Checks whether PromotionSet review metadata is safe to disclose because the selected reference is terminal.
+    let internal isRevealablePromotionSetMetadataLink (referenceDto: Reference.ReferenceDto) promotionSetId =
+        referenceDto.Links
+        |> Seq.exists (function
+            | ReferenceLinkType.PromotionSetTerminal terminalPromotionSetId when terminalPromotionSetId = promotionSetId -> true
+            | _ -> false)
+
+    /// Selects terminal PromotionSet authority from a reference reveal when it is the first public publication point.
+    let internal tryGetTerminalPromotionSetForReveal (referenceDto: Reference.ReferenceDto) =
+        referenceDto.Links
+        |> Seq.tryPick (function
+            | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
+            | _ -> None)
+
     /// Orders non-deleted references newest-first so public windows can refill past deleted rows before applying MaxCount.
     let internal activeReferencesLatestFirst (references: Reference.ReferenceDto seq) =
         references
@@ -282,8 +304,8 @@ module Branch =
                         .ToArray()
         }
 
-    /// Validates that a reveal will not disclose hidden reference or promotion-review links.
-    let private validateRevealLinks repositoryId selectedReferenceId (referenceDto: Reference.ReferenceDto) correlationId =
+    /// Validates that a reveal will not disclose hidden reference or non-terminal promotion-review links.
+    let private validateRevealLinks context branchDto repositoryId selectedReferenceId (referenceDto: Reference.ReferenceDto) correlationId =
         task {
             let linkArray = referenceDto.Links |> Seq.toArray
             let mutable index = 0
@@ -310,14 +332,25 @@ module Branch =
                                     .enhance(nameof ReferenceId, selectedReferenceId)
                                     .enhance ("BasedOnReferenceId", basedOnReferenceId)
                             )
-                | ReferenceLinkType.IncludedInPromotionSet promotionSetId
-                | ReferenceLinkType.PromotionSetTerminal promotionSetId ->
+                | ReferenceLinkType.IncludedInPromotionSet promotionSetId when not (isRevealablePromotionSetMetadataLink referenceDto promotionSetId) ->
                     error <-
                         Some(
                             (GraceError.Create "Reference reveal cannot disclose promotion review metadata in this slice." correlationId)
                                 .enhance(nameof ReferenceId, selectedReferenceId)
                                 .enhance (nameof PromotionSetId, promotionSetId)
                         )
+                | ReferenceLinkType.PromotionSetTerminal promotionSetId ->
+                    let! canObserveReferenceAudience = canObserveReferenceForReveal context branchDto referenceDto
+
+                    if not canObserveReferenceAudience then
+                        error <-
+                            Some(
+                                (GraceError.Create
+                                    "Reference reveal requires private terminal audience before publishing PromotionSet terminal metadata."
+                                    correlationId)
+                                    .enhance(nameof ReferenceId, selectedReferenceId)
+                                    .enhance (nameof PromotionSetId, promotionSetId)
+                            )
                 | _ -> ()
 
                 index <- index + 1
@@ -2455,15 +2488,26 @@ module Branch =
                                 context
                                 |> result400BadRequest (badRequest (ReferenceError.getErrorMessage ReferenceError.ReferenceIdDoesNotExist))
                         else
+                            let branchActorProxy = Branch.CreateActorProxy graceIds.BranchId repositoryId correlationId
+                            let! branchDto = branchActorProxy.Get correlationId
+
                             let revealPrincipal =
                                 PrincipalMapper.tryGetUserId context.User
                                 |> Option.defaultValue String.Empty
 
                             let metadata = EventMetadata.New correlationId revealPrincipal
                             metadata.Properties[ nameof RepositoryId ] <- $"{repositoryId}"
+                            metadata.Properties[ nameof OwnerId ] <- $"{graceIds.OwnerId}"
+                            metadata.Properties[ nameof OrganizationId ] <- $"{graceIds.OrganizationId}"
                             metadata.Properties[ nameof BranchId ] <- $"{graceIds.BranchId}"
                             metadata.Properties[ nameof ReferenceId ] <- $"{parameters.ReferenceId}"
                             metadata.Properties[ "ReferenceRevealOperationId" ] <- parameters.OperationId
+
+                            referenceDto
+                            |> tryGetTerminalPromotionSetForReveal
+                            |> Option.iter (fun promotionSetId ->
+                                metadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+                                metadata.Properties[ "TerminalPromotionReferenceId" ] <- $"{parameters.ReferenceId}")
 
                             /// Runs the durable actor transition after route-local reveal preconditions have passed or replay is detected.
                             let executeReveal () =
@@ -2495,7 +2539,7 @@ module Branch =
                                 match! validateRevealGraph repositoryId referenceDto correlationId with
                                 | Error error -> return! context |> result400BadRequest error
                                 | Ok () ->
-                                    match! validateRevealLinks repositoryId parameters.ReferenceId referenceDto correlationId with
+                                    match! validateRevealLinks context branchDto repositoryId parameters.ReferenceId referenceDto correlationId with
                                     | Error error -> return! context |> result400BadRequest error
                                     | Ok () -> return! executeReveal ()
                 with

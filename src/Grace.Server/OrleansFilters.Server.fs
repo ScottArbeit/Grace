@@ -65,7 +65,7 @@ module Orleans =
                             | StateName.Owner -> StateName.Owner
                             | StateName.PersonalAccessToken -> grainId.Key.ToString()
                             | StateName.Policy -> repositoryId ()
-                            | StateName.PromotionSet -> repositoryId ()
+                            | StateName.PromotionSet -> grainId.Key.ToString()
                             | StateName.PromotionQueue -> repositoryId ()
                             | StateName.RepositoryContentCounter -> firstGrainKeySegment ()
                             | StateName.ValidationSet -> repositoryId ()

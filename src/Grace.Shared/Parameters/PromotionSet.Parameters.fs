@@ -29,6 +29,8 @@ module PromotionSet =
     type CreatePromotionSetParameters() =
         inherit PromotionSetParameters()
         member val public TargetBranchId = String.Empty with get, set
+        member val public Visibility = String.Empty with get, set
+        member val public Ownership = String.Empty with get, set
 
     /// Parameters for /promotion-set/update-input-promotions.
     type UpdatePromotionSetInputPromotionsParameters() =

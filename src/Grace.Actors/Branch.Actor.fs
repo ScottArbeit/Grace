@@ -79,14 +79,45 @@ module Branch =
                 // Get the latest references.
                 let! latestReferences = getLatestReferenceByReferenceTypes referenceTypes branchDto.RepositoryId branchDto.BranchId
 
+                let latestPromotionByType =
+                    match latestReferences.TryGetValue ReferenceType.Promotion with
+                    | true, referenceDto -> Some referenceDto
+                    | _ -> Option.None
+
+                let! latestPublishableTerminalPromotion =
+                    match branchDto.PromotionEnabled, latestPromotionByType with
+                    | true, Some referenceDto when hasPromotionSetTerminalLink referenceDto -> getLatestPromotion branchDto.RepositoryId branchDto.BranchId
+                    | _ -> task { return Option.None }
+
+                let latestPromotion =
+                    match latestPromotionByType with
+                    | Some referenceDto when hasPromotionSetTerminalLink referenceDto -> latestPublishableTerminalPromotion
+                    | Some referenceDto -> Some referenceDto
+                    | Option.None -> Option.None
+
+                let latestReferenceCandidates =
+                    let nonPromotionReferences =
+                        latestReferences.Values
+                        |> Seq.filter (fun referenceDto ->
+                            referenceDto.ReferenceType
+                            <> ReferenceType.Promotion)
+
+                    match latestPromotion with
+                    | Some promotion -> Seq.append nonPromotionReferences [ promotion ]
+                    | Option.None -> nonPromotionReferences
+
                 // Get the latest reference of any type.
                 let latestReference =
-                    latestReferences
-                        .Values
+                    latestReferenceCandidates
                         .OrderByDescending(fun referenceDto -> referenceDto.UpdatedAt)
                         .FirstOrDefault(ReferenceDto.Default)
 
                 newBranchDto <- { newBranchDto with LatestReference = latestReference }
+
+                if branchDto.PromotionEnabled then
+                    match latestPromotion with
+                    | Some promotion -> newBranchDto <- { newBranchDto with LatestPromotion = promotion; BasedOn = promotion }
+                    | Option.None -> newBranchDto <- { newBranchDto with LatestPromotion = ReferenceDto.Default; BasedOn = ReferenceDto.Default }
 
                 // Get the latest reference of each type.
                 for kvp in latestReferences do
@@ -96,7 +127,7 @@ module Branch =
                     | Save -> newBranchDto <- { newBranchDto with LatestSave = referenceDto }
                     | Checkpoint -> newBranchDto <- { newBranchDto with LatestCheckpoint = referenceDto }
                     | Commit -> newBranchDto <- { newBranchDto with LatestCommit = referenceDto }
-                    | Promotion -> newBranchDto <- { newBranchDto with LatestPromotion = referenceDto; BasedOn = referenceDto }
+                    | Promotion -> ()
                     | Rebase ->
                         let basedOnLink =
                             kvp.Value.Links

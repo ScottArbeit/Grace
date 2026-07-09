@@ -101,6 +101,72 @@ module private PromotionSetIntegrationHelpers =
         Assert.That(eventNames, Is.EqualTo<string array>(expectedNames))
         Assert.That(actorIds |> Array.forall ((=) promotionSetId), Is.True)
 
+    /// Asserts a PromotionSet DTO response serialized successfully with authoritative route identity and visibility metadata.
+    let assertPromotionSetDtoPayload
+        (body: string)
+        (promotionSetId: string)
+        (ownerId: string)
+        (organizationId: string)
+        (repositoryId: string)
+        (targetBranchId: string)
+        =
+        use document = JsonDocument.Parse(body)
+
+        let returnValue =
+            document.RootElement
+            |> requireProperty "ReturnValue"
+
+        let className =
+            (returnValue |> requireProperty "Class")
+                .GetString()
+
+        Assert.That(className, Is.EqualTo("PromotionSetDto"))
+
+        Assert.That(
+            (returnValue |> requireProperty "PromotionSetId")
+                .GetString(),
+            Is.EqualTo(promotionSetId),
+            body
+        )
+
+        Assert.That(
+            (returnValue |> requireProperty "OwnerId")
+                .GetString(),
+            Is.EqualTo(ownerId),
+            body
+        )
+
+        Assert.That(
+            (returnValue |> requireProperty "OrganizationId")
+                .GetString(),
+            Is.EqualTo(organizationId),
+            body
+        )
+
+        Assert.That(
+            (returnValue |> requireProperty "RepositoryId")
+                .GetString(),
+            Is.EqualTo(repositoryId),
+            body
+        )
+
+        Assert.That(
+            (returnValue |> requireProperty "TargetBranchId")
+                .GetString(),
+            Is.EqualTo(targetBranchId),
+            body
+        )
+
+        returnValue
+        |> requireProperty "Visibility"
+        |> ignore
+
+        returnValue
+        |> requireProperty "Ownership"
+        |> ignore
+
+        returnValue |> requireProperty "Status" |> ignore
+
     /// Gets promotion set from the running test server.
     let getPromotionSetAsync repositoryId promotionSetId =
         task {
@@ -168,7 +234,11 @@ module private PromotionSetIntegrationHelpers =
                 { FilePath = "src/app.fs"; Accepted = true; OverrideContentArtifactId = Option.None }
             ]
 
-        postStatusContainsAsync $"/promotion-set/{promotionSetId}/resolve-conflicts" parameters HttpStatusCode.InternalServerError "ValidateIdsMiddleware"
+        postStatusContainsAsync
+            $"/promotion-set/{promotionSetId}/resolve-conflicts"
+            parameters
+            HttpStatusCode.BadRequest
+            "PromotionSet is not blocked for conflict resolution."
 
     /// Defines delete behavior for the surrounding tests used by the server integration promotion Set Integration scenario.
     let deleteAsync repositoryId promotionSetId =
@@ -193,8 +263,7 @@ type PromotionSetRouteIntegrationTests() =
             let! promotionSetId = PromotionSetIntegrationHelpers.createAsync repositoryId targetBranchId
 
             let! created = PromotionSetIntegrationHelpers.getPromotionSetAsync repositoryId promotionSetId
-            Assert.That(created, Does.Contain("JsonEnumLikeUnionConverter"))
-            Assert.That(created, Does.Contain("Object reference not set"))
+            PromotionSetIntegrationHelpers.assertPromotionSetDtoPayload created promotionSetId ownerId organizationId repositoryId targetBranchId
 
             let! recomputeBody = PromotionSetIntegrationHelpers.recomputeAsync repositoryId promotionSetId "hosted proof empty set"
 
@@ -213,7 +282,7 @@ type PromotionSetRouteIntegrationTests() =
             do! PromotionSetIntegrationHelpers.updateInputPromotionsAsync repositoryId promotionSetId [ firstPointer; secondPointer ]
 
             let! updated = PromotionSetIntegrationHelpers.getPromotionSetAsync repositoryId promotionSetId
-            Assert.That(updated, Does.Contain("JsonEnumLikeUnionConverter"))
+            PromotionSetIntegrationHelpers.assertPromotionSetDtoPayload updated promotionSetId ownerId organizationId repositoryId targetBranchId
 
             let! eventsBeforeDelete = PromotionSetIntegrationHelpers.getEventsAsync repositoryId promotionSetId
 
@@ -235,7 +304,7 @@ type PromotionSetRouteIntegrationTests() =
 
             do! PromotionSetIntegrationHelpers.deleteAsync repositoryId promotionSetId
             let! deleted = PromotionSetIntegrationHelpers.getPromotionSetAsync repositoryId promotionSetId
-            Assert.That(deleted, Does.Contain("JsonEnumLikeUnionConverter"))
+            PromotionSetIntegrationHelpers.assertPromotionSetDtoPayload deleted promotionSetId ownerId organizationId repositoryId targetBranchId
 
             let! eventsAfterDelete = PromotionSetIntegrationHelpers.getEventsAsync repositoryId promotionSetId
 

@@ -134,6 +134,29 @@ type ReferenceDtoTests() =
         Assert.That(updated.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
         Assert.That(updated.CreatorUserId, Is.EqualTo(Some(UserId "creator-user-1")))
 
+    /// Verifies that legacy created references without visibility metadata remain public branch authority.
+    [<Test>]
+    member _.CreatedEventWithoutInheritedVisibilityDefaultsToPublicAuthority() =
+        let updated = ReferenceDto.UpdateDto (createdEvent "alice@example.test") ReferenceDto.Default
+
+        Assert.That(updated.Visibility, Is.EqualTo(ResourceVisibility.Public))
+        Assert.That(updated.Ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
+        Assert.That(updated.CreatorUserId, Is.EqualTo(Option.None))
+
+    /// Verifies that explicit private inherited visibility still hides contributor-owned reference authority.
+    [<Test>]
+    member _.CreatedEventWithPrivateInheritedVisibilityStaysPrivateAuthority() =
+        let referenceEvent = createdEvent "alice@example.test"
+        referenceEvent.Metadata.Properties[ "InheritedVisibility" ] <- "Private"
+        referenceEvent.Metadata.Properties[ "InheritedOwnership" ] <- "ContributorOwned"
+        referenceEvent.Metadata.Properties[ "InheritedCreatorUserId" ] <- "creator-user-2"
+
+        let updated = ReferenceDto.UpdateDto referenceEvent ReferenceDto.Default
+
+        Assert.That(updated.Visibility, Is.EqualTo(ResourceVisibility.Private))
+        Assert.That(updated.Ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
+        Assert.That(updated.CreatorUserId, Is.EqualTo(Some(UserId "creator-user-2")))
+
     /// Verifies that reveal events persist public visibility and operation id replay evidence.
     [<Test>]
     member _.RevealEventPersistsPublicVisibilityAndOperationEvidence() =

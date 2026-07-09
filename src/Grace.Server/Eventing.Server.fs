@@ -11,6 +11,7 @@ open Grace.Types.Queue
 open Grace.Types.Reference
 open Grace.Types.Review
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Validation
 open Grace.Types.WorkItem
 open System
@@ -35,11 +36,49 @@ module EventingPublisher =
     /// Gets try get organization id data needed by the server flow.
     let private tryGetOrganizationId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof OrganizationId) metadata
 
+    /// Gets try get branch id data needed by the server flow.
+    let private tryGetBranchId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof BranchId) metadata
+
+    /// Gets try get promotion set id data needed by the server flow.
+    let private tryGetPromotionSetId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof PromotionSetId) metadata
+
+    /// Gets try get terminal promotion reference id from reveal metadata.
+    let private tryGetTerminalPromotionReferenceId (metadata: EventMetadata) = tryGetGuidFromMetadata "TerminalPromotionReferenceId" metadata
+
     /// Gets try get actor id data needed by the server flow.
     let private tryGetActorId (metadata: EventMetadata) (defaultActorId: string) =
         match metadata.Properties.TryGetValue("ActorId") with
         | true, actorId when String.IsNullOrWhiteSpace actorId |> not -> actorId
         | _ -> defaultActorId
+
+    /// Suppresses public automation projections for private contributor-owned workflow metadata.
+    let private metadataAllowsPublicProjection (metadata: EventMetadata) =
+        let visibility =
+            match metadata.Properties.TryGetValue("Visibility") with
+            | true, value ->
+                ResourceVisibility.TryParsePublicInput value
+                |> Option.defaultValue ResourceVisibility.Private
+            | _ ->
+                match metadata.Properties.TryGetValue("InheritedVisibility") with
+                | true, value ->
+                    ResourceVisibility.TryParsePublicInput value
+                    |> Option.defaultValue ResourceVisibility.Private
+                | _ -> ResourceVisibility.Public
+
+        let ownership =
+            match metadata.Properties.TryGetValue("Ownership") with
+            | true, value ->
+                ResourceOwnership.TryParsePublicInput value
+                |> Option.defaultValue ResourceOwnership.ContributorOwned
+            | _ ->
+                match metadata.Properties.TryGetValue("InheritedOwnership") with
+                | true, value ->
+                    ResourceOwnership.TryParsePublicInput value
+                    |> Option.defaultValue ResourceOwnership.ContributorOwned
+                | _ -> ResourceOwnership.RepositoryOwned
+
+        visibility = ResourceVisibility.Public
+        || ownership = ResourceOwnership.RepositoryOwned
 
     /// Implements envelope for the server request pipeline.
     let private envelope
@@ -60,6 +99,12 @@ module EventingPublisher =
             match link with
             | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
             | _ -> Option.None)
+
+    /// Creates the public automation projection for a PromotionSet apply publication point.
+    let private createPromotionSetAppliedEnvelope metadata ownerId organizationId repositoryId branchId promotionSetId terminalPromotionReferenceId =
+        let payload = {| promotionSetId = promotionSetId; targetBranchId = branchId; terminalPromotionReferenceId = terminalPromotionReferenceId |}
+
+        envelope AutomationEventType.PromotionSetApplied metadata ownerId organizationId repositoryId (tryGetActorId metadata "Reference") (serialize payload)
 
     /// Computes map promotion set event type data used by Grace Server.
     let private mapPromotionSetEventType (eventType: PromotionSetEventType) =
@@ -102,16 +147,21 @@ module EventingPublisher =
         | PromotionSetEvent promotionSetEvent ->
             let eventType = mapPromotionSetEventType promotionSetEvent.Event
 
-            envelope
-                eventType
-                promotionSetEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId promotionSetEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId promotionSetEvent.Metadata "PromotionSet")
-                (serialize promotionSetEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection promotionSetEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    eventType
+                    promotionSetEvent.Metadata
+                    (tryGetOwnerId promotionSetEvent.Metadata
+                     |> Option.defaultValue OwnerId.Empty)
+                    (tryGetOrganizationId promotionSetEvent.Metadata
+                     |> Option.defaultValue OrganizationId.Empty)
+                    (tryGetRepositoryId promotionSetEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId promotionSetEvent.Metadata "PromotionSet")
+                    (serialize promotionSetEvent)
+                |> Some
         | ValidationSetEvent validationSetEvent ->
             let eventType =
                 match validationSetEvent.Event with
@@ -130,27 +180,33 @@ module EventingPublisher =
                 (serialize validationSetEvent)
             |> Some
         | ValidationResultEvent validationResultEvent ->
-            envelope
-                AutomationEventType.ValidationResultRecorded
-                validationResultEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId validationResultEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId validationResultEvent.Metadata "ValidationResult")
-                (serialize validationResultEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection validationResultEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    AutomationEventType.ValidationResultRecorded
+                    validationResultEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId validationResultEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId validationResultEvent.Metadata "ValidationResult")
+                    (serialize validationResultEvent)
+                |> Some
         | ArtifactEvent artifactEvent ->
-            envelope
-                AutomationEventType.ArtifactCreated
-                artifactEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId artifactEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId artifactEvent.Metadata "Artifact")
-                (serialize artifactEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection artifactEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    AutomationEventType.ArtifactCreated
+                    artifactEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId artifactEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId artifactEvent.Metadata "Artifact")
+                    (serialize artifactEvent)
+                |> Some
         | QueueEvent queueEvent ->
             let eventType =
                 match queueEvent.Event with
@@ -158,17 +214,20 @@ module EventingPublisher =
                 | PromotionQueueEventType.PromotionSetDequeued _ -> Some AutomationEventType.PromotionSetDequeued
                 | _ -> Option.None
 
-            eventType
-            |> Option.map (fun mappedType ->
-                envelope
-                    mappedType
-                    queueEvent.Metadata
-                    OwnerId.Empty
-                    OrganizationId.Empty
-                    (tryGetRepositoryId queueEvent.Metadata
-                     |> Option.defaultValue RepositoryId.Empty)
-                    (tryGetActorId queueEvent.Metadata "PromotionQueue")
-                    (serialize queueEvent))
+            if not (metadataAllowsPublicProjection queueEvent.Metadata) then
+                Option.None
+            else
+                eventType
+                |> Option.map (fun mappedType ->
+                    envelope
+                        mappedType
+                        queueEvent.Metadata
+                        OwnerId.Empty
+                        OrganizationId.Empty
+                        (tryGetRepositoryId queueEvent.Metadata
+                         |> Option.defaultValue RepositoryId.Empty)
+                        (tryGetActorId queueEvent.Metadata "PromotionQueue")
+                        (serialize queueEvent))
         | ReviewEvent reviewEvent ->
             let ownerId, organizationId, repositoryId, eventType =
                 match reviewEvent.Event with
@@ -186,26 +245,51 @@ module EventingPublisher =
                      |> Option.defaultValue RepositoryId.Empty),
                     AutomationEventType.ReviewNotesUpdated
 
-            envelope eventType reviewEvent.Metadata ownerId organizationId repositoryId (tryGetActorId reviewEvent.Metadata "Review") (serialize reviewEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection reviewEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    eventType
+                    reviewEvent.Metadata
+                    ownerId
+                    organizationId
+                    repositoryId
+                    (tryGetActorId reviewEvent.Metadata "Review")
+                    (serialize reviewEvent)
+                |> Some
         | ReferenceEvent referenceEvent ->
             match referenceEvent.Event with
             | ReferenceEventType.Created (referenceId, ownerId, organizationId, repositoryId, branchId, _, _, _, referenceType, _, links) ->
-                if referenceType = ReferenceType.Promotion then
+                if referenceType = ReferenceType.Promotion
+                   && metadataAllowsPublicProjection referenceEvent.Metadata then
                     match tryGetTerminalPromotionSetId links with
                     | Some promotionSetId ->
-                        let payload = {| promotionSetId = promotionSetId; targetBranchId = branchId; terminalPromotionReferenceId = referenceId |}
-
-                        envelope
-                            AutomationEventType.PromotionSetApplied
+                        createPromotionSetAppliedEnvelope referenceEvent.Metadata ownerId organizationId repositoryId branchId promotionSetId referenceId
+                        |> Some
+                    | Option.None -> Option.None
+                else
+                    Option.None
+            | ReferenceEventType.Revealed (_, _, _, previousVisibility, newVisibility) ->
+                if previousVisibility = ResourceVisibility.Private
+                   && newVisibility = ResourceVisibility.Public then
+                    match tryGetOwnerId referenceEvent.Metadata,
+                          tryGetOrganizationId referenceEvent.Metadata,
+                          tryGetRepositoryId referenceEvent.Metadata,
+                          tryGetBranchId referenceEvent.Metadata,
+                          tryGetPromotionSetId referenceEvent.Metadata,
+                          tryGetTerminalPromotionReferenceId referenceEvent.Metadata
+                        with
+                    | Some ownerId, Some organizationId, Some repositoryId, Some branchId, Some promotionSetId, Some terminalPromotionReferenceId ->
+                        createPromotionSetAppliedEnvelope
                             referenceEvent.Metadata
                             ownerId
                             organizationId
                             repositoryId
-                            (tryGetActorId referenceEvent.Metadata "Reference")
-                            (serialize payload)
+                            branchId
+                            promotionSetId
+                            terminalPromotionReferenceId
                         |> Some
-                    | Option.None -> Option.None
+                    | _ -> Option.None
                 else
                     Option.None
             | _ -> Option.None
@@ -215,16 +299,19 @@ module EventingPublisher =
                 | WorkItemEventType.ArtifactLinked _ -> AutomationEventType.AgentSummaryAdded
                 | _ -> AutomationEventType.ReviewNotesUpdated
 
-            envelope
-                eventType
-                workItemEvent.Metadata
-                OwnerId.Empty
-                OrganizationId.Empty
-                (tryGetRepositoryId workItemEvent.Metadata
-                 |> Option.defaultValue RepositoryId.Empty)
-                (tryGetActorId workItemEvent.Metadata "WorkItem")
-                (serialize workItemEvent)
-            |> Some
+            if not (metadataAllowsPublicProjection workItemEvent.Metadata) then
+                Option.None
+            else
+                envelope
+                    eventType
+                    workItemEvent.Metadata
+                    OwnerId.Empty
+                    OrganizationId.Empty
+                    (tryGetRepositoryId workItemEvent.Metadata
+                     |> Option.defaultValue RepositoryId.Empty)
+                    (tryGetActorId workItemEvent.Metadata "WorkItem")
+                    (serialize workItemEvent)
+                |> Some
         | PolicyEvent _
         | ApprovalRequestEvent _
         | OwnerEvent _

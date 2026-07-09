@@ -5,6 +5,7 @@ open Grace.Shared
 open Grace.Shared.Utilities
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Visibility
 open NodaTime
 open NUnit.Framework
 open System
@@ -35,6 +36,25 @@ type ServicesEffectivePromotionTests() =
             CreatedAt = createdAt
             Links = links
             DeletedAt = if isDeleted then Some(createdAt + Duration.FromMinutes(1.0)) else Option.None
+        }
+
+    /// Constructs terminal promotion Reference fixtures with durable visibility facts for actor authority assertions.
+    let createVisiblePromotionReference createdAt visibility ownership creatorUserId =
+        { createPromotionReference createdAt false true with Visibility = visibility; Ownership = ownership; CreatorUserId = creatorUserId }
+
+    /// Constructs direct branch promotion Reference fixtures without PromotionSet workflow links.
+    let createDirectPromotionReference createdAt visibility ownership creatorUserId =
+        { createPromotionReference createdAt false false with Visibility = visibility; Ownership = ownership; CreatorUserId = creatorUserId; Links = [] }
+
+    /// Constructs PromotionSet fixtures with durable visibility facts for actor authority assertions.
+    let promotionSet visibility ownership creatorUserId =
+        { Grace.Types.PromotionSet.PromotionSetDto.Default with
+            PromotionSetId = Guid.NewGuid()
+            RepositoryId = Guid.NewGuid()
+            TargetBranchId = Guid.NewGuid()
+            Visibility = visibility
+            Ownership = ownership
+            CreatorUserId = creatorUserId
         }
 
     let ownerId = Guid.Parse("11111111-cccc-4444-8888-111111111111")
@@ -103,35 +123,179 @@ type ServicesEffectivePromotionTests() =
                 }
         }
 
-    /// Verifies that latest Effective Promotion Ignores Deleted Terminal References.
+    /// Verifies that latest effective promotion falls back from deleted terminals to direct promotion references.
     [<Test>]
-    member _.LatestEffectivePromotionIgnoresDeletedTerminalReferences() =
+    member _.LatestEffectivePromotionIgnoresDeletedTerminalReferencesAndSelectsDirectPromotion() =
         let createdAt = Instant.FromUtc(2026, 2, 21, 10, 0)
 
         let deletedLatestTerminal = createPromotionReference (createdAt + Duration.FromMinutes(3.0)) true true
-        let latestNonTerminal = createPromotionReference (createdAt + Duration.FromMinutes(2.0)) false false
+        let latestIntermediate = createPromotionReference (createdAt + Duration.FromMinutes(2.0)) false false
         let previousTerminal = createPromotionReference (createdAt + Duration.FromMinutes(1.0)) false true
 
         let selected =
             Services.tryGetLatestEffectivePromotionReference (
                 [
                     deletedLatestTerminal
-                    latestNonTerminal
+                    latestIntermediate
                     previousTerminal
                 ]
             )
 
         Assert.That(selected, Is.EqualTo(Some previousTerminal))
 
-    /// Verifies that latest Effective Promotion Requires Terminal Link.
+    /// Verifies that direct promotion references remain effective branch promotions.
     [<Test>]
-    member _.LatestEffectivePromotionRequiresTerminalLink() =
+    member _.LatestEffectivePromotionAllowsDirectPromotionReference() =
         let createdAt = Instant.FromUtc(2026, 2, 21, 12, 0)
-        let nonTerminal = createPromotionReference createdAt false false
+        let nonTerminal = createDirectPromotionReference createdAt ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
 
         let selected = Services.tryGetLatestEffectivePromotionReference ([ nonTerminal ])
 
-        Assert.That(selected, Is.EqualTo(None))
+        Assert.That(selected, Is.EqualTo(Some nonTerminal))
+
+    /// Verifies that public branch recompute can fall back from hidden terminal tips to older direct promotions.
+    [<Test>]
+    member _.LatestEffectivePromotionFallsBackFromHiddenTerminalToDirectPromotion() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 10, 30)
+
+        let hiddenTerminal =
+            createVisiblePromotionReference
+                (createdAt + Duration.FromMinutes(2.0))
+                ResourceVisibility.Private
+                ResourceOwnership.ContributorOwned
+                (Some(UserId "creator-a"))
+
+        let directPromotion =
+            createDirectPromotionReference (createdAt + Duration.FromMinutes(1.0)) ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
+
+        let selected =
+            [ hiddenTerminal; directPromotion ]
+            |> Seq.filter Services.terminalPromotionCanPublishBranchAuthority
+            |> Services.tryGetLatestEffectivePromotionReference
+
+        Assert.That(selected, Is.EqualTo(Some directPromotion))
+
+    /// Verifies that public branch recompute skips publishable PromotionSet intermediate steps.
+    [<Test>]
+    member _.LatestEffectivePromotionSkipsPromotionSetIntermediateSteps() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 10, 45)
+
+        let publicIntermediate =
+            { createVisiblePromotionReference (createdAt + Duration.FromMinutes(2.0)) ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None with
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet(Guid.NewGuid())
+                    ]
+            }
+
+        let directPromotion =
+            createDirectPromotionReference (createdAt + Duration.FromMinutes(1.0)) ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
+
+        let selected =
+            [ publicIntermediate; directPromotion ]
+            |> Seq.filter Services.terminalPromotionCanPublishBranchAuthority
+            |> Services.tryGetLatestEffectivePromotionReference
+
+        Assert.That(Services.isEffectivePromotionBaseCandidate publicIntermediate, Is.False)
+        Assert.That(selected, Is.EqualTo(Some directPromotion))
+
+    /// Verifies that hidden and intermediate candidates do not stop fallback to an older terminal promotion.
+    [<Test>]
+    member _.LatestEffectivePromotionScansPastHiddenAndIntermediateCandidatesToTerminal() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 10, 50)
+
+        let hiddenTerminal =
+            createVisiblePromotionReference
+                (createdAt + Duration.FromMinutes(3.0))
+                ResourceVisibility.Private
+                ResourceOwnership.ContributorOwned
+                (Some(UserId "creator-a"))
+
+        let publicIntermediate =
+            { createVisiblePromotionReference (createdAt + Duration.FromMinutes(2.0)) ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None with
+                Links =
+                    [
+                        ReferenceLinkType.IncludedInPromotionSet(Guid.NewGuid())
+                    ]
+            }
+
+        let publicTerminal =
+            createVisiblePromotionReference (createdAt + Duration.FromMinutes(1.0)) ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
+
+        let selected =
+            [
+                hiddenTerminal
+                publicIntermediate
+                publicTerminal
+            ]
+            |> Seq.filter Services.terminalPromotionCanPublishBranchAuthority
+            |> Services.tryGetLatestEffectivePromotionReference
+
+        Assert.That(selected, Is.EqualTo(Some publicTerminal))
+
+    /// Verifies that public PromotionSet base selection skips hidden private terminal references.
+    [<Test>]
+    member _.LatestPromotionForPublicPromotionSetSkipsPrivateTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 0)
+        let publicWorkflow = promotionSet ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
+
+        let privateTerminal =
+            createVisiblePromotionReference
+                (createdAt + Duration.FromMinutes(2.0))
+                ResourceVisibility.Private
+                ResourceOwnership.ContributorOwned
+                (Some(UserId "creator-a"))
+
+        let publicTerminal =
+            createVisiblePromotionReference (createdAt + Duration.FromMinutes(1.0)) ResourceVisibility.Public ResourceOwnership.RepositoryOwned Option.None
+
+        let selected = Services.tryGetLatestEffectivePromotionReferenceForPromotionSet publicWorkflow [ privateTerminal; publicTerminal ]
+
+        Assert.That(selected, Is.EqualTo(Some publicTerminal))
+
+    /// Verifies that branch base selection keeps repository-owned terminal authority available for default branches.
+    [<Test>]
+    member _.BranchAuthorityAllowsRepositoryOwnedTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 15)
+
+        let repositoryOwnedTerminal = createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.RepositoryOwned Option.None
+
+        Assert.That(Services.terminalPromotionCanPublishBranchAuthority repositoryOwnedTerminal, Is.True)
+
+    /// Verifies that branch base selection still rejects private contributor-owned terminal authority.
+    [<Test>]
+    member _.BranchAuthorityRejectsPrivateContributorOwnedTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 20)
+
+        let privateContributorTerminal =
+            createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.ContributorOwned (Some(UserId "creator-a"))
+
+        Assert.That(Services.terminalPromotionCanPublishBranchAuthority privateContributorTerminal, Is.False)
+
+    /// Verifies that private PromotionSet base selection can share private terminal authority inside the same contributor audience.
+    [<Test>]
+    member _.LatestPromotionForPrivatePromotionSetAllowsSameContributorPrivateTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 9, 30)
+        let creator = Some(UserId "creator-a")
+        let privateWorkflow = promotionSet ResourceVisibility.Private ResourceOwnership.ContributorOwned creator
+        let privateTerminal = createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.ContributorOwned creator
+
+        let selected = Services.tryGetLatestEffectivePromotionReferenceForPromotionSet privateWorkflow [ privateTerminal ]
+
+        Assert.That(selected, Is.EqualTo(Some privateTerminal))
+
+    /// Verifies that private PromotionSet base selection rejects hidden terminal authority from a different contributor audience.
+    [<Test>]
+    member _.LatestPromotionForPrivatePromotionSetRejectsDifferentContributorPrivateTerminalReference() =
+        let createdAt = Instant.FromUtc(2026, 7, 8, 10, 0)
+        let privateWorkflow = promotionSet ResourceVisibility.Private ResourceOwnership.ContributorOwned (Some(UserId "creator-a"))
+
+        let otherPrivateTerminal =
+            createVisiblePromotionReference createdAt ResourceVisibility.Private ResourceOwnership.ContributorOwned (Some(UserId "creator-b"))
+
+        let selected = Services.tryGetLatestEffectivePromotionReferenceForPromotionSet privateWorkflow [ otherPrivateTerminal ]
+
+        Assert.That(selected, Is.EqualTo(Option.None))
 
     /// Verifies that latest Reference Selection Ignores Deleted References.
     [<Test>]

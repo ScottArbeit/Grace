@@ -20,6 +20,7 @@ open Grace.Types.PromotionSet
 open Grace.Types.Review
 open Grace.Types.Queue
 open Grace.Types.Validation
+open Grace.Types.Visibility
 open Grace.Types.Artifact
 open Grace.Types.UploadSession
 open Grace.Types.Webhooks
@@ -382,6 +383,19 @@ module Interfaces =
 
         /// Validates incoming commands and converts them to events that are stored in the database.
         abstract member Handle: command: PromotionSetCommand -> eventMetadata: EventMetadata -> Task<GraceResult<string>>
+
+        /// Creates a PromotionSet with explicit scope and visibility fields across the Orleans boundary.
+        abstract member CreatePromotionSet:
+            promotionSetId: PromotionSetId *
+            ownerId: OwnerId *
+            organizationId: OrganizationId *
+            repositoryId: RepositoryId *
+            targetBranchId: BranchId *
+            visibility: ResourceVisibility *
+            ownership: ResourceOwnership *
+            creatorUserId: UserId option *
+            eventMetadata: EventMetadata ->
+                Task<GraceResult<string>>
 
     /// Defines the operations for the Policy actor.
     [<Interface>]

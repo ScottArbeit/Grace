@@ -682,6 +682,12 @@ module Reference =
                     let graceEvent = GraceEvent.ReferenceEvent referenceEvent
                     do! publishGraceEvent graceEvent referenceEvent.Metadata
 
+                    match referenceEvent.Event with
+                    | ReferenceEventType.Revealed (_, _, _, _, ResourceVisibility.Public) when referenceDto.ReferenceType = ReferenceType.Promotion ->
+                        let branchActorProxy = Branch.CreateActorProxy referenceDto.BranchId referenceDto.RepositoryId correlationId
+                        do! branchActorProxy.MarkForRecompute correlationId
+                    | _ -> ()
+
                     // If this is a Save or Checkpoint reference, schedule a physical deletion based on the default delays from the repository.
                     match referenceEvent.Event with
                     | Created (referenceId,

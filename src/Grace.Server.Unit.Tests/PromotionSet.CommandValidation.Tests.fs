@@ -1,10 +1,15 @@
 namespace Grace.Server.Tests
 
 open Grace.Actors
+open Grace.Server
+open Grace.Shared
+open Grace.Shared.Parameters.PromotionSet
 open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
+open Microsoft.AspNetCore.Http
 open NodaTime
 open NUnit.Framework
 open System
@@ -100,6 +105,65 @@ type PromotionSetCommandValidationTests() =
         Assert.That(summary.State, Is.EqualTo(PromotionSetApprovalState.Stale))
         Assert.That(summary.ApprovalPolicyId, Is.EqualTo(Some policy.ApprovalPolicyId))
         Assert.That(summary.Reason, Is.EqualTo(Some "Approval request is expired."))
+
+    /// Verifies that hidden PromotionSet get uses the stable empty missing DTO shape.
+    [<Test>]
+    member _.MissingPromotionSetRouteDtoKeepsEmptyPromotionSetId() =
+        let missingDto = PromotionSet.missingPromotionSetDtoForRoute ()
+
+        Assert.That(missingDto, Is.EqualTo(PromotionSetDto.Default))
+        Assert.That(missingDto.PromotionSetId, Is.EqualTo(PromotionSetId.Empty))
+
+    /// Verifies that hidden conflict resolution states do not leak blocked or attempt-specific information.
+    [<Test>]
+    member _.ConflictResolutionPrecheckHidesStateBeforeStatusAndAttemptChecks() =
+        let correlationId = "corr-hidden-conflict"
+
+        let hiddenBlockedWrongAttempt =
+            { existingPromotionSet PromotionSetStatus.Blocked StepsComputationStatus.ComputeFailed with StepsComputationAttempt = 3 }
+
+        let hiddenNotBlocked = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let missing = PromotionSetDto.Default
+
+        let hiddenBlockedError = PromotionSet.tryGetConflictResolutionPrecheckError false hiddenBlockedWrongAttempt 99 correlationId
+
+        let hiddenNotBlockedError = PromotionSet.tryGetConflictResolutionPrecheckError false hiddenNotBlocked 1 correlationId
+
+        let missingError = PromotionSet.tryGetConflictResolutionPrecheckError false missing 1 correlationId
+
+        for error in
+            [
+                hiddenBlockedError
+                hiddenNotBlockedError
+                missingError
+            ] do
+            match error with
+            | Option.Some graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet does not exist."))
+            | Option.None -> Assert.Fail("Expected hidden or missing conflict resolution to return the missing-equivalent error.")
+
+    /// Verifies that observable conflict resolution still reports state-specific route errors.
+    [<Test>]
+    member _.ConflictResolutionPrecheckKeepsObservableStateSpecificErrors() =
+        let correlationId = "corr-visible-conflict"
+        let notBlocked = existingPromotionSet PromotionSetStatus.Ready StepsComputationStatus.Computed
+        let blockedWrongAttempt = { existingPromotionSet PromotionSetStatus.Blocked StepsComputationStatus.ComputeFailed with StepsComputationAttempt = 3 }
+        let blockedMatchingAttempt = { blockedWrongAttempt with StepsComputationAttempt = 9 }
+
+        let notBlockedError = PromotionSet.tryGetConflictResolutionPrecheckError true notBlocked 1 correlationId
+
+        let wrongAttemptError = PromotionSet.tryGetConflictResolutionPrecheckError true blockedWrongAttempt 99 correlationId
+
+        let allowed = PromotionSet.tryGetConflictResolutionPrecheckError true blockedMatchingAttempt 9 correlationId
+
+        match notBlockedError with
+        | Option.Some graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet is not blocked for conflict resolution."))
+        | Option.None -> Assert.Fail("Expected an observable non-blocked PromotionSet to keep the route-specific error.")
+
+        match wrongAttemptError with
+        | Option.Some graceError -> Assert.That(graceError.Error, Is.EqualTo("StepsComputationAttempt does not match current PromotionSet state."))
+        | Option.None -> Assert.Fail("Expected an observable wrong-attempt PromotionSet to keep the route-specific error.")
+
+        Assert.That(allowed.IsNone, Is.True)
 
     /// Verifies that apply Rejected When Promotion Set Already Succeeded.
     [<Test>]
@@ -375,3 +439,57 @@ type PromotionSetCommandValidationTests() =
         match PromotionSet.validateCommandForState [] dto (PromotionSetCommand.UpdateInputPromotions pointers) metadata with
         | Ok _ -> Assert.Fail("Expected update-input validation to fail for succeeded PromotionSet.")
         | Error graceError -> Assert.That(graceError.Error, Is.EqualTo("PromotionSet has already succeeded and cannot be edited."))
+
+    /// Verifies that blank PromotionSet visibility inputs preserve the existing public workflow default.
+    [<Test>]
+    member _.PromotionSetVisibilityResolverDefaultsToPublicRepositoryOwned() =
+        let parameters = CreatePromotionSetParameters()
+
+        match Grace.Server.PromotionSet.resolvePromotionSetVisibility parameters with
+        | Ok (visibility, ownership) ->
+            Assert.That(visibility, Is.EqualTo(ResourceVisibility.Public))
+            Assert.That(ownership, Is.EqualTo(ResourceOwnership.RepositoryOwned))
+        | Error errorMessage -> Assert.Fail($"Expected default visibility resolution, got {errorMessage}.")
+
+    /// Verifies that private PromotionSet visibility always resolves to contributor-owned hidden workflow state.
+    [<Test>]
+    member _.PromotionSetVisibilityResolverMakesPrivateContributorOwned() =
+        let parameters = CreatePromotionSetParameters()
+        parameters.Visibility <- "Private"
+
+        match Grace.Server.PromotionSet.resolvePromotionSetVisibility parameters with
+        | Ok (visibility, ownership) ->
+            Assert.That(visibility, Is.EqualTo(ResourceVisibility.Private))
+            Assert.That(ownership, Is.EqualTo(ResourceOwnership.ContributorOwned))
+        | Error errorMessage -> Assert.Fail($"Expected private visibility resolution, got {errorMessage}.")
+
+    /// Verifies that conflicting PromotionSet visibility inputs are rejected instead of becoming observable no-ops.
+    [<Test>]
+    member _.PromotionSetVisibilityResolverRejectsPrivateRepositoryOwnedConflict() =
+        let parameters = CreatePromotionSetParameters()
+        parameters.Visibility <- "Private"
+        parameters.Ownership <- "RepositoryOwned"
+
+        match Grace.Server.PromotionSet.resolvePromotionSetVisibility parameters with
+        | Error errorMessage -> Assert.That(errorMessage, Is.EqualTo("Private PromotionSet visibility requires ContributorOwned ownership."))
+        | Ok _ -> Assert.Fail("Expected private RepositoryOwned conflict to be rejected.")
+
+    /// Verifies that hidden duplicate creates use the same success body type as unused caller-supplied create ids.
+    [<Test>]
+    member _.HiddenDuplicateCreateReturnValueMatchesCreateSuccessEnvelopeShape() =
+        let promotionSetId: PromotionSetId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+        let context = DefaultHttpContext()
+        context.Items[ Constants.CorrelationId ] <- "corr-hidden-duplicate-create"
+        context.Request.Path <- PathString("/promotionSet/create")
+
+        let parameters = CreatePromotionSetParameters()
+        parameters.PromotionSetId <- $"{promotionSetId}"
+        parameters.TargetBranchId <- "ffffffff-ffff-ffff-ffff-ffffffffffff"
+        parameters.Visibility <- "Private"
+
+        let returnValue = Grace.Server.PromotionSet.hiddenPromotionSetCreateReturnValue context parameters promotionSetId
+
+        Assert.That(returnValue.ReturnValue, Is.EqualTo("Promotion set command succeeded."))
+        Assert.That(returnValue.CorrelationId, Is.EqualTo("corr-hidden-duplicate-create"))
+        Assert.That(returnValue.Properties[nameof PromotionSetId], Is.EqualTo(box promotionSetId))
+        Assert.That(returnValue.Properties["Path"], Is.EqualTo("/promotionSet/create"))

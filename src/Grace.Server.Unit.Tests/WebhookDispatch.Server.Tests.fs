@@ -8,6 +8,7 @@ open Grace.Types.Events
 open Grace.Types.PromotionSet
 open Grace.Types.Reference
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open Microsoft.Extensions.Configuration
 open Microsoft.Extensions.FileProviders
@@ -187,6 +188,42 @@ module private WebhookDispatchTestHelpers =
 
         GraceEvent.PromotionSetEvent promotionSetEvent
 
+    /// Builds a private applied event that must not reach external webhook fanout before reference reveal.
+    let privateAppliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId =
+        let eventMetadata = metadata ownerId organizationId repositoryId targetBranchId promotionSetId "corr-webhook-private"
+        eventMetadata.Properties[ "Visibility" ] <- $"{ResourceVisibility.Private}"
+        eventMetadata.Properties[ "Ownership" ] <- $"{ResourceOwnership.ContributorOwned}"
+
+        GraceEvent.PromotionSetEvent { Event = PromotionSetEventType.Applied terminalReferenceId; Metadata = eventMetadata }
+
+    /// Builds a reveal event that is the first public publication point for a private PromotionSet terminal reference.
+    let terminalReferenceRevealEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId =
+        let eventMetadata = metadata ownerId organizationId repositoryId targetBranchId promotionSetId "corr-webhook-reveal"
+        eventMetadata.Properties[ nameof ReferenceId ] <- $"{terminalReferenceId}"
+        eventMetadata.Properties[ "TerminalPromotionReferenceId" ] <- $"{terminalReferenceId}"
+        eventMetadata.Properties[ "ReferenceRevealOperationId" ] <- "reveal-op-1"
+
+        let referenceEvent: ReferenceEvent =
+            {
+                Event = ReferenceEventType.Revealed("reveal-op-1", "reviewer@example.test", "accepted", ResourceVisibility.Private, ResourceVisibility.Public)
+                Metadata = eventMetadata
+            }
+
+        GraceEvent.ReferenceEvent referenceEvent
+
+    /// Builds a non-terminal reference reveal event that must not publish PromotionSet apply.
+    let genericReferenceRevealEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId =
+        let eventMetadata = metadata ownerId organizationId repositoryId targetBranchId promotionSetId "corr-webhook-generic-reveal"
+        eventMetadata.Properties[ nameof ReferenceId ] <- $"{terminalReferenceId}"
+
+        let referenceEvent: ReferenceEvent =
+            {
+                Event = ReferenceEventType.Revealed("reveal-op-1", "reviewer@example.test", "accepted", ResourceVisibility.Private, ResourceVisibility.Public)
+                Metadata = eventMetadata
+            }
+
+        GraceEvent.ReferenceEvent referenceEvent
+
     /// Builds rule test data for the server unit webhook Dispatch scenarios in this file.
     let rule ruleId ownerId organizationId repositoryId targetBranchId =
         { WebhookRule.Default with
@@ -288,6 +325,103 @@ type WebhookDispatchUnitTests() =
             Assert.That(deliveries[0].Status, Is.EqualTo(WebhookDeliveryStatus.Succeeded))
             Assert.That(deliveries[0].AttemptCount, Is.EqualTo(1))
             Assert.That(deliveries[0].LastStatusCode, Is.EqualTo(Option.Some 202))
+        }
+
+    /// Verifies that private PromotionSet apply is suppressed before webhook dispatch fanout.
+    [<Test>]
+    member _.PrivatePromotionSetAppliedDoesNotCreateWebhookDelivery() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let terminalReferenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.Succeeded 202 ])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.privateAppliedEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId)
+
+            Assert.That(result.DeliveryCount, Is.EqualTo(0))
+            Assert.That(result.DeliveredCount, Is.EqualTo(0))
+            Assert.That(transport.Requests, Is.Empty)
+
+            let deliveries = WebhookStore.listDeliveries rule.Scope rule.WebhookRuleId true
+            Assert.That(deliveries, Is.Empty)
+        }
+
+    /// Verifies that terminal reference reveal publishes private PromotionSet apply exactly once.
+    [<Test>]
+    member _.TerminalReferenceRevealPublishesPrivatePromotionSetAppliedOnce() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let terminalReferenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport =
+                WebhookDispatchTestHelpers.RecordingTransport(
+                    [
+                        OutboundWebhookResult.Succeeded 202
+                        OutboundWebhookResult.Succeeded 202
+                    ]
+                )
+
+            let graceEvent =
+                WebhookDispatchTestHelpers.terminalReferenceRevealEvent ownerId organizationId repositoryId targetBranchId promotionSetId terminalReferenceId
+
+            let! first = WebhookDispatchTestHelpers.dispatch transport graceEvent
+            let! second = WebhookDispatchTestHelpers.dispatch transport graceEvent
+
+            Assert.That(first.DeliveryCount, Is.EqualTo(1))
+            Assert.That(first.DeliveredCount, Is.EqualTo(1))
+            Assert.That(second.SkippedDuplicateCount, Is.EqualTo(1))
+            Assert.That(transport.Requests, Has.Length.EqualTo(1))
+
+            use payload = JsonDocument.Parse(transport.Requests[0].PayloadJson)
+            let root = payload.RootElement
+            Assert.That(root.GetProperty("eventName").GetString(), Is.EqualTo(ExternalWebhookEventRegistry.PromotionSetAppliedName))
+            Assert.That(root.GetProperty("promotionSetId").GetGuid(), Is.EqualTo(promotionSetId))
+
+            Assert.That(
+                root
+                    .GetProperty("terminalPromotionReferenceId")
+                    .GetGuid(),
+                Is.EqualTo(terminalReferenceId)
+            )
+        }
+
+    /// Verifies that generic reference reveal does not replay private PromotionSet history into webhooks.
+    [<Test>]
+    member _.GenericReferenceRevealDoesNotPublishPromotionSetApplied() =
+        task {
+            let ownerId = Guid.NewGuid()
+            let organizationId = Guid.NewGuid()
+            let repositoryId = Guid.NewGuid()
+            let targetBranchId = Guid.NewGuid()
+            let promotionSetId = Guid.NewGuid()
+            let referenceId = Guid.NewGuid()
+            let rule = WebhookDispatchTestHelpers.rule (Guid.NewGuid()) ownerId organizationId repositoryId (Option.Some targetBranchId)
+            WebhookStore.upsertRule rule |> ignore
+
+            let transport = WebhookDispatchTestHelpers.RecordingTransport([ OutboundWebhookResult.Succeeded 202 ])
+
+            let! result =
+                WebhookDispatchTestHelpers.dispatch
+                    transport
+                    (WebhookDispatchTestHelpers.genericReferenceRevealEvent ownerId organizationId repositoryId targetBranchId promotionSetId referenceId)
+
+            Assert.That(result.DeliveryCount, Is.EqualTo(0))
+            Assert.That(transport.Requests, Is.Empty)
         }
 
     /// Verifies that committed Delivery Headers Use Stable Sha256 Payload Digest And Hmac Preimage.

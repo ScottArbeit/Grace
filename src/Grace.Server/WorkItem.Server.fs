@@ -43,6 +43,30 @@ module WorkItem =
 
     let activitySource = new ActivitySource("WorkItem")
 
+    /// Loads a PromotionSet only when the current caller may observe its private workflow state.
+    let private tryGetObservablePromotionSet (context: HttpContext) repositoryId correlationId promotionSetId =
+        task {
+            let promotionSetActorProxy = PromotionSet.CreateActorProxy promotionSetId repositoryId correlationId
+            let! promotionSet = promotionSetActorProxy.Get correlationId
+
+            if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                return Option.None
+            else
+                let! canObserve = Grace.Server.PromotionSet.canObservePromotionSet context promotionSet
+
+                if canObserve then return Some promotionSet else return Option.None
+        }
+
+    /// Copies private PromotionSet visibility facts onto work-item automation metadata.
+    let private inheritPromotionSetVisibilityMetadata (metadata: EventMetadata) (promotionSet: Grace.Types.PromotionSet.PromotionSetDto) =
+        metadata.Properties[ "InheritedVisibility" ] <- $"{promotionSet.Visibility}"
+        metadata.Properties[ "InheritedOwnership" ] <- $"{promotionSet.Ownership}"
+
+        promotionSet.CreatorUserId
+        |> Option.iter (fun creatorUserId -> metadata.Properties[ "InheritedCreatorUserId" ] <- $"{creatorUserId}")
+
+        metadata
+
     /// Parses try parse work item identifier input into the server model.
     let private tryParseWorkItemIdentifier (value: string) =
         let mutable parsedGuid = Guid.Empty
@@ -186,31 +210,54 @@ module WorkItem =
                         let actorProxy = WorkItem.CreateActorProxy workItemId graceIds.RepositoryId correlationId
                         let metadata = createMetadata context
 
-                        match! actorProxy.Handle cmd metadata with
-                        | Ok graceReturnValue ->
-                            graceReturnValue
-                                .enhance(parameterDictionary)
-                                .enhance(nameof OwnerId, graceIds.OwnerId)
-                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof WorkItemId, workItemId)
-                                .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path.Value)
-                            |> ignore
+                        let! promotionSetForCommand =
+                            match cmd with
+                            | WorkItemCommand.LinkPromotionSet promotionSetId
+                            | WorkItemCommand.UnlinkPromotionSet promotionSetId ->
+                                tryGetObservablePromotionSet context graceIds.RepositoryId correlationId promotionSetId
+                            | _ -> Task.FromResult None
 
-                            return! context |> result200Ok graceReturnValue
-                        | Error graceError ->
-                            graceError
-                                .enhance(parameterDictionary)
-                                .enhance(nameof OwnerId, graceIds.OwnerId)
-                                .enhance(nameof OrganizationId, graceIds.OrganizationId)
-                                .enhance(nameof RepositoryId, graceIds.RepositoryId)
-                                .enhance(nameof WorkItemId, workItemId)
-                                .enhance("Command", commandName)
-                                .enhance ("Path", context.Request.Path.Value)
-                            |> ignore
+                        let commandReferencesHiddenPromotionSet =
+                            match cmd with
+                            | WorkItemCommand.LinkPromotionSet _
+                            | WorkItemCommand.UnlinkPromotionSet _ -> promotionSetForCommand.IsNone
+                            | _ -> false
 
-                            return! context |> result400BadRequest graceError
+                        if commandReferencesHiddenPromotionSet then
+                            return!
+                                context
+                                |> result400BadRequest (GraceError.Create "PromotionSet does not exist." correlationId)
+                        else
+                            promotionSetForCommand
+                            |> Option.iter (fun promotionSet ->
+                                inheritPromotionSetVisibilityMetadata metadata promotionSet
+                                |> ignore)
+
+                            match! actorProxy.Handle cmd metadata with
+                            | Ok graceReturnValue ->
+                                graceReturnValue
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof WorkItemId, workItemId)
+                                    .enhance("Command", commandName)
+                                    .enhance ("Path", context.Request.Path.Value)
+                                |> ignore
+
+                                return! context |> result200Ok graceReturnValue
+                            | Error graceError ->
+                                graceError
+                                    .enhance(parameterDictionary)
+                                    .enhance(nameof OwnerId, graceIds.OwnerId)
+                                    .enhance(nameof OrganizationId, graceIds.OrganizationId)
+                                    .enhance(nameof RepositoryId, graceIds.RepositoryId)
+                                    .enhance(nameof WorkItemId, workItemId)
+                                    .enhance("Command", commandName)
+                                    .enhance ("Path", context.Request.Path.Value)
+                                |> ignore
+
+                                return! context |> result400BadRequest graceError
                 else
                     let! error = validationResults |> getFirstError
                     let errorMessage = WorkItemError.getErrorMessage error
@@ -1118,7 +1165,16 @@ module WorkItem =
                             artifactMetadataById[artifactId] <- artifactMetadata
                             i <- i + 1
 
-                        let linksDto = buildLinksDto workItemDto artifactMetadataById
+                        let visiblePromotionSetIds = ResizeArray<PromotionSetId>()
+
+                        for promotionSetId in workItemDto.PromotionSetIds do
+                            let! promotionSet = tryGetObservablePromotionSet context graceIds.RepositoryId correlationId promotionSetId
+
+                            if promotionSet.IsSome then visiblePromotionSetIds.Add promotionSetId
+
+                        let visibleWorkItemDto = { workItemDto with PromotionSetIds = visiblePromotionSetIds |> Seq.toList }
+
+                        let linksDto = buildLinksDto visibleWorkItemDto artifactMetadataById
 
                         let graceReturnValue =
                             (GraceReturnValue.Create linksDto correlationId)

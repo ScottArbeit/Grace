@@ -1,6 +1,7 @@
 namespace Grace.Server
 
 open Giraffe
+open Grace.Actors.Extensions
 open Grace.Server.Security
 open Grace.Shared.Authorization
 open Grace.Shared.Parameters.Approval
@@ -8,6 +9,7 @@ open Grace.Shared.Utilities
 open Grace.Types
 open Grace.Types.Authorization
 open Grace.Types.Common
+open Grace.Types.Visibility
 open Grace.Types.Webhooks
 open Microsoft.AspNetCore.Http
 open Microsoft.Extensions.DependencyInjection
@@ -29,6 +31,56 @@ module ApprovalRequest =
         Environment.GetEnvironmentVariable("GRACE_TESTING") = "1"
         || isDevelopment (Environment.GetEnvironmentVariable("ASPNETCORE_ENVIRONMENT"))
         || isDevelopment (Environment.GetEnvironmentVariable("DOTNET_ENVIRONMENT"))
+
+    /// Checks whether the current caller may observe a loaded PromotionSet attached to an approval request.
+    let private canObservePromotionSet (context: HttpContext) (promotionSet: Grace.Types.PromotionSet.PromotionSetDto) =
+        task {
+            let callerUserId =
+                PrincipalMapper.tryGetUserId context.User
+                |> Option.map UserId
+
+            let resource = Resource.Repository(promotionSet.OwnerId, promotionSet.OrganizationId, promotionSet.RepositoryId)
+            let principals = PrincipalMapper.getPrincipals context.User
+            let claims = PrincipalMapper.getEffectiveClaims context.User
+            let evaluator = context.RequestServices.GetRequiredService<IGracePermissionEvaluator>()
+
+            let! repositoryAdminDecision = evaluator.CheckAsync(principals, claims, Operation.RepositoryAdmin, resource)
+
+            let caller =
+                { VisibilityCallerAudience.Anonymous with
+                    UserId = callerUserId
+                    HasRepositoryAdministration =
+                        match repositoryAdminDecision with
+                        | Allowed _ -> true
+                        | Denied _ -> false
+                }
+
+            let resource =
+                {
+                    AuthorityKey = promotionSet.PromotionSetId
+                    Visibility = promotionSet.Visibility
+                    Ownership = promotionSet.Ownership
+                    CreatorUserId = promotionSet.CreatorUserId
+                }
+
+            return VisibilityAuthorization.canObservePromotionSet caller (fun _ -> VisibilityResourceAudience.None) resource
+        }
+
+    /// Checks whether the current caller may observe the PromotionSet scope attached to an approval request.
+    let private canObservePromotionSetScope (context: HttpContext) (request: ApprovalRequest) =
+        task {
+            match request.Scope.PromotionSetId with
+            | None -> return true
+            | Some promotionSetId ->
+                let correlationId = Services.getCorrelationId context
+                let promotionSetActorProxy = ActorProxy.PromotionSet.CreateActorProxy promotionSetId request.Scope.RepositoryId correlationId
+                let! promotionSet = promotionSetActorProxy.Get correlationId
+
+                if promotionSet.PromotionSetId = PromotionSetId.Empty then
+                    return false
+                else
+                    return! canObservePromotionSet context promotionSet
+        }
 
     /// Implements request id from context for the server request pipeline.
     let private requestIdFromContext<'T when 'T :> ApprovalRequestParameters> (context: HttpContext) =
@@ -179,41 +231,46 @@ module ApprovalRequest =
                 | Some requestId ->
                     match! ApprovalStore.tryGetRequestAsync requestId fallbackScope correlationId with
                     | None -> return! Services.result404NotFound context
-                    | Some request when not (selectorMatches context request) ->
-                        return!
-                            context
-                            |> Services.result400BadRequest (error context "Caller does not match the stored approval responder selector.")
                     | Some request ->
-                        let responder = currentUserId context
+                        let! canObservePromotionSet = canObservePromotionSetScope context request
 
-                        let normalizedClientDecisionId =
-                            if String.IsNullOrWhiteSpace clientDecisionId then
-                                $"{requestId:N}:{decision}:{responder}"
-                            else
-                                clientDecisionId
-
-                        let requestDecision =
-                            { ApprovalRequestDecision.Default with
-                                Decision = decision
-                                DecidedBy = responder
-                                DecidedAt = getCurrentInstant ()
-                                Reason = if String.IsNullOrWhiteSpace reason then None else Some reason
-                                ClientDecisionId = normalizedClientDecisionId
-                            }
-
-                        match!
-                            ApprovalStore.handleRequestCommandAsync
-                                requestId
-                                request.Scope.RepositoryId
-                                (ApprovalRequestCommand.RecordDecision requestDecision)
-                                correlationId
-                                $"{responder}"
-                            with
-                        | Ok result ->
+                        if not canObservePromotionSet then
+                            return! Services.result404NotFound context
+                        elif not (selectorMatches context request) then
                             return!
                                 context
-                                |> Services.result200Ok result.ReturnValue.Request
-                        | Error failure -> return! context |> Services.result400BadRequest failure
+                                |> Services.result400BadRequest (error context "Caller does not match the stored approval responder selector.")
+                        else
+                            let responder = currentUserId context
+
+                            let normalizedClientDecisionId =
+                                if String.IsNullOrWhiteSpace clientDecisionId then
+                                    $"{requestId:N}:{decision}:{responder}"
+                                else
+                                    clientDecisionId
+
+                            let requestDecision =
+                                { ApprovalRequestDecision.Default with
+                                    Decision = decision
+                                    DecidedBy = responder
+                                    DecidedAt = getCurrentInstant ()
+                                    Reason = if String.IsNullOrWhiteSpace reason then None else Some reason
+                                    ClientDecisionId = normalizedClientDecisionId
+                                }
+
+                            match!
+                                ApprovalStore.handleRequestCommandAsync
+                                    requestId
+                                    request.Scope.RepositoryId
+                                    (ApprovalRequestCommand.RecordDecision requestDecision)
+                                    correlationId
+                                    $"{responder}"
+                                with
+                            | Ok result ->
+                                return!
+                                    context
+                                    |> Services.result200Ok result.ReturnValue.Request
+                            | Error failure -> return! context |> Services.result400BadRequest failure
             }
 
     /// Handles the Grace Server list request.
@@ -224,7 +281,16 @@ module ApprovalRequest =
                 let scope = scopeFromRequestParameters parameters
 
                 let! requests = ApprovalStore.listRequestsAsync scope parameters.IncludeTerminal (Services.getCorrelationId context)
-                return! context |> Services.result200Ok requests
+                let visibleRequests = ResizeArray<ApprovalRequest>()
+
+                for request in requests do
+                    let! canObservePromotionSet = canObservePromotionSetScope context request
+
+                    if canObservePromotionSet then visibleRequests.Add request
+
+                return!
+                    context
+                    |> Services.result200Ok (visibleRequests.ToArray() :> IReadOnlyList<ApprovalRequest>)
             }
 
     /// Handles the Grace Server seed generated request.
@@ -291,7 +357,13 @@ module ApprovalRequest =
                     let scope = scopeFromRequestParameters parameters
 
                     match! ApprovalStore.tryGetRequestAsync requestId scope (Services.getCorrelationId context) with
-                    | Some request -> return! context |> Services.result200Ok request
+                    | Some request ->
+                        let! canObservePromotionSet = canObservePromotionSetScope context request
+
+                        if canObservePromotionSet then
+                            return! context |> Services.result200Ok request
+                        else
+                            return! Services.result404NotFound context
                     | None -> return! Services.result404NotFound context
                 | None -> return! Services.result404NotFound context
             }
@@ -324,7 +396,16 @@ module ApprovalRequest =
                 | Some requestId ->
                     let scope = scopeFromRequestParameters parameters
                     let! history = ApprovalStore.requestHistoryAsync requestId scope (Services.getCorrelationId context)
-                    return! context |> Services.result200Ok history
+                    let visibleHistory = ResizeArray<ApprovalRequest>()
+
+                    for request in history do
+                        let! canObservePromotionSet = canObservePromotionSetScope context request
+
+                        if canObservePromotionSet then visibleHistory.Add request
+
+                    return!
+                        context
+                        |> Services.result200Ok (visibleHistory.ToArray() :> IReadOnlyList<ApprovalRequest>)
                 | None ->
                     return!
                         context

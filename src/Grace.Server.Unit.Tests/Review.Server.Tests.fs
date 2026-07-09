@@ -2,17 +2,31 @@ namespace Grace.Server.Tests
 
 open FsUnit
 open Grace.Server
+open Grace.Types.Common
 open Grace.Types.Queue
 open Grace.Types.Review
 open Grace.Shared.Parameters.Review
 open Grace.Types.PromotionSet
+open Grace.Types.Visibility
+open NodaTime
 open NUnit.Framework
 open System
+open System.Collections.Generic
 open System.Threading.Tasks
 
 /// Covers review Projection behavior in no-Aspire server unit tests.
 [<Parallelizable(ParallelScope.All)>]
 type ReviewProjectionTests() =
+    /// Constructs metadata fixtures used by the server unit review projection assertions.
+    let createMetadata correlationId =
+        {
+            Timestamp = Instant.FromUtc(2026, 7, 9, 0, 0)
+            CorrelationId = correlationId
+            Principal = "reviewer"
+            ClientType = Microsoft.FSharp.Core.Option.None
+            Properties = Dictionary<string, string>()
+        }
+
     /// Constructs parameters fixtures used by the server unit review assertions.
     let createParameters (candidateId: string) =
         let parameters = ResolveCandidateIdentityParameters(CandidateId = candidateId)
@@ -137,6 +151,29 @@ type ReviewProjectionTests() =
             Assert.That(error.Properties["RepositoryId"], Is.EqualTo(parameters.RepositoryId))
             Assert.That(error.Properties["NormalizedCandidateId"], Is.EqualTo(candidateId.ToString()))
 
+    /// Verifies that hidden candidate PromotionSets use the same projection error as missing candidates.
+    [<Test>]
+    member _.ResolveCandidateIdentityProjectionWithTreatsHiddenPromotionSetAsMissing() =
+        let candidateId = Guid.NewGuid()
+        let parameters = createParameters (candidateId.ToString())
+        let mutable backendWasAskedForCandidate = false
+
+        let resolvePromotionSet (promotionSetId: Guid) : Task<Grace.Types.PromotionSet.PromotionSetDto option> =
+            task {
+                backendWasAskedForCandidate <- promotionSetId = candidateId
+                return Option.None
+            }
+
+        let resultTask = Review.resolveCandidateIdentityProjectionWith resolvePromotionSet parameters
+        let result = resultTask.GetAwaiter().GetResult()
+
+        match result with
+        | Ok _ -> Assert.Fail("Expected hidden candidate projection to return the missing-equivalent error.")
+        | Error error ->
+            Assert.That(backendWasAskedForCandidate, Is.True)
+            Assert.That(error.Error, Is.EqualTo($"Candidate '{candidateId}' was not found in repository scope."))
+            Assert.That(error.Properties["NormalizedCandidateId"], Is.EqualTo(candidateId.ToString()))
+
     /// Verifies that derive Candidate Required Actions Returns Ordered Deterministic Actions.
     [<Test>]
     member _.DeriveCandidateRequiredActionsReturnsOrderedDeterministicActions() =
@@ -201,6 +238,57 @@ type ReviewProjectionTests() =
                 "queue"
                 "review"
             ]
+
+    /// Verifies that review metadata inherits private PromotionSet visibility before automation publication.
+    [<Test>]
+    member _.ReviewMetadataInheritsPrivatePromotionSetVisibility() =
+        let creatorUserId = Guid.NewGuid().ToString()
+
+        let promotionSet =
+            { PromotionSetDto.Default with
+                PromotionSetId = Guid.NewGuid()
+                Visibility = ResourceVisibility.Private
+                Ownership = ResourceOwnership.ContributorOwned
+                CreatorUserId = Some creatorUserId
+            }
+
+        let metadata = Review.inheritPromotionSetVisibilityMetadata (createMetadata "corr-review-private") promotionSet
+
+        Assert.That(metadata.Properties["InheritedVisibility"], Is.EqualTo($"{ResourceVisibility.Private}"))
+        Assert.That(metadata.Properties["InheritedOwnership"], Is.EqualTo($"{ResourceOwnership.ContributorOwned}"))
+        Assert.That(metadata.Properties["InheritedCreatorUserId"], Is.EqualTo($"{creatorUserId}"))
+
+    /// Verifies that review snapshots do not serialize hidden private running queue work.
+    [<Test>]
+    member _.BuildCandidateProjectionSnapshotUsesCallerVisibleQueueProjection() =
+        let publicPromotionSetId = Guid.Parse("11111111-1111-1111-1111-111111111111")
+        let hiddenRunningPromotionSetId = Guid.Parse("22222222-2222-2222-2222-222222222222")
+
+        let promotionSet =
+            { PromotionSetDto.Default with
+                PromotionSetId = publicPromotionSetId
+                Status = PromotionSetStatus.Ready
+                StepsComputationStatus = StepsComputationStatus.Computed
+            }
+
+        let queue =
+            { PromotionQueue.Default with
+                State = QueueState.Running
+                RunningPromotionSetId = Some hiddenRunningPromotionSetId
+                UpdatedAt = Some(Instant.FromUtc(2026, 7, 9, 1, 0))
+            }
+
+        let projectedQueue = Review.projectQueueForReviewSnapshot queue [] Option.None
+        let identity = CandidateIdentityProjection()
+        identity.CandidateId <- publicPromotionSetId.ToString()
+        identity.PromotionSetId <- publicPromotionSetId.ToString()
+        identity.IdentityMode <- CandidateIdentityModes.DirectPromotionSetProjection
+
+        let snapshot = Review.buildCandidateProjectionSnapshot identity promotionSet (Some projectedQueue) Option.None
+
+        Assert.That(snapshot.QueueState, Is.EqualTo($"{QueueState.Idle}"))
+        Assert.That(snapshot.RunningPromotionSetId, Is.EqualTo(String.Empty))
+        Assert.That(snapshot.RunningPromotionSetId, Is.Not.EqualTo(hiddenRunningPromotionSetId.ToString()))
 
     /// Verifies that build Candidate Attestation Entries Marks Missing Sources As Not Available.
     [<Test>]
