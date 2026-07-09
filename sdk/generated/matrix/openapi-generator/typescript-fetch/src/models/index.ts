@@ -164,6 +164,8 @@ export * from './RepositoryReferencesReturnValue';
 export * from './RepositoryReturnValue';
 export * from './RepositoryStatus';
 export * from './RepositoryVisibility';
+export * from './ResourceOwnership';
+export * from './ResourceVisibility';
 export * from './SaveDirectoryVersionsParameters';
 export * from './ScopedOutboundUrl';
 export * from './SearchVisibility';

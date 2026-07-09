@@ -36,6 +36,15 @@ module EventingPublisher =
     /// Gets try get organization id data needed by the server flow.
     let private tryGetOrganizationId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof OrganizationId) metadata
 
+    /// Gets try get branch id data needed by the server flow.
+    let private tryGetBranchId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof BranchId) metadata
+
+    /// Gets try get promotion set id data needed by the server flow.
+    let private tryGetPromotionSetId (metadata: EventMetadata) = tryGetGuidFromMetadata (nameof PromotionSetId) metadata
+
+    /// Gets try get terminal promotion reference id from reveal metadata.
+    let private tryGetTerminalPromotionReferenceId (metadata: EventMetadata) = tryGetGuidFromMetadata "TerminalPromotionReferenceId" metadata
+
     /// Gets try get actor id data needed by the server flow.
     let private tryGetActorId (metadata: EventMetadata) (defaultActorId: string) =
         match metadata.Properties.TryGetValue("ActorId") with
@@ -90,6 +99,12 @@ module EventingPublisher =
             match link with
             | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
             | _ -> Option.None)
+
+    /// Creates the public automation projection for a PromotionSet apply publication point.
+    let private createPromotionSetAppliedEnvelope metadata ownerId organizationId repositoryId branchId promotionSetId terminalPromotionReferenceId =
+        let payload = {| promotionSetId = promotionSetId; targetBranchId = branchId; terminalPromotionReferenceId = terminalPromotionReferenceId |}
+
+        envelope AutomationEventType.PromotionSetApplied metadata ownerId organizationId repositoryId (tryGetActorId metadata "Reference") (serialize payload)
 
     /// Computes map promotion set event type data used by Grace Server.
     let private mapPromotionSetEventType (eventType: PromotionSetEventType) =
@@ -239,18 +254,32 @@ module EventingPublisher =
                    && metadataAllowsPublicProjection referenceEvent.Metadata then
                     match tryGetTerminalPromotionSetId links with
                     | Some promotionSetId ->
-                        let payload = {| promotionSetId = promotionSetId; targetBranchId = branchId; terminalPromotionReferenceId = referenceId |}
-
-                        envelope
-                            AutomationEventType.PromotionSetApplied
+                        createPromotionSetAppliedEnvelope referenceEvent.Metadata ownerId organizationId repositoryId branchId promotionSetId referenceId
+                        |> Some
+                    | Option.None -> Option.None
+                else
+                    Option.None
+            | ReferenceEventType.Revealed (_, _, _, previousVisibility, newVisibility) ->
+                if previousVisibility = ResourceVisibility.Private
+                   && newVisibility = ResourceVisibility.Public then
+                    match tryGetOwnerId referenceEvent.Metadata,
+                          tryGetOrganizationId referenceEvent.Metadata,
+                          tryGetRepositoryId referenceEvent.Metadata,
+                          tryGetBranchId referenceEvent.Metadata,
+                          tryGetPromotionSetId referenceEvent.Metadata,
+                          tryGetTerminalPromotionReferenceId referenceEvent.Metadata
+                        with
+                    | Some ownerId, Some organizationId, Some repositoryId, Some branchId, Some promotionSetId, Some terminalPromotionReferenceId ->
+                        createPromotionSetAppliedEnvelope
                             referenceEvent.Metadata
                             ownerId
                             organizationId
                             repositoryId
-                            (tryGetActorId referenceEvent.Metadata "Reference")
-                            (serialize payload)
+                            branchId
+                            promotionSetId
+                            terminalPromotionReferenceId
                         |> Some
-                    | Option.None -> Option.None
+                    | _ -> Option.None
                 else
                     Option.None
             | _ -> Option.None

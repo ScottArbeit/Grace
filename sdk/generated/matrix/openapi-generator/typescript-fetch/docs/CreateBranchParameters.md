@@ -20,6 +20,8 @@ Name | Type
 `parentBranchId` | string
 `parentBranchName` | string
 `initialPermissions` | [Array&lt;ReferenceType&gt;](ReferenceType.md)
+`visibility` | [ResourceVisibility](ResourceVisibility.md)
+`ownership` | [ResourceOwnership](ResourceOwnership.md)
 
 ## Example
 
@@ -41,6 +43,8 @@ const example = {
   "parentBranchId": de7bf47d-23ae-4599-af68-68a317ea390d,
   "parentBranchName": MyBranch,
   "initialPermissions": null,
+  "visibility": null,
+  "ownership": null,
 } satisfies CreateBranchParameters
 
 console.log(example)

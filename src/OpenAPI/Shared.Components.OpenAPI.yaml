@@ -464,6 +464,20 @@ components:
         - Private
         - Public
 
+    ResourceVisibility:
+      type: string
+      description: Branch, reference, and promotion-set audience values implemented by Grace.
+      enum:
+        - Private
+        - Public
+
+    ResourceOwnership:
+      type: string
+      description: Principal family that owns a branch, reference, or promotion-set workflow.
+      enum:
+        - RepositoryOwned
+        - ContributorOwned
+
     RepositoryStatus:
       type: string
       enum:

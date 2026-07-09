@@ -1006,7 +1006,7 @@ module Services =
     /// Reads download files from object storage with clients data needed by the command workflow without changing remote state.
     let internal downloadFilesFromObjectStorageWithClients
         (manifestDownload: ManifestDownload.ManifestDownloadRequest -> Task<GraceResult<ManifestDownload.ManifestDownloadResult>>)
-        (wholeFileDownload: GetDownloadUriParameters -> string -> Task<GraceResult<string>>)
+        (wholeFileDownload: GetDownloadUriParameters -> FileVersion -> string -> Task<GraceResult<string>>)
         (getDownloadUriParameters: GetDownloadUriParameters)
         (files: IEnumerable<ObjectStorageDownloadFile>)
         (correlationId: string)
@@ -1031,7 +1031,10 @@ module Services =
                             parameters.RepositoryId <- getDownloadUriParameters.RepositoryId
                             parameters.RepositoryName <- getDownloadUriParameters.RepositoryName
                             let fileVersion = fileVersionForObjectStorageDownload downloadFile
-                            parameters.FileVersion <- fileVersion
+                            parameters.ReferenceId <- getDownloadUriParameters.ReferenceId
+                            parameters.RelativePath <- fileVersion.RelativePath
+                            parameters.Sha256Hash <- fileVersion.Sha256Hash
+                            parameters.Blake3Hash <- fileVersion.Blake3Hash
                             parameters.CorrelationId <- getDownloadUriParameters.CorrelationId
 
                             if fileVersion.ContentReference.ReferenceType = FileContentReferenceType.FileManifest then
@@ -1063,6 +1066,7 @@ module Services =
                                             OrganizationName = getDownloadUriParameters.OrganizationName
                                             RepositoryId = getDownloadUriParameters.RepositoryId
                                             RepositoryName = getDownloadUriParameters.RepositoryName
+                                            ReferenceId = getDownloadUriParameters.ReferenceId
                                             FileVersion = fileVersion
                                             OutputStream = Some outputStream
                                             CorrelationId = getDownloadUriParameters.CorrelationId
@@ -1079,7 +1083,7 @@ module Services =
                                     | Ok _ ->
                                         outputStream.Dispose()
                                         deletePartialManifestCacheFile ()
-                                        return! wholeFileDownload parameters correlationId
+                                        return! wholeFileDownload parameters fileVersion correlationId
                                 with
                                 | ex ->
                                     deletePartialManifestCacheFile ()
@@ -1091,7 +1095,7 @@ module Services =
                                                 correlationId
                                         )
                             else
-                                return! wholeFileDownload parameters correlationId
+                                return! wholeFileDownload parameters fileVersion correlationId
                         })
                             .Result)
 
@@ -2238,6 +2242,7 @@ module Services =
         (previousGraceStatus: GraceStatus)
         (updatedGraceStatus: GraceStatus)
         (newDirectoryVersionDtos: IEnumerable<Grace.Types.DirectoryVersion.DirectoryVersionDto>)
+        (targetReferenceId: ReferenceId)
         (correlationId: CorrelationId)
         =
         task {
@@ -2277,6 +2282,7 @@ module Services =
                                 OrganizationName = Current().OrganizationName,
                                 RepositoryId = $"{Current().RepositoryId}",
                                 RepositoryName = Current().RepositoryName,
+                                ReferenceId = targetReferenceId,
                                 CorrelationId = correlationId
                             )
 

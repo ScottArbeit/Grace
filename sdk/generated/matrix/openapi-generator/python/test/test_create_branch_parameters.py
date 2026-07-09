@@ -50,7 +50,9 @@ class TestCreateBranchParameters(unittest.TestCase):
                 parent_branch_name = 'MyBranch',
                 initial_permissions = [
                     'Commit'
-                    ]
+                    ],
+                visibility = 'Private',
+                ownership = 'RepositoryOwned'
             )
         else:
             return CreateBranchParameters(

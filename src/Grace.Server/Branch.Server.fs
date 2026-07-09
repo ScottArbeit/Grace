@@ -232,6 +232,14 @@ module Branch =
                 return VisibilityAuthorization.canObserveBranchReference caller (fun _ -> branchAudience) resource
         }
 
+    /// Checks private-reference audience without treating branch administration alone as terminal reveal authority.
+    let private canObserveReferenceForReveal (context: HttpContext) (branchDto: BranchDto) (referenceDto: Reference.ReferenceDto) =
+        task {
+            let! caller = getVisibilityCallerAudience context branchDto
+            let resource = referenceVisibilityResource referenceDto
+            return VisibilityAuthorization.canObserveReference caller (fun _ -> VisibilityResourceAudience.None) resource
+        }
+
     /// Checks whether PromotionSet review metadata is safe to disclose because the selected reference is terminal.
     let internal isRevealablePromotionSetMetadataLink (referenceDto: Reference.ReferenceDto) promotionSetId =
         referenceDto.Links
@@ -246,8 +254,58 @@ module Branch =
             | ReferenceLinkType.PromotionSetTerminal promotionSetId -> Some promotionSetId
             | _ -> None)
 
+    /// Orders non-deleted references newest-first so public windows can refill past deleted rows before applying MaxCount.
+    let internal activeReferencesLatestFirst (references: Reference.ReferenceDto seq) =
+        references
+            .Where(fun referenceDto -> referenceDto.DeletedAt.IsNone)
+            .OrderByDescending(fun referenceDto -> referenceDto.CreatedAt)
+            .ToArray()
+
+    /// Applies hidden-as-missing behavior to a reference that must be observable from the already-selected branch.
+    let private getObservableReferenceInBranchOrDefault (context: HttpContext) (branchDto: BranchDto) (referenceDto: Reference.ReferenceDto) =
+        task {
+            if referenceDto.ReferenceId = ReferenceId.Empty then
+                return Reference.ReferenceDto.Default
+            else
+                let! isObservable = canObserveReferenceInBranch context branchDto referenceDto
+                return if isObservable then referenceDto else Reference.ReferenceDto.Default
+        }
+
+    /// Filters references for one already-authorized branch without reloading branch authority for every returned row.
+    let internal filterVisibleReferenceWindowForBranch (context: HttpContext) (branchDto: BranchDto) maxCount (references: Reference.ReferenceDto seq) =
+        task {
+            if maxCount = 0 then
+                return Array.empty<Reference.ReferenceDto>
+            else
+                let visibleReferences = List<Reference.ReferenceDto>()
+                let latestFirst = activeReferencesLatestFirst references
+
+                let mutable index = 0
+
+                let mutable keepScanning =
+                    index < latestFirst.Length
+                    && (maxCount < 0 || visibleReferences.Count < maxCount)
+
+                while keepScanning do
+                    let referenceDto = latestFirst[index]
+                    let! isObservable = canObserveReferenceInBranch context branchDto referenceDto
+
+                    if isObservable then visibleReferences.Add referenceDto
+
+                    index <- index + 1
+
+                    keepScanning <-
+                        index < latestFirst.Length
+                        && (maxCount < 0 || visibleReferences.Count < maxCount)
+
+                return
+                    visibleReferences
+                        .OrderBy(fun referenceDto -> referenceDto.CreatedAt)
+                        .ToArray()
+        }
+
     /// Validates that a reveal will not disclose hidden reference or non-terminal promotion-review links.
-    let private validateRevealLinks repositoryId selectedReferenceId (referenceDto: Reference.ReferenceDto) correlationId =
+    let private validateRevealLinks context branchDto repositoryId selectedReferenceId (referenceDto: Reference.ReferenceDto) correlationId =
         task {
             let linkArray = referenceDto.Links |> Seq.toArray
             let mutable index = 0
@@ -281,7 +339,18 @@ module Branch =
                                 .enhance(nameof ReferenceId, selectedReferenceId)
                                 .enhance (nameof PromotionSetId, promotionSetId)
                         )
-                | ReferenceLinkType.PromotionSetTerminal _ -> ()
+                | ReferenceLinkType.PromotionSetTerminal promotionSetId ->
+                    let! canObserveReferenceAudience = canObserveReferenceForReveal context branchDto referenceDto
+
+                    if not canObserveReferenceAudience then
+                        error <-
+                            Some(
+                                (GraceError.Create
+                                    "Reference reveal requires private terminal audience before publishing PromotionSet terminal metadata."
+                                    correlationId)
+                                    .enhance(nameof ReferenceId, selectedReferenceId)
+                                    .enhance (nameof PromotionSetId, promotionSetId)
+                            )
                 | _ -> ()
 
                 index <- index + 1
@@ -597,6 +666,7 @@ module Branch =
 
     /// Implements include stored based on references for the server request pipeline.
     let private includeStoredBasedOnReferences
+        (context: HttpContext)
         repositoryId
         correlationId
         maxReferences
@@ -629,31 +699,38 @@ module Branch =
                     if basedOnReference.ReferenceId <> ReferenceId.Empty
                        && basedOnReference.DeletedAt.IsNone
                        && basedOnReference.RepositoryId = repositoryId then
-                        let! branchReferences = getReferences basedOnReference.RepositoryId basedOnReference.BranchId Int32.MaxValue correlationId
+                        let basedOnBranchActorProxy = Branch.CreateActorProxy basedOnReference.BranchId basedOnReference.RepositoryId correlationId
+                        let! basedOnBranch = basedOnBranchActorProxy.Get correlationId
+                        let! observableBasedOnReference = getObservableReferenceInBranchOrDefault context basedOnBranch basedOnReference
 
-                        let basedOnHistoryWindow =
-                            if branchReferences
-                               |> Array.exists (fun branchReference -> branchReference.ReferenceId = basedOnReference.ReferenceId) then
-                                branchReferences
-                            else
-                                Array.append branchReferences [| basedOnReference |]
-                            |> orderedHistoryWindowWithSyntheticBoundaries basedOnReference.ReferenceId maxReferences
+                        if observableBasedOnReference.ReferenceId
+                           <> ReferenceId.Empty then
+                            let! branchReferences = getReferences basedOnReference.RepositoryId basedOnReference.BranchId Int32.MaxValue correlationId
+                            let! visibleBranchReferences = filterVisibleReferenceWindowForBranch context basedOnBranch -1 branchReferences
 
-                        for syntheticBasedOn in basedOnHistoryWindow.SyntheticBasedOnByReferenceId do
-                            syntheticBasedOnByReferenceId[syntheticBasedOn.Key] <- syntheticBasedOn.Value
+                            let basedOnHistoryWindow =
+                                if visibleBranchReferences
+                                   |> Array.exists (fun branchReference -> branchReference.ReferenceId = basedOnReference.ReferenceId) then
+                                    visibleBranchReferences
+                                else
+                                    Array.append visibleBranchReferences [| basedOnReference |]
+                                |> orderedHistoryWindowWithSyntheticBoundaries basedOnReference.ReferenceId maxReferences
 
-                        let mutable basedOnHistoryIndex = 0
+                            for syntheticBasedOn in basedOnHistoryWindow.SyntheticBasedOnByReferenceId do
+                                syntheticBasedOnByReferenceId[syntheticBasedOn.Key] <- syntheticBasedOn.Value
 
-                        while basedOnHistoryIndex < basedOnHistoryWindow.References.Length do
-                            let basedOnHistoryReference = basedOnHistoryWindow.References[basedOnHistoryIndex]
+                            let mutable basedOnHistoryIndex = 0
 
-                            if not (knownReferenceIds.Contains basedOnHistoryReference.ReferenceId) then
-                                knownReferenceIds.Add basedOnHistoryReference.ReferenceId
-                                |> ignore
+                            while basedOnHistoryIndex < basedOnHistoryWindow.References.Length do
+                                let basedOnHistoryReference = basedOnHistoryWindow.References[basedOnHistoryIndex]
 
-                                effectiveReferences.Add basedOnHistoryReference
+                                if not (knownReferenceIds.Contains basedOnHistoryReference.ReferenceId) then
+                                    knownReferenceIds.Add basedOnHistoryReference.ReferenceId
+                                    |> ignore
 
-                            basedOnHistoryIndex <- basedOnHistoryIndex + 1
+                                    effectiveReferences.Add basedOnHistoryReference
+
+                                basedOnHistoryIndex <- basedOnHistoryIndex + 1
                 | _ -> ()
 
                 index <- index + 1
@@ -683,63 +760,82 @@ module Branch =
 
                 let! repositoryDto = repositoryActorProxy.Get correlationId
 
-                let referenceActorProxy = Reference.CreateActorProxy parameters.TargetReferenceId graceIds.RepositoryId correlationId
-                let! targetReference = referenceActorProxy.Get correlationId
+                let branchActorProxy = Branch.CreateActorProxy graceIds.BranchId graceIds.RepositoryId correlationId
+                let! branchDto = branchActorProxy.Get correlationId
+                let! isBranchObservable = canObserveBranch context branchDto
 
-                if targetReference.ReferenceId = ReferenceId.Empty then
-                    return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
-                elif targetReference.DeletedAt.IsSome then
-                    return Error(annotationError correlationId "Annotation target Reference has been deleted.")
-                elif targetReference.RepositoryId
-                     <> graceIds.RepositoryId
-                     || targetReference.BranchId <> graceIds.BranchId then
-                    return Error(annotationError correlationId "Annotation target Reference must belong to the requested repository and branch.")
+                if not isBranchObservable then
+                    return Error(hiddenBranchError context (callerSuppliedBranchId context parameters))
                 else
-                    let! targetContents = getReferenceContents repositoryDto.RepositoryId correlationId targetReference
+                    let referenceActorProxy = Reference.CreateActorProxy parameters.TargetReferenceId graceIds.RepositoryId correlationId
+                    let! targetReference = referenceActorProxy.Get correlationId
 
-                    match tryFindFileVersion normalizedPath targetContents with
-                    | None -> return Error(annotationError correlationId $"Annotation target path '{normalizedPath}' was not found in the target Reference.")
-                    | Some _ ->
-                        let! branchReferences = getReferences targetReference.RepositoryId targetReference.BranchId Int32.MaxValue correlationId
+                    if targetReference.ReferenceId <> ReferenceId.Empty
+                       && (targetReference.RepositoryId
+                           <> graceIds.RepositoryId
+                           || targetReference.BranchId <> graceIds.BranchId) then
+                        return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
+                    else
+                        let! targetReference = getObservableReferenceInBranchOrDefault context branchDto targetReference
 
-                        let localHistoryWindow =
-                            if branchReferences
-                               |> Array.exists (fun referenceDto -> referenceDto.ReferenceId = targetReference.ReferenceId) then
-                                branchReferences
-                            else
-                                Array.append branchReferences [| targetReference |]
-                            |> orderedHistoryWindowWithSyntheticBoundaries targetReference.ReferenceId parameters.MaxReferences
+                        if targetReference.ReferenceId = ReferenceId.Empty then
+                            return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
+                        elif targetReference.DeletedAt.IsSome then
+                            return Error(annotationError correlationId "Annotation target Reference has been deleted.")
+                        elif targetReference.RepositoryId
+                             <> graceIds.RepositoryId
+                             || targetReference.BranchId <> graceIds.BranchId then
+                            return Error(annotationError correlationId (BranchError.getErrorMessage BranchError.ReferenceIdDoesNotExist))
+                        else
+                            let! targetContents = getReferenceContents repositoryDto.RepositoryId correlationId targetReference
 
-                        let! references =
-                            includeStoredBasedOnReferences
-                                targetReference.RepositoryId
-                                correlationId
-                                parameters.MaxReferences
-                                localHistoryWindow.SyntheticBasedOnByReferenceId
-                                localHistoryWindow.References
+                            match tryFindFileVersion normalizedPath targetContents with
+                            | None ->
+                                return Error(annotationError correlationId $"Annotation target path '{normalizedPath}' was not found in the target Reference.")
+                            | Some _ ->
+                                let! branchReferences = getReferences targetReference.RepositoryId targetReference.BranchId Int32.MaxValue correlationId
+                                let! visibleBranchReferences = filterVisibleReferenceWindowForBranch context branchDto -1 branchReferences
 
-                        match! buildEffectiveHistory context repositoryDto normalizedPath targetReference.ReferenceId references with
-                        | Error error -> return Error error
-                        | Ok history ->
-                            let traversal = AnnotationLineCore.traverseEffectiveBranchHistory targetReference.ReferenceId parameters.MaxReferences history
+                                let localHistoryWindow =
+                                    if visibleBranchReferences
+                                       |> Array.exists (fun referenceDto -> referenceDto.ReferenceId = targetReference.ReferenceId) then
+                                        visibleBranchReferences
+                                    else
+                                        Array.append visibleBranchReferences [| targetReference |]
+                                    |> orderedHistoryWindowWithSyntheticBoundaries targetReference.ReferenceId parameters.MaxReferences
 
-                            match
-                                AnnotationLineCore.buildAnnotationFromEffectiveHistoryTraversal
-                                    (
-                                        parameters.LineRange,
-                                        targetReference.ReferenceId,
-                                        normalizedPath,
-                                        parameters.ReferenceTypes,
-                                        parameters.MaxReferences,
-                                        parameters.IncludeLineText,
-                                        traversal
-                                    )
-                                with
-                            | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
-                            | Ok annotation ->
-                                match Annotation.validate annotation with
-                                | Ok () -> return Ok annotation
-                                | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
+                                let! references =
+                                    includeStoredBasedOnReferences
+                                        context
+                                        targetReference.RepositoryId
+                                        correlationId
+                                        parameters.MaxReferences
+                                        localHistoryWindow.SyntheticBasedOnByReferenceId
+                                        localHistoryWindow.References
+
+                                match! buildEffectiveHistory context repositoryDto normalizedPath targetReference.ReferenceId references with
+                                | Error error -> return Error error
+                                | Ok history ->
+                                    let traversal =
+                                        AnnotationLineCore.traverseEffectiveBranchHistory targetReference.ReferenceId parameters.MaxReferences history
+
+                                    match
+                                        AnnotationLineCore.buildAnnotationFromEffectiveHistoryTraversal
+                                            (
+                                                parameters.LineRange,
+                                                targetReference.ReferenceId,
+                                                normalizedPath,
+                                                parameters.ReferenceTypes,
+                                                parameters.MaxReferences,
+                                                parameters.IncludeLineText,
+                                                traversal
+                                            )
+                                        with
+                                    | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
+                                    | Ok annotation ->
+                                        match Annotation.validate annotation with
+                                        | Ok () -> return Ok annotation
+                                        | Error errors -> return Error(annotationError correlationId (String.Join(" ", errors)))
         }
 
     /// Coordinates process command with post success processing for Grace Server.
@@ -1064,46 +1160,6 @@ module Branch =
         task {
             let branchActorProxy = Branch.CreateActorProxy referenceDto.BranchId referenceDto.RepositoryId correlationId
             return! branchActorProxy.Get correlationId
-        }
-
-    /// Orders non-deleted references newest-first so public windows can refill past deleted rows before applying MaxCount.
-    let internal activeReferencesLatestFirst (references: Reference.ReferenceDto seq) =
-        references
-            .Where(fun referenceDto -> referenceDto.DeletedAt.IsNone)
-            .OrderByDescending(fun referenceDto -> referenceDto.CreatedAt)
-            .ToArray()
-
-    /// Filters references for one already-authorized branch without reloading branch authority for every returned row.
-    let internal filterVisibleReferenceWindowForBranch (context: HttpContext) (branchDto: BranchDto) maxCount (references: Reference.ReferenceDto seq) =
-        task {
-            if maxCount = 0 then
-                return Array.empty<Reference.ReferenceDto>
-            else
-                let visibleReferences = List<Reference.ReferenceDto>()
-                let latestFirst = activeReferencesLatestFirst references
-
-                let mutable index = 0
-
-                let mutable keepScanning =
-                    index < latestFirst.Length
-                    && (maxCount < 0 || visibleReferences.Count < maxCount)
-
-                while keepScanning do
-                    let referenceDto = latestFirst[index]
-                    let! isObservable = canObserveReferenceInBranch context branchDto referenceDto
-
-                    if isObservable then visibleReferences.Add referenceDto
-
-                    index <- index + 1
-
-                    keepScanning <-
-                        index < latestFirst.Length
-                        && (maxCount < 0 || visibleReferences.Count < maxCount)
-
-                return
-                    visibleReferences
-                        .OrderBy(fun referenceDto -> referenceDto.CreatedAt)
-                        .ToArray()
         }
 
     /// Chooses the maximum bounded reference-history scan size for a public reference window.
@@ -2432,6 +2488,9 @@ module Branch =
                                 context
                                 |> result400BadRequest (badRequest (ReferenceError.getErrorMessage ReferenceError.ReferenceIdDoesNotExist))
                         else
+                            let branchActorProxy = Branch.CreateActorProxy graceIds.BranchId repositoryId correlationId
+                            let! branchDto = branchActorProxy.Get correlationId
+
                             let revealPrincipal =
                                 PrincipalMapper.tryGetUserId context.User
                                 |> Option.defaultValue String.Empty
@@ -2480,7 +2539,7 @@ module Branch =
                                 match! validateRevealGraph repositoryId referenceDto correlationId with
                                 | Error error -> return! context |> result400BadRequest error
                                 | Ok () ->
-                                    match! validateRevealLinks repositoryId parameters.ReferenceId referenceDto correlationId with
+                                    match! validateRevealLinks context branchDto repositoryId parameters.ReferenceId referenceDto correlationId with
                                     | Error error -> return! context |> result400BadRequest error
                                     | Ok () -> return! executeReveal ()
                 with
@@ -3380,10 +3439,15 @@ module Branch =
 
                 let! directoryVersionDtos = directoryVersionActorProxy.GetRecursiveDirectoryVersions false correlationId
 
-                let directoryIds =
+                let rootDirectoryId = rootDirectoryVersion.DirectoryVersionId
+                let directoryIds = List<DirectoryVersionId>()
+                directoryIds.Add(rootDirectoryId)
+
+                directoryIds.AddRange(
                     directoryVersionDtos
                         .Select(fun dv -> dv.DirectoryVersion.DirectoryVersionId)
-                        .ToList()
+                        .Where(fun directoryVersionId -> directoryVersionId <> rootDirectoryId)
+                )
 
                 return directoryIds
             | None -> return List<DirectoryVersionId>()
@@ -3408,44 +3472,34 @@ module Branch =
             | None -> () // This should never happen because it would get caught in validations.
         }
 
-    /// Implements update parameters from reference for the server request pipeline.
-    let private updateParametersFromReference
+    /// Updates getVersion branch routing from ReferenceId only when that reference is observable to the caller.
+    let private updateParametersFromObservableReference
         (context: HttpContext)
         (parameters: GetBranchVersionParameters)
         (repositoryIdResolved: Guid)
         (correlationId: CorrelationId)
         =
         task {
-            logToConsole $"In Branch.GetVersion: parameters.ReferenceId: {parameters.ReferenceId}"
-            let referenceGuid = Guid.Parse(parameters.ReferenceId)
-            let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryIdResolved correlationId
+            let mutable referenceGuid = Guid.Empty
 
-            let! referenceDto = referenceActorProxy.Get(getCorrelationId context)
-            logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
-            parameters.BranchId <- $"{referenceDto.BranchId}"
-        }
+            if
+                Guid.TryParse(parameters.ReferenceId, &referenceGuid)
+                && referenceGuid <> Guid.Empty
+            then
+                let referenceActorProxy = Reference.CreateActorProxy referenceGuid repositoryIdResolved correlationId
+                let! referenceDto = referenceActorProxy.Get correlationId
 
-    /// Implements update parameters from sha for the server request pipeline.
-    let private updateParametersFromSha (parameters: GetBranchVersionParameters) (repositoryIdFromRoute: Guid) (graceIds: GraceIds) =
-        task {
-            logToConsole $"In Branch.GetVersion: parameters.Sha256Hash: {parameters.Sha256Hash}"
+                if referenceDto.ReferenceId <> ReferenceId.Empty then
+                    let branchActorProxy = Branch.CreateActorProxy referenceDto.BranchId referenceDto.RepositoryId correlationId
+                    let! branchDto = branchActorProxy.Get correlationId
+                    let! isObservable = canObserveReferenceInBranch context branchDto referenceDto
 
-            let! referenceResult = getReferenceBySha256Hash repositoryIdFromRoute graceIds.BranchId parameters.Sha256Hash
-
-            match referenceResult with
-            | Some referenceDto ->
-                logToConsole $"referenceDto.ReferenceId: {referenceDto.ReferenceId}"
-                parameters.BranchId <- $"{referenceDto.BranchId}"
-            | None ->
-                // Reference Id was not found in the database.
-                ()
+                    if isObservable then parameters.BranchId <- $"{referenceDto.BranchId}"
         }
 
     /// Implements update parameters for repository id option for the server request pipeline.
     let private updateParametersForRepositoryIdOption
         (context: HttpContext)
-        (graceIds: GraceIds)
-        (repositoryIdFromRoute: Guid)
         (correlationId: CorrelationId)
         (parameters: GetBranchVersionParameters)
         (repositoryIdOption: Guid option)
@@ -3463,9 +3517,7 @@ module Branch =
                 not
                 <| String.IsNullOrEmpty(parameters.ReferenceId)
             then
-                updateParametersFromReference context parameters repositoryIdResolved correlationId
-            elif not <| String.IsNullOrEmpty(parameters.Sha256Hash) then
-                updateParametersFromSha parameters repositoryIdFromRoute graceIds
+                updateParametersFromObservableReference context parameters repositoryIdResolved correlationId
             else
                 Task.FromResult(())
 
@@ -3474,7 +3526,6 @@ module Branch =
         task {
             let graceIds = getGraceIds context
             let correlationId = getCorrelationId context
-            let repositoryIdFromRoute = graceIds.RepositoryId
 
             let! parameters = context |> parse<GetBranchVersionParameters>
             context.Items[ callerSuppliedBranchIdItemKey ] <- parameters.BranchId
@@ -3482,7 +3533,7 @@ module Branch =
             let! repositoryIdOption =
                 resolveRepositoryId graceIds.OwnerId graceIds.OrganizationId parameters.RepositoryId parameters.RepositoryName parameters.CorrelationId
 
-            do! updateParametersForRepositoryIdOption context graceIds repositoryIdFromRoute correlationId parameters repositoryIdOption
+            do! updateParametersForRepositoryIdOption context correlationId parameters repositoryIdOption
 
             // Now that we've populated BranchId for sure...
             context.Items.Add("GetVersionParameters", parameters)

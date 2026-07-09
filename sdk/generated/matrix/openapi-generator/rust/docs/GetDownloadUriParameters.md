@@ -12,7 +12,10 @@ Name | Type | Description | Notes
 **organization_name** | Option<**String**> |  | [optional]
 **repository_id** | Option<**String**> |  | [optional]
 **repository_name** | Option<**String**> |  | [optional]
-**file_version** | Option<[**models::FileVersion**](FileVersion.md)> |  | [optional]
+**reference_id** | **uuid::Uuid** |  | 
+**relative_path** | **String** |  | 
+**sha256_hash** | Option<**String**> | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | [optional]
+**blake3_hash** | Option<**String**> | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional]
 
 [[Back to Model list]](../README.md#documentation-for-models) [[Back to API list]](../README.md#documentation-for-api-endpoints) [[Back to README]](../README.md)
 

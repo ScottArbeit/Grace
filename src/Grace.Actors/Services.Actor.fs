@@ -769,9 +769,7 @@ module Services =
         let objectKey = StoragePoolRouting.objectKeyInShard route.Shard (StorageKeys.contentBlockObjectKey contentBlockAddress)
         createAzureContentBlockSasUriForObjectKey route objectKey permission correlationId
 
-    let azureBlobReadPermissions =
-        (BlobSasPermissions.Read
-         ||| BlobSasPermissions.List) // These are the minimum permissions needed to read a file.
+    let azureBlobReadPermissions = BlobSasPermissions.Read
 
     /// Gets a full Uri, including shared access signature, for reading from the object storage provider.
     let getUriWithReadSharedAccessSignature (repositoryDto: RepositoryDto) (blobName: string) (correlationId: CorrelationId) =
@@ -1695,7 +1693,7 @@ module Services =
         references
         |> Seq.tryFind (fun referenceDto ->
             isNotDeletedReference referenceDto
-            && hasPromotionSetTerminalLink referenceDto)
+            && referenceDto.ReferenceType = ReferenceType.Promotion)
 
     /// Checks whether a terminal promotion reference can publish normal branch/base authority.
     let internal terminalPromotionCanPublishBranchAuthority (referenceDto: ReferenceDto) =
@@ -2492,7 +2490,6 @@ module Services =
                                     eventsForAllReferences[index].State
 
                             if isNotDeletedReference referenceDto
-                               && hasPromotionSetTerminalLink referenceDto
                                && referenceIsVisible referenceDto then
                                 latestPromotion <- Some referenceDto
 

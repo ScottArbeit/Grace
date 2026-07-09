@@ -166,10 +166,8 @@ module Storage =
         }
 
     /// Gets a file from object storage and saves it to the local object directory.
-    let GetFileFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) correlationId =
+    let GetFileFromObjectStorage (getDownloadUriParameters: GetDownloadUriParameters) (fileVersion: FileVersion) correlationId =
         task {
-            let fileVersion = getDownloadUriParameters.FileVersion
-
             try
                 match Current().ObjectStorageProvider with
                 | AzureBlobStorage ->

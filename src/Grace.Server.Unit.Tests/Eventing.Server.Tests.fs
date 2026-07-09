@@ -35,6 +35,17 @@ type AutomationEventingTests() =
             Properties = properties
         }
 
+    /// Constructs reveal metadata for terminal PromotionSet public publication assertions.
+    let terminalRevealMetadata correlationId ownerId organizationId repositoryId branchId promotionSetId terminalReferenceId =
+        let eventMetadata = metadata correlationId repositoryId
+        eventMetadata.Properties[ nameof OwnerId ] <- $"{ownerId}"
+        eventMetadata.Properties[ nameof OrganizationId ] <- $"{organizationId}"
+        eventMetadata.Properties[ nameof BranchId ] <- $"{branchId}"
+        eventMetadata.Properties[ nameof PromotionSetId ] <- $"{promotionSetId}"
+        eventMetadata.Properties[ "TerminalPromotionReferenceId" ] <- $"{terminalReferenceId}"
+        eventMetadata.Properties[ "ReferenceRevealOperationId" ] <- "reveal-op-eventing"
+        eventMetadata
+
     /// Adds private workflow visibility metadata to an event fixture.
     let markPrivateContributorOwned (metadata: EventMetadata) =
         metadata.Properties[ "Visibility" ] <- $"{ResourceVisibility.Private}"
@@ -167,6 +178,82 @@ type AutomationEventingTests() =
                 Metadata =
                     metadata "corr-private-terminal" repositoryId
                     |> markPrivateInheritedReference
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
+    /// Verifies that terminal reference reveal maps to public PromotionSet applied automation.
+    [<Test>]
+    member _.TerminalReferenceRevealMapsToPromotionSetApplied() =
+        let ownerId = Guid.NewGuid()
+        let organizationId = Guid.NewGuid()
+        let repositoryId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+        let promotionSetId = Guid.NewGuid()
+        let terminalReferenceId = Guid.NewGuid()
+
+        let referenceEvent: ReferenceEvent =
+            {
+                Event = ReferenceEventType.Revealed("reveal-op-eventing", "tester", "accepted", ResourceVisibility.Private, ResourceVisibility.Public)
+                Metadata = terminalRevealMetadata "corr-terminal-reveal" ownerId organizationId repositoryId branchId promotionSetId terminalReferenceId
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)
+        Assert.That(envelope.IsSome, Is.True)
+
+        let eventEnvelope = envelope.Value
+        Assert.That(eventEnvelope.EventType, Is.EqualTo(AutomationEventType.PromotionSetApplied))
+        Assert.That(eventEnvelope.OwnerId, Is.EqualTo(ownerId))
+        Assert.That(eventEnvelope.OrganizationId, Is.EqualTo(organizationId))
+        Assert.That(eventEnvelope.RepositoryId, Is.EqualTo(repositoryId))
+
+        use payload = JsonDocument.Parse(eventEnvelope.DataJson)
+        let root = payload.RootElement
+        Assert.That(root.GetProperty("promotionSetId").GetGuid(), Is.EqualTo(promotionSetId))
+        Assert.That(root.GetProperty("targetBranchId").GetGuid(), Is.EqualTo(branchId))
+
+        Assert.That(
+            root
+                .GetProperty("terminalPromotionReferenceId")
+                .GetGuid(),
+            Is.EqualTo(terminalReferenceId)
+        )
+
+    /// Verifies that reveal retry does not create another automation projection without a durable reveal event.
+    [<Test>]
+    member _.AlreadyPublicRevealRetryDoesNotMapToPromotionSetApplied() =
+        let metadata =
+            terminalRevealMetadata
+                "corr-terminal-reveal-retry"
+                (Guid.NewGuid())
+                (Guid.NewGuid())
+                (Guid.NewGuid())
+                (Guid.NewGuid())
+                (Guid.NewGuid())
+                (Guid.NewGuid())
+
+        let referenceEvent: ReferenceEvent =
+            {
+                Event = ReferenceEventType.Revealed("reveal-op-eventing", "tester", "accepted", ResourceVisibility.Public, ResourceVisibility.Public)
+                Metadata = metadata
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
+    /// Verifies that generic reference reveal does not map to PromotionSet applied automation.
+    [<Test>]
+    member _.GenericReferenceRevealDoesNotMapToPromotionSetApplied() =
+        let eventMetadata = metadata "corr-generic-reveal" (Guid.NewGuid())
+        eventMetadata.Properties[ nameof OwnerId ] <- $"{Guid.NewGuid()}"
+        eventMetadata.Properties[ nameof OrganizationId ] <- $"{Guid.NewGuid()}"
+        eventMetadata.Properties[ nameof BranchId ] <- $"{Guid.NewGuid()}"
+
+        let referenceEvent: ReferenceEvent =
+            {
+                Event = ReferenceEventType.Revealed("reveal-op-eventing", "tester", "accepted", ResourceVisibility.Private, ResourceVisibility.Public)
+                Metadata = eventMetadata
             }
 
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)

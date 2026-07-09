@@ -464,7 +464,7 @@ example().catch(console.error);
 
 Gets a download URI for whole-file content.
 
-Compatibility endpoint for downloading repository-scoped WholeFileContent.
+Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape. 
 
 ### Example
 
@@ -526,6 +526,7 @@ example().catch(console.error);
 |-------------|-------------|------------------|
 | **200** | OK |  -  |
 | **400** | Bad Request |  -  |
+| **404** | Not Found |  -  |
 | **500** | Internal Server Error |  -  |
 
 [[Back to top]](#) [[Back to API list]](../README.md#api-endpoints) [[Back to Model list]](../README.md#models) [[Back to README]](../README.md)

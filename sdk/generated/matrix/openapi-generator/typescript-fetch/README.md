@@ -327,6 +327,8 @@ All URIs are relative to *http://localhost:5000*
 - [RepositoryReturnValue](docs/RepositoryReturnValue.md)
 - [RepositoryStatus](docs/RepositoryStatus.md)
 - [RepositoryVisibility](docs/RepositoryVisibility.md)
+- [ResourceOwnership](docs/ResourceOwnership.md)
+- [ResourceVisibility](docs/ResourceVisibility.md)
 - [SaveDirectoryVersionsParameters](docs/SaveDirectoryVersionsParameters.md)
 - [ScopedOutboundUrl](docs/ScopedOutboundUrl.md)
 - [SearchVisibility](docs/SearchVisibility.md)

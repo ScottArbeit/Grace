@@ -31,12 +31,20 @@ pub struct GetDownloadUriParameters {
     pub repository_id: Option<String>,
     #[serde(rename = "RepositoryName", skip_serializing_if = "Option::is_none")]
     pub repository_name: Option<String>,
-    #[serde(rename = "FileVersion", skip_serializing_if = "Option::is_none")]
-    pub file_version: Option<Box<models::FileVersion>>,
+    #[serde(rename = "ReferenceId")]
+    pub reference_id: uuid::Uuid,
+    #[serde(rename = "RelativePath")]
+    pub relative_path: String,
+    /// Lowercase 64-character SHA-256 version hash persisted on version DTOs.
+    #[serde(rename = "Sha256Hash", skip_serializing_if = "Option::is_none")]
+    pub sha256_hash: Option<String>,
+    /// Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.
+    #[serde(rename = "Blake3Hash", skip_serializing_if = "Option::is_none")]
+    pub blake3_hash: Option<String>,
 }
 
 impl GetDownloadUriParameters {
-    pub fn new() -> GetDownloadUriParameters {
+    pub fn new(reference_id: uuid::Uuid, relative_path: String) -> GetDownloadUriParameters {
         GetDownloadUriParameters {
             correlation_id: None,
             principal: None,
@@ -46,7 +54,10 @@ impl GetDownloadUriParameters {
             organization_name: None,
             repository_id: None,
             repository_name: None,
-            file_version: None,
+            reference_id,
+            relative_path,
+            sha256_hash: None,
+            blake3_hash: None,
         }
     }
 }

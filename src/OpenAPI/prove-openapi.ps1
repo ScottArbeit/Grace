@@ -1326,6 +1326,13 @@ function Test-OpenApiSharedContractDetails {
             "Storage raw URI operation '$operationId' must keep its own 200 response as text/plain."
     }
 
+    $storageComponentsText = Get-Content -LiteralPath (Join-Path $OpenApiRoot 'Storage.Components.OpenAPI.yaml') -Raw
+    Assert-TextContains $storageComponentsText 'x-grace-required-one-of:' 'GetDownloadUri must keep the Grace-specific generator compatibility marker for hash proof fields.'
+    Assert-OperationTextMatches `
+        ([pscustomobject]@{ OperationText = $storageComponentsText }) `
+        "(?s)GetDownloadUriParameters:\s*.*?if:\s*.*?not:\s*.*?required:\s*.*?-\s*Sha256Hash\s*.*?then:\s*.*?required:\s*.*?-\s*Blake3Hash" `
+        'GetDownloadUriParameters must express the hash proof requirement with standard JSON Schema if/then required clauses.'
+
     foreach ($operationId in @('CreateApprovalPolicy', 'ApproveApprovalRequest')) {
         $operation = Get-RequiredOpenApiOperation $Operations 'Approval.Paths.OpenAPI.yaml' $operationId
         Assert-OperationTextMatches `

@@ -38,7 +38,7 @@ class RepositoryDto(BaseModel):
     organization_id: Optional[UUID] = Field(default=None, alias="OrganizationId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
     object_storage_provider: Optional[ObjectStorageProvider] = Field(default=None, alias="ObjectStorageProvider")
-    storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.", alias="StoragePoolId")
+    storage_pool_id: Optional[StrictStr] = Field(default=None, description="StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.", alias="StoragePoolId")
     storage_account_name: Optional[StrictStr] = Field(default=None, alias="StorageAccountName")
     storage_container_name: Optional[StrictStr] = Field(default=None, alias="StorageContainerName")
     repository_visibility: Optional[RepositoryVisibility] = Field(default=None, alias="RepositoryVisibility")

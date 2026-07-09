@@ -18,9 +18,10 @@ import pprint
 import re  # noqa: F401
 import json
 
-from pydantic import BaseModel, ConfigDict, Field, StrictStr
+from pydantic import BaseModel, ConfigDict, Field, StrictStr, field_validator
 from typing import Any, ClassVar, Dict, List, Optional
-from grace_generated_openapi_probe.models.file_version import FileVersion
+from typing_extensions import Annotated
+from uuid import UUID
 from typing import Optional, Set
 from typing_extensions import Self
 from pydantic_core import to_jsonable_python
@@ -37,8 +38,37 @@ class GetDownloadUriParameters(BaseModel):
     organization_name: Optional[StrictStr] = Field(default=None, alias="OrganizationName")
     repository_id: Optional[StrictStr] = Field(default=None, alias="RepositoryId")
     repository_name: Optional[StrictStr] = Field(default=None, alias="RepositoryName")
-    file_version: Optional[FileVersion] = Field(default=None, alias="FileVersion")
-    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "FileVersion"]
+    reference_id: UUID = Field(alias="ReferenceId")
+    relative_path: StrictStr = Field(alias="RelativePath")
+    sha256_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character SHA-256 version hash persisted on version DTOs.", alias="Sha256Hash")
+    blake3_hash: Optional[Annotated[str, Field(strict=True)]] = Field(default=None, description="Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs.", alias="Blake3Hash")
+    __properties: ClassVar[List[str]] = ["CorrelationId", "Principal", "OwnerId", "OwnerName", "OrganizationId", "OrganizationName", "RepositoryId", "RepositoryName", "ReferenceId", "RelativePath", "Sha256Hash", "Blake3Hash"]
+
+    @field_validator('sha256_hash')
+    def sha256_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
+
+    @field_validator('blake3_hash')
+    def blake3_hash_validate_regular_expression(cls, value):
+        """Validates the regular expression"""
+        if value is None:
+            return value
+
+        if not isinstance(value, str):
+            value = str(value)
+
+        if not re.match(r"^[a-f0-9]{64}$", value):
+            raise ValueError(r"must validate the regular expression /^[a-f0-9]{64}$/")
+        return value
 
     model_config = ConfigDict(
         validate_by_name=True,
@@ -79,9 +109,6 @@ class GetDownloadUriParameters(BaseModel):
             exclude=excluded_fields,
             exclude_none=True,
         )
-        # override the default output from pydantic by calling `to_dict()` of file_version
-        if self.file_version:
-            _dict['FileVersion'] = self.file_version.to_dict()
         return _dict
 
     @classmethod
@@ -102,7 +129,10 @@ class GetDownloadUriParameters(BaseModel):
             "OrganizationName": obj.get("OrganizationName"),
             "RepositoryId": obj.get("RepositoryId"),
             "RepositoryName": obj.get("RepositoryName"),
-            "FileVersion": FileVersion.from_dict(obj["FileVersion"]) if obj.get("FileVersion") is not None else None
+            "ReferenceId": obj.get("ReferenceId"),
+            "RelativePath": obj.get("RelativePath"),
+            "Sha256Hash": obj.get("Sha256Hash"),
+            "Blake3Hash": obj.get("Blake3Hash")
         })
         return _obj
 

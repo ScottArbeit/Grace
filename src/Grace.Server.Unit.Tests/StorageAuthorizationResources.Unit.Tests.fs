@@ -77,11 +77,11 @@ type StorageAuthorizationResourcesTests() =
         assertPathResource "src/upload.fs" resources[0]
         assertPathResource "assets/icon.png" resources[1]
 
-    /// Verifies that download Uri File Version Maps To Single Path Resource.
+    /// Verifies that download Uri Relative Path Maps To Single Path Resource.
     [<Test>]
-    member _.DownloadUriFileVersionMapsToSinglePathResource() =
+    member _.DownloadUriRelativePathMapsToSinglePathResource() =
         let parameters = Storage.GetDownloadUriParameters()
-        parameters.FileVersion <- fileVersion "src/download.fs"
+        parameters.RelativePath <- "src/download.fs"
 
         let resource = StorageAuthorizationResources.downloadUriResource ownerId organizationId repositoryId parameters
 

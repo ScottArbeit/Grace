@@ -13,10 +13,13 @@ Name | Type | Description | Notes
 **organization_name** | **str** |  | [optional] 
 **repository_id** | **str** |  | [optional] 
 **repository_name** | **str** |  | [optional] 
-**authorized_scope** | **str** |  | [optional] 
-**storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly. | [optional] 
-**content_block_address** | **str** | Lowercase 64-character BLAKE3-derived ContentBlock address. | [optional] 
-**manifest_address** | **str** | Lowercase 64-character BLAKE3-derived FileManifest address. | [optional] 
+**reference_id** | **UUID** |  | 
+**authorized_scope** | **str** |  | 
+**sha256_hash** | **str** | Lowercase 64-character SHA-256 version hash persisted on version DTOs. | [optional] 
+**blake3_hash** | **str** | Lowercase 64-character BLAKE3 version hash persisted on new version graph DTOs. | [optional] 
+**storage_pool_id** | **str** | StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly. | 
+**content_block_address** | **str** | Lowercase 64-character BLAKE3-derived ContentBlock address. | 
+**manifest_address** | **str** | Lowercase 64-character BLAKE3-derived FileManifest address. | 
 
 ## Example
 

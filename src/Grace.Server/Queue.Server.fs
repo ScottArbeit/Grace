@@ -55,6 +55,42 @@ module Queue =
         (observablePromotionSetIds: PromotionSetId list)
         (observableRunningPromotionSetId: PromotionSetId option)
         =
+        let allAffectedWorkVisible =
+            let queuedIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+
+            let queuedWorkVisible =
+                queuedIds.Length = observablePromotionSetIds.Length
+                && queuedIds
+                   |> List.forall (fun promotionSetId ->
+                       observablePromotionSetIds
+                       |> List.contains promotionSetId)
+
+            let runningWorkVisible =
+                match queue.RunningPromotionSetId with
+                | Some promotionSetId -> observableRunningPromotionSetId = Some promotionSetId
+                | None -> true
+
+            queuedWorkVisible && runningWorkVisible
+
+        let visibleState =
+            match observableRunningPromotionSetId with
+            | Some _ -> QueueState.Running
+            | None when observablePromotionSetIds.IsEmpty -> QueueState.Idle
+            | None when allAffectedWorkVisible ->
+                match queue.State with
+                | QueueState.Paused -> QueueState.Paused
+                | QueueState.Degraded -> QueueState.Degraded
+                | _ -> QueueState.Idle
+            | None -> QueueState.Idle
+
+        let visibleUpdatedAt =
+            match visibleState with
+            | QueueState.Idle when observableRunningPromotionSetId.IsNone -> None
+            | QueueState.Paused
+            | QueueState.Degraded when allAffectedWorkVisible -> if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
+            | QueueState.Running -> if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
+            | _ -> None
+
         if observablePromotionSetIds.IsEmpty
            && observableRunningPromotionSetId.IsNone then
             { queue with PromotionSetIds = []; RunningPromotionSetId = None; State = QueueState.Idle; UpdatedAt = None }
@@ -62,14 +98,45 @@ module Queue =
             { queue with
                 PromotionSetIds = observablePromotionSetIds
                 RunningPromotionSetId = observableRunningPromotionSetId
-                State = if isNull (box queue.State) then QueueState.Idle else queue.State
-                UpdatedAt = if isNull (box queue.UpdatedAt) then None else queue.UpdatedAt
+                State = visibleState
+                UpdatedAt = visibleUpdatedAt
             }
 
     /// Decides whether a queue route may mutate state from caller-visible work.
     let internal hasCallerVisibleQueueWork (observablePromotionSetIds: PromotionSetId list) (observableRunningPromotionSetId: PromotionSetId option) =
         not observablePromotionSetIds.IsEmpty
         || observableRunningPromotionSetId.IsSome
+
+    /// Requires every queued or running PromotionSet to be observable before a queue-wide mutation can run.
+    let internal allAffectedQueueWorkVisible
+        (queue: PromotionQueue)
+        (observablePromotionSetIds: PromotionSetId list)
+        (observableRunningPromotionSetId: PromotionSetId option)
+        =
+        let queuedIds = if isNull (box queue.PromotionSetIds) then [] else queue.PromotionSetIds
+
+        let queuedWorkVisible =
+            queuedIds.Length = observablePromotionSetIds.Length
+            && queuedIds
+               |> List.forall (fun promotionSetId ->
+                   observablePromotionSetIds
+                   |> List.contains promotionSetId)
+
+        let runningWorkVisible =
+            match queue.RunningPromotionSetId with
+            | Some promotionSetId -> observableRunningPromotionSetId = Some promotionSetId
+            | None -> true
+
+        queuedWorkVisible && runningWorkVisible
+
+    /// Decides whether pause or resume can mutate the whole queue without touching hidden work.
+    let internal canMutateCallerVisibleQueueWork
+        (queue: PromotionQueue)
+        (observablePromotionSetIds: PromotionSetId list)
+        (observableRunningPromotionSetId: PromotionSetId option)
+        =
+        hasCallerVisibleQueueWork observablePromotionSetIds observableRunningPromotionSetId
+        && allAffectedQueueWorkVisible queue observablePromotionSetIds observableRunningPromotionSetId
 
     /// Creates the stable no-op result for pause and resume when the caller has no visible queue work.
     let internal noObservableQueueWorkReturnValue commandName correlationId =
@@ -445,7 +512,7 @@ module Queue =
                     let queue = deserialize<PromotionQueue> queueJson
                     let! observablePromotionSetIds, observableRunningPromotionSetId = getObservableQueueWork context graceIds.RepositoryId correlationId queue
 
-                    if hasCallerVisibleQueueWork observablePromotionSetIds observableRunningPromotionSetId then
+                    if canMutateCallerVisibleQueueWork queue observablePromotionSetIds observableRunningPromotionSetId then
                         match! actorProxy.PauseForRoute(createMetadata context) with
                         | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
                         | Error graceError -> return! context |> result400BadRequest graceError
@@ -486,7 +553,7 @@ module Queue =
                     let queue = deserialize<PromotionQueue> queueJson
                     let! observablePromotionSetIds, observableRunningPromotionSetId = getObservableQueueWork context graceIds.RepositoryId correlationId queue
 
-                    if hasCallerVisibleQueueWork observablePromotionSetIds observableRunningPromotionSetId then
+                    if canMutateCallerVisibleQueueWork queue observablePromotionSetIds observableRunningPromotionSetId then
                         match! actorProxy.ResumeForRoute(createMetadata context) with
                         | Ok graceReturnValue -> return! context |> result200Ok graceReturnValue
                         | Error graceError -> return! context |> result400BadRequest graceError

@@ -61,6 +61,7 @@ export interface GraceFileVersion {
   readonly Class?: "FileVersion" | string;
   readonly RelativePath: string;
   readonly Sha256Hash: string;
+  readonly Blake3Hash?: string;
   readonly IsBinary?: boolean;
   readonly Size?: number;
   readonly CreatedAt?: string;
@@ -84,6 +85,7 @@ export interface GraceUploadFileRequest extends GraceStorageScope {
 }
 
 export interface GraceDownloadFileRequest extends GraceStorageScope {
+  readonly referenceId: string;
   readonly fileVersion: GraceFileVersion;
   readonly outputPath: string;
   readonly correlationId?: string;
@@ -250,10 +252,14 @@ export class GraceClient {
   public async downloadFile(request: GraceDownloadFileRequest): Promise<GraceDownloadFileResult> {
     await assertOutputPathIsWritable(request.outputPath, request.allowOverwrite ?? false);
     const correlationId = request.correlationId ?? (await resolveValue(this.correlationId));
+    const normalizedFileVersion = normalizeDownloadFileVersion(request.fileVersion);
 
     const uriRequest = await this.request<string>({
       body: createStorageParameters({ ...request, correlationId }, {
-        FileVersion: normalizeFileVersion(request.fileVersion),
+        Blake3Hash: normalizedFileVersion.Blake3Hash,
+        ReferenceId: normalizeRequiredString(request.referenceId, "referenceId"),
+        RelativePath: normalizedFileVersion.RelativePath,
+        Sha256Hash: normalizedFileVersion.Sha256Hash,
       }),
       correlationId,
       headers: {
@@ -267,7 +273,6 @@ export class GraceClient {
       throw new Error("Grace did not return a download URI.");
     }
 
-    const normalizedFileVersion = normalizeFileVersion(request.fileVersion);
     await emitProgress(request.onProgress, {
       bytesTransferred: 0,
       operation: "download",
@@ -445,10 +450,21 @@ function normalizeFileVersion(fileVersion: GraceFileVersion): GraceFileVersion {
     },
     CreatedAt: fileVersion.CreatedAt,
     IsBinary: fileVersion.IsBinary ?? true,
+    Blake3Hash: fileVersion.Blake3Hash,
     RelativePath: normalizeRelativePath(fileVersion.RelativePath),
     Sha256Hash: fileVersion.Sha256Hash,
     Size: fileVersion.Size,
   };
+}
+
+function normalizeDownloadFileVersion(fileVersion: GraceFileVersion): GraceFileVersion {
+  const normalizedFileVersion = normalizeFileVersion(fileVersion);
+
+  if (normalizedFileVersion.ContentReference?.ReferenceType === "FileManifest") {
+    throw new Error("Manifest-backed downloads require ContentBlock request fields and are not supported by this facade yet.");
+  }
+
+  return normalizedFileVersion;
 }
 
 function createStorageParameters(scope: GraceStorageScope & { readonly correlationId?: string }, body: Record<string, unknown>): Record<string, unknown> {
@@ -554,6 +570,14 @@ async function assertOutputPathIsWritable(outputPath: string, allowOverwrite: bo
 
 function normalizeRelativePath(relativePath: string): string {
   return relativePath.replace(/\\/g, "/").replace(/^\/+/, "");
+}
+
+function normalizeRequiredString(value: string, fieldName: string): string {
+  if (!value || value.trim() === "") {
+    throw new Error(`${fieldName} is required.`);
+  }
+
+  return value.trim();
 }
 
 function removeUndefined(value: Record<string, unknown>): Record<string, unknown> {

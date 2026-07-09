@@ -1862,7 +1862,7 @@ module CurrentStateCaptureCliTests =
 
             let updatedStatus = graceStatus updatedRoot.DirectoryVersionId updatedRoot.Sha256Hash
 
-            updateWorkingDirectory previousStatus updatedStatus [| updatedDto |] correlationId
+            updateWorkingDirectory previousStatus updatedStatus [| updatedDto |] ReferenceId.Empty correlationId
             |> fun task -> task.GetAwaiter().GetResult()
 
             File.ReadAllBytes(workingFilePath)

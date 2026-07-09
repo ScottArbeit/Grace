@@ -71,14 +71,66 @@ type QueuePromotionSetTests() =
         Assert.That(projected.State, Is.EqualTo(QueueState.Running))
         Assert.That(projected.UpdatedAt, Is.EqualTo(Some updatedAt))
 
+    /// Verifies that hidden running work cannot leak Running state or timestamps when visible queued work remains.
+    [<Test>]
+    member _.QueueStatusProjectionRecomputesMixedHiddenRunningVisibleQueuedState() =
+        let hiddenRunningPromotionSetId: PromotionSetId = Guid.Parse("11111111-eeee-eeee-eeee-111111111111")
+        let visibleQueuedPromotionSetId: PromotionSetId = Guid.Parse("22222222-eeee-eeee-eeee-222222222222")
+
+        let queue =
+            { PromotionQueue.Default with
+                PromotionSetIds = [ visibleQueuedPromotionSetId ]
+                RunningPromotionSetId = Some hiddenRunningPromotionSetId
+                State = QueueState.Running
+                UpdatedAt = Some(Instant.FromUtc(2026, 7, 8, 8, 45))
+            }
+
+        let projected = Grace.Server.Queue.projectObservableQueueStatus queue [ visibleQueuedPromotionSetId ] None
+
+        Assert.That(projected.PromotionSetIds, Is.EquivalentTo([ visibleQueuedPromotionSetId ]))
+        Assert.That(projected.RunningPromotionSetId, Is.EqualTo(None))
+        Assert.That(projected.State, Is.EqualTo(QueueState.Idle))
+        Assert.That(projected.UpdatedAt, Is.EqualTo(None))
+
+    /// Verifies that fully visible paused queues retain their public queue-level state.
+    [<Test>]
+    member _.QueueStatusProjectionKeepsFullyVisiblePausedQueueState() =
+        let visiblePromotionSetId: PromotionSetId = Guid.Parse("33333333-eeee-eeee-eeee-333333333333")
+        let updatedAt = Instant.FromUtc(2026, 7, 8, 9, 0)
+
+        let queue = { PromotionQueue.Default with PromotionSetIds = [ visiblePromotionSetId ]; State = QueueState.Paused; UpdatedAt = Some updatedAt }
+
+        let projected = Grace.Server.Queue.projectObservableQueueStatus queue [ visiblePromotionSetId ] None
+
+        Assert.That(projected.PromotionSetIds, Is.EquivalentTo([ visiblePromotionSetId ]))
+        Assert.That(projected.State, Is.EqualTo(QueueState.Paused))
+        Assert.That(projected.UpdatedAt, Is.EqualTo(Some updatedAt))
+
     /// Verifies that pause and resume use the caller-visible queue projection as mutation authority.
     [<Test>]
     member _.QueueActionMutationRequiresCallerVisibleWork() =
         let visiblePromotionSetId: PromotionSetId = Guid.Parse("eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee")
+        let hiddenPromotionSetId: PromotionSetId = Guid.Parse("ffffffff-eeee-eeee-eeee-ffffffffffff")
+
+        let visibleQueue = { PromotionQueue.Default with PromotionSetIds = [ visiblePromotionSetId ] }
+
+        let mixedQueue =
+            { PromotionQueue.Default with
+                PromotionSetIds =
+                    [
+                        visiblePromotionSetId
+                        hiddenPromotionSetId
+                    ]
+            }
+
+        let mixedRunningQueue = { PromotionQueue.Default with PromotionSetIds = [ visiblePromotionSetId ]; RunningPromotionSetId = Some hiddenPromotionSetId }
 
         Assert.That(Grace.Server.Queue.hasCallerVisibleQueueWork [] None, Is.False)
         Assert.That(Grace.Server.Queue.hasCallerVisibleQueueWork [ visiblePromotionSetId ] None, Is.True)
         Assert.That(Grace.Server.Queue.hasCallerVisibleQueueWork [] (Some visiblePromotionSetId), Is.True)
+        Assert.That(Grace.Server.Queue.canMutateCallerVisibleQueueWork visibleQueue [ visiblePromotionSetId ] None, Is.True)
+        Assert.That(Grace.Server.Queue.canMutateCallerVisibleQueueWork mixedQueue [ visiblePromotionSetId ] None, Is.False)
+        Assert.That(Grace.Server.Queue.canMutateCallerVisibleQueueWork mixedRunningQueue [ visiblePromotionSetId ] None, Is.False)
 
     /// Verifies that hidden-only pause and resume no-ops use the same deterministic result shape.
     [<Test>]

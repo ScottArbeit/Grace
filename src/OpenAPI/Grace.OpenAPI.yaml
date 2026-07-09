@@ -2789,7 +2789,8 @@ paths:
   /storage/getDownloadUri:
     post:
       summary: Gets a download URI for whole-file content.
-      description: Compatibility endpoint for downloading repository-scoped WholeFileContent.
+      description: |
+        Gets an object-specific read-only SAS URI for whole-file bytes only after the server proves the requested FileVersion is reachable from an observable reference, path, and hash proof. Hidden private references and missing references return the same not-found shape.
       operationId: GetDownloadUri
       requestBody:
         required: true
@@ -2810,6 +2811,8 @@ paths:
                   value: https://storage.example.net/grace/repo/file.txt?sv=2023-11-03&sig=example
         '400':
           $ref: '#/components/responses/400'
+        '404':
+          $ref: '#/components/responses/404'
         '500':
           $ref: '#/components/responses/500'
   /storage/getContentBlockUploadUri:
@@ -3502,6 +3505,10 @@ components:
               type: array
               items:
                 $ref: '#/components/schemas/ReferenceType'
+            Visibility:
+              $ref: '#/components/schemas/ResourceVisibility'
+            Ownership:
+              $ref: '#/components/schemas/ResourceOwnership'
     RebaseParameters:
       description: Parameters for the /branch/rebase endpoint.
       allOf:
@@ -4377,13 +4384,33 @@ components:
           items:
             $ref: '#/components/schemas/FileVersion'
     GetDownloadUriParameters:
-      description: Parameters for /storage/getDownloadUri.
+      description: |
+        Parameters for /storage/getDownloadUri. The request identifies an observable reference, file path, and file hash proof; the server derives the FileVersion from that reachable reference tree before issuing a read-only object SAS. Supplying a FileVersion body is not accepted as authorization. At least one of Sha256Hash or Blake3Hash is required; the server enforces that proof requirement as request validation.
       allOf:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
+      if:
+        not:
+          required:
+            - Sha256Hash
+      then:
+        required:
+          - Blake3Hash
+      x-grace-required-one-of:
+        - Sha256Hash
+        - Blake3Hash
       properties:
-        FileVersion:
-          $ref: '#/components/schemas/FileVersion'
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
+        RelativePath:
+          $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
+      required:
+        - ReferenceId
+        - RelativePath
     GetContentBlockUploadUriParameters:
       description: Parameters for /storage/getContentBlockUploadUri.
       allOf:
@@ -4398,19 +4425,41 @@ components:
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
     GetContentBlockDownloadUriParameters:
-      description: Parameters for /storage/getContentBlockDownloadUri. The request carries the server-accepted StoragePoolId, ManifestAddress, and one ContentBlockAddress for an authorized manifest-backed reconstruction path. It must not embed the full FileManifest for every block request.
+      description: Parameters for /storage/getContentBlockDownloadUri. The request identifies an observable reference, authorized file path, file hash proof, server-accepted StoragePoolId and ManifestAddress, and one ContentBlockAddress for an authorized manifest-backed reconstruction path. It must not embed the full FileManifest for every block request, and raw content block or manifest addresses are not accepted as authorization by themselves. At least one of Sha256Hash or Blake3Hash is required; the server enforces that proof requirement as request validation.
       allOf:
         - $ref: '#/components/schemas/StorageParameters'
       type: object
+      if:
+        not:
+          required:
+            - Sha256Hash
+      then:
+        required:
+          - Blake3Hash
+      x-grace-required-one-of:
+        - Sha256Hash
+        - Blake3Hash
       properties:
+        ReferenceId:
+          $ref: '#/components/schemas/ReferenceId'
         AuthorizedScope:
           $ref: '#/components/schemas/RelativePath'
+        Sha256Hash:
+          $ref: '#/components/schemas/Sha256Hash'
+        Blake3Hash:
+          $ref: '#/components/schemas/Blake3Hash'
         StoragePoolId:
           $ref: '#/components/schemas/StoragePoolId'
         ContentBlockAddress:
           $ref: '#/components/schemas/ContentBlockAddress'
         ManifestAddress:
           $ref: '#/components/schemas/ManifestAddress'
+      required:
+        - ReferenceId
+        - AuthorizedScope
+        - StoragePoolId
+        - ContentBlockAddress
+        - ManifestAddress
     DiscoverContentBlocksParameters:
       description: Parameters for /storage/discoverContentBlocks. Discovery is bounded and non-authoritative; empty results do not prove that chunks or future ContentBlocks are absent.
       allOf:
@@ -4566,7 +4615,7 @@ components:
         - WasIdempotentReplay
         - Message
     FileManifest:
-      description: Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not authority for a client to choose physical storage shards.
+      description: Server-accepted reconstruction contract for one manifest-backed file. StoragePoolId is placement evidence selected by Grace Server, not a publication right for a client to choose physical storage shards.
       type: object
       properties:
         Class:
@@ -4634,7 +4683,7 @@ components:
       type: string
       pattern: ^[a-f0-9]{64}$
     StoragePoolId:
-      description: StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authority directly.
+      description: StoragePool-wide CAS scope identifier. Public clients treat this as server-provided placement evidence and must not use it to select storage accounts, containers, buckets, prefixes, or write authorization directly.
       type: string
     ChunkingSuiteId:
       description: Versioned chunking suite identifier.
@@ -5168,6 +5217,18 @@ components:
         - RetryScheduled
         - Failed
         - DeadLettered
+    ResourceVisibility:
+      type: string
+      description: Branch, reference, and promotion-set audience values implemented by Grace.
+      enum:
+        - Private
+        - Public
+    ResourceOwnership:
+      type: string
+      description: Principal family that owns a branch, reference, or promotion-set workflow.
+      enum:
+        - RepositoryOwned
+        - ContributorOwned
     BranchCommandReturnValue:
       description: Grace response envelope returned by branch command endpoints.
       type: object
@@ -6980,6 +7041,8 @@ components:
                 CorrelationId: cli-20260604T181500Z-0001
                 Properties:
                   Path: /owner/get
+    '404':
+      description: Not Found
     '500':
       description: Internal Server Error
       content:

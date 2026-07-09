@@ -175,6 +175,8 @@ docs/RepositoryReferencesReturnValue.md
 docs/RepositoryReturnValue.md
 docs/RepositoryStatus.md
 docs/RepositoryVisibility.md
+docs/ResourceOwnership.md
+docs/ResourceVisibility.md
 docs/SaveDirectoryVersionsParameters.md
 docs/ScopedOutboundUrl.md
 docs/SearchVisibility.md
@@ -412,6 +414,8 @@ src/models/repository_references_return_value.rs
 src/models/repository_return_value.rs
 src/models/repository_status.rs
 src/models/repository_visibility.rs
+src/models/resource_ownership.rs
+src/models/resource_visibility.rs
 src/models/save_directory_versions_parameters.rs
 src/models/scoped_outbound_url.rs
 src/models/search_visibility.rs
