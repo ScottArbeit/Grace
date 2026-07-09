@@ -13102,6 +13102,93 @@ module WatchTests =
                 |> should equal true
             | None -> Assert.Fail("Expected transition IPC to publish from the local transition read."))
 
+    /// Verifies that materialization-only pending status keeps IPC dirty without entering timer work.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``manual pending status marker publishes dirty ipc without timer processing`` () =
+        withTempRepo (fun _ ->
+            Watch.setGraceWatchRuntimeModeForWatchTests Services.GraceWatchRuntimeMode.HealthyIncremental
+
+            let status =
+                { graceStatusTracking Array.empty<string> Array.empty<string> with
+                    RootDirectorySha256Hash = Sha256Hash "manual-pending-root"
+                    RootDirectoryBlake3Hash = Blake3Hash "manual-pending-root-blake3"
+                }
+
+            let directoryIds = HashSet<DirectoryVersionId>(status.Index.Keys)
+
+            Watch.setGraceStatusForWatchTests status
+            Watch.updateGraceStatusDirectoryIds status
+
+            (Services.updateGraceWatchInterprocessFile status (Some directoryIds))
+                .GetAwaiter()
+                .GetResult()
+
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+
+            let processablePending, hasPendingEvidence = Watch.pendingWatchWorkEvidenceForWatchTests ()
+
+            processablePending |> should equal false
+            hasPendingEvidence |> should equal true
+
+            Watch.publishPendingWatchWorkTransitionIfNeededForWatchTests ()
+
+            readWatchStatusJsonBooleanProperty "HasPendingWatchWork"
+            |> should equal true
+
+            readWatchStatusJsonBooleanProperty "IsWorkingTreeClean"
+            |> should equal false
+
+            /// Tracks accidental timer status reads while only materialization pending status exists.
+            let mutable readStatusCalls = 0
+            /// Tracks accidental timer uploads while only materialization pending status exists.
+            let mutable uploadCalls = 0
+            /// Tracks accidental scan-based status updates while only materialization pending status exists.
+            let mutable scanStatusCalls = 0
+            /// Tracks accidental event-derived status updates while only materialization pending status exists.
+            let mutable eventStatusCalls = 0
+            /// Tracks accidental incremental status updates while only materialization pending status exists.
+            let mutable incrementalCalls = 0
+
+            let readStatus () =
+                readStatusCalls <- readStatusCalls + 1
+                Task.FromResult(status)
+
+            let upload _ _ =
+                uploadCalls <- uploadCalls + 1
+                Task.FromResult(())
+
+            let updateGraceStatus currentStatus _ =
+                scanStatusCalls <- scanStatusCalls + 1
+                Task.FromResult(Some currentStatus)
+
+            let updateGraceStatusFromDifferences currentStatus _ _ =
+                eventStatusCalls <- eventStatusCalls + 1
+                Task.FromResult(Some currentStatus)
+
+            let applyIncremental _ _ _ =
+                incrementalCalls <- incrementalCalls + 1
+                Task.FromResult(())
+
+            let updateIpc _ _ = Task.FromResult(())
+
+            (Watch.processChangedFilesWithClients
+                readStatus
+                readStatus
+                upload
+                updateGraceStatus
+                scannerHostileDifferenceDiscovery
+                updateGraceStatusFromDifferences
+                applyIncremental
+                updateIpc)
+                .GetAwaiter()
+                .GetResult()
+
+            readStatusCalls |> should equal 0
+            uploadCalls |> should equal 0
+            scanStatusCalls |> should equal 0
+            eventStatusCalls |> should equal 0
+            incrementalCalls |> should equal 0)
+
     /// Verifies that overflow during an in-flight upload cancels normal status application.
     [<Test>]
     let ``overflow during upload prevents stale observation commit`` () =
@@ -14927,6 +15014,126 @@ module WatchTests =
                 [|
                     "process-local Watch queues have pending local observations"
                     "process-local Watch queues have pending local observations"
+                |])
+
+    /// Verifies that the materialization gate waits while the existing Grace update marker is present.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator blocks clean ipc while update marker exists`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+            let updateMarkerFile = Services.updateInProgressFileName ()
+
+            Directory.CreateDirectory(Path.GetDirectoryName(updateMarkerFile))
+            |> ignore
+
+            File.WriteAllText(updateMarkerFile, "`grace rebase` is in progress.")
+
+            try
+                let notification =
+                    validCurrentBranchReferenceNotification
+                        currentRepositoryId
+                        currentBranchId
+                        ReferenceType.Save
+                        (Guid.NewGuid())
+                        (Sha256Hash "remote-root")
+                        (Blake3Hash "remote-root-blake3")
+
+                let getBranch () =
+                    Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "update-marker-gate-test"))
+
+                let inspectStatus () = Task.FromResult(watchStatusInspection status)
+                let requestDegradedResync _ = Assert.Fail("Existing update marker should wait, not request degraded resync.")
+                let safePointWaits = ResizeArray<string>()
+
+                let waitForSafePoint _ gate =
+                    task {
+                        match gate with
+                        | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
+                        | _ -> Assert.Fail("Expected existing update marker to block the coordinator.")
+                    }
+
+                let reestablishIpc _ _ = Task.FromResult(())
+                let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("update marker must block clean materialization"))
+
+                let outcome =
+                    (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                        getBranch
+                        inspectStatus
+                        requestDegradedResync
+                        waitForSafePoint
+                        reestablishIpc
+                        applyReference
+                        notification)
+                        .Result
+
+                outcome.Value.Reason
+                |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+
+                safePointWaits.ToArray()
+                |> should
+                    equal
+                    [|
+                        "Grace update marker is present"
+                        "Grace update marker is present"
+                    |]
+            finally
+                if File.Exists(updateMarkerFile) then File.Delete(updateMarkerFile))
+
+    /// Verifies that materialization pending status remains a clean-gate blocker even though it is not timer work.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator blocks clean ipc with manual pending status marker`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let status = liveWatchStatus (Guid.NewGuid())
+
+            Watch.setGraceWatchPendingWorkStatusFlagForWatchTests true
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let getBranch () = Task.FromResult(Ok(GraceReturnValue.Create (branchDtoWithLatestCurrentBranchReference notification) "manual-pending-gate-test"))
+
+            let inspectStatus () = Task.FromResult(watchStatusInspection status)
+            let requestDegradedResync _ = Assert.Fail("Manual pending status should wait, not request degraded resync.")
+            let safePointWaits = ResizeArray<string>()
+
+            let waitForSafePoint _ gate =
+                task {
+                    match gate with
+                    | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
+                    | _ -> Assert.Fail("Expected manual pending status to block the coordinator.")
+                }
+
+            let reestablishIpc _ _ = Task.FromResult(())
+            let applyReference _ _ = Task.FromException<unit>(InvalidOperationException("manual pending status must block clean materialization"))
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.WaitingForSafePoint
+
+            safePointWaits.ToArray()
+            |> should
+                equal
+                [|
+                    "materialization pending status has not reached IPC"
+                    "materialization pending status has not reached IPC"
                 |])
 
     /// Verifies that clean IPC does not let materialization proceed when the local-state database is missing.

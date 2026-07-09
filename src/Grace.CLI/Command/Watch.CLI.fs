@@ -2130,18 +2130,21 @@ module Watch =
     type private PendingWatchWorkEvidence =
         {
             HasProcessablePendingWork: bool
+            HasManualPendingStatusEvidence: bool
             HasDurableWatchJournalEvidence: bool
         }
 
         /// Reports whether any Watch work or durable journal evidence must keep IPC dirty.
         member this.HasPendingWork =
             this.HasProcessablePendingWork
+            || this.HasManualPendingStatusEvidence
             || this.HasDurableWatchJournalEvidence
 
         /// Reports whether durable journal evidence is the only reason IPC must be dirty.
         member this.HasDurableOnlyPendingWork =
             this.HasDurableWatchJournalEvidence
             && not this.HasProcessablePendingWork
+            && not this.HasManualPendingStatusEvidence
 
     /// Reports whether Watch has queued process-local work other than a startup catch-up marker.
     let private hasProcessablePendingWatchWorkExceptManual () =
@@ -2160,20 +2163,29 @@ module Watch =
         || hasPendingDurableWatchJournalEvidence ()
 
     /// Reports whether Watch has queued process-local work that can advance during the current timer pass.
-    let private hasProcessablePendingWatchWork () =
-        hasManualPendingWatchWorkStatusFlag ()
-        || hasProcessablePendingWatchWorkExceptManual ()
+    let private hasProcessablePendingWatchWork () = hasProcessablePendingWatchWorkExceptManual ()
 
     /// Evaluates has pending watch work against parsed options, process state, and durable journal evidence.
     let private hasPendingWatchWork () =
-        hasProcessablePendingWatchWork ()
+        hasManualPendingWatchWorkStatusFlag ()
+        || hasProcessablePendingWatchWork ()
         || hasPendingDurableWatchJournalEvidence ()
 
     /// Reads process-local and durable pending-work facts once for a single status publication decision.
     let private readPendingWatchWorkEvidence () =
         let hasProcessablePendingWork = hasProcessablePendingWatchWork ()
 
-        { HasProcessablePendingWork = hasProcessablePendingWork; HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence () }
+        {
+            HasProcessablePendingWork = hasProcessablePendingWork
+            HasManualPendingStatusEvidence = hasManualPendingWatchWorkStatusFlag ()
+            HasDurableWatchJournalEvidence = hasPendingDurableWatchJournalEvidence ()
+        }
+
+    /// Exposes pending Watch work checks to tests without running the foreground timer loop.
+    let internal pendingWatchWorkEvidenceForWatchTests () =
+        let evidence = readPendingWatchWorkEvidence ()
+
+        evidence.HasProcessablePendingWork, evidence.HasPendingWork
 
     /// Reads the generation for Grace Status DB refresh events observed from the filesystem.
     let private currentGraceStatusRefreshGeneration () = Volatile.Read(&graceStatusRefreshGeneration)
@@ -2201,6 +2213,9 @@ module Watch =
             |> ignore
 
             setGraceWatchHasPendingWorkForStatus hasPendingWork)
+
+    /// Sets the materialization pending status marker for focused Watch tests.
+    let internal setGraceWatchPendingWorkStatusFlagForWatchTests hasPendingWork = setGraceWatchPendingWorkStatusFlag hasPendingWork
 
     /// Reports whether the last verified IPC pending-work publication is stale against fresh evidence.
     let private pendingWatchWorkTransitionNeedsPublication () =
@@ -3263,6 +3278,10 @@ module Watch =
     let private currentBranchMaterializationStatusGate payload (inspection: GraceWatchStatusInspection) =
         if not (currentBranchReferenceNotificationTargetsCurrentBranch payload) then
             NotCurrentBranch
+        elif updateInProgress () then
+            Blocked "Grace update marker is present"
+        elif hasManualPendingWatchWorkStatusFlag () then
+            Blocked "materialization pending status has not reached IPC"
         elif hasProcessablePendingWatchWork () then
             Blocked "process-local Watch queues have pending local observations"
         elif inspection.IsUsable then
