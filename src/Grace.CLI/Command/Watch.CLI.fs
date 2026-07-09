@@ -3235,6 +3235,8 @@ module Watch =
             ReadGraceStatus: unit -> Task<GraceStatus>
             WriteGraceStatus: GraceStatus -> Task<unit>
             RequestResync: string -> unit
+            BeforeFinalVerification: unit -> Task<unit>
+            BeforeStatusReplacementVerification: unit -> Task<unit>
         }
 
     /// Lists the exact target paths that a remote Reference materialization will mutate.
@@ -3244,6 +3246,7 @@ module Watch =
             DirectoryDeletes: RelativePath array
             DirectoryCreates: RelativePath array
             FileWrites: LocalFileVersion array
+            RetainedFiles: LocalFileVersion array
         }
 
     /// Converts the active repository path comparison into dictionary lookup semantics.
@@ -3445,7 +3448,25 @@ module Watch =
                 || currentFile.Blake3Hash <> remoteFile.Blake3Hash)
             |> Seq.toArray
 
-        { FileDeletes = fileDeletes; DirectoryDeletes = directoryDeletes; DirectoryCreates = directoryCreates; FileWrites = fileWrites }
+        let retainedFiles =
+            remoteFiles.Values
+            |> Seq.filter (fun (remoteFile: LocalFileVersion) ->
+                let path = normalizedMaterializationPath remoteFile.RelativePath
+                let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                not (currentDirectories.ContainsKey path)
+                && currentFiles.TryGetValue(path, &currentFile)
+                && currentFile.Sha256Hash = remoteFile.Sha256Hash
+                && currentFile.Blake3Hash = remoteFile.Blake3Hash)
+            |> Seq.toArray
+
+        {
+            FileDeletes = fileDeletes
+            DirectoryDeletes = directoryDeletes
+            DirectoryCreates = directoryCreates
+            FileWrites = fileWrites
+            RetainedFiles = retainedFiles
+        }
 
     /// Verifies a tracked target file still matches the local status snapshot.
     let private targetFileStillMatchesStatus (fileVersion: LocalFileVersion) =
@@ -3600,6 +3621,16 @@ module Watch =
                         invalidOp $"Remote materialization create target appeared before apply: {relativePath}."
         }
 
+    /// Verifies files omitted from mutation still match the clean snapshot represented by replacement status.
+    let private verifyCurrentBranchMaterializationRetainedFiles (plan: CurrentBranchRemoteMaterializationPlan) =
+        task {
+            for fileVersion in plan.RetainedFiles do
+                let! matchesStatus = targetFileStillMatchesStatus fileVersion
+
+                if not matchesStatus then
+                    invalidOp $"Remote materialization retained file changed before status replacement: {fileVersion.RelativePath}."
+        }
+
     /// Verifies recursive DirectoryVersion metadata includes every declared child directory.
     let private validateCurrentBranchMaterializationDirectoryClosure (remoteDirectoryVersions: DirectoryVersion array) =
         let directoryIds =
@@ -3622,6 +3653,49 @@ module Watch =
                 |> String.concat ", "
 
             invalidOp $"Remote materialization metadata is missing child DirectoryVersion entries: {missingDescription}."
+
+    /// Rejects remote paths that cannot map one-to-one onto the active worktree filesystem.
+    let private validateCurrentBranchMaterializationPathRepresentability (remoteDirectoryVersions: DirectoryVersion array) =
+        let targetPaths = Dictionary<string, string>(materializationStringComparer ())
+        let collisions = ResizeArray<string>()
+
+        let remoteTargets =
+            seq {
+                for directoryVersion in remoteDirectoryVersions do
+                    yield directoryVersion.RelativePath
+
+                    for fileVersion in directoryVersion.Files do
+                        yield fileVersion.RelativePath
+            }
+
+        for relativePath in remoteTargets do
+            let normalizedPath = normalizedMaterializationPath relativePath
+            let mutable existingPath = Unchecked.defaultof<string>
+
+            if targetPaths.TryGetValue(normalizedPath, &existingPath) then
+                collisions.Add($"{existingPath} <> {relativePath}")
+            else
+                targetPaths.Add(normalizedPath, $"{relativePath}")
+
+        if collisions.Count > 0 then
+            let collisionDescription = String.concat ", " collisions
+            invalidOp $"Remote materialization metadata contains case-colliding or duplicate target paths: {collisionDescription}."
+
+    /// Verifies the fetched root metadata is the exact id and hash pair carried by the accepted Reference.
+    let private validateCurrentBranchMaterializationRootIdentity
+        (payload: CurrentBranchReferenceNotification)
+        (remoteDirectoryVersions: DirectoryVersion array)
+        =
+        match remoteDirectoryVersions
+              |> Array.tryFind (fun directoryVersion -> directoryVersion.DirectoryVersionId = payload.DirectoryId)
+            with
+        | None -> invalidOp $"Remote materialization metadata did not include requested root DirectoryVersionId {payload.DirectoryId}."
+        | Some rootDirectoryVersion ->
+            if rootDirectoryVersion.Sha256Hash
+               <> payload.Sha256Hash
+               || rootDirectoryVersion.Blake3Hash
+                  <> payload.Blake3Hash then
+                invalidOp $"Remote materialization root identity did not match accepted Reference payload for {payload.DirectoryId}."
 
     /// Verifies every local object-cache file required by the exact file writes is already present and hash-valid.
     let private verifyCurrentBranchMaterializationObjectCache (plan: CurrentBranchRemoteMaterializationPlan) =
@@ -3657,7 +3731,7 @@ module Watch =
         }
 
     /// Applies exact target mutations from local object-cache files while the update marker is present.
-    let private applyCurrentBranchMaterializationTargets (writeStatus: GraceStatus -> Task<unit>) remoteStatus plan =
+    let private applyCurrentBranchMaterializationTargets (clients: CurrentBranchRemoteMaterializationApplyClients) currentStatus remoteStatus plan =
         task {
             let markerFileName = updateInProgressFileName ()
             let completedFileName = updateMarkerCompletedFileName ()
@@ -3668,8 +3742,22 @@ module Watch =
             File.WriteAllText(markerFileName, "`grace watch` remote materialization is in progress.")
 
             try
+                do! clients.BeforeFinalVerification()
+                do! verifyCurrentBranchMaterializationObjectCache plan
+                do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                do! verifyCurrentBranchMaterializationRetainedFiles plan
+                let currentFiles = materializationFilesByPath currentStatus
+
                 for relativePath in plan.FileDeletes do
                     let fullPath = materializationTargetFullPath relativePath
+                    let path = normalizedMaterializationPath relativePath
+                    let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                    if currentFiles.TryGetValue(path, &currentFile) then
+                        let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                        if not matchesStatus then
+                            invalidOp $"Remote materialization delete target changed at mutation boundary: {relativePath}."
 
                     if File.Exists(fullPath) then File.Delete(fullPath)
 
@@ -3677,17 +3765,51 @@ module Watch =
                     plan.DirectoryDeletes
                     |> Array.sortByDescending (fun path -> (normalizedMaterializationPath path).Length) do
                     let fullPath = materializationTargetFullPath relativePath
+                    let! matchesStatus = targetDirectoryStillMatchesStatus currentStatus relativePath
+
+                    if not matchesStatus then
+                        invalidOp $"Remote materialization directory target changed at mutation boundary: {relativePath}."
 
                     if Directory.Exists(fullPath) then Directory.Delete(fullPath, true)
 
                 for relativePath in plan.DirectoryCreates do
-                    materializationTargetFullPath relativePath
-                    |> Directory.CreateDirectory
-                    |> ignore
+                    let fullPath = materializationTargetFullPath relativePath
+
+                    if
+                        File.Exists(fullPath)
+                        || Directory.Exists(fullPath)
+                    then
+                        invalidOp $"Remote materialization directory create target appeared at mutation boundary: {relativePath}."
+
+                    Directory.CreateDirectory(fullPath) |> ignore
 
                 for fileVersion in plan.FileWrites do
                     let targetPath = materializationTargetFullPath fileVersion.RelativePath
                     let sourcePath = getLocalObjectCachePathForFileVersion fileVersion.ToFileVersion
+                    let path = normalizedMaterializationPath fileVersion.RelativePath
+                    let mutable currentFile = Unchecked.defaultof<LocalFileVersion>
+
+                    let removedByDirectoryDelete =
+                        plan.DirectoryDeletes
+                        |> Array.exists (fun directoryPath ->
+                            normalizedMaterializationPath directoryPath = path
+                            || materializationPathIsUnder directoryPath fileVersion.RelativePath)
+
+                    if
+                        currentFiles.TryGetValue(path, &currentFile)
+                        && not removedByDirectoryDelete
+                    then
+                        let! matchesStatus = targetFileStillMatchesStatus currentFile
+
+                        if not matchesStatus then
+                            invalidOp $"Remote materialization write target changed at mutation boundary: {fileVersion.RelativePath}."
+                    elif
+                        File.Exists(targetPath)
+                        || Directory.Exists(targetPath)
+                    then
+                        invalidOp $"Remote materialization write target appeared at mutation boundary: {fileVersion.RelativePath}."
+
+                    do! verifyCurrentBranchMaterializationObjectCache { plan with FileWrites = [| fileVersion |] }
 
                     Directory.CreateDirectory(Path.GetDirectoryName(targetPath))
                     |> ignore
@@ -3695,7 +3817,9 @@ module Watch =
                     File.Copy(sourcePath, targetPath, true)
                     File.SetLastWriteTimeUtc(targetPath, fileVersion.LastWriteTimeUtc)
 
-                do! writeStatus remoteStatus
+                do! clients.BeforeStatusReplacementVerification()
+                do! verifyCurrentBranchMaterializationRetainedFiles plan
+                do! clients.WriteGraceStatus remoteStatus
                 graceStatus <- remoteStatus
                 updateGraceStatusDirectoryIds remoteStatus
             finally
@@ -3712,12 +3836,16 @@ module Watch =
             configureWatchPathComparisonForCurrentRepository ()
 
             match! clients.GetRemoteDirectoryVersions payload.DirectoryId payload.CorrelationId with
-            | Error error -> raise (InvalidOperationException(error.Error))
+            | Error error ->
+                clients.RequestResync $"remote materialization metadata fetch failed before exact apply: {error.Error}"
+                raise (InvalidOperationException(error.Error))
             | Ok remoteDirectoryVersions ->
                 let! currentStatus = clients.ReadGraceStatus()
 
                 try
                     validateCurrentBranchMaterializationDirectoryClosure remoteDirectoryVersions
+                    validateCurrentBranchMaterializationPathRepresentability remoteDirectoryVersions
+                    validateCurrentBranchMaterializationRootIdentity payload remoteDirectoryVersions
                 with
                 | ex ->
                     clients.RequestResync $"remote materialization metadata incomplete before exact apply: {ex.Message}"
@@ -3740,6 +3868,7 @@ module Watch =
 
                 try
                     do! verifyCurrentBranchMaterializationTargetsUnchanged currentStatus plan
+                    do! verifyCurrentBranchMaterializationRetainedFiles plan
                 with
                 | ex ->
                     clients.RequestResync $"remote materialization target changed before exact apply: {ex.Message}"
@@ -3753,7 +3882,7 @@ module Watch =
                     raise ex
 
                 try
-                    do! applyCurrentBranchMaterializationTargets clients.WriteGraceStatus remoteStatus plan
+                    do! applyCurrentBranchMaterializationTargets clients currentStatus remoteStatus plan
                 with
                 | ex ->
                     clients.RequestResync $"remote materialization failed during exact target apply: {ex.Message}"
@@ -3794,6 +3923,8 @@ module Watch =
                 ReadGraceStatus = readGraceStatusFile
                 WriteGraceStatus = writeGraceStatusFile
                 RequestResync = requestGraceWatchExplicitResync
+                BeforeFinalVerification = fun () -> Task.FromResult(())
+                BeforeStatusReplacementVerification = fun () -> Task.FromResult(())
             }
             payload
 
