@@ -746,6 +746,53 @@ export grace__auth__oidc__m2m_scopes="read:foo write:bar"
 
 ---
 
+### Grace Cache service registration identity
+
+Grace Cache registration uses the existing OIDC/JWT bearer authentication path. A cache service must authenticate with
+an OIDC machine-to-machine credential. Grace Server accepts it for cache registration only when the token is a JWT bearer
+token with `gty=client-credentials`, and the presented service principal ID is listed in server-side cache registration
+configuration. Grace PATs, interactive user credentials, local TestAuth headers, endpoint URLs, and cache-reported
+locations are not proof of cache service identity.
+
+Registration scope and capability approval is also server-owned. A cache service can request only scopes and
+capabilities that Grace Server configuration already approved; the cache service does not approve its own repositories,
+StoragePools, artifact grants, or read-through capabilities.
+
+Configure cache registration with these environment variables when the registration endpoint is implemented:
+
+* `grace__cache__registration__enabled`: `true` enables cache registration configuration validation. The default is
+  disabled.
+* `grace__cache__registration__service_principal_ids`: semicolon-delimited OIDC service principal IDs that may register
+  cache services.
+* `grace__cache__registration__allowed_scopes`: semicolon-delimited server-approved cache registration scopes. Use
+  stable server-defined scope keys such as repository or StoragePool scopes; do not use endpoint URLs as scopes.
+* `grace__cache__registration__allowed_capabilities`: semicolon-delimited server-approved cache registration
+  capabilities.
+
+PowerShell:
+
+```powershell
+$env:grace__cache__registration__enabled="true"
+$env:grace__cache__registration__service_principal_ids="cache-service-client"
+$env:grace__cache__registration__allowed_scopes="repository:owner/org/repo;storage-pool:pool-1"
+$env:grace__cache__registration__allowed_capabilities="Register;PublishHealth"
+```
+
+bash / zsh:
+
+```bash
+export grace__cache__registration__enabled="true"
+export grace__cache__registration__service_principal_ids="cache-service-client"
+export grace__cache__registration__allowed_scopes="repository:owner/org/repo;storage-pool:pool-1"
+export grace__cache__registration__allowed_capabilities="Register;PublishHealth"
+```
+
+Later Grace.Cache startup must validate this configuration before exposing its HTTP listener. Logs and status output
+must report only non-secret summaries, such as service principal count, approved scope count, and approved capability
+names; they must not print client secrets, bearer tokens, service principal IDs, or credential-bearing URLs.
+
+---
+
 ### Grace CLI PAT configuration
 
 * `GRACE_TOKEN` (optional)

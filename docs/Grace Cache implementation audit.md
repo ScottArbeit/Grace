@@ -156,16 +156,24 @@ docs-only classification with current evidence for the behavior they own.
 
 ### Cache Service Registration And Identity
 
-- Implementation seam: cache service registration, health or capability publication, configured
-  cache audience, and Cache Service Identity for prefetch subscriptions.
-- Proof seam: tests or static validation for unregistered cache rejection, wrong audience rejection,
-  duplicate registration handling, identity rotation, disabled-cache behavior, and rejection of
-  per-call artifact grant bypass attempts.
-- Status classification: `not applicable` to this docs-only scaffold.
-- Issue or PR evidence: #609 creates the audit slot; registration work must cite its owning issue or
-  PR and validation.
-- Residual risk or rationale: Cache Service Identity authorizes configured cache behavior only; it
-  must not become a global artifact reader or bypass per-call artifact grants.
+- Implementation seam: #617 defines the pre-registration identity boundary in
+  `Grace.Server.Security.CacheServiceIdentity`. Registration must use the existing OIDC/JWT bearer
+  scheme with a client-credentials service token and a configured service principal ID. Server
+  configuration owns the approved service principal IDs, registration scopes, and registration
+  capabilities.
+- Proof seam: `CacheServiceIdentityUnitTests` covers disabled configuration, fail-fast enabled
+  configuration, valid OIDC service-principal registration, PAT rejection, normal user rejection,
+  missing client-credentials marker rejection, unapproved scope and capability rejection, and
+  non-secret status summaries.
+- Status classification: `contract defined; registration actor/API not implemented`.
+- Issue or PR evidence: #617 owns the service credential, identity claim, allowed scheme, scope
+  model, configuration boundary, docs, and `pwsh ./scripts/validate.ps1 -Fast` validation for this
+  preflight.
+- Residual risk or rationale: #618 still owns duplicate registration handling, endpoint routing,
+  persistence, identity rotation behavior, and disabled-cache API behavior. #619 still owns
+  per-call artifact grants. #620 still owns cache-mode plan generation. Cache Service Identity
+  authorizes configured cache registration behavior only; it must not become a global artifact
+  reader or bypass per-call artifact grants.
 
 ### Read-Through Behavior
 
