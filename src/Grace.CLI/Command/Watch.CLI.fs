@@ -3364,6 +3364,7 @@ module Watch =
             let mutable terminal = false
             let mutable attempts = 0
             let mutable degradedResyncRequestedForReason: string option = None
+            let mutable acceptedMaterializationDecision: LatestCurrentBranchReferenceDecision option = None
 
             let canRetry () =
                 clients.MaxAttempts
@@ -3372,7 +3373,12 @@ module Watch =
             while not terminal && canRetry () do
                 attempts <- attempts + 1
 
-                match! currentBranchMaterializationDecision clients current payload with
+                let! decisionResult =
+                    match acceptedMaterializationDecision with
+                    | Some decision -> Task.FromResult(Ok decision)
+                    | None -> currentBranchMaterializationDecision clients current payload
+
+                match decisionResult with
                 | Error _ ->
                     terminalOutcome <-
                         {
@@ -3399,6 +3405,7 @@ module Watch =
                             terminal <- true
                         | Clean _ ->
                             let acceptedDecision = decision
+                            acceptedMaterializationDecision <- Some acceptedDecision
                             let mutable postLeaseRetryGate: CurrentBranchMaterializationStatusGate option = None
 
                             let! cleanOutcome =

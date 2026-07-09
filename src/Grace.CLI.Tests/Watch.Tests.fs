@@ -15532,6 +15532,215 @@ module WatchTests =
             materializationTask.Result.Value.Reason
             |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.NotCurrentBranch)
 
+    /// Verifies that an accepted Reference survives a post-lease blocked retry when BranchDto latest advances meanwhile.
+    [<Test; Category("CurrentBranchMaterializationCoordinator"); Category("BranchSwitchSerialization")>]
+    let ``current branch materialization coordinator keeps accepted reference after post lease blocked retry`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let cleanStatus = liveWatchStatus (Guid.NewGuid())
+            let blockedStatus = { cleanStatus with HasPendingWatchWork = true; IsWorkingTreeClean = false }
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Save
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let newerNotification =
+                { notification with
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "newer-remote-root"
+                    Blake3Hash = Blake3Hash "newer-remote-root-blake3"
+                }
+
+            let mutable latestBranchDto = branchDtoWithLatestCurrentBranchReference notification
+            let branchFetches = ResizeArray<ReferenceId>()
+
+            let getBranch () =
+                task {
+                    branchFetches.Add(latestBranchDto.LatestReference.ReferenceId)
+                    return Ok(GraceReturnValue.Create latestBranchDto "post-lease-blocked-retry-test")
+                }
+
+            let mutable inspectionCount = 0
+            let inspections = ResizeArray<string>()
+
+            let inspectStatus () =
+                task {
+                    inspectionCount <- inspectionCount + 1
+
+                    if inspectionCount = 3 then
+                        inspections.Add("blocked")
+                        return watchStatusInspection blockedStatus
+                    else
+                        inspections.Add("clean")
+                        return watchStatusInspection cleanStatus
+                }
+
+            let requestDegradedResync _ = Assert.Fail("Blocked post-lease retry must wait for a safe point, not request degraded resync.")
+            let safePointWaits = ResizeArray<string>()
+
+            let waitForSafePoint payload gate =
+                task {
+                    payload.ReferenceId
+                    |> should equal notification.ReferenceId
+
+                    match gate with
+                    | Watch.CurrentBranchMaterializationStatusGate.Blocked reason -> safePointWaits.Add(reason)
+                    | _ -> Assert.Fail("Expected a blocked safe-point gate.")
+
+                    latestBranchDto <- branchDtoWithLatestCurrentBranchReference newerNotification
+                }
+
+            let reestablishIpc _ _ = Task.FromException<unit>(InvalidOperationException("blocked retry must not reestablish IPC"))
+            let appliedReferences = ResizeArray<ReferenceId>()
+            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            branchFetches.ToArray()
+            |> should equal [| notification.ReferenceId |]
+
+            safePointWaits.ToArray()
+            |> should
+                equal
+                [|
+                    "local Watch status has dirty or pending work"
+                |]
+
+            inspections.ToArray()
+            |> should
+                equal
+                [|
+                    "clean"
+                    "clean"
+                    "blocked"
+                    "clean"
+                    "clean"
+                |]
+
+            appliedReferences.ToArray()
+            |> should equal [| notification.ReferenceId |])
+
+    /// Verifies that an accepted Reference survives a post-lease degraded retry when BranchDto latest advances meanwhile.
+    [<Test; Category("CurrentBranchMaterializationCoordinator")>]
+    let ``current branch materialization coordinator keeps accepted reference after post lease degraded retry`` () =
+        withTempRepo (fun root ->
+            let currentRepositoryId, currentBranchId = configureCurrentWatchIdentity root "current-repo" "current-branch"
+            let cleanStatus = liveWatchStatus (Guid.NewGuid())
+
+            let notification =
+                validCurrentBranchReferenceNotification
+                    currentRepositoryId
+                    currentBranchId
+                    ReferenceType.Checkpoint
+                    (Guid.NewGuid())
+                    (Sha256Hash "remote-root")
+                    (Blake3Hash "remote-root-blake3")
+
+            let newerNotification =
+                { notification with
+                    ReferenceId = Guid.NewGuid()
+                    DirectoryId = Guid.NewGuid()
+                    Sha256Hash = Sha256Hash "newer-remote-root"
+                    Blake3Hash = Blake3Hash "newer-remote-root-blake3"
+                }
+
+            let mutable latestBranchDto = branchDtoWithLatestCurrentBranchReference notification
+            let branchFetches = ResizeArray<ReferenceId>()
+
+            let getBranch () =
+                task {
+                    branchFetches.Add(latestBranchDto.LatestReference.ReferenceId)
+                    return Ok(GraceReturnValue.Create latestBranchDto "post-lease-degraded-retry-test")
+                }
+
+            let mutable inspectionCount = 0
+            let inspections = ResizeArray<string>()
+
+            let inspectStatus () =
+                task {
+                    inspectionCount <- inspectionCount + 1
+
+                    if inspectionCount = 3 then
+                        inspections.Add("degraded")
+                        return missingWatchStatusInspection
+                    else
+                        inspections.Add("clean")
+                        return watchStatusInspection cleanStatus
+                }
+
+            let degradedRequests = ResizeArray<string>()
+            let requestDegradedResync reason = degradedRequests.Add(reason)
+            let waitForSafePoint _ _ = Task.FromException<unit>(InvalidOperationException("degraded retry must not wait for a safe point"))
+            let reestablishedReferences = ResizeArray<ReferenceId>()
+
+            let reestablishIpc payload _ =
+                task {
+                    reestablishedReferences.Add(payload.ReferenceId)
+                    latestBranchDto <- branchDtoWithLatestCurrentBranchReference newerNotification
+                }
+
+            let appliedReferences = ResizeArray<ReferenceId>()
+            let applyReference payload _ = task { appliedReferences.Add(payload.ReferenceId) }
+
+            let outcome =
+                (Watch.handleCurrentBranchReferenceMaterializationWithClientsForWatchTests
+                    getBranch
+                    inspectStatus
+                    requestDegradedResync
+                    waitForSafePoint
+                    reestablishIpc
+                    applyReference
+                    notification)
+                    .Result
+
+            outcome.Value.Reason
+            |> should equal Watch.CurrentBranchMaterializationCoordinatorOutcomeReason.Applied
+
+            branchFetches.ToArray()
+            |> should equal [| notification.ReferenceId |]
+
+            degradedRequests.ToArray()
+            |> should
+                equal
+                [|
+                    "missing Watch IPC/status authority"
+                |]
+
+            reestablishedReferences.ToArray()
+            |> should equal [| notification.ReferenceId |]
+
+            inspections.ToArray()
+            |> should
+                equal
+                [|
+                    "clean"
+                    "clean"
+                    "degraded"
+                    "clean"
+                    "clean"
+                |]
+
+            appliedReferences.ToArray()
+            |> should equal [| notification.ReferenceId |])
+
     /// Verifies that missing IPC enters degraded resync and keeps the exact Reference for revalidation.
     [<Test; Category("CurrentBranchMaterializationCoordinator")>]
     let ``current branch materialization coordinator revalidates exact reference after degraded resync`` () =
