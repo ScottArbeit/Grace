@@ -6,6 +6,7 @@ open Grace.Shared.Utilities
 open Microsoft.AspNetCore.Authentication.JwtBearer
 open Microsoft.Extensions.Configuration
 open System
+open System.Collections.Generic
 open System.Security.Claims
 
 /// Contains Grace Cache registration identity and server-approved configuration boundaries.
@@ -34,14 +35,16 @@ module CacheServiceIdentity =
             if String.IsNullOrWhiteSpace value then None else Some(value.Trim())
 
     /// Parses a semicolon-delimited configuration list while removing empty entries and duplicate values.
-    let private parseConfiguredList (value: string option) =
+    let private parseConfiguredList (comparer: StringComparer) (value: string option) =
         match value with
         | None -> []
         | Some configured ->
+            let seen = HashSet<string>(comparer)
+
             configured.Split(listSeparators, StringSplitOptions.RemoveEmptyEntries)
             |> Seq.map (fun item -> item.Trim())
             |> Seq.filter (fun item -> not (String.IsNullOrWhiteSpace item))
-            |> Seq.distinctBy (fun item -> item.ToUpperInvariant())
+            |> Seq.filter seen.Add
             |> Seq.toList
 
     /// Parses the cache registration enablement flag so invalid startup configuration fails early.
@@ -66,17 +69,17 @@ module CacheServiceIdentity =
             let servicePrincipalIds =
                 EnvironmentVariables.GraceCacheRegistrationServicePrincipalIds
                 |> tryGetConfigValue configuration
-                |> parseConfiguredList
+                |> parseConfiguredList StringComparer.Ordinal
 
             let allowedScopes =
                 EnvironmentVariables.GraceCacheRegistrationAllowedScopes
                 |> tryGetConfigValue configuration
-                |> parseConfiguredList
+                |> parseConfiguredList StringComparer.Ordinal
 
             let allowedCapabilities =
                 EnvironmentVariables.GraceCacheRegistrationAllowedCapabilities
                 |> tryGetConfigValue configuration
-                |> parseConfiguredList
+                |> parseConfiguredList StringComparer.OrdinalIgnoreCase
 
             let errors = ResizeArray<string>()
 
@@ -115,7 +118,7 @@ module CacheServiceIdentity =
     /// Determines whether a requested Cache registration scope was approved by server configuration.
     let isScopeAllowed (config: CacheRegistrationConfig) (scope: string) =
         config.AllowedScopes
-        |> List.exists (fun allowed -> String.Equals(allowed, scope, StringComparison.OrdinalIgnoreCase))
+        |> List.exists (fun allowed -> String.Equals(allowed, scope, StringComparison.Ordinal))
 
     /// Determines whether a requested Cache registration capability was approved by server configuration.
     let isCapabilityAllowed (config: CacheRegistrationConfig) (capability: string) =
@@ -140,15 +143,17 @@ module CacheServiceIdentity =
                 |> Option.map (fun claim -> claim.Value.Trim())
                 |> Option.filter (fun value -> not (String.IsNullOrWhiteSpace value)))
 
-    /// Determines whether the principal was authenticated by the JWT bearer scheme used for OIDC service credentials.
-    let isJwtBearerPrincipal (principal: ClaimsPrincipal) =
-        if isNull principal || isNull principal.Identity then
+    /// Determines whether the request was authenticated by the JWT bearer scheme used for OIDC service credentials.
+    let isJwtBearerPrincipal (authenticatedScheme: string) (principal: ClaimsPrincipal) =
+        if isNull principal
+           || isNull principal.Identity
+           || String.IsNullOrWhiteSpace authenticatedScheme then
             false
         else
             let identity = principal.Identity
 
             identity.IsAuthenticated
-            && String.Equals(identity.AuthenticationType, JwtBearerDefaults.AuthenticationScheme, StringComparison.Ordinal)
+            && String.Equals(authenticatedScheme, JwtBearerDefaults.AuthenticationScheme, StringComparison.Ordinal)
 
     /// Determines whether the JWT carries the Auth0 client-credentials marker required for Cache service registration.
     let hasClientCredentialsGrant (principal: ClaimsPrincipal) =
@@ -161,10 +166,16 @@ module CacheServiceIdentity =
                 && String.Equals(claim.Value, "client-credentials", StringComparison.OrdinalIgnoreCase))
 
     /// Authorizes a Cache registration request against the configured service identity, scopes, and capabilities.
-    let decideRegistration (config: CacheRegistrationConfig) (principal: ClaimsPrincipal) (requestedScopes: string list) (requestedCapabilities: string list) =
+    let decideRegistration
+        (config: CacheRegistrationConfig)
+        (authenticatedScheme: string)
+        (principal: ClaimsPrincipal)
+        (requestedScopes: string list)
+        (requestedCapabilities: string list)
+        =
         if not config.Enabled then
             Denied "Cache registration is disabled."
-        elif not (isJwtBearerPrincipal principal) then
+        elif not (isJwtBearerPrincipal authenticatedScheme principal) then
             Denied "Cache registration requires OIDC JWT bearer authentication."
         elif not (hasClientCredentialsGrant principal) then
             Denied "Cache registration requires an OIDC client-credentials service token."
@@ -175,7 +186,7 @@ module CacheServiceIdentity =
                 not
                     (
                         config.ServicePrincipalIds
-                        |> List.exists (fun configured -> String.Equals(configured, servicePrincipalId, StringComparison.OrdinalIgnoreCase))
+                        |> List.exists (fun configured -> String.Equals(configured, servicePrincipalId, StringComparison.Ordinal))
                     )
                 ->
                 Denied "Cache registration service principal is not approved by server configuration."

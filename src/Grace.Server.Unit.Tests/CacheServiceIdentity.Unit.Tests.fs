@@ -42,6 +42,9 @@ type CacheServiceIdentityUnitTests() =
     /// Builds a claims principal with a specific authentication scheme and claims.
     let principal (scheme: string) (claims: Claim list) = ClaimsPrincipal(ClaimsIdentity((claims :> Claim seq), scheme))
 
+    /// Builds a claims principal authenticated by token validation without assuming the ASP.NET scheme name.
+    let tokenValidatedPrincipal (claims: Claim list) = principal "TokenValidation" claims
+
     /// Builds an OIDC JWT bearer service principal fixture.
     let servicePrincipal servicePrincipalId =
         principal
@@ -110,7 +113,16 @@ type CacheServiceIdentityUnitTests() =
             Assert.Fail($"Expected Cache registration config, got {errorText}.")
         | Ok registration ->
             Assert.That(registration.Enabled, Is.True)
-            Assert.That(registration.ServicePrincipalIds, Is.EquivalentTo([ "cache-service-client" ]))
+
+            Assert.That(
+                registration.ServicePrincipalIds,
+                Is.EquivalentTo(
+                    [
+                        "cache-service-client"
+                        "CACHE-SERVICE-CLIENT"
+                    ]
+                )
+            )
 
             Assert.That(
                 registration.AllowedScopes,
@@ -130,11 +142,42 @@ type CacheServiceIdentityUnitTests() =
         let decision =
             CacheServiceIdentity.decideRegistration
                 enabledConfig
+                JwtBearerDefaults.AuthenticationScheme
                 (servicePrincipal "cache-service-client")
                 [ "repository:owner/org/repo" ]
                 [ "Register"; "PublishHealth" ]
 
         Assert.That(decision, Is.EqualTo(CacheServiceIdentity.CacheRegistrationDecision.Allowed "cache-service-client"))
+
+    /// Verifies that production JWT bearer authentication is keyed by the ASP.NET scheme, not identity metadata.
+    [<Test>]
+    member _.ProductionJwtBearerSchemeDoesNotDependOnIdentityAuthenticationType() =
+        let validatedPrincipal =
+            tokenValidatedPrincipal [ Claim("azp", "cache-service-client")
+                                      Claim("gty", "client-credentials") ]
+
+        let decision =
+            CacheServiceIdentity.decideRegistration
+                enabledConfig
+                JwtBearerDefaults.AuthenticationScheme
+                validatedPrincipal
+                [ "repository:owner/org/repo" ]
+                [ "Register"; "PublishHealth" ]
+
+        Assert.That(decision, Is.EqualTo(CacheServiceIdentity.CacheRegistrationDecision.Allowed "cache-service-client"))
+
+    /// Verifies that valid-looking service claims cannot register through a non-bearer request scheme.
+    [<Test>]
+    member _.NonBearerAuthenticatedSchemeCannotRegisterCacheService() =
+        let decision =
+            CacheServiceIdentity.decideRegistration
+                enabledConfig
+                TestAuth.SchemeName
+                (servicePrincipal "cache-service-client")
+                [ "repository:owner/org/repo" ]
+                [ "Register" ]
+
+        Assert.That(decision, Is.EqualTo(CacheServiceIdentity.CacheRegistrationDecision.Denied "Cache registration requires OIDC JWT bearer authentication."))
 
     /// Verifies that Grace PAT identities cannot register Cache services even when the principal ID matches.
     [<Test>]
@@ -146,7 +189,8 @@ type CacheServiceIdentityUnitTests() =
                     Claim(PrincipalMapper.GraceUserIdClaim, "cache-service-client")
                 ]
 
-        let decision = CacheServiceIdentity.decideRegistration enabledConfig patPrincipal [ "repository:owner/org/repo" ] [ "Register" ]
+        let decision =
+            CacheServiceIdentity.decideRegistration enabledConfig PersonalAccessTokenAuth.SchemeName patPrincipal [ "repository:owner/org/repo" ] [ "Register" ]
 
         Assert.That(decision, Is.EqualTo(CacheServiceIdentity.CacheRegistrationDecision.Denied "Cache registration requires OIDC JWT bearer authentication."))
 
@@ -155,7 +199,13 @@ type CacheServiceIdentityUnitTests() =
     member _.NormalJwtUserPrincipalCannotRegisterCacheService() =
         let userPrincipal = principal JwtBearerDefaults.AuthenticationScheme [ Claim("sub", "auth0|developer-user") ]
 
-        let decision = CacheServiceIdentity.decideRegistration enabledConfig userPrincipal [ "repository:owner/org/repo" ] [ "Register" ]
+        let decision =
+            CacheServiceIdentity.decideRegistration
+                enabledConfig
+                JwtBearerDefaults.AuthenticationScheme
+                userPrincipal
+                [ "repository:owner/org/repo" ]
+                [ "Register" ]
 
         Assert.That(
             decision,
@@ -169,22 +219,68 @@ type CacheServiceIdentityUnitTests() =
 
         let userPrincipal = principal JwtBearerDefaults.AuthenticationScheme [ Claim("sub", "auth0|developer-user") ]
 
-        let decision = CacheServiceIdentity.decideRegistration userCompatibleConfig userPrincipal [ "repository:owner/org/repo" ] [ "Register" ]
+        let decision =
+            CacheServiceIdentity.decideRegistration
+                userCompatibleConfig
+                JwtBearerDefaults.AuthenticationScheme
+                userPrincipal
+                [ "repository:owner/org/repo" ]
+                [ "Register" ]
 
         Assert.That(
             decision,
             Is.EqualTo(CacheServiceIdentity.CacheRegistrationDecision.Denied "Cache registration requires an OIDC client-credentials service token.")
         )
 
+    /// Verifies that configured service principal IDs use exact matching for opaque OIDC client identifiers.
+    [<Test>]
+    member _.ConfiguredServicePrincipalIdsCompareExactly() =
+        let decision =
+            CacheServiceIdentity.decideRegistration
+                enabledConfig
+                JwtBearerDefaults.AuthenticationScheme
+                (servicePrincipal "CACHE-SERVICE-CLIENT")
+                [ "repository:owner/org/repo" ]
+                [ "Register" ]
+
+        Assert.That(
+            decision,
+            Is.EqualTo(CacheServiceIdentity.CacheRegistrationDecision.Denied "Cache registration service principal is not approved by server configuration.")
+        )
+
+    /// Verifies that configured scopes use exact matching because they can contain storage-pool IDs.
+    [<Test>]
+    member _.ConfiguredScopesCompareExactly() =
+        let decision =
+            CacheServiceIdentity.decideRegistration
+                enabledConfig
+                JwtBearerDefaults.AuthenticationScheme
+                (servicePrincipal "cache-service-client")
+                [ "storage-pool:POOL-1" ]
+                [ "Register" ]
+
+        Assert.That(
+            decision,
+            Is.EqualTo(
+                CacheServiceIdentity.CacheRegistrationDecision.Denied "Cache registration requested a scope that is not approved by server configuration."
+            )
+        )
+
     /// Verifies that unapproved scopes and capabilities are rejected by server configuration.
     [<Test>]
     member _.UnapprovedScopesAndCapabilitiesAreRejectedByServerConfiguration() =
         let scopeDecision =
-            CacheServiceIdentity.decideRegistration enabledConfig (servicePrincipal "cache-service-client") [ "repository:other/org/repo" ] [ "Register" ]
+            CacheServiceIdentity.decideRegistration
+                enabledConfig
+                JwtBearerDefaults.AuthenticationScheme
+                (servicePrincipal "cache-service-client")
+                [ "repository:other/org/repo" ]
+                [ "Register" ]
 
         let capabilityDecision =
             CacheServiceIdentity.decideRegistration
                 enabledConfig
+                JwtBearerDefaults.AuthenticationScheme
                 (servicePrincipal "cache-service-client")
                 [ "repository:owner/org/repo" ]
                 [ "ApproveOwnScope" ]
