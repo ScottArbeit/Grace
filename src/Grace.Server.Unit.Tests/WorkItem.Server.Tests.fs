@@ -331,6 +331,30 @@ type WorkItemServerUnitTests() =
         Assert.That(scopedMetadata.Properties["Unrelated"], Is.EqualTo("kept"))
         Assert.That(originalMetadata.Properties.ContainsKey(nameof PromotionSetId), Is.False)
 
+    /// Verifies that add-summary artifact creation, artifact link, and PromotionSet link metadata share projection scope.
+    [<Test>]
+    member _.AddSummaryProjectionMetadataCarriesPromotionSetScopeForAllFanoutSegments() =
+        let promotionSetId = Guid.NewGuid()
+        let originalMetadata = metadata (Instant.FromUtc(2026, 7, 9, 10, 25))
+        let baseCorrelationId = "corr-add-summary"
+
+        let segments =
+            [|
+                "summary-artifact"
+                "summary-link"
+                "prompt-artifact"
+                "prompt-link"
+                "promotion-set-link"
+            |]
+
+        for segment in segments do
+            let scopedMetadata = WorkItem.addSummaryProjectionMetadata originalMetadata baseCorrelationId segment (Some promotionSetId)
+
+            Assert.That(scopedMetadata.CorrelationId, Is.EqualTo($"{baseCorrelationId}:add-summary:{segment}"))
+            Assert.That(scopedMetadata.Properties[nameof PromotionSetId], Is.EqualTo($"{promotionSetId}"))
+
+        Assert.That(originalMetadata.Properties.ContainsKey(nameof PromotionSetId), Is.False)
+
     /// Verifies that deterministic Add Summary Artifact Id Differs By Repository Work Item And Correlation Segment.
     [<Test>]
     member _.DeterministicAddSummaryArtifactIdDiffersByRepositoryWorkItemAndCorrelationSegment() =

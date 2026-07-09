@@ -617,6 +617,16 @@ module WorkItem =
     /// Coordinates add summary correlation id processing for Grace Server.
     let private addSummaryCorrelationId (baseCorrelationId: CorrelationId) (segment: string) = $"{baseCorrelationId}:add-summary:{segment}"
 
+    /// Builds add-summary event metadata so artifact creation, artifact links, and PromotionSet links share projection scope.
+    let internal addSummaryProjectionMetadata
+        (metadata: EventMetadata)
+        (baseCorrelationId: CorrelationId)
+        (segment: string)
+        (promotionSetId: PromotionSetId option)
+        =
+        withCorrelationId metadata (addSummaryCorrelationId baseCorrelationId segment)
+        |> withPromotionSetProjectionScope promotionSetId
+
     /// Determines whether duplicate correlation id error.
     let private isDuplicateCorrelationIdError (graceError: GraceError) =
         String.Equals(graceError.Error, WorkItemError.getErrorMessage WorkItemError.DuplicateCorrelationId, StringComparison.OrdinalIgnoreCase)
@@ -768,11 +778,9 @@ module WorkItem =
 
                         let promotionSetIdOption = tryParseNonEmptyGuid parameters.PromotionSetId
 
-                        let summaryArtifactMetadata = withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "summary-artifact")
+                        let summaryArtifactMetadata = addSummaryProjectionMetadata requestMetadata correlationId "summary-artifact" promotionSetIdOption
 
-                        let summaryLinkMetadata =
-                            withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "summary-link")
-                            |> withPromotionSetProjectionScope promotionSetIdOption
+                        let summaryLinkMetadata = addSummaryProjectionMetadata requestMetadata correlationId "summary-link" promotionSetIdOption
 
                         let! summaryArtifactResult =
                             createArtifactFromContent
@@ -811,11 +819,10 @@ module WorkItem =
                                     if hasPromptContent then
                                         async {
                                             let promptArtifactMetadata =
-                                                withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "prompt-artifact")
+                                                addSummaryProjectionMetadata requestMetadata correlationId "prompt-artifact" promotionSetIdOption
 
                                             let promptLinkMetadata =
-                                                withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "prompt-link")
-                                                |> withPromotionSetProjectionScope promotionSetIdOption
+                                                addSummaryProjectionMetadata requestMetadata correlationId "prompt-link" promotionSetIdOption
 
                                             let! createdPromptArtifactResult =
                                                 createArtifactFromContent
@@ -858,7 +865,7 @@ module WorkItem =
                                         match promotionSetIdOption with
                                         | Some promotionSetId ->
                                             let promotionSetLinkMetadata =
-                                                withCorrelationId requestMetadata (addSummaryCorrelationId correlationId "promotion-set-link")
+                                                addSummaryProjectionMetadata requestMetadata correlationId "promotion-set-link" promotionSetIdOption
 
                                             handleWorkItemCommandAllowReplay
                                                 workItemActorProxy

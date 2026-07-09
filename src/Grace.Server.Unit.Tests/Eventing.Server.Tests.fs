@@ -209,6 +209,41 @@ type AutomationEventingTests() =
         let envelope = EventingPublisher.tryCreateEnvelope (GraceEvent.ReferenceEvent referenceEvent)
         Assert.That(envelope.IsNone, Is.True)
 
+    /// Verifies that current public visibility never replays old private terminal reference creation automation.
+    [<Test>]
+    member _.CurrentPublicTerminalReferenceDoesNotReplayPrivateCreatedAutomationProjection() =
+        let repositoryId = Guid.NewGuid()
+        let referenceId = Guid.NewGuid()
+        let promotionSetId = Guid.NewGuid()
+        let branchId = Guid.NewGuid()
+
+        let referenceEvent: ReferenceEvent =
+            {
+                Event =
+                    ReferenceEventType.Created(
+                        referenceId,
+                        Guid.NewGuid(),
+                        Guid.NewGuid(),
+                        repositoryId,
+                        branchId,
+                        Guid.NewGuid(),
+                        Sha256Hash String.Empty,
+                        Blake3Hash String.Empty,
+                        ReferenceType.Promotion,
+                        "promotion",
+                        [
+                            ReferenceLinkType.IncludedInPromotionSet promotionSetId
+                            ReferenceLinkType.PromotionSetTerminal promotionSetId
+                        ]
+                    )
+                Metadata =
+                    metadata "corr-current-public-private-terminal" repositoryId
+                    |> markPrivateInheritedReference
+            }
+
+        let envelope = EventingPublisher.tryCreateEnvelopeWithCurrentVisibility (Some true) (GraceEvent.ReferenceEvent referenceEvent)
+        Assert.That(envelope.IsNone, Is.True)
+
     /// Verifies that terminal reference reveal maps to public PromotionSet applied automation.
     [<Test>]
     member _.TerminalReferenceRevealMapsToPromotionSetApplied() =

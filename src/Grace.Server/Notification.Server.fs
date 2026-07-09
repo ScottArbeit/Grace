@@ -469,6 +469,34 @@ module Notification =
             visibility = ResourceVisibility.Public
             || ownership = ResourceOwnership.RepositoryOwned
 
+        /// Determines whether event metadata was public when the event was recorded for replay-sensitive public fanout.
+        let private metadataAllowsPublicProjection (metadata: EventMetadata) =
+            let visibility =
+                match metadata.Properties.TryGetValue("Visibility") with
+                | true, value ->
+                    ResourceVisibility.TryParsePublicInput value
+                    |> Option.defaultValue ResourceVisibility.Private
+                | _ ->
+                    match metadata.Properties.TryGetValue("InheritedVisibility") with
+                    | true, value ->
+                        ResourceVisibility.TryParsePublicInput value
+                        |> Option.defaultValue ResourceVisibility.Private
+                    | _ -> ResourceVisibility.Public
+
+            let ownership =
+                match metadata.Properties.TryGetValue("Ownership") with
+                | true, value ->
+                    ResourceOwnership.TryParsePublicInput value
+                    |> Option.defaultValue ResourceOwnership.ContributorOwned
+                | _ ->
+                    match metadata.Properties.TryGetValue("InheritedOwnership") with
+                    | true, value ->
+                        ResourceOwnership.TryParsePublicInput value
+                        |> Option.defaultValue ResourceOwnership.ContributorOwned
+                    | _ -> ResourceOwnership.RepositoryOwned
+
+            allowsPublicProjection visibility ownership
+
         /// Determines whether a persisted reference snapshot is still eligible for public projection fanout.
         let internal referenceDtoAllowsPublicProjection (referenceDto: ReferenceDto) =
             referenceDto.DeletedAt.IsNone
@@ -499,19 +527,40 @@ module Notification =
         let internal shouldNotifyReferenceProjection currentReferenceProjection =
             EventingPublisher.currentSourceAllowsPublicProjection currentReferenceProjection
 
+        /// Applies creation-time and current reference visibility before replay-sensitive public reference side effects.
+        let internal shouldNotifyReferenceCreatedProjection metadata currentReferenceProjection =
+            metadataAllowsPublicProjection metadata
+            && shouldNotifyReferenceProjection currentReferenceProjection
+
         /// Determines whether reference-derived validation side effects may run for the current source snapshot.
         let internal shouldRecordDerivedReferenceProjection currentReferenceProjection =
             EventingPublisher.currentSourceAllowsPublicProjection currentReferenceProjection
 
+        /// Determines whether reference-derived validation side effects may run for creation replay.
+        let internal shouldRecordDerivedReferenceCreatedProjection metadata currentReferenceProjection =
+            metadataAllowsPublicProjection metadata
+            && shouldRecordDerivedReferenceProjection currentReferenceProjection
+
+        /// Reads a GUID metadata property used by projection source revalidation.
+        let private tryGetMetadataGuid propertyName (metadata: EventMetadata) =
+            match metadata.Properties.TryGetValue propertyName with
+            | true, rawValue -> parseGuid rawValue
+            | _ -> None
+
         /// Extracts the PromotionSet id that owns review, queue, validation, artifact, or work-item projection side effects.
-        let private tryGetPromotionSetProjectionId graceEvent =
+        let internal tryGetPromotionSetProjectionId graceEvent =
             match graceEvent with
             | QueueEvent queueEvent ->
                 match queueEvent.Event with
                 | PromotionQueueEventType.PromotionSetEnqueued promotionSetId
                 | PromotionQueueEventType.PromotionSetDequeued promotionSetId -> Some promotionSetId
                 | _ -> None
-            | PromotionSetEvent promotionSetEvent -> tryGetPromotionSetIdFromMetadata promotionSetEvent.Metadata
+            | PromotionSetEvent promotionSetEvent ->
+                match promotionSetEvent.Event with
+                | PromotionSet.PromotionSetEventType.Created (promotionSetId, _, _, _, _, _, _, _) -> Some promotionSetId
+                | _ ->
+                    tryGetPromotionSetIdFromMetadata promotionSetEvent.Metadata
+                    |> Option.orElseWith (fun () -> tryGetMetadataGuid "ActorId" promotionSetEvent.Metadata)
             | ReviewEvent reviewEvent ->
                 match reviewEvent.Event with
                 | ReviewEventType.NotesUpserted notes -> notes.PromotionSetId
@@ -553,12 +602,6 @@ module Notification =
             |> Option.map (fun metadata -> metadata.CorrelationId)
             |> Option.defaultValue String.Empty
 
-        /// Reads a GUID metadata property used by projection source revalidation.
-        let private tryGetMetadataGuid propertyName (metadata: EventMetadata) =
-            match metadata.Properties.TryGetValue propertyName with
-            | true, rawValue -> parseGuid rawValue
-            | _ -> None
-
         /// Re-reads the current source for public projection fanout when the event carries an addressable source.
         let private currentSourceAllowsPublicProjection graceEvent correlationId =
             task {
@@ -566,7 +609,10 @@ module Notification =
                 | ReferenceEvent referenceEvent ->
                     match referenceEvent.Event with
                     | ReferenceEventType.Created (referenceId, _, _, repositoryId, _, _, _, _, _, _, _links) ->
-                        return! currentReferenceAllowsPublicProjection repositoryId referenceId correlationId
+                        if not (metadataAllowsPublicProjection referenceEvent.Metadata) then
+                            return Some false
+                        else
+                            return! currentReferenceAllowsPublicProjection repositoryId referenceId correlationId
                     | ReferenceEventType.Revealed _ ->
                         match tryGetRepositoryIdFromMetadata referenceEvent.Metadata, tryGetMetadataGuid "TerminalPromotionReferenceId" referenceEvent.Metadata
                             with
@@ -579,7 +625,10 @@ module Notification =
                     | Some metadata ->
                         match tryGetRepositoryIdFromMetadata metadata, tryGetPromotionSetProjectionId graceEvent with
                         | Some repositoryId, Some promotionSetId -> return! currentPromotionSetAllowsPublicProjection repositoryId promotionSetId correlationId
-                        | _ -> return None
+                        | _ ->
+                            match graceEvent with
+                            | PromotionSetEvent _ -> return Some false
+                            | _ -> return None
                     | None -> return None
             }
 
@@ -839,9 +888,9 @@ module Notification =
                                                   referenceText,
                                                   links) ->
                         let! currentReferenceProjection = currentReferenceAllowsPublicProjection repositoryId referenceId correlationId
-                        let referenceAllowsPublicNotification = shouldNotifyReferenceProjection currentReferenceProjection
+                        let referenceAllowsPublicNotification = shouldNotifyReferenceCreatedProjection referenceEvent.Metadata currentReferenceProjection
 
-                        if shouldRecordDerivedReferenceProjection currentReferenceProjection then
+                        if shouldRecordDerivedReferenceCreatedProjection referenceEvent.Metadata currentReferenceProjection then
                             do! DerivedComputation.handleReferenceEvent referenceEvent
 
                         match referenceType with
