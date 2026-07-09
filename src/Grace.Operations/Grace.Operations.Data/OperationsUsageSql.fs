@@ -409,6 +409,40 @@ WHERE UsageFactId = @UsageFactId
 AND ArchiveState IN (@ArchiveStateHot, @ArchiveStateVerified);
 """
 
+    /// Lists row-scoped archive failures with enough identifiers for operator repair or disposal.
+    [<Literal>]
+    let SelectRawUsageFactArchiveFailuresForOperatorRepair =
+        """
+SELECT
+    UsageFactId,
+    CorrelationId,
+    FactKind,
+    OwnerId,
+    OrganizationId,
+    RepositoryId,
+    StoragePoolId,
+    Quantity,
+    ObservedAtUtc,
+    ArchiveState,
+    ArchiveBlobName,
+    ArchiveChecksumSha256Hex,
+    ArchiveByteLength,
+    LastArchiveFailureAtUtc,
+    LastArchiveFailureReason,
+    ArchiveFailureCount,
+    ArchiveRetiredAtUtc
+FROM ops.RawUsageFact WITH (READCOMMITTEDLOCK)
+WHERE
+    LastArchiveFailureAtUtc IS NOT NULL
+    OR ArchiveFailureCount > 0
+    OR ArchiveRetiredAtUtc IS NOT NULL
+ORDER BY
+    CASE WHEN ArchiveRetiredAtUtc IS NULL THEN 0 ELSE 1 END,
+    LastArchiveFailureAtUtc DESC,
+    ObservedAtUtc ASC,
+    UsageFactId ASC;
+"""
+
     /// Adds a quantity to the minute aggregate row associated with a newly accepted raw fact.
     [<Literal>]
     let AddToUsageAggregateMinute =

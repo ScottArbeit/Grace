@@ -410,6 +410,9 @@ type private ArchiveFailureClassification =
     | ArchiveDependencyFailure
     | RowScopedFailure
 
+/// Summarizes one hot-payload archive retention batch.
+type OperationsUsageArchiveBatchResult = { Archived: int; RowScopedFailures: int }
+
 /// Archives old hot raw payloads after Blob authority is verified and persisted in SQL.
 type OperationsUsageArchiveProcessor
     (
@@ -512,12 +515,13 @@ type OperationsUsageArchiveProcessor
             )
         }
 
-    /// Archives at most one batch of candidates older than the supplied hot-retention cutoff.
-    member _.ArchiveBatchAsync(observedBefore: Instant, batchSize: int, cancellationToken: CancellationToken) =
+    /// Archives at most one batch and preserves row-scoped failure counts for operator-visible readiness.
+    let archiveBatchWithStatusAsync observedBefore batchSize cancellationToken =
         task {
             let! candidates = archiveStore.ListArchiveCandidatesAsync(observedBefore, batchSize, cancellationToken)
             let mutable index = 0
             let mutable archived = 0
+            let mutable rowScopedFailures = 0
             let candidateArray = candidates |> List.toArray
 
             while index < candidateArray.Length do
@@ -544,6 +548,7 @@ type OperationsUsageArchiveProcessor
                     | RowScopedFailure ->
                         let failureReason = archiveFailureReason ex
                         do! archiveStore.RecordArchiveFailureAsync(candidate.UsageFactId, failureReason, cancellationToken)
+                        rowScopedFailures <- rowScopedFailures + 1
 
                         logger.LogError(
                             ex,
@@ -555,7 +560,18 @@ type OperationsUsageArchiveProcessor
 
                 index <- index + 1
 
-            return archived
+            return { Archived = archived; RowScopedFailures = rowScopedFailures }
+        }
+
+    /// Archives at most one batch and returns row-scoped failure status for worker readiness.
+    member _.ArchiveBatchWithStatusAsync(observedBefore: Instant, batchSize: int, cancellationToken: CancellationToken) =
+        archiveBatchWithStatusAsync observedBefore batchSize cancellationToken
+
+    /// Archives at most one batch of candidates older than the supplied hot-retention cutoff.
+    member _.ArchiveBatchAsync(observedBefore: Instant, batchSize: int, cancellationToken: CancellationToken) =
+        task {
+            let! result = archiveBatchWithStatusAsync observedBefore batchSize cancellationToken
+            return result.Archived
         }
 
 /// Clears expired temporary-hot archived payloads without deleting compact replay authority.
@@ -1969,12 +1985,25 @@ type OperationsUsageArchiveWorkerService
     let runBatchAsync cancellationToken =
         task {
             let cutoff = observedBefore ()
-            let! archived = processor.ArchiveBatchAsync(cutoff, settings.BatchSize, cancellationToken)
-            readiness.MarkArchiveProcessingSuccess()
+            let! result = processor.ArchiveBatchWithStatusAsync(cutoff, settings.BatchSize, cancellationToken)
+
+            if result.RowScopedFailures = 0 then
+                readiness.MarkArchiveProcessingSuccess()
+            else
+                let rowFailureDescription =
+                    if result.RowScopedFailures = 1 then
+                        "1 row-scoped archive failure"
+                    else
+                        $"{result.RowScopedFailures} row-scoped archive failures"
+
+                readiness.MarkArchiveProcessingFailure(
+                    $"Archive retention recorded {rowFailureDescription}; run src/Grace.Operations/scripts/list-archive-row-failures.sql to inspect problem rows."
+                )
 
             logger.LogInformation(
-                "Completed operations usage archive batch. ArchivedFacts: {ArchivedFacts}; HotRetentionDays: {HotRetentionDays}; CutoffUtc: {CutoffUtc}.",
-                archived,
+                "Completed operations usage archive batch. ArchivedFacts: {ArchivedFacts}; RowScopedFailures: {RowScopedFailures}; HotRetentionDays: {HotRetentionDays}; CutoffUtc: {CutoffUtc}.",
+                result.Archived,
+                result.RowScopedFailures,
                 settings.HotRetentionDays,
                 cutoff
             )

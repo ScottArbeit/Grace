@@ -1036,11 +1036,12 @@ type OperationsUsageArchiveTests() =
 
             let blobStore = RecordingArchiveBlobStore(events)
             let processor = createProcessor archiveStore blobStore
-            let! archived = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+            let! result = processor.ArchiveBatchWithStatusAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(archived, Is.EqualTo(1))
+                    Assert.That(result.Archived, Is.EqualTo(1))
+                    Assert.That(result.RowScopedFailures, Is.EqualTo(2))
 
                     Assert.That(
                         String.Join("|", events),
@@ -1188,11 +1189,12 @@ type OperationsUsageArchiveTests() =
             blobStore.Put(safeArchiveBlob.Pointer.BlobName, safeArchiveBlob.Content)
             let processor = createProcessor archiveStore blobStore
 
-            let! archived = processor.ArchiveBatchAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
+            let! result = processor.ArchiveBatchWithStatusAsync(Instant.FromUtc(2026, 8, 1, 0, 0), 10, CancellationToken.None)
 
             Assert.Multiple(
                 Action (fun () ->
-                    Assert.That(archived, Is.EqualTo(1))
+                    Assert.That(result.Archived, Is.EqualTo(1))
+                    Assert.That(result.RowScopedFailures, Is.EqualTo(1))
 
                     Assert.That(
                         String.Join("|", events),
@@ -1400,6 +1402,93 @@ type OperationsUsageArchiveTests() =
                     Assert.That(snapshot.DependencyFailure.Value, Does.Contain("Archive retention failed (RequestFailedException).")))
             )
         }
+
+    /// Verifies row-scoped archive failures keep archive readiness degraded until a later clean pass or row retirement.
+    [<Test>]
+    member _.ArchiveWorkerKeepsReadinessVisibleAfterRowScopedFailure() =
+        task {
+            let events = List<string>()
+            let badUsageFactId = Guid.Parse("47474747-4747-4747-8747-474747474747")
+            let safeUsageFactId = Guid.Parse("47474747-4747-4747-8747-474747474748")
+            let badCandidate = OperationsUsageArchiveTestData.candidate badUsageFactId RawUsageFactArchiveState.Hot None None
+            let safeRawPayload = OperationsUsageArchiveTestData.payload safeUsageFactId
+            let safeCandidate = OperationsUsageArchiveTestData.candidate safeUsageFactId RawUsageFactArchiveState.Hot (Some safeRawPayload) None
+            let safeArchiveBlob = OperationsUsageArchiveFormat.createArchiveBlob safeCandidate safeRawPayload
+            let schema = RecordingSchemaInitializer(events)
+            let archiveStore = RecordingArchiveStore([ badCandidate; safeCandidate ], events)
+            let blobStore = RecordingArchiveBlobStore(events)
+            blobStore.Put(safeArchiveBlob.Pointer.BlobName, safeArchiveBlob.Content)
+            let processor = createProcessor archiveStore blobStore
+            let readiness = OperationsUsageReadinessState()
+
+            let service =
+                new OperationsUsageArchiveWorkerService(
+                    { archiveWorkerSettings () with PollInterval = TimeSpan.FromSeconds(30.0) },
+                    schema,
+                    processor,
+                    readiness :> IOperationsUsageReadinessRecorder,
+                    NullLogger<OperationsUsageArchiveWorkerService>
+                        .Instance
+                )
+
+            do!
+                (service :> IHostedService)
+                    .StartAsync(CancellationToken.None)
+
+            do! schema.Invoked.WaitAsync(TimeSpan.FromSeconds(5.0))
+
+            let probe = readiness :> IOperationsUsageReadinessProbe
+            let deadline = DateTime.UtcNow.AddSeconds(5.0)
+            let mutable snapshot = probe.GetSnapshot()
+
+            while not (
+                      snapshot.DependencyFailure
+                      |> Option.exists (fun failure -> failure.Contains("row-scoped archive failure", StringComparison.Ordinal))
+                  )
+                  && DateTime.UtcNow < deadline do
+                do! Task.Delay(TimeSpan.FromMilliseconds(20.0), CancellationToken.None)
+                snapshot <- probe.GetSnapshot()
+
+            use stopCancellation = new CancellationTokenSource(TimeSpan.FromSeconds(5.0))
+
+            do!
+                (service :> IHostedService)
+                    .StopAsync(stopCancellation.Token)
+
+            Assert.Multiple(
+                Action (fun () ->
+                    Assert.That(archiveStore.RecordedFailures |> List.length, Is.EqualTo(1))
+                    Assert.That(fst archiveStore.RecordedFailures[0], Is.EqualTo(badUsageFactId))
+                    Assert.That(snapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                    Assert.That(snapshot.DependencyFailure.Value, Does.Contain("row-scoped archive failure"))
+                    Assert.That(snapshot.DependencyFailure.Value, Does.Contain("src/Grace.Operations/scripts/list-archive-row-failures.sql")))
+            )
+        }
+
+    /// Verifies a later clean archive batch clears row-scoped archive readiness after repair or retirement.
+    [<Test>]
+    member _.ArchiveReadinessClearsRowScopedFailureAfterLaterCleanPass() =
+        let readiness = OperationsUsageReadinessState()
+        let recorder = readiness :> IOperationsUsageReadinessRecorder
+        let probe = readiness :> IOperationsUsageReadinessProbe
+
+        recorder.MarkReady()
+
+        recorder.MarkArchiveProcessingFailure(
+            "Archive retention recorded 1 row-scoped archive failure; run src/Grace.Operations/scripts/list-archive-row-failures.sql to inspect problem rows."
+        )
+
+        let failureSnapshot = probe.GetSnapshot()
+        recorder.MarkArchiveProcessingSuccess()
+        let recoveredSnapshot = probe.GetSnapshot()
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(failureSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.NotReady))
+                Assert.That(failureSnapshot.DependencyFailure.Value, Does.Contain("row-scoped archive failure"))
+                Assert.That(recoveredSnapshot.Status, Is.EqualTo(OperationsUsageReadinessStatus.Ready))
+                Assert.That(recoveredSnapshot.DependencyFailure, Is.EqualTo(None)))
+        )
 
     /// Verifies a hot row without payload bytes records failure evidence and does not block later safe candidates.
     [<Test>]
@@ -1624,6 +1713,30 @@ type OperationsUsageArchiveTests() =
                 Assert.That(OperationsUsageSql.MarkRawUsageFactArchiveVerified, Does.Contain("ArchiveFailureCount = 0"))
                 Assert.That(OperationsUsageSql.CompleteRawUsageFactArchive, Does.Contain("LastArchiveFailureReason = NULL"))
                 Assert.That(OperationsUsageSql.CompleteRawUsageFactArchive, Does.Contain("ArchiveFailureCount = 0")))
+        )
+
+    /// Verifies the operator repair query exposes identifiers and failure metadata for problem archive rows.
+    [<Test>]
+    member _.ArchiveFailureOperatorRepairSqlIdentifiesProblemRows() =
+        let script = sourceText "src/Grace.Operations/scripts/list-archive-row-failures.sql"
+
+        Assert.Multiple(
+            Action (fun () ->
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("UsageFactId"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("CorrelationId"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("OwnerId"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("OrganizationId"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("RepositoryId"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("ArchiveBlobName"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("LastArchiveFailureReason"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("ArchiveFailureCount"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("ArchiveRetiredAtUtc"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("LastArchiveFailureAtUtc IS NOT NULL"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("ArchiveFailureCount > 0"))
+                Assert.That(OperationsUsageSql.SelectRawUsageFactArchiveFailuresForOperatorRepair, Does.Contain("ORDER BY"))
+                Assert.That(script, Does.Contain("LastArchiveFailureReason"))
+                Assert.That(script, Does.Contain("ArchiveFailureCount"))
+                Assert.That(script, Does.Contain("ArchiveRetiredAtUtc")))
         )
 
     /// Verifies chunked rehydration uses one SQL transaction instead of committing each batch independently.
