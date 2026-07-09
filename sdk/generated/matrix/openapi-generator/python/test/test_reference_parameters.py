@@ -39,7 +39,7 @@ class TestReferenceParameters(unittest.TestCase):
                 correlation_id = '',
                 principal = '',
                 reference_id = 'c8f9bac8-d489-46c7-917f-b36b7d9efa9a',
-                reference_type = 'Commit',
+                reference_type = 'commit',
                 reference_text = '',
                 repository_id = 'ab6f35ef-6e01-440b-8f9b-c343a5272095',
                 repository_name = ''

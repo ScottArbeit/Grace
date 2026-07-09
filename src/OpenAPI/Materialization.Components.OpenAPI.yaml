@@ -1,0 +1,232 @@
+    MaterializationExecutionMode:
+      description: How Grace may satisfy a Materialization Plan request.
+      type: string
+      enum: [direct, cachePreferred, cacheRequired]
+      x-enumNames: [Direct, CachePreferred, CacheRequired]
+      example: direct
+    MaterializationTargetSelectorKind:
+      description: Selector shape supplied before Grace resolves the immutable target root.
+      type: string
+      enum: [directoryVersionId, referenceId, branchName, referenceType]
+      x-enumNames: [DirectoryVersionId, ReferenceId, BranchName, ReferenceType]
+      example: directoryVersionId
+    MaterializationCacheSelectionKind:
+      description: Cache behavior requested for artifact source selection.
+      type: string
+      enum: [bypassCache, preferCache, requireCache]
+      x-enumNames: [BypassCache, PreferCache, RequireCache]
+      example: bypassCache
+    MaterializationArtifactKind:
+      description: Artifact contract vocabulary that a Materialization Plan may require.
+      type: string
+      enum: [directoryVersionZip, recursiveDirectoryMetadata, wholeFileContent, fileManifest, contentBlock]
+      x-enumNames: [DirectoryVersionZip, RecursiveDirectoryMetadata, WholeFileContent, FileManifest, ContentBlock]
+      example: directoryVersionZip
+    MaterializationArtifactSourceKind:
+      description: Where a planned artifact can be fetched or resolved from.
+      type: string
+      enum: [directUri, cacheEntry, deferred]
+      x-enumNames: [DirectUri, CacheEntry, Deferred]
+      example: directUri
+    MaterializationTargetSelector:
+      description: Public selector that the server resolves to one immutable root DirectoryVersionId. ReferenceType selectors provide ReferenceType plus exactly one of BranchId or BranchName.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationTargetSelector
+        SelectorKind:
+          $ref: '#/MaterializationTargetSelectorKind'
+        DirectoryVersionId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+          nullable: true
+        ReferenceId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceId'
+          nullable: true
+        BranchId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchId'
+          nullable: true
+        BranchName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/BranchName'
+          nullable: true
+        ReferenceType:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/ReferenceType'
+          nullable: true
+      required: [Class, SelectorKind]
+    MaterializationCacheSelection:
+      description: Cache-selection intent separate from artifact source details.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationCacheSelection
+        SelectionKind:
+          $ref: '#/MaterializationCacheSelectionKind'
+        CacheScope:
+          type: string
+          nullable: true
+      required: [Class, SelectionKind]
+    MaterializationPlanRequest:
+      description: Request contract for server-side Materialization Plan creation.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationPlanRequest
+        TargetSelector:
+          $ref: '#/MaterializationTargetSelector'
+        ExecutionMode:
+          $ref: '#/MaterializationExecutionMode'
+        CacheSelection:
+          $ref: '#/MaterializationCacheSelection'
+        RequestedArtifactKinds:
+          type: array
+          items:
+            $ref: '#/MaterializationArtifactKind'
+      required: [Class, TargetSelector, ExecutionMode, CacheSelection, RequestedArtifactKinds]
+      example: &materializationPlanRequestExample
+        Class: MaterializationPlanRequest
+        TargetSelector:
+          Class: MaterializationTargetSelector
+          SelectorKind: directoryVersionId
+          DirectoryVersionId: 33a4e36b-828f-4fae-9343-50b6560dc842
+          ReferenceId: null
+          BranchId: null
+          BranchName: null
+          ReferenceType: null
+        ExecutionMode: direct
+        CacheSelection:
+          Class: MaterializationCacheSelection
+          SelectionKind: bypassCache
+          CacheScope: null
+        RequestedArtifactKinds: [directoryVersionZip, recursiveDirectoryMetadata]
+    PlanParameters:
+      description: Parameters for the /materialization/plan endpoint. Repository authority accepts the same ID-or-name pairs resolved by ValidateIdsMiddleware; provide either OwnerId or OwnerName, either OrganizationId or OrganizationName, and either RepositoryId or RepositoryName.
+      type: object
+      allOf:
+        - $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CommonParameters'
+      properties:
+        OwnerId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerId'
+        OwnerName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OwnerName'
+        OrganizationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationId'
+        OrganizationName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/OrganizationName'
+        RepositoryId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryId'
+        RepositoryName:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RepositoryName'
+        Request:
+          $ref: '#/MaterializationPlanRequest'
+      required: [Request]
+      example: &materializationPlanParametersExample
+        CorrelationId: cli-20260707T105500Z-0001
+        Principal: user:alice
+        OwnerId: 9dd5f81f-dc43-4839-9173-85d09394f30f
+        OwnerName: null
+        OrganizationId: e35d64a9-b990-44f5-bf02-32ad7d15630c
+        OrganizationName: null
+        RepositoryId: ab6f35ef-6e01-440b-8f9b-c343a5272095
+        RepositoryName: null
+        Request: *materializationPlanRequestExample
+    MaterializationArtifactSource:
+      description: Fetchable or deferred source for one planned artifact.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationArtifactSource
+        SourceKind:
+          $ref: '#/MaterializationArtifactSourceKind'
+        DirectUri:
+          type: string
+          format: uri
+          nullable: true
+        CacheKey:
+          type: string
+          nullable: true
+      required: [Class, SourceKind]
+    MaterializationArtifactDescriptor:
+      description: Stable artifact identity required to materialize a resolved target root.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationArtifactDescriptor
+        ArtifactKind:
+          $ref: '#/MaterializationArtifactKind'
+        CanonicalArtifactIdentity:
+          type: string
+          nullable: true
+        RepresentedRootDirectoryVersionId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+          nullable: true
+        TargetRootDirectoryVersionId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+        SizeInBytes:
+          type: integer
+          format: int64
+          nullable: true
+        RelativePath:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/RelativePath'
+          nullable: true
+        Sha256Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Sha256Hash'
+          nullable: true
+        Blake3Hash:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Blake3Hash'
+          nullable: true
+        ManifestAddress:
+          $ref: 'Storage.Components.OpenAPI.yaml#/ManifestAddress'
+          nullable: true
+        ContentBlockAddress:
+          $ref: 'Storage.Components.OpenAPI.yaml#/ContentBlockAddress'
+          nullable: true
+        StoragePoolId:
+          $ref: 'Storage.Components.OpenAPI.yaml#/StoragePoolId'
+          nullable: true
+        Source:
+          $ref: '#/MaterializationArtifactSource'
+          nullable: true
+      required: [Class, ArtifactKind, TargetRootDirectoryVersionId]
+    MaterializationPlan:
+      description: Resolved immutable target root and artifacts required to materialize it.
+      type: object
+      properties:
+        Class:
+          type: string
+          example: MaterializationPlan
+        TargetRootDirectoryVersionId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/DirectoryVersionId'
+        ExecutionMode:
+          $ref: '#/MaterializationExecutionMode'
+        CacheSelection:
+          $ref: '#/MaterializationCacheSelection'
+        RequiredArtifacts:
+          type: array
+          items:
+            $ref: '#/MaterializationArtifactDescriptor'
+      required: [Class, TargetRootDirectoryVersionId, ExecutionMode, CacheSelection, RequiredArtifacts]
+    MaterializationPlanReturnValue:
+      description: Grace response envelope whose ReturnValue contains a Materialization Plan.
+      type: object
+      properties:
+        ReturnValue:
+          $ref: '#/MaterializationPlan'
+        EventTime:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/Instant'
+        CorrelationId:
+          $ref: 'Shared.Components.OpenAPI.yaml#/components/schemas/CorrelationId'
+        Properties:
+          type: object
+          additionalProperties:
+            type: string
+      required: [ReturnValue, EventTime, CorrelationId, Properties]
+    MaterializationPlanResponse:
+      description: OK
+      content:
+        application/json:
+          schema:
+            $ref: '#/MaterializationPlanReturnValue'

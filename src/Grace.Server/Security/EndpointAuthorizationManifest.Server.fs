@@ -202,6 +202,7 @@ module EndpointAuthorizationManifest =
                 "/directory/saveDirectoryVersions"
                 (AnyOf [ Authorized(RepositoryAdmin, Repository)
                          Authorized(RepositoryWrite, Repository) ])
+            endpoint "POST" "/materialization/plan" (Authorized(RepositoryRead, Repository))
             endpoint "GET" "/healthz" AllowAnonymous
             endpoint
                 "POST"

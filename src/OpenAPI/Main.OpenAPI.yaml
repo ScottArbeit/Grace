@@ -166,6 +166,9 @@ paths:
     $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1getByBlake3Hash'
   /directory/saveDirectoryVersions:
     $ref: './Directory.Paths.OpenAPI.yaml#/~1directory~1saveDirectoryVersions'
+
+  /materialization/plan:
+    $ref: './Materialization.Paths.OpenAPI.yaml#/~1materialization~1plan'
       
   /organization/create:
     $ref: './Organization.Paths.OpenAPI.yaml#/~1organization~1create'
@@ -391,6 +394,33 @@ components:
       $ref: 'Directory.Components.OpenAPI.yaml#/GetByBlake3HashParameters'
     SaveDirectoryVersionsParameters:
       $ref: 'Directory.Components.OpenAPI.yaml#/SaveDirectoryVersionsParameters'
+
+    MaterializationExecutionMode:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationExecutionMode'
+    MaterializationTargetSelectorKind:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationTargetSelectorKind'
+    MaterializationCacheSelectionKind:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationCacheSelectionKind'
+    MaterializationArtifactKind:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationArtifactKind'
+    MaterializationArtifactSourceKind:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationArtifactSourceKind'
+    MaterializationTargetSelector:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationTargetSelector'
+    MaterializationCacheSelection:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationCacheSelection'
+    MaterializationPlanRequest:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlanRequest'
+    PlanParameters:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/PlanParameters'
+    MaterializationArtifactSource:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationArtifactSource'
+    MaterializationArtifactDescriptor:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationArtifactDescriptor'
+    MaterializationPlan:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlan'
+    MaterializationPlanReturnValue:
+      $ref: 'Materialization.Components.OpenAPI.yaml#/MaterializationPlanReturnValue'
 
     BranchDto:
       $ref: 'Dto.Components.OpenAPI.yaml#/BranchDto'

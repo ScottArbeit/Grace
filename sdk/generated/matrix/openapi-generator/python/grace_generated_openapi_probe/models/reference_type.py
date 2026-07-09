@@ -27,11 +27,13 @@ class ReferenceType(str, Enum):
     """
     allowed enum values
     """
-    PROMOTION = 'Promotion'
-    COMMIT = 'Commit'
-    CHECKPOINT = 'Checkpoint'
-    SAVE = 'Save'
-    TAG = 'Tag'
+    PROMOTION = 'promotion'
+    COMMIT = 'commit'
+    CHECKPOINT = 'checkpoint'
+    SAVE = 'save'
+    TAG = 'tag'
+    EXTERNAL = 'external'
+    REBASE = 'rebase'
 
     @classmethod
     def from_json(cls, json_str: str) -> Self:

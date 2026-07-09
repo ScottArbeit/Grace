@@ -169,18 +169,26 @@ module AnnotationLineCore =
     /// Creates the stable boundary identifier used inside one annotation response.
     let private boundaryId index = $"boundary-{index}"
 
-    /// Converts a reference type union case to the public filter name accepted by annotation requests.
-    let private referenceTypeName (referenceType: ReferenceType) = getDiscriminatedUnionCaseName referenceType
+    /// Converts a reference type union case to the JSON wire value published by the shared ReferenceType schema.
+    let private referenceTypeWireValue (referenceType: ReferenceType) =
+        let caseName = getDiscriminatedUnionCaseName referenceType
+        $"{caseName.Substring(0, 1).ToLowerInvariant()}{caseName.Substring(1)}"
 
-    let private knownReferenceTypeNames = listCases<ReferenceType> () |> Set.ofArray
+    let private knownReferenceTypeWireValues =
+        listCases<ReferenceType> ()
+        |> Array.choose (
+            ReferenceType.FromString
+            >> Option.map referenceTypeWireValue
+        )
+        |> Set.ofArray
 
-    /// Converts a reference type union case to the public filter name accepted by annotation requests.
-    let private isKnownReferenceTypeName referenceTypeName = knownReferenceTypeNames.Contains referenceTypeName
+    /// Checks whether an annotation source reference carries a known ReferenceType wire value.
+    let private isKnownReferenceTypeWireValue referenceTypeName = knownReferenceTypeWireValues.Contains referenceTypeName
 
     /// Applies the optional reference-type filter when selecting attribution sources.
     let private matchesReferenceTypeFilter (referenceTypeNames: Set<string>) (document: AnnotationHistoryDocument) =
         referenceTypeNames.Count = 0
-        || (isKnownReferenceTypeName document.SourceReference.ReferenceType
+        || (isKnownReferenceTypeWireValue document.SourceReference.ReferenceType
             && referenceTypeNames.Contains document.SourceReference.ReferenceType)
 
     /// Validates source references.
@@ -192,7 +200,7 @@ module AnnotationLineCore =
                 if String.IsNullOrWhiteSpace sourceReference.SourceReferenceId then
                     "SourceReference contains blank SourceReferenceId."
 
-                if not (isKnownReferenceTypeName sourceReference.ReferenceType) then
+                if not (isKnownReferenceTypeWireValue sourceReference.ReferenceType) then
                     $"SourceReference '{sourceReference.SourceReferenceId}' contains unknown ReferenceType '{sourceReference.ReferenceType}'."
 
             let duplicatedSourceReferenceIds =
@@ -641,7 +649,7 @@ module AnnotationLineCore =
 
         let referenceTypeNames =
             referenceTypeFilter
-            |> Array.map referenceTypeName
+            |> Array.map referenceTypeWireValue
             |> Set.ofArray
 
         let traversalWasBudgetBounded =

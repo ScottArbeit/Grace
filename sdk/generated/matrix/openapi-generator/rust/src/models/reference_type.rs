@@ -14,27 +14,33 @@ use serde::{Deserialize, Serialize};
 /// 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Ord, PartialOrd, Hash, Serialize, Deserialize)]
 pub enum ReferenceType {
-    #[serde(rename = "Promotion")]
+    #[serde(rename = "promotion")]
     Promotion,
-    #[serde(rename = "Commit")]
+    #[serde(rename = "commit")]
     Commit,
-    #[serde(rename = "Checkpoint")]
+    #[serde(rename = "checkpoint")]
     Checkpoint,
-    #[serde(rename = "Save")]
+    #[serde(rename = "save")]
     Save,
-    #[serde(rename = "Tag")]
+    #[serde(rename = "tag")]
     Tag,
+    #[serde(rename = "external")]
+    External,
+    #[serde(rename = "rebase")]
+    Rebase,
 
 }
 
 impl std::fmt::Display for ReferenceType {
     fn fmt(&self, f: &mut std::fmt::Formatter) -> std::fmt::Result {
         match self {
-            Self::Promotion => write!(f, "Promotion"),
-            Self::Commit => write!(f, "Commit"),
-            Self::Checkpoint => write!(f, "Checkpoint"),
-            Self::Save => write!(f, "Save"),
-            Self::Tag => write!(f, "Tag"),
+            Self::Promotion => write!(f, "promotion"),
+            Self::Commit => write!(f, "commit"),
+            Self::Checkpoint => write!(f, "checkpoint"),
+            Self::Save => write!(f, "save"),
+            Self::Tag => write!(f, "tag"),
+            Self::External => write!(f, "external"),
+            Self::Rebase => write!(f, "rebase"),
         }
     }
 }

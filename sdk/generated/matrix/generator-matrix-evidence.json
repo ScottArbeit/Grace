@@ -2,17 +2,17 @@
   "schemaVersion": 1,
   "issue": 221,
   "sourceProjection": "src/OpenAPI/Grace.OpenAPI.3.1.2.yaml",
-  "sourceProjectionSha256": "f3302412cae350c013786e3a95a87058f0337fabddff422385fee2135a5cd00e",
+  "sourceProjectionSha256": "ef79d933e768dac17d5a408ff80590bea72004fb356b94dcd737b51144f5a26a",
   "generatedAtPolicy": "not recorded; report is deterministic across machines except tool output directories",
   "toolVersions": {
-    "pwsh": "PowerShell 7.6.2",
+    "pwsh": "PowerShell 7.6.3",
     "dotnet": "10.0.301",
     "node": "v24.3.0",
     "npm": "11.10.1",
     "python": "Python 3.14.6",
     "cargo": "cargo 1.96.0 (30a34c682 2026-05-25)",
     "rustc": "rustc 1.96.0 (ac68faa20 2026-05-25)",
-    "docker": "Docker version 29.5.3, build d1c06ef",
+    "docker": "Docker version 29.6.1, build 8900f1d",
     "java": "unavailable",
     "openApiGenerator": "openapitools/openapi-generator-cli:v7.22.0",
     "kiota": "1.32.1+958a7d04f87c48ab4c0dba1c4e91032ad2f6b9cb",
@@ -27,7 +27,29 @@
       "outcome": "Rejected",
       "conclusion": "Full projection fails before generation on malformed schema references/null schema properties.",
       "outputPath": "",
-      "evidence": [],
+      "evidence": [
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/DifferenceType/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/FileSystemEntryType/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileSystemDifference/properties/RelativePath/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/RelativePath/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/FileSha1/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/CreatedAt1/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/FileSha2/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/CreatedAt2/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/InlineDiff/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/SideBySideOld/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/FileDiff/properties/SideBySideNew/items/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/DiffPiece/properties/SubPieces/items/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/components/schemas/DiffPiece/properties/Type/$ref - The schema reference '#/components/schemas/openapi-json-null-sentinel-value-2BF93600-0FE4-4250-987A-E5DDB203E464' does not point to an existing schema.",
+        "OpenAPI warning: #/ - The schema UploadSessionEventType is a polymorphic type but does not define a discriminator. This will result in serialization errors.",
+        "OpenAPI warning: #/components/schemas/CreateApprovalPolicyParameters/allOf/1/properties/NotificationUrl - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/CreateWebhookRuleParameters/allOf/1/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/MaterializationArtifactSource/properties/DirectUri - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/ScopedOutboundUrl/properties/Url - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/UploadMetadata/properties/BlobUriWithSasToken - The format uri is not supported by Kiota and the string type will be used.",
+        "OpenAPI warning: #/components/schemas/UriString - The format uri is not supported by Kiota and the string type will be used.",
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (The schema reference is not resolved) (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (The schema reference is not resolved))"
+      ],
       "transportPolicySupport": "RequestAdapter pipeline can carry auth, API version, correlation, and client identity once generation succeeds.",
       "facadeFit": "Good facade candidate after contract cleanup; generated client remains hidden behind handwritten facade."
     },
@@ -39,7 +61,9 @@
       "outcome": "Rejected",
       "conclusion": "Generation still fails on non-object DirectoryVersion collection items after validation rules are disabled.",
       "outputPath": "",
-      "evidence": [],
+      "evidence": [
+        "error generating the client: One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved))) (One or more errors occurred. (One or more errors occurred. (The schema reference is not resolved)))"
+      ],
       "transportPolicySupport": "RequestAdapter middleware model is promising, but no generated output was available to compile.",
       "facadeFit": "Facade fit cannot be accepted until generation and import compile."
     },
@@ -52,7 +76,7 @@
       "conclusion": "NSwag/NJsonSchema cannot parse array-valued schema properties such as FileVersion.RepositoryId.",
       "outputPath": "",
       "evidence": [
-        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 145178."
+        "Newtonsoft.Json.JsonSerializationException: Cannot populate JSON array onto type 'NJsonSchema.JsonSchema'. Path 'components.schemas.GraceResult.oneOf[0]', line 1, position 155454."
       ],
       "transportPolicySupport": "HttpClient partial-class customization would support transport policies if generation succeeded.",
       "facadeFit": "Facade fit is acceptable in principle, but parsing fails before a .NET compile probe."
@@ -73,6 +97,7 @@
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
+        "[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/sdk/generated/matrix/openapi-generator/typescript-fetch) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
         "[main] INFO  o.o.codegen.TemplateManager - writing file /local/sdk/generated/matrix/openapi-generator/typescript-fetch/tsconfig.json",
         "[main] INFO  o.o.codegen.TemplateManager - writing file /local/sdk/generated/matrix/openapi-generator/typescript-fetch/tsconfig.esm.json"
@@ -96,6 +121,7 @@
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
+        "[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/sdk/generated/matrix/openapi-generator/python) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator."
       ],
       "transportPolicySupport": "Configuration object exposes host, default headers, API key, bearer token, and user agent hooks.",
@@ -117,6 +143,7 @@
         "-attribute components.schemas.GraceResult. is not of type `object`",
         "Warnings:",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator.",
+        "[main] INFO  o.o.c.ignore.CodegenIgnoreProcessor - Output directory (/local/sdk/generated/matrix/openapi-generator/rust) does not exist, or is inaccessible. No file (.openapi-generator-ignore) will be evaluated.",
         "[main] WARN  o.o.codegen.DefaultCodegen - OpenAPI 3.1 support is still in beta. To report an issue related to 3.1 spec, please kindly open an issue in the Github repo: https://github.com/openAPITools/openapi-generator."
       ],
       "transportPolicySupport": "Generated configuration supports bearer token, API key, user agent, and reqwest client customization.",
@@ -153,15 +180,15 @@
   "deterministicRegeneration": [
     {
       "path": "sdk/generated/matrix/openapi-generator/typescript-fetch",
-      "manifestSha256": "728e029aff27d8ac5f9531e3e029ca3d80eeffae689fe27659ebe9c168a83de8"
+      "manifestSha256": "cb6ee7b9b9806782b0159ce7ea142d8d62ee03ad6678d6e4f44e0bbc6d086cc7"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/python",
-      "manifestSha256": "f738dc5835fa82603bf04828c56df0ae8590728f509c82a4cd3b798e1c54181b"
+      "manifestSha256": "bf51663ef5fd721e4102ba370e929951adc6437be7847721d079cab9bcd0be1c"
     },
     {
       "path": "sdk/generated/matrix/openapi-generator/rust",
-      "manifestSha256": "ae84693c8404006429a06ab56d5fdaff1dea4fadb84a7532103a5c138ba1ed98"
+      "manifestSha256": "49a8a3b3d8342f0d38206a30b7c37c3dbc4916e4a7c8be6753a43075d14b0931"
     }
   ],
   "overallConclusion": "OpenAPI Generator is the only evaluated tool that produced compile/importable TS, Python, and Rust output, and only with --skip-validate-spec. Kiota and NSwag are rejected until OpenAPI schema-shape debt is fixed.",
