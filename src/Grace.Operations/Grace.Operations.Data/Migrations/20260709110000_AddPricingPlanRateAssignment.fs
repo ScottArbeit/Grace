@@ -205,6 +205,18 @@ IF NOT EXISTS
     SELECT 1
     FROM sys.indexes
     WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.CustomerPricingAssignmentTable}')
+    AND name = N'{OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName}'
+)
+BEGIN
+    CREATE INDEX {OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName}
+        ON {OperationsPricingSql.CustomerPricingAssignmentTable}(PricingPlanId);
+END;
+
+IF NOT EXISTS
+(
+    SELECT 1
+    FROM sys.indexes
+    WHERE object_id = OBJECT_ID(N'{OperationsPricingSql.CustomerPricingAssignmentTable}')
     AND name = N'UX_ops_CustomerPricingAssignment_ScopeEffectiveFrom'
 )
 BEGIN
@@ -890,6 +902,11 @@ END;');
             .HasColumnType("datetime2(7)")
             .HasDefaultValueSql("SYSUTCDATETIME()")
             .IsRequired()
+        |> ignore
+
+        assignment
+            .HasIndex([| "PricingPlanId" |])
+            .HasDatabaseName("IX_CustomerPricingAssignment_PricingPlanId")
         |> ignore
 
         assignment

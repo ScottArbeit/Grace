@@ -72,6 +72,10 @@ module OperationsPricingSql =
     [<Literal>]
     let CustomerPricingAssignmentScopeIndexName = "IX_ops_CustomerPricingAssignment_ScopeEffective"
 
+    /// Names the foreign-key lookup path from customer assignments to pricing plans.
+    [<Literal>]
+    let CustomerPricingAssignmentPricingPlanIndexName = "IX_CustomerPricingAssignment_PricingPlanId"
+
     /// Names the indexed lookup path for effective rate selection.
     [<Literal>]
     let PricingRateEffectiveIndexName = "IX_ops_PricingRate_PlanUsageKindEffective"

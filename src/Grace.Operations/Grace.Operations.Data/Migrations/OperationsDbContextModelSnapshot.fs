@@ -533,6 +533,11 @@ type OperationsDbContextModelSnapshot() =
         |> ignore
 
         assignment
+            .HasIndex([| "PricingPlanId" |])
+            .HasDatabaseName("IX_CustomerPricingAssignment_PricingPlanId")
+        |> ignore
+
+        assignment
             .HasIndex(
                 [|
                     "CustomerId"

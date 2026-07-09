@@ -532,6 +532,11 @@ module OperationsModel =
         |> ignore
 
         assignment
+            .HasIndex([| "PricingPlanId" |])
+            .HasDatabaseName(OperationsPricingSql.CustomerPricingAssignmentPricingPlanIndexName)
+        |> ignore
+
+        assignment
             .HasIndex(
                 [|
                     "CustomerId"
