@@ -311,6 +311,61 @@ type ContentOwnershipLedgerActorTests() =
         Assert.That(reused.Ledger.ActiveUsageByOwner[repositoryScope], Is.EqualTo(2L))
         Assert.That(reused.Ledger.ActiveUsageByOwner.ContainsKey contributorScope, Is.False)
 
+    /// Verifies accepted repository ownership survives removal of every active usage for the manifest.
+    [<Test>]
+    member _.ContributorReuseAfterAcceptedTransferAndRemovalKeepsRepositoryOwnership() =
+        let added =
+            ContentOwnershipLedgerActor.decideCommand
+                []
+                ContentOwnershipLedgerDto.Default
+                (addContributor "reference:add-private" activeUsageId)
+                (metadata "corr-add-private")
+            |> expectOk
+
+        let transferred =
+            ContentOwnershipLedgerActor.decideCommand
+                added.Events
+                (applyEvents added.Events ContentOwnershipLedgerDto.Default)
+                (transfer "promotion-transfer:accepted" contributorScope)
+                (metadata "corr-transfer")
+            |> expectOk
+
+        let removed =
+            ContentOwnershipLedgerActor.decideCommand
+                (added.Events @ transferred.Events)
+                transferred.Ledger
+                (remove "reference-expiry:private" activeUsageId)
+                (metadata "corr-remove")
+            |> expectOk
+
+        Assert.That(removed.Ledger.ActiveUsageOwners, Is.Empty)
+        Assert.That(removed.Ledger.ActiveUsageByOwner, Is.Empty)
+
+        let events = added.Events @ transferred.Events @ removed.Events
+
+        let reused =
+            ContentOwnershipLedgerActor.decideCommand
+                events
+                removed.Ledger
+                (addContributor "reference:add-reuse-after-removal" thirdActiveUsageId)
+                (metadata "corr-add-reuse-after-removal")
+            |> expectOk
+
+        Assert.That(reused.Ledger.ActiveUsageOwners[thirdActiveUsageId], Is.EqualTo(repositoryScope))
+        Assert.That(reused.Ledger.ActiveUsageByOwner[repositoryScope], Is.EqualTo(1L))
+        Assert.That(reused.Ledger.ActiveUsageByOwner.ContainsKey contributorScope, Is.False)
+
+        let replay =
+            ContentOwnershipLedgerActor.decideCommand
+                (events @ reused.Events)
+                reused.Ledger
+                (addContributor "reference:add-reuse-after-removal" thirdActiveUsageId)
+                (metadata "corr-add-reuse-after-removal-replay")
+            |> expectOk
+
+        Assert.That(replay.WasIdempotentReplay, Is.True)
+        Assert.That(replay.Events, Is.Empty)
+
     /// Verifies rejected or abandoned private work has no repository transfer without accepted evidence.
     [<Test>]
     member _.RejectedOrAbandonedWorkDoesNotCreateRepositoryOwnedTransfer() =

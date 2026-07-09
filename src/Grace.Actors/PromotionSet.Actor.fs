@@ -95,8 +95,20 @@ module PromotionSet =
         (promotionSetCommand: PromotionSetCommand)
         (eventMetadata: EventMetadata)
         =
-        if existingEvents
-           |> Seq.exists (fun event -> event.Metadata.CorrelationId = eventMetadata.CorrelationId) then
+        let hasDuplicateCorrelationId =
+            existingEvents
+            |> Seq.exists (fun event -> event.Metadata.CorrelationId = eventMetadata.CorrelationId)
+
+        if
+            hasDuplicateCorrelationId
+            && not
+                (
+                    currentPromotionSetDto.Status = PromotionSetStatus.Succeeded
+                    && match promotionSetCommand with
+                       | PromotionSetCommand.Apply _ -> true
+                       | _ -> false
+                )
+        then
             Error(GraceError.Create "Duplicate correlation ID for PromotionSet command." eventMetadata.CorrelationId)
         else
             match promotionSetCommand with

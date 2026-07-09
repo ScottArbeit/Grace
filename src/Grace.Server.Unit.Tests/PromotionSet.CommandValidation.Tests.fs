@@ -169,9 +169,15 @@ type PromotionSetCommandValidationTests() =
     [<Test>]
     member _.ApplyAllowedWhenPromotionSetAlreadySucceededForTransferRetry() =
         let dto = existingPromotionSet PromotionSetStatus.Succeeded StepsComputationStatus.Computed
-        let metadata = createMetadata "corr-apply-succeeded"
+        let duplicateCorrelationId = "corr-apply-succeeded"
+        let metadata = createMetadata duplicateCorrelationId
 
-        match PromotionSet.validateCommandForState [] dto (PromotionSetCommand.Apply []) metadata with
+        let existingEvents: PromotionSetEvent list =
+            [
+                { Event = PromotionSetEventType.Applied(Guid.NewGuid()); Metadata = createMetadata duplicateCorrelationId }
+            ]
+
+        match PromotionSet.validateCommandForState existingEvents dto (PromotionSetCommand.Apply []) metadata with
         | Ok _ -> Assert.Pass()
         | Error graceError -> Assert.Fail($"Expected apply validation to allow succeeded PromotionSet transfer retry, got {graceError.Error}.")
 

@@ -51,4 +51,5 @@ type OrleansPartitionKeyProviderTests() =
         let sourceText = File.ReadAllText(filePath)
 
         Assert.That(sourceText, Does.Contain("| StateName.RepositoryContentCounter -> firstGrainKeySegment ()"))
+        Assert.That(sourceText, Does.Contain("| StateName.ContentOwnershipLedger -> firstGrainKeySegment ()"))
         Assert.That(sourceText, Does.Contain("| StateName.ManifestContributionWorkflow -> firstGrainKeySegment ()"))

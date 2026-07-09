@@ -342,8 +342,7 @@ type ReferenceActorHashValidationTests() =
 
         Assert.That(validateIndex, Is.GreaterThanOrEqualTo(0), "Create must validate root directory hashes before planning Created.")
 
-        let boundaryIndex =
-            createBranch.IndexOf("applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType", validateIndex, StringComparison.Ordinal)
+        let boundaryIndex = createBranch.IndexOf("applyReferenceManifestBoundary", validateIndex, StringComparison.Ordinal)
 
         Assert.That(
             boundaryIndex,
@@ -388,12 +387,13 @@ type ReferenceActorHashValidationTests() =
             "Save manifest contribution boundary failures must not occur after ApplyEvent persists Created."
         )
 
-    /// Verifies that manifest Expiry Boundary Only Applies To Save References Until Commit Checkpoint Fanout Is Wired.
+    /// Verifies that manifest expiry boundary applies to save and promotion references that pin manifest content.
     [<Test>]
-    member _.ManifestExpiryBoundaryOnlyAppliesToSaveReferencesUntilCommitCheckpointFanoutIsWired() =
+    member _.ManifestExpiryBoundaryAppliesToSaveAndPromotionReferences() =
         let referenceOfType referenceType = { ReferenceDto.Default with ReferenceId = Guid.NewGuid(); ReferenceType = referenceType }
 
         Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Save), Is.True)
+        Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Promotion), Is.True)
         Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Commit), Is.False)
         Assert.That(shouldApplyManifestExpiryBoundary (referenceOfType ReferenceType.Checkpoint), Is.False)
         Assert.That(shouldApplyManifestExpiryBoundary ReferenceDto.Default, Is.False)
@@ -403,9 +403,9 @@ type ReferenceActorHashValidationTests() =
         Assert.That(shouldApplyOwnershipManifestBoundary ReferenceType.Commit, Is.False)
         Assert.That(shouldApplyOwnershipManifestBoundary ReferenceType.Checkpoint, Is.False)
 
-    /// Verifies that manifest contribution boundary predicates keep range retention scoped while ownership tracks promotion refs.
+    /// Verifies that manifest contribution boundary predicates keep retention scoped to save and promotion refs.
     [<Test>]
-    member _.ManifestContributionBoundaryPredicateKeepsCommitCheckpointOutOfUnwiredWorkflow() =
+    member _.ManifestContributionBoundaryPredicateIncludesPromotionRetention() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
         let predicateStart = actorSource.IndexOf("let appliesRepositoryManifestBoundary referenceType =", StringComparison.Ordinal)
@@ -422,7 +422,7 @@ type ReferenceActorHashValidationTests() =
         let ownershipPredicateSource = actorSource.Substring(ownershipPredicateStart, ownershipPredicateEnd - ownershipPredicateStart)
 
         Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Save"))
-        Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Promotion"))
+        Assert.That(predicateSource, Does.Contain("referenceType = ReferenceType.Promotion"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Commit"))
         Assert.That(predicateSource, Does.Not.Contain("ReferenceType.Checkpoint"))
 
@@ -444,9 +444,9 @@ type ReferenceActorHashValidationTests() =
         Assert.That(referenceSource, Does.Contain("shouldSkipContentOwnershipBoundary metadata"))
         Assert.That(referenceSource, Does.Contain("&& not (shouldSkipContentOwnershipBoundary metadata)"))
 
-    /// Verifies promotion physical deletion removes content ownership entries even though repository counters remain save-only.
+    /// Verifies promotion physical deletion removes both repository retention and ownership entries.
     [<Test>]
-    member _.PhysicalDeletionRemovesPromotionOwnershipWithoutEnablingPromotionRepositoryCounters() =
+    member _.PhysicalDeletionRemovesPromotionRetentionAndOwnership() =
         let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
         let actorSource = File.ReadAllText actorPath
         let reminderStart = actorSource.IndexOf("| ReminderTypes.PhysicalDeletion", StringComparison.Ordinal)
@@ -468,10 +468,44 @@ type ReferenceActorHashValidationTests() =
         let deletePhysicalSource = actorSource.Substring(deletePhysicalStart, deletePhysicalEnd - deletePhysicalStart)
 
         Assert.That(reminderSource, Does.Contain("shouldApplyOwnershipManifestBoundary referenceDto.ReferenceType"))
+        Assert.That(reminderSource, Does.Contain("let appliesRepositoryBoundary = shouldApplyManifestExpiryBoundary referenceDto"))
+        Assert.That(reminderSource, Does.Contain("applyManifestContributionBoundary expiryPlans systemMetadata"))
         Assert.That(reminderSource, Does.Contain("applyContentOwnershipBoundary plans (ownershipOwnerScopeFromReferenceDto referenceDto) true"))
         Assert.That(expiryBoundarySource, Does.Contain("let appliesOwnershipBoundary = shouldApplyOwnershipManifestBoundary referenceType"))
+        Assert.That(expiryBoundarySource, Does.Contain("applyManifestContributionBoundary expiryPlans metadata"))
         Assert.That(expiryBoundarySource, Does.Contain("applyContentOwnershipBoundary plans (ownerScopeFromReference ()) true"))
         Assert.That(deletePhysicalSource, Does.Contain("applyReferenceManifestExpiryBoundary"))
+
+    /// Verifies existing create replay repairs ownership side effects from durable reference state.
+    [<Test>]
+    member _.ExistingReferenceReplayUsesDurableOwnerScopeForOwnershipBoundary() =
+        let actorPath = Path.GetFullPath(Path.Combine(__SOURCE_DIRECTORY__, "..", "Grace.Actors", "Reference.Actor.fs"))
+        let actorSource = File.ReadAllText actorPath
+
+        let existingReturnStart = actorSource.IndexOf("let existingReferenceReturnValue () =", StringComparison.Ordinal)
+
+        let existingReplayStart =
+            actorSource.IndexOf(
+                "| Create (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) when",
+                existingReturnStart,
+                StringComparison.Ordinal
+            )
+
+        let existingReplayEnd = actorSource.IndexOf("| Reveal (operationId, reason) when", existingReplayStart, StringComparison.Ordinal)
+        let freshCreateStart = actorSource.IndexOf("| Create (referenceId,", existingReplayEnd, StringComparison.Ordinal)
+        let freshCreateEnd = actorSource.IndexOf("| AddLink link ->", freshCreateStart, StringComparison.Ordinal)
+
+        Assert.That(existingReplayStart, Is.GreaterThanOrEqualTo(0))
+        Assert.That(existingReplayEnd, Is.GreaterThan(existingReplayStart))
+        Assert.That(freshCreateStart, Is.GreaterThan(existingReplayEnd))
+        Assert.That(freshCreateEnd, Is.GreaterThan(freshCreateStart))
+
+        let existingReplaySource = actorSource.Substring(existingReplayStart, existingReplayEnd - existingReplayStart)
+        let freshCreateSource = actorSource.Substring(freshCreateStart, freshCreateEnd - freshCreateStart)
+
+        Assert.That(existingReplaySource, Does.Contain("ownershipOwnerScopeFromReferenceDto referenceDto"))
+        Assert.That(existingReplaySource, Does.Not.Contain("ownerScopeFromMetadata repositoryId"))
+        Assert.That(freshCreateSource, Does.Contain("ownerScopeFromMetadata repositoryId"))
 
     /// Verifies PromotionSet apply transfers accepted ownership only after the Applied event has persisted.
     [<Test>]
@@ -535,7 +569,7 @@ type ReferenceActorHashValidationTests() =
         assertBoundaryForcesRegeneration "let! boundaryResult =" "match boundaryResult with"
 
         assertBoundaryForcesRegeneration
-            "let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType ="
+            "let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType ownerScope ="
             "let applyReferenceManifestExpiryBoundary referenceId repositoryId directoryId referenceType ="
 
         assertBoundaryForcesRegeneration

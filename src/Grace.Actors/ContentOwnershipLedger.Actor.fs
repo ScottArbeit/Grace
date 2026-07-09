@@ -194,6 +194,34 @@ module ContentOwnershipLedger =
         else
             None
 
+    /// Reuses durable accepted-transfer evidence so future contributor references stay repository-owned.
+    let private commandWithDurableAcceptedOwner events command =
+        match command with
+        | ContentOwnershipLedgerCommand.AddActiveUsage (operationId,
+                                                        repositoryId,
+                                                        storagePoolId,
+                                                        manifestAddress,
+                                                        activeUsageId,
+                                                        ContentOwnershipOwnerScope.ContributorOwned _) ->
+            let repositoryOwnerScope = ContentOwnershipOwnerScope.RepositoryOwned repositoryId
+
+            let hasAcceptedRepositoryTransfer =
+                events
+                |> Seq.exists (fun ledgerEvent ->
+                    match ledgerEvent.Event with
+                    | ContentOwnershipLedgerEventType.AcceptedContentTransferred transferred ->
+                        transferred.RepositoryId = repositoryId
+                        && transferred.StoragePoolId = storagePoolId
+                        && transferred.ManifestAddress = manifestAddress
+                        && transferred.TargetOwnerScope = repositoryOwnerScope
+                    | _ -> false)
+
+            if hasAcceptedRepositoryTransfer then
+                ContentOwnershipLedgerCommand.AddActiveUsage(operationId, repositoryId, storagePoolId, manifestAddress, activeUsageId, repositoryOwnerScope)
+            else
+                command
+        | _ -> command
+
     let decideCommandForKey
         (expectedPrimaryKey: string option)
         (events: seq<ContentOwnershipLedgerEvent>)
@@ -202,6 +230,7 @@ module ContentOwnershipLedger =
         (metadata: EventMetadata)
         : Result<ContentOwnershipLedgerDecision, GraceError>
         =
+        let command = commandWithDurableAcceptedOwner events command
         let operationId = operationId command
         let repositoryId, storagePoolId, manifestAddress = commandTarget command
 

@@ -215,7 +215,8 @@ module Reference =
     /// Coordinates should apply manifest expiry boundary logic for the Reference actor.
     let shouldApplyManifestExpiryBoundary (referenceDto: ReferenceDto) =
         referenceDto.ReferenceId <> ReferenceId.Empty
-        && referenceDto.ReferenceType = ReferenceType.Save
+        && (referenceDto.ReferenceType = ReferenceType.Save
+            || referenceDto.ReferenceType = ReferenceType.Promotion)
 
     /// Coordinates ownership ledger boundary coverage for references that pin manifest-backed content.
     let shouldApplyOwnershipManifestBoundary referenceType =
@@ -1001,7 +1002,9 @@ module Reference =
                 /// Runs Reference command decisions, applies emitted events, and persists the result.
                 let processCommand (command: ReferenceCommand) (metadata: EventMetadata) =
                     /// Coordinates repository-counter manifest boundary logic for the Reference actor.
-                    let appliesRepositoryManifestBoundary referenceType = referenceType = ReferenceType.Save
+                    let appliesRepositoryManifestBoundary referenceType =
+                        referenceType = ReferenceType.Save
+                        || referenceType = ReferenceType.Promotion
 
                     /// Reads the reference owner scope supplied by create metadata.
                     let ownerScopeFromMetadata repositoryId =
@@ -1020,7 +1023,7 @@ module Reference =
                     let ownerScopeFromReference () = ownershipOwnerScopeFromReferenceDto referenceDto
 
                     /// Applies reference manifest boundary changes to the Reference actor state.
-                    let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType =
+                    let applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType ownerScope =
                         task {
                             let appliesOwnershipBoundary =
                                 shouldApplyOwnershipManifestBoundary referenceType
@@ -1057,7 +1060,7 @@ module Reference =
                                         | Error graceError -> boundaryError <- Some graceError
 
                                     if boundaryError.IsNone && appliesOwnershipBoundary then
-                                        match! applyContentOwnershipBoundary plans (ownerScopeFromMetadata repositoryId) false metadata with
+                                        match! applyContentOwnershipBoundary plans ownerScope false metadata with
                                         | Ok () -> ()
                                         | Error graceError -> boundaryError <- Some graceError
 
@@ -1176,7 +1179,14 @@ module Reference =
                         | Create (referenceId, _, _, repositoryId, _, directoryId, _, _, referenceType, _, _) when
                             createCommandMatchesReference referenceDto command
                             ->
-                            match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
+                            match!
+                                applyReferenceManifestBoundary
+                                    referenceId
+                                    repositoryId
+                                    directoryId
+                                    referenceType
+                                    (ownershipOwnerScopeFromReferenceDto referenceDto)
+                                with
                             | Ok () -> return Ok(existingReferenceReturnValue ())
                             | Error graceError -> return Error graceError
                         | Reveal (operationId, reason) when
@@ -1201,7 +1211,14 @@ module Reference =
                                               links) ->
                                         match! validateRootDirectoryVersionHashes repositoryId directoryId sha256Hash blake3Hash with
                                         | Ok () ->
-                                            match! applyReferenceManifestBoundary referenceId repositoryId directoryId referenceType with
+                                            match!
+                                                applyReferenceManifestBoundary
+                                                    referenceId
+                                                    repositoryId
+                                                    directoryId
+                                                    referenceType
+                                                    (ownerScopeFromMetadata repositoryId)
+                                                with
                                             | Ok () ->
                                                 return
                                                     Ok(
